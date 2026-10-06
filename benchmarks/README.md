@@ -34,7 +34,7 @@ The summary reports request success, latency, and throughput. Streamed requests 
 
 Performance time values may include a unit such as `s`, `min`, or `h`; unitless values use seconds.
 
-[Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](metrics.md).
+[Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](docs/metrics.md).
 
 ## Evaluate model quality
 

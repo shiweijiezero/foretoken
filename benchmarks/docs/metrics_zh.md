@@ -1,6 +1,6 @@
 # 性能指标
 
-[English](metrics.md) | 简体中文 · [性能评测示例](docs/perf/README_zh.md)
+[English](metrics.md) | 简体中文 · [性能评测示例](perf/README_zh.md)
 
 结果包括汇总指标和逐请求记录。
 
@@ -44,7 +44,7 @@ Kustomize 性能评测会在与负载、Ready 副本和 SLO 窗口相同的经�
 
 ## SLO 结果
 
-启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。失败或缺少必要计时指标的请求计为不达标。达标率是满足全部条件的请求占实测请求的比例；请求 goodput 和 token goodput 分别是达标请求数及其输出 token 总数除以运行时长。设置逐请求条件后，一秒完成窗口的时间曲线也展示达标率、请求 goodput 和 token goodput。失败请求计入窗口达标率分母；没有完成请求的窗口不显示达标率。整次运行的汇总仍按全部实测请求计算，不平均各窗口达标率。加上 `--slo-search` 后启用 [SLO 并发搜索](docs/perf/slo_zh.md)，按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。
+启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。失败或缺少必要计时指标的请求计为不达标。达标率是满足全部条件的请求占实测请求的比例；请求 goodput 和 token goodput 分别是达标请求数及其输出 token 总数除以运行时长。设置逐请求条件后，一秒完成窗口的时间曲线也展示达标率、请求 goodput 和 token goodput。失败请求计入窗口达标率分母；没有完成请求的窗口不显示达标率。整次运行的汇总仍按全部实测请求计算，不平均各窗口达标率。加上 `--slo-search` 后启用 [SLO 并发搜索](perf/slo_zh.md)，按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 

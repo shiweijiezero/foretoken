@@ -34,7 +34,7 @@ foretoken perf examples/quickstart \
 
 `perf` 的 `--duration`、`--timeout`、`--trace-start` 和 `--trace-duration` 可带时间单位，例如 `500ms`、`30s`、`8min`（或 `8m`）、`1.5h`、`1d`，不带单位时按秒解释。扫描文件中，带单位的值写成字符串，例如 `"duration": ["30s", "2min"]`。
 
-[性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](metrics_zh.md)。
+[性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](docs/metrics_zh.md)。
 
 ## 评测模型质量
 

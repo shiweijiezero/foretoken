@@ -1,6 +1,6 @@
 # Performance metrics
 
-English | [简体中文](metrics_zh.md) · [Performance examples](docs/perf/README.md)
+English | [简体中文](metrics_zh.md) · [Performance examples](perf/README.md)
 
 Results include aggregate metrics and per-request records.
 
@@ -44,7 +44,7 @@ For a Kustomize model service with Prometheus, performance runs report accepted 
 
 ## SLO results
 
-When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Failed requests and requests missing required timing metrics count as not meeting the SLO. Attainment is the fraction of measured requests meeting all conditions; request goodput divides their count by run duration, and token goodput divides their output token total by the same duration. When request-level criteria are set, one-second completion-window curves also show attainment and request/token goodput on the elapsed-time axis. Each window counts failed requests in its attainment denominator; windows without completions have no attainment value. The run summary still scores all measured requests together, not an average of window fractions. Adding `--slo-search` enables [SLO concurrency search](docs/perf/slo.md), which evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
+When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Failed requests and requests missing required timing metrics count as not meeting the SLO. Attainment is the fraction of measured requests meeting all conditions; request goodput divides their count by run duration, and token goodput divides their output token total by the same duration. When request-level criteria are set, one-second completion-window curves also show attainment and request/token goodput on the elapsed-time axis. Each window counts failed requests in its attainment denominator; windows without completions have no attainment value. The run summary still scores all measured requests together, not an average of window fractions. Adding `--slo-search` enables [SLO concurrency search](perf/slo.md), which evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 

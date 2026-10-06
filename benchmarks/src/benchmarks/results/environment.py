@@ -13,6 +13,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+import foretoken
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 
@@ -29,7 +30,7 @@ def client_environment() -> dict[str, Any]:
             packages[name] = version(name)
         except PackageNotFoundError:
             packages[name] = None
-    root = Path(__file__).resolve().parents[2]
+    root = Path(foretoken.__file__).resolve().parents[2]
     source = None
     if (root / ".git").exists():
         commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
