@@ -8,7 +8,7 @@ We provide these playbooks to help developers and agents find references, conduc
 
 ## Design goals
 
-- Fast experiments: provide relevant references, code entry points, and execution steps. Choose tests for the question at hand, record time spent at each stage, and reduce repeated setup.
+- Fast iteration: guide code changes, rapid deployment, and experimental validation. Reuse environments and caches, choose tests for the current question, and record time spent at each stage to reduce repeated setup and shorten the feedback cycle.
 - Reliable conclusions: examine performance metrics alongside actual model outputs and operating conditions to determine whether a change accounts for the observed improvement. Retain the evidence needed to reproduce the result.
 - Cumulative learning: preserve the motivation, results, and decisions from successive trials. Find and update references during a task, and turn verified methods into reusable guidance.
 
