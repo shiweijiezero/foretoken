@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 开始前
 
-集群需要 Kubernetes 1.29 或更高版本、沐曦驱动和提供 `metax-tech.com/gpu` 资源的设备插件，并配置容器运行时，将宿主驱动库注入 GPU 容器的 `/opt/mxdriver`。SDK 镜像不能替代这些驱动库。准备好目标节点可访问的模型目录，或用于模型缓存的 StorageClass；存储配置见[模型存储](../model-storage_zh.md)。前端还需要可访问的 LoadBalancer 地址；使用网关模式时则需要 Gateway 入口。
+集群需要 Kubernetes 1.29 或更高版本、沐曦驱动和提供 `metax-tech.com/gpu` 资源的设备插件，并配置容器运行时，将宿主驱动库注入 GPU 容器的 `/opt/mxdriver`。SDK 镜像不能替代这些驱动库。沐曦适配层默认排除在容器网络命名空间中没有可用 GID（RDMA 网络地址）的 RoCE 端口；显式设置的 `MCCL_IB_HCA` 优先。准备好目标节点可访问的模型目录，或用于模型缓存的 StorageClass；存储配置见[模型存储](../model-storage_zh.md)。前端还需要可访问的 LoadBalancer 地址；使用网关模式时则需要 Gateway 入口。
 
 先安装 [Foretoken 命令行工具](../../cli/README_zh.md#安装命令行工具)，确认 `kubectl` 指向目标集群。安装平台还需要 Helm 和集群权限；共享依赖由命令行工具按需准备。
 
