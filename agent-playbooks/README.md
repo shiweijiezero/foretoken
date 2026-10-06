@@ -8,7 +8,8 @@ We provide these playbooks to help developers and agents find references, conduc
 
 ## Design goals
 
-- Fast iteration: guide code changes, rapid deployment, and experimental validation. Reuse environments and caches, choose tests for the current question, and record time spent at each stage to reduce repeated setup and shorten the feedback cycle.
+- Rapid deployment: apply code changes to inference services in the target cluster, reusing runtime environments and build caches to shorten the time between editing code and testing it.
+- Fast iteration: choose experiments for the current question, record time spent at each stage, and use measurements to refine the next approach while reducing repeated setup and waiting.
 - Reliable conclusions: examine performance metrics alongside actual model outputs and operating conditions to determine whether a change accounts for the observed improvement. Retain the evidence needed to reproduce the result.
 - Cumulative learning: preserve the motivation, results, and decisions from successive trials. Find and update references during a task, and turn verified methods into reusable guidance.
 
