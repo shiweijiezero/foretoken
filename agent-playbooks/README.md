@@ -2,37 +2,18 @@
 
 English | [简体中文](README_zh.md)
 
-Task playbooks for improving Foretoken inference systems.
+Guidance and experiment notes for improving Foretoken inference systems, connecting code changes with deployment, workloads and measured results.
 
-## Why this exists
+Use the [shared templates](common/README.md) to describe an experiment and its iterations. Deploy through the [source workflow](../docs/custom-deployment.md) and measure with the existing [benchmark tools](../benchmarks/README.md).
 
-An inference optimization often crosses source code, deployment, workload design, runtime behavior, and observability. The relevant code, commands, metrics, and examples are easy to lose across those boundaries.
+## Organization
 
-Each playbook gives an optimization task a clear starting point, the context to read, the steps to run, and the results to check. This makes it easier to move from an optimization idea to a measured result.
+| Directory | Purpose |
+| --- | --- |
+| [common/](common/README.md) | Experiment and iteration notes shared by all tasks |
+| [guidance/](guidance/README.md) | Reusable architecture, code and measurement guidance |
+| [tasks/](tasks/README.md) | Instructions for individual optimization tasks |
 
-## How to use a playbook
+## Writing a task playbook
 
-1. Select the task that matches the intended optimization.
-2. Read the shared material in `common/` and the relevant guidance in `guidance/`.
-3. Inspect the current code and configuration.
-4. Make the change and deploy it through the normal source workflow.
-5. Run the workload, benchmark, or profile described by the task.
-6. Compare the result with the reference case and record what changed.
-
-## What each task playbook contains
-
-Every task playbook should define:
-
-- the goal and success criteria;
-- ownership and relevant code entry points;
-- references and project context;
-- change scope and non-goals;
-- deployment and experiment steps;
-- validation, observation, and diagnosis;
-- result interpretation and follow-up work.
-
-## Layout
-
-- `common/`: material shared by all playbooks;
-- `guidance/`: architecture, code-entry, reference, and validation guidance;
-- `tasks/`: playbooks for specific optimization tasks.
+Define the goal, change scope and relevant code, then provide the deployment and measurement steps needed to compare with a reference result. Explain how to interpret the observations and decide whether to keep the change. Link shared guidance and existing commands rather than copying them.

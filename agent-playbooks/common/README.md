@@ -14,6 +14,6 @@ results/<goal>/<motivation>/
         └── artifacts/
 ```
 
-Authors maintain `notes/`. Commands, source revisions, file snapshots, timestamps, and execution status belong in automatically generated run records. Benchmark configurations, metrics, logs, and profiles belong with the run artifacts. Link those files from the notes rather than maintaining a second copy of their fields.
+Authors maintain `notes/`. Commands, source snapshots, timestamps and status are recorded under `generated/`; benchmark configurations, metrics and profiles belong under `artifacts/`. Link these files from the notes rather than copying their fields.
 
 Choose only the workload needed to answer the current question. Record time spent researching, editing, preparing the environment, and analyzing results; label estimates and link measured durations.
