@@ -791,6 +791,7 @@ rm -rf "$incoming"
                 *self._containerd(),
                 "images",
                 "export",
+                "--skip-manifest-json",
                 "--platform",
                 platform,
                 layout + "/image.tar",
