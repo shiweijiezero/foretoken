@@ -2,7 +2,7 @@
 
 English | [简体中文](experiment-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/notes/experiment.md`. Update the overall findings here and link to the iteration notes for individual approaches.
+Reference for `results/<goal>/<motivation>/notes/experiment.md`. At the start, describe the goal, scope, and comparison method. After each iteration, update the findings and next questions, linking to iteration notes for individual changes.
 
 ## Goal
 

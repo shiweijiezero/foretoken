@@ -6,7 +6,7 @@
 
 ## 组织记录
 
-将实验保存在 `results/<优化目标>/<实验动机>/`，用能说明方案的名称标识迭代，例如 `queue-aware-routing`。
+先确定实验目录 `results/<优化目标>/<实验动机>/`，再为本轮方案选择迭代名称，例如 `queue-aware-routing`。下例展示同一方案的两次性能测试和一次质量评测，以及另一个方案的记录位置。
 
 ```text
 results/<goal>/<motivation>/
@@ -42,12 +42,11 @@ results/<goal>/<motivation>/
 
 上例为 `--output experiment` 的目录布局。`context.json` 记录命令、状态、耗时和源码信息；`changes/` 在可采集源码时保存改动文件，保持仓库相对路径。`run.log` 在启用 `quiet` 时保存。`artifacts/` 内保留评测工具的结果目录和文件。
 
-
 实验说明持续汇总整体结论，迭代说明记录本轮假设、设计、改动和结果解释，可分别参考[实验模板](../templates/experiment-template_zh.md)和[迭代模板](../templates/iteration-template_zh.md)。
 
-通过 `--output experiment`、`--output-dir results/<goal>/<motivation>` 和 `--iteration <name>` 将 perf/eval 命令归入同一轮迭代；重复执行会新增独立运行记录，不覆盖旧结果。
+运行 `foretoken perf` 或 `foretoken eval` 时，设置 `--output experiment`、`--output-dir results/<goal>/<motivation>` 和 `--iteration <name>`。将占位符替换为选定的目标、动机和迭代名称；同一方案的命令使用相同的输出目录和迭代名称，程序为每次运行新增目录。不指定 `--iteration` 时，每条命令创建一个新的编号迭代。
 
-选择该输出方式后，`generated/` 保存采集到的命令、耗时、状态和可获取的源码快照，`artifacts/` 保存评测配置与结果。开发者或 Agent 维护说明，并引用这些记录。在包含改动的源码仓库中执行命令，以捕获对应源码状态；服务代码若单独构建，在说明中另行记录其来源。
+程序只在说明文件不存在时创建空白模板；开发者或 Agent 补充内容，后续运行不覆盖说明。在包含改动的源码仓库中执行命令，以捕获对应源码状态；服务代码若单独构建，在说明中另行记录其来源。
 
 ## 每轮结束后
 
@@ -68,6 +67,6 @@ results/<goal>/<motivation>/
 
 ## 记录迭代耗时
 
-记录调查、设计、实现、部署、评测和分析所花的时间。有实测值时引用记录，估算值注明来源。区分整条命令耗时与其中的测量窗口，包含关系的时间不重复相加。
+在本轮迭代说明中分别记录调查、设计、实现、部署、评测和分析所花的时间。有实测值时引用记录，估算值注明来源。区分整条命令耗时与其中的测量窗口，包含关系的时间不重复相加。
 
 根据这些耗时判断下一轮可以复用或简化哪些工作，并只选择能回答当前问题的评测。

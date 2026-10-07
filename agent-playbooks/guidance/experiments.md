@@ -6,7 +6,7 @@ Keep related approaches and measurements together so that later iterations can b
 
 ## Organize the records
 
-Store an experiment under `results/<goal>/<motivation>/`. Give each iteration a name that describes its approach, such as `queue-aware-routing`.
+Choose an experiment directory under `results/<goal>/<motivation>/` and a name for the current approach, such as `queue-aware-routing`. The example below shows two performance runs and one quality evaluation for that approach, plus the location for another approach.
 
 ```text
 results/<goal>/<motivation>/
@@ -42,12 +42,11 @@ results/<goal>/<motivation>/
 
 This layout is produced by `--output experiment`. `context.json` records the command, status, timing, and source information. When source capture is available, `changes/` retains modified files at their repository-relative paths. `run.log` is saved with `quiet` enabled. `artifacts/` preserves the benchmark tool's result directories and files.
 
-
 Update the experiment notes with overall findings and the iteration notes with the current hypothesis, design, changes, and interpretation. Refer to the [experiment](../templates/experiment-template.md) and [iteration](../templates/iteration-template.md) templates as needed.
 
-Use `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>` to group perf/eval commands under one iteration. Repeated commands create separate runs without overwriting earlier results.
+Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>`. Replace the placeholders with the chosen goal, motivation, and iteration name. Reuse these options for the same approach; each command adds a run directory. Without `--iteration`, each command creates a new numbered iteration.
 
-With this output selected, `generated/` holds captured commands, timing, status, and available source snapshots; `artifacts/` holds evaluation configurations and results. Notes are maintained by the developer or agent and link to these records. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
+The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
 
 ## At the end of each iteration
 
@@ -68,6 +67,6 @@ An optional final review can inspect the implementation and raw outputs for benc
 
 ## Track iteration time
 
-Record time spent on investigation, design, implementation, deployment, evaluation, and analysis. Use measured durations where available and label estimates. Keep command duration distinct from its measurement window, and avoid adding nested durations together.
+In the iteration note, record time spent on investigation, design, implementation, deployment, evaluation, and analysis separately. Use measured durations where available and label estimates. Keep command duration distinct from its measurement window, and avoid adding nested durations together.
 
 Use this breakdown to decide what to reuse or streamline in the next iteration, and choose only the evaluations needed to answer its question.

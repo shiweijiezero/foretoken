@@ -2,7 +2,7 @@
 
 [English](iteration-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。随本轮工作推进更新说明，运行记录从 `../runs/` 引用。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。实现前写清分析与设计，测量后补充结果，结束时写明决策和实际留下的状态。引用本轮 `../runs/` 中的记录，不重写原始指标文件。
 
 ## 问题与分析
 
@@ -24,7 +24,7 @@
 
 记录调查、设计、实现、部署、评测和分析的耗时，实测值引用记录，估算值注明来源。包含关系的时间分别说明。
 
-## 决策
+## 决策与收尾
 
 写明保留、继续修改或回退的决定及执行后的代码、部署状态。列出下一轮问题，链接已更新的实验总结和指导；记录已清理的临时资源及仍需保留的资源用途。
 

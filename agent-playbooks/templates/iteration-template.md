@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Update this note throughout the iteration and link run records under `../runs/`.
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Write the analysis and design before implementation, add results after measurement, and finish with the decision and resulting state. Link records under this iteration’s `../runs/` rather than rewriting raw metric files.
 
 ## Question and analysis
 
@@ -24,7 +24,7 @@ Explain the workload and sample-size choices. Link each run and explain how fail
 
 Link measured durations and label estimates for investigation, design, implementation, deployment, evaluation, and analysis. Keep overlapping durations separate.
 
-## Decision
+## Decision and completion
 
 State the decision to retain, refine, or revert changes and the resulting code and deployment state. Name the next question, link the updated experiment summary and guidance, and record which temporary resources were cleaned up or retained and why.
 
