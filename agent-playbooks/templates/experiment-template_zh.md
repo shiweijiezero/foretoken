@@ -1,6 +1,6 @@
 # 实验说明
 
-用于 `results/<goal>/<motivation>/notes/experiment.md`。这里说明实验思路，实际执行信息引用运行记录。
+编写 `results/<goal>/<motivation>/notes/experiment.md` 时参考。这里说明实验思路，实际执行信息引用运行记录。
 
 ## 目标
 

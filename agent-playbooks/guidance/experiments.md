@@ -1,8 +1,8 @@
-# Common Guidance
+# Experiment Guidance
 
-English | [简体中文](README_zh.md)
+English | [简体中文](experiments_zh.md)
 
-Use the [experiment template](experiment-template.md) to describe the goal and comparison, and the [iteration template](iteration-template.md) to explain each approach and its outcome.
+Refer to the [experiment template](../templates/experiment-template.md) to describe the goal and comparison, and the [iteration template](../templates/iteration-template.md) to explain each approach and its outcome.
 
 ```text
 results/<goal>/<motivation>/

@@ -1,8 +1,8 @@
-# 通用指导
+# 实验指导
 
-[English](README.md) | 简体中文
+[English](experiments.md) | 简体中文
 
-用[实验模板](experiment-template_zh.md)说明优化目标和比较方法，用[迭代模板](iteration-template_zh.md)记录每轮尝试及其结论。
+参考[实验模板](../templates/experiment-template_zh.md)说明优化目标和比较方法，参考[迭代模板](../templates/iteration-template_zh.md)记录每轮尝试及其结论。
 
 ```text
 results/<goal>/<motivation>/

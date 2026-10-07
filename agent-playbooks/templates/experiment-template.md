@@ -1,6 +1,6 @@
 # Experiment Notes
 
-Use this template for `results/<goal>/<motivation>/notes/experiment.md`. Describe the research choices here; link execution facts from the run records.
+Refer to this template when writing `results/<goal>/<motivation>/notes/experiment.md`. Describe the research choices here; link execution facts from the run records.
 
 ## Goal
 

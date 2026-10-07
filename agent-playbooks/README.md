@@ -19,7 +19,7 @@ We provide these playbooks to help developers and agents find references, conduc
 
 | Directory | Purpose |
 | --- | --- |
-| [common/](common/README.md) | Shared experiment guidance and note templates |
+| [templates/](templates/README.md) | Templates to refer to when writing experiment and iteration notes |
 | [guidance/](guidance/README.md) | References and methods for understanding code, measuring behavior, and diagnosing problems |
 | [tasks/](tasks/README.md) | Goals, instructions, and result interpretation for specific optimization tasks |
 
@@ -29,8 +29,8 @@ Start with the shared experiment templates. References and task-specific playboo
 
 Organize records into experiments, iterations, and runs. For example, an experiment aimed at reducing time to first output might compare two routing approaches. Each approach is an iteration and can include several performance and quality evaluation runs.
 
-- Experiment notes: use the [experiment template](common/experiment-template.md) for the overall goal, comparison method, and findings. Update it as the investigation progresses.
-- Iteration notes: use one [iteration template](common/iteration-template.md) per approach to explain the change, expected outcome, results, and next step.
+- Experiment notes: refer to the [experiment template](templates/experiment-template.md) for the overall goal, comparison method, and findings. Update it as the investigation progresses.
+- Iteration notes: refer to the [iteration template](templates/iteration-template.md) per approach to explain the change, expected outcome, results, and next step.
 - Run records: retain commands, configurations, and measurements separately for each execution, and link them from the iteration notes.
 
-Keep records under `results/<goal>/<motivation>/`; see [common guidance](common/README.md) for the layout. Notes explain choices and conclusions, while execution evidence stays with its individual run.
+Keep records under `results/<goal>/<motivation>/`; see [experiment guidance](guidance/experiments.md) for the layout. Notes explain choices and conclusions, while execution evidence stays with its individual run.

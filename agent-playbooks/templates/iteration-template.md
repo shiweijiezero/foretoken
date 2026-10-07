@@ -1,6 +1,6 @@
 # Iteration Notes
 
-Use this template for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Continue editing the note as the work progresses. Link automatically generated records under `../runs/`.
+Refer to this template when writing `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Continue editing the note as the work progresses. Link automatically generated records under `../runs/`.
 
 ## Question and reference
 

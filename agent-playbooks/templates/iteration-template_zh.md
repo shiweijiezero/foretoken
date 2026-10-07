@@ -1,6 +1,6 @@
 # 本轮迭代说明
 
-用于 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`。随着实验推进补充这份说明，自动生成的运行记录从 `../runs/` 引用。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。随着实验推进补充这份说明，自动生成的运行记录从 `../runs/` 引用。
 
 ## 问题与参考
 

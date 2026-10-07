@@ -19,7 +19,7 @@
 
 | 目录 | 用途 |
 | --- | --- |
-| [common/](common/README_zh.md) | 各任务共用的实验指导与记录模板 |
+| [templates/](templates/README_zh.md) | 供编写实验与迭代记录时参考的模板 |
 | [guidance/](guidance/README_zh.md) | 整理参考资料，以及理解代码、测量和诊断的方法 |
 | [tasks/](tasks/README_zh.md) | 按具体优化任务组织目标、操作和结果分析方法 |
 
@@ -29,8 +29,8 @@
 
 记录按实验、迭代和运行组织。例如，围绕降低首个输出的等待时间开展一个实验，分别尝试两种路由方案；每种方案是一轮迭代，可以包含多次性能测试和质量评测。
 
-- 实验说明：使用[实验模板](common/experiment-template_zh.md)记录整体目标、比较方法和结论，随着研究推进持续更新。
-- 迭代说明：每轮使用一份[迭代模板](common/iteration-template_zh.md)，解释改动、预期、结果和下一步。
+- 实验说明：参考[实验模板](templates/experiment-template_zh.md)记录整体目标、比较方法和结论，随着研究推进持续更新。
+- 迭代说明：每轮参考[迭代模板](templates/iteration-template_zh.md)，解释改动、预期、结果和下一步。
 - 运行记录：每次执行分别保存命令、配置和测量结果，供对应迭代说明引用。
 
-记录保存在 `results/<优化目标>/<实验动机>/`，具体布局见[通用指导](common/README_zh.md)。说明文件用于解释选择和结果，运行证据随各次执行分别保留。
+记录保存在 `results/<优化目标>/<实验动机>/`，具体布局见[实验指导](guidance/experiments_zh.md)。说明文件用于解释选择和结果，运行证据随各次执行分别保留。
