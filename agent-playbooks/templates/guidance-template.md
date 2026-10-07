@@ -18,4 +18,4 @@ Explain where to start, what needs to change, and the key trade-offs or unresolv
 
 ## References
 
-List papers, code, technical articles, and experimental results. Distinguish published findings, measurements in this project, and ideas still to be tested.
+Cite papers, code, technical articles, or previous experiments. For an experiment, link its notes and relevant run records, and state the conditions and findings.
