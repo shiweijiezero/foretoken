@@ -21,7 +21,7 @@ We provide these playbooks to help developers and agents find references, conduc
 | --- | --- |
 | [templates/](templates/README.md) | Experiment layout, record templates, and technique note templates |
 | [guidance/](guidance/README.md) | Reference material and knowledge for inference-system optimization |
-| [tasks/](tasks/README.md) | Common optimization tasks with goals, exploration directions, and evaluation methods |
+| [tasks/](tasks/README.md) | Goals, environments, and scope for common optimization tasks |
 
 ## Steps
 

@@ -53,7 +53,7 @@ results/<goal>/<motivation>/
         └── runs/
 ```
 
-上例为 `--output experiment` 的目录布局。`context.json` 记录命令、状态、耗时和源码信息；`changes/` 在可采集源码时保存改动文件，保持仓库相对路径。`run.log` 在启用 `quiet` 时保存。`artifacts/` 内保留评测工具的结果目录和文件。
+`--output experiment` 按上述结构保存结果。`context.json` 记录命令、状态、耗时和源码信息；`changes/` 在可采集源码时保存改动文件，保持仓库相对路径。`run.log` 在启用 `quiet` 时保存。`artifacts/` 内保留评测工具的结果目录和文件。
 
 运行 `foretoken perf` 或 `foretoken eval` 时，设置 `--output experiment`、`--output-dir results/<goal>/<motivation>` 和 `--iteration <name>`。将占位符替换为选定的目标、动机和迭代名称；同一方案的命令使用相同的输出目录和迭代名称，程序为每次运行新增目录。不指定 `--iteration` 时，每条命令创建一个新的编号迭代。
 
@@ -73,7 +73,7 @@ results/<goal>/<motivation>/
 
 质量评测需要逐题记录时添加 `--log_samples`（lm-evaluation-harness）。资源与服务指标的曲线入口见[性能结果](../../benchmarks/docs/perf/wandb_zh.md)；选择 W&B 输出前先完成登录。
 
-要重画已有结果，将 `RESULT_DIR` 设为评测程序打印的具体结果目录，而不是整个实验目录：
+要重画已有结果，将 `RESULT_DIR` 设为评测程序打印的具体结果目录，：
 
 ```bash
 foretoken plot "$RESULT_DIR" --columns 2
@@ -83,13 +83,13 @@ foretoken plot "$RESULT_DIR" --columns 2
 
 ## 每次运行后补充说明
 
-命令结束后，打开 `iterations/<name>/notes/iteration.md`，由用户或 Agent 追加本次运行的说明，而不是修改本目录中的参考模板。至少写清：
+命令结束后，打开 `iterations/<name>/notes/iteration.md`，由用户或 Agent 追加本次运行的说明：
 
 - 本次运行的链接，以及测试了哪个改动或假设。
 - 与参考结果相比发生了什么，模型输出是否符合预期，现有证据支持什么结论。
 - 失败、中断或结论不明确时的原因和下一步；补充程序未记录的工作耗时。
 
-每次补跑保留此前说明，以运行名称区分各次解释。原始指标和日志留在对应运行目录，说明中引用它们。程序不会自动填写这些分析。
+每次补跑保留此前说明，以运行名称区分各次解释。原始指标和日志留在对应运行目录，说明中引用它们。
 
 ## 每轮结束后
 

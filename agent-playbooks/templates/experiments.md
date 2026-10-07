@@ -73,7 +73,7 @@ Find the run under `iterations/<name>/runs/`. The benchmark result directory pri
 
 For per-sample quality records, add `--log_samples` with lm-evaluation-harness. See [performance results](../../benchmarks/docs/perf/wandb.md) for resource and serving metric charts; log in before selecting W&B output.
 
-To redraw saved results, set `RESULT_DIR` to the concrete result directory printed by the runner, not the experiment root:
+To redraw saved results, set `RESULT_DIR` to the concrete result directory printed by the runner:
 
 ```bash
 foretoken plot "$RESULT_DIR" --columns 2
@@ -83,13 +83,13 @@ This does not rerun inference. If a profile was captured, use `foretoken profile
 
 ## Add notes after each run
 
-After the command finishes, open `iterations/<name>/notes/iteration.md`. The developer or agent appends an explanation of the run there, rather than editing the reference template in this directory. Include:
+After the command finishes, open `iterations/<name>/notes/iteration.md`. The developer or agent appends an explanation of the run, including:
 
 - A link to the run and the change or hypothesis it tested.
 - What differed from the reference result, whether model outputs met expectations, and what the evidence supports.
 - The cause and next action for a failure, interruption, or inconclusive result, plus time spent on work not recorded by the command.
 
-Keep earlier explanations when adding runs, identifying each by its run name. Leave raw metrics and logs in their run directories and link to them from the notes. Commands do not fill in this analysis.
+Keep earlier explanations when adding runs, identifying each by its run name. Leave raw metrics and logs in their run directories and link to them from the notes.
 
 ## At the end of each iteration
 

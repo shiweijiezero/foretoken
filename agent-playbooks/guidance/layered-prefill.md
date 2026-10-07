@@ -21,7 +21,6 @@ Processing more prompt tokens together at an MoE layer increases reuse of each e
 
 - Colocated prefill and decode, with arriving long prompts and latency constraints on ongoing decode requests.
 - Small token chunks activate many experts, making expert-weight reads expensive; smaller decode batches make this worth investigating.
-- The execution environment permits changes to engine scheduling and model execution, not just request routing.
 
 Pausing and resuming by layer is not tied to one GPU, but the reported gains depend on MoE access patterns. The authors observed regressions for dense Qwen3-8B. Relaxing inter-token latency constraints and allowing larger token chunks also narrows the advantage. A lone request in pure decode, with no arriving prefill, has no extra prefill weight loads for this mechanism to eliminate.
 
@@ -29,7 +28,7 @@ Pausing and resuming by layer is not tied to one GPU, but the reported gains dep
 
 The [public implementation](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3) uses Nano-vLLM and provides scheduling and benchmark commands.
 
-Checked on 2026-10-07: vLLM revision `1be36283678a9a94fc8fdaad6c95c2896d6b4015` expresses scheduled work as per-request token counts in [scheduler output](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py). Its [Qwen3 MoE forward](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py) traverses the layers assigned to the current pipeline stage. The reviewed paths have no request layer-group cursor preserved across iterations; changing the token budget alone does not implement layered prefill.
+vLLM expresses scheduled work as per-request token counts in [scheduler output](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py). Its [Qwen3 MoE forward](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py) traverses the layers assigned to the current pipeline stage. Layer-group scheduling needs to pass per-request layer progress through these interfaces and retain the state needed to resume across iterations.
 
 A port would need the following state and execution changes:
 

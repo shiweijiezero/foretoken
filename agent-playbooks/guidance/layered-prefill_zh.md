@@ -6,7 +6,7 @@
 
 ## 思路
 
-常见的 chunked prefill 沿 token 维度切分 prompt。每轮只处理一段 tokens，但这段输入仍经过所有模型层。对细粒度 MoE，较小的分块就可能激活大部分专家，每个专家却只处理少量 tokens；后续分块经过同一层时又要读取这些专家权重。
+常见的 chunked prefill 沿 token 维度切分 prompt。每轮只处理一段 token，但这段输入仍经过所有模型层。对细粒度 MoE，较小的分块就可能激活大部分专家，每个专家却只处理少量 token；后续分块经过同一层时又要读取这些专家权重。
 
 Layered prefill 改变调度维度：一轮让完整 prompt 经过一组连续层，然后保存中间状态，把剩余层组留到后续轮次。已有 decode 请求每轮仍经过全部层。
 
@@ -15,21 +15,20 @@ Layered prefill 改变调度维度：一轮让完整 prompt 经过一组连续�
 按层组推进：  完整 prompt → 第 1 组层；完整 prompt → 第 2 组层
 ```
 
-在某个 MoE 层内一次处理更多 prompt tokens，可让同一批专家权重服务更多 tokens，减少分块造成的重复加载。超长 prompt 仍可切成较大的 token chunks，再在每个 chunk 内按层组推进。
+在某个 MoE 层内一次处理更多输入 token，可让同一批专家权重服务更多 token，减少分块造成的重复加载。超长 prompt 仍可切成较大的 token 分块，再在每个分块内按层组推进。
 
 ## 适用场景
 
 - 预填充与解码共置，有长 prompt 持续进入，同时需要控制已有请求的 token 间隔。
-- MoE 的小 token chunks 激活了较多专家，专家权重读取成为明显开销；decode batch 较小时更值得调查。
-- 可以改动引擎调度和模型执行，而不只是调整服务层路由。
+- MoE 的小 token 分块激活了较多专家，专家权重读取成为明显开销；解码批量较小时更值得调查。
 
-按层暂停和恢复的思路不绑定一种 GPU，但论文收益依赖 MoE 专家访问模式。作者在 dense Qwen3-8B 上观察到退化；放宽 token 间隔要求、允许更大的 token chunk 后，两种调度的差距也会缩小。只有单个请求、prefill 已完成且没有新 prefill 插入时，这个机制没有额外的 prefill 权重读取可以消除。
+按层暂停和恢复的思路不绑定一种 GPU，但论文收益依赖 MoE 专家访问模式。作者在稠密模型 Qwen3-8B 上观察到退化；放宽 token 间隔要求、允许更大的 token 分块后，两种调度的差距也会缩小。只有单个请求、prefill 已完成且没有新 prefill 插入时，这个机制没有额外的 prefill 权重读取可以消除。
 
 ## 实现线索
 
 [公开实现](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)基于 Nano-vLLM，提供层组调度及基准命令。
 
-核对日期为 2026-10-07。在 vLLM `1be36283678a9a94fc8fdaad6c95c2896d6b4015` 的[调度输出](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py)中，工作量按每请求 token 数表达；[Qwen3 MoE 执行路径](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py)遍历当前流水线阶段所属层。已审阅的路径没有跨轮保存请求层组进度的接口，不能通过修改 token budget 直接实现该机制。
+vLLM 的[调度输出](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py)中，工作量按每请求 token 数表达；[Qwen3 MoE 执行路径](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py)遍历当前流水线阶段所属层。层组调度需要在这些接口之间传递请求的层进度，并保存跨轮恢复所需的状态。
 
 迁移时需要设计以下执行状态：
 

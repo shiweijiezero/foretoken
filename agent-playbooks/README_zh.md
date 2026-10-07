@@ -21,7 +21,7 @@
 | --- | --- |
 | [templates/](templates/README_zh.md) | 实验目录结构、记录模板与知识条目模板 |
 | [guidance/](guidance/README_zh.md) | 推理系统优化所需的参考资料与知识 |
-| [tasks/](tasks/README_zh.md) | 常用优化任务的目标、探索方向与验证方法 |
+| [tasks/](tasks/README_zh.md) | 常用优化任务的目标、环境与优化范围 |
 
 ## 使用步骤
 
