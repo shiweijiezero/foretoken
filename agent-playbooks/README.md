@@ -92,22 +92,14 @@ Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-d
 
 The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes.
 
-### Save the code for each experiment
+### Save experiment code
 
-Experiment output saves the current Git commit together with uncommitted changes so you can recover the code associated with a run. Run evaluation commands with `--output experiment` from the checkout you are editing; there is no need to commit first.
+Run with `--output experiment` from the Git checkout you are editing. Each run independently saves the current commit and uncommitted changes; committing first is unnecessary:
 
-Each run's `generated/` directory contains:
+- `generated/context.json`: commit ID and change list.
+- `generated/changes/`: modified and new file contents at their original paths, excluding Git-ignored files.
 
-- `context.json`: the current commit ID, changed-file list, and information such as file deletions.
-- `changes/`: the contents of modified and new files, preserving their directory structure. Git-ignored files are excluded.
-
-If you edit two files and run an evaluation, that run saves their contents at that point. Further edits and another run produce a separate record. If you commit between runs, subsequent records start from the new commit. Each run retains its own code state.
-
-To recover the code, check out the recorded commit in a separate directory, copy files from `changes/` to their corresponding paths, and apply the deletions, symlinks, and permission changes listed in `context.json`.
-
-The record describes the checkout where the evaluation command runs. If the serving code comes from another checkout or a separately built image, add its version and source to the iteration notes. When run outside a Git repository, `context.json` identifies source capture as unavailable.
-
-Source files and author-written notes stay local; W&B receives benchmark artifacts. Saved commands redact credential options; evaluation configurations are available in the run artifacts.
+To restore, check out the recorded commit in a separate directory, overlay the saved files, and apply the listed deletions, symlinks, and permissions. Note the source of any separately built serving code or image in the iteration notes. Source files and notes stay local.
 
 ## Inspect the results
 
