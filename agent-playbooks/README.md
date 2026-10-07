@@ -90,15 +90,24 @@ This layout is produced by `--output experiment`. `context.json` records the com
 
 Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>`. Replace the placeholders with the chosen goal, motivation, and iteration name. Reuse these options for the same approach; each command adds a run directory. Without `--iteration`, each command creates a new numbered iteration.
 
-The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
+The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes.
 
-### Source records
+### Save the code for each experiment
 
-Each run saves the current checkout's `HEAD` and copies modified and non-ignored untracked files into `generated/changes/` at their repository-relative paths. `context.json` also records deletions, symlinks, modes, and submodule state. After a commit, the next run uses the new `HEAD`.
+Experiment output saves the current Git commit together with uncommitted changes so you can recover the code associated with a run. Run evaluation commands with `--output experiment` from the checkout you are editing; there is no need to commit first.
 
-To restore the working tree, check out the recorded commit in a separate directory, apply deletion and symlink entries, and overlay snapshot files with their modes. The snapshot describes the invoking checkout; record the source of separately built serving images or engine checkouts in the notes. Git-ignored files are excluded; invocation outside a repository records source capture as unavailable.
+Each run's `generated/` directory contains:
 
-Notes and source snapshots stay local; W&B publishes benchmark artifacts. Recorded command arguments redact credentials and compound options that may contain them; refer to run artifacts for evaluation configuration.
+- `context.json`: the current commit ID, changed-file list, and information such as file deletions.
+- `changes/`: the contents of modified and new files, preserving their directory structure. Git-ignored files are excluded.
+
+If you edit two files and run an evaluation, that run saves their contents at that point. Further edits and another run produce a separate record. If you commit between runs, subsequent records start from the new commit. Each run retains its own code state.
+
+To recover the code, check out the recorded commit in a separate directory, copy files from `changes/` to their corresponding paths, and apply the deletions, symlinks, and permission changes listed in `context.json`.
+
+The record describes the checkout where the evaluation command runs. If the serving code comes from another checkout or a separately built image, add its version and source to the iteration notes. When run outside a Git repository, `context.json` identifies source capture as unavailable.
+
+Source files and author-written notes stay local; W&B receives benchmark artifacts. Saved commands redact credential options; evaluation configurations are available in the run artifacts.
 
 ## Inspect the results
 
