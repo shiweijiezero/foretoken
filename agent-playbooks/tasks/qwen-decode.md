@@ -12,4 +12,4 @@ Two machines, each with eight MetaX C500 GPUs. Use Qwen3.5-35B-A3B BF16; the age
 
 ## Optimization scope
 
-There is no restriction on which components may be optimized. The agent analyzes bottlenecks and designs the approach.
+There is no restriction on which components may be optimized.
