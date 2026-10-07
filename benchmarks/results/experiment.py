@@ -80,11 +80,15 @@ def _snapshot_repository(root: Path, destination: Path, output_root: Path) -> di
     untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
     paths = sorted({os.fsdecode(path) for path in (tracked + untracked).split(b"\0") if path})
     entries: list[dict[str, Any]] = []
+    retained_repositories: set[str] = set()
     for name in paths:
         source = root / name
         # Results may be outside the repository's ignore rules. Never snapshot
         # the running experiment itself, or dereference a changed symlink.
-        if source.is_relative_to(output_root):
+        if output_root == root or root.is_relative_to(output_root):
+            if any(source.is_relative_to(output_root / name) for name in ("iterations", "notes")):
+                continue
+        elif source.is_relative_to(output_root):
             continue
         entry: dict[str, Any] = {"path": name}
         entries.append(entry)
@@ -103,12 +107,15 @@ def _snapshot_repository(root: Path, destination: Path, output_root: Path) -> di
             entry["action"] = "replace"
         elif stat.S_ISDIR(mode):
             entry["action"] = "directory"
+            if (source / ".git").exists():
+                retained_repositories.add(name)
         else:
             entry["action"] = "unsupported"
 
     # Each initialized submodule has its own HEAD and uncommitted changes. Keep
     # that identity even when its parent Git link still points at an older commit.
     submodules = []
+    indexed_submodules: dict[str, str] = {}
     for raw in _git(root, "ls-files", "--stage", "-z").split(b"\0"):
         if not raw:
             continue
@@ -116,10 +123,12 @@ def _snapshot_repository(root: Path, destination: Path, output_root: Path) -> di
         if metadata.split()[0] != b"160000":
             continue
         name = os.fsdecode(path)
+        indexed_submodules[name] = metadata.split()[1].decode()
+    for name in sorted(indexed_submodules.keys() | retained_repositories):
         if (root / name / ".git").exists():
             submodules.append({"path": name, **_snapshot_repository(root / name, destination / name, output_root)})
         else:
-            submodules.append({"path": name, "commit": metadata.split()[1].decode(), "initialized": False})
+            submodules.append({"path": name, "commit": indexed_submodules[name], "initialized": False})
     return {"commit": revision, "entries": entries, "submodules": submodules}
 
 
@@ -142,7 +151,7 @@ def _command_arguments(arguments: Sequence[str]) -> list[str]:
     # Native evaluator dictionaries can contain provider-specific credentials.
     # Their safe resolved settings are already emitted by the evaluation adapter.
     private = {
-        "--api-key", "--api_key", "--token", "--auth-token", "--auth_token",
+        "--api-key", "--api_key", "--reference-api-key", "--token", "--auth-token", "--auth_token",
         "--password", "--headers", "--header", "--model_args", "--model-args",
         "--extra-body", "--dataset-args", "--dataset_args", "--judge-model-args",
         "--judge_model_args", "--hf-token", "--hf_token",
@@ -153,7 +162,7 @@ def _command_arguments(arguments: Sequence[str]) -> list[str]:
         name, separator, _ = argument.partition("=")
         if name.startswith("--"):
             redact = False
-        if name in private or (name.startswith("--api") and "--api-key".startswith(name)):
+        if name.startswith("--") and any(option.startswith(name) for option in private):
             result.append(name + "=<redacted>" if separator else name)
             redact = True
         elif redact:
@@ -187,8 +196,16 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     else:
         iteration = _numbered_directory(iterations)
     run = _numbered_directory(iteration / "runs", f"{command}-")
-    _create_note(root / "notes" / "experiment.md", "# Experiment\n\n## Goal and motivation\n\n## Models, workloads and comparison\n\n## Findings\n")
-    _create_note(iteration / "notes" / "iteration.md", "# Iteration\n\n## Based on and hypothesis\n\n## Changes and reasons\n\n## Results and attribution\n\n## Time spent\n\nReferences / implementation / deployment / analysis; link measured run timings and label estimates.\n\n## Next decision\n")
+    _create_note(
+        root / "notes" / "experiment.md",
+        "# Experiment Notes\n\n## Goal\n\n## Scope\n\n## Comparison\n\n## Findings\n\n## Next questions\n",
+    )
+    _create_note(
+        iteration / "notes" / "iteration.md",
+        "# Iteration Notes\n\n## Question and analysis\n\n## Hypothesis and design\n\n"
+        "## Implementation and deployment\n\n## Measurements and interpretation\n\n"
+        "## Time spent\n\n## Decision and completion\n\n## Optional behavior and attribution review\n",
+    )
     generated = run / "generated"
     generated.mkdir()
     started = time.monotonic()

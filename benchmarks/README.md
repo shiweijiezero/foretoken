@@ -69,7 +69,15 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 
 Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 
-For repeated optimization work, add `experiment` and use `--iteration NAME` to group performance and quality runs with their code changes and notes. See [Iterative experiments](docs/experiments.md) for commands and the saved layout.
+Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
+
+```bash
+foretoken perf examples/quickstart --num-prompts 20 \
+  --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
+  --iteration baseline
+```
+
+`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [playbook guide](../agent-playbooks/README.md#organize-the-records) for the layout, source records, and author-written notes.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 

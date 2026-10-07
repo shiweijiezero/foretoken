@@ -92,6 +92,14 @@ Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-d
 
 The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
 
+### Source records
+
+Each run saves the current checkout's `HEAD` and copies modified and non-ignored untracked files into `generated/changes/` at their repository-relative paths. `context.json` also records deletions, symlinks, modes, and submodule state. After a commit, the next run uses the new `HEAD`.
+
+To restore the working tree, check out the recorded commit in a separate directory, apply deletion and symlink entries, and overlay snapshot files with their modes. The snapshot describes the invoking checkout; record the source of separately built serving images or engine checkouts in the notes. Git-ignored files are excluded; invocation outside a repository records source capture as unavailable.
+
+Notes and source snapshots stay local; W&B publishes benchmark artifacts. Recorded command arguments redact credentials and compound options that may contain them; refer to run artifacts for evaluation configuration.
+
 ## Inspect the results
 
 Find the run under `iterations/<name>/runs/`. The benchmark result directory printed by the runner is inside its `artifacts/`; a sweep command may contain several result directories.

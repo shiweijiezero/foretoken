@@ -69,7 +69,15 @@ foretoken eval examples/quickstart \
 
 每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
 
-反复优化同一问题时，加入 `experiment`，通过 `--iteration NAME` 将性能、质量评测与代码改动和实验说明归在一起。命令和保存结构见[记录迭代实验](docs/experiments_zh.md)。
+使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
+
+```bash
+foretoken perf examples/quickstart --num-prompts 20 \
+  --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
+  --iteration baseline
+```
+
+`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[任务手册](../agent-playbooks/README_zh.md#组织记录)。
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
