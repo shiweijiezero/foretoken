@@ -2,7 +2,7 @@
 
 [English](experiment-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/notes/experiment.md` 时参考。开始实验时说明目标、范围和比较方法；每轮结束后更新结论与后续问题，具体改动链接到对应迭代说明。
+编写 `results/<goal>/<motivation>/notes/experiment.md` 时参考。持续维护一份整体总结，具体尝试链接到各轮迭代说明。
 
 ## 目标
 
@@ -18,7 +18,7 @@
 
 ## 结论
 
-每轮结束后补充新增或修正的结论，链接对应迭代说明和结果，写明保留或放弃该方案的原因。
+补充新增或修正的结论，链接支撑结论的迭代说明和结果。
 
 ## 后续问题
 

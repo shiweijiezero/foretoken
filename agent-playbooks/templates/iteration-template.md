@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Write the analysis and design before implementation, add results after measurement, and finish with the decision and resulting state. Link records under this iteration’s `../runs/` rather than rewriting raw metric files.
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Update it as the approach develops and link supporting records under `../runs/`.
 
 ## Question and analysis
 
@@ -26,7 +26,7 @@ Link measured durations and label estimates for investigation, design, implement
 
 ## Decision and completion
 
-State the decision to retain, refine, or revert changes and the resulting code and deployment state. Name the next question, link the updated experiment summary and guidance, and record which temporary resources were cleaned up or retained and why.
+State the decision to retain, refine, or revert changes, the resulting code and deployment state, and the next question. Note any resources still needed by the next iteration.
 
 ## Optional behavior and attribution review
 

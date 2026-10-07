@@ -2,7 +2,7 @@
 
 English | [简体中文](experiment-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/notes/experiment.md`. At the start, describe the goal, scope, and comparison method. After each iteration, update the findings and next questions, linking to iteration notes for individual changes.
+Reference for `results/<goal>/<motivation>/notes/experiment.md`. Keep one overall summary and link to the individual iteration notes.
 
 ## Goal
 
@@ -18,7 +18,7 @@ List the models, workloads, and metrics for comparison. State which conditions m
 
 ## Findings
 
-After each iteration, add new or revised findings with links to the iteration note and results. Explain why the approach was retained or rejected.
+Add new or revised findings with links to the supporting iteration notes and results.
 
 ## Next questions
 
