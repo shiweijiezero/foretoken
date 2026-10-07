@@ -86,20 +86,20 @@ results/<goal>/<motivation>/
         └── runs/
 ```
 
-This layout is produced by `--output experiment`. `context.json` records the command, status, timing, and source information. When source capture is available, `changes/` retains modified files at their repository-relative paths. `run.log` is saved with `quiet` enabled. `artifacts/` preserves the benchmark tool's result directories and files.
+`generated/` holds run information; `artifacts/` holds benchmark results. With `quiet` enabled, execution logs are saved to `generated/run.log`.
 
 Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>`. Replace the placeholders with the chosen goal, motivation, and iteration name. Reuse these options for the same approach; each command adds a run directory. Without `--iteration`, each command creates a new numbered iteration.
 
 The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes.
 
-### Save experiment code
+### Record code changes
 
-Run with `--output experiment` from the Git checkout you are editing. Each run independently saves the current commit and uncommitted changes; committing first is unnecessary:
+Run evaluations from the Git checkout you are editing. `--output experiment` records the current Git commit ID and saves copies of uncommitted file changes so you can trace the code used for each experiment:
 
 - `generated/context.json`: commit ID and change list.
-- `generated/changes/`: modified and new file contents at their original paths, excluding Git-ignored files.
+- `generated/changes/`: copies of changed files at their original paths, excluding Git-ignored files.
 
-To restore, check out the recorded commit in a separate directory, overlay the saved files, and apply the listed deletions, symlinks, and permissions. Note the source of any separately built serving code or image in the iteration notes. Source files and notes stay local.
+If the service uses a separately built image or another checkout, identify its source in the iteration notes. Source records and author-written notes stay local.
 
 ## Inspect the results
 

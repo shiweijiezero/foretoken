@@ -86,20 +86,20 @@ results/<goal>/<motivation>/
         └── runs/
 ```
 
-`--output experiment` 按上述结构保存结果。`context.json` 记录命令、状态、耗时和源码信息；`changes/` 在可采集源码时保存改动文件，保持仓库相对路径。`run.log` 在启用 `quiet` 时保存。`artifacts/` 内保留评测工具的结果目录和文件。
+`generated/` 保存运行信息，`artifacts/` 保存评测结果。启用 `quiet` 时，执行日志保存在 `generated/run.log`。
 
 运行 `foretoken perf` 或 `foretoken eval` 时，设置 `--output experiment`、`--output-dir results/<goal>/<motivation>` 和 `--iteration <name>`。将占位符替换为选定的目标、动机和迭代名称；同一方案的命令使用相同的输出目录和迭代名称，程序为每次运行新增目录。不指定 `--iteration` 时，每条命令创建一个新的编号迭代。
 
 程序只在说明文件不存在时创建空白模板；开发者或 Agent 补充内容，后续运行不覆盖说明。
 
-### 保存实验代码
+### 记录代码改动
 
-在修改的 Git 仓库中使用 `--output experiment`，每次运行会独立保存当前提交和未提交改动，无需先提交：
+在正在修改的 Git 仓库中执行评测，`--output experiment` 会记录当前 Git 提交编号，并另存尚未提交的文件改动，方便追溯每次实验使用的代码：
 
 - `generated/context.json`：提交编号和变更清单。
-- `generated/changes/`：修改与新增文件的内容，保留原目录结构，排除 Git 忽略的文件。
+- `generated/changes/`：改动文件的副本，保持原目录结构；Git 忽略的文件除外。
 
-恢复时，在独立目录检出记录中的提交，覆盖保存的文件，再按变更清单还原删除、链接和权限。服务使用其他源码或镜像时，在迭代说明中补充其来源。源码和说明仅保存在本地。
+服务使用单独构建的镜像或其他源码目录时，在迭代说明中注明其来源。源码记录和手写说明保存在本地。
 
 ## 查看本次结果
 
