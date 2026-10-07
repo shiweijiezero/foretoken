@@ -15,7 +15,7 @@ Select evaluations for the current optimization goal. Use the [experiment comman
 | Locate computation, communication, and waiting costs | [Profiling](../../benchmarks/docs/profile/README.md), `foretoken perf --profile` | Execution timeline; use separate unprofiled runs for speed comparisons |
 | Compare concurrency, input lengths, and traffic patterns | [Sweep and workload configurations](../../benchmarks/docs/recipes.md) | Metrics and trends across workload points |
 
-For decode optimization, follow [Qwen decode optimization](../tasks/qwen-decode.md). Inspect command options with `foretoken perf --help` and `foretoken eval --help`.
+Inspect command options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Organize the records
 

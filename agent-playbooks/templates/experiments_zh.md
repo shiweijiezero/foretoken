@@ -15,7 +15,7 @@
 | 定位计算、通信和等待开销 | [性能剖析](../../benchmarks/docs/profile/README_zh.md)，`foretoken perf --profile` | 执行时间线；速度对比另用不带剖析的运行 |
 | 比较不同并发、输入长度和流量下的表现 | [参数扫描与负载配置](../../benchmarks/docs/recipes_zh.md) | 各负载点的指标及变化趋势 |
 
-解码优化任务见[Qwen 解码速度优化](../tasks/qwen-decode_zh.md)。命令选项可用 `foretoken perf --help` 和 `foretoken eval --help` 查询。
+命令选项可用 `foretoken perf --help` 和 `foretoken eval --help` 查询。
 
 ## 组织记录
 
