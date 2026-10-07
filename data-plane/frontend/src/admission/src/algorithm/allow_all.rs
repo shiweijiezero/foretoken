@@ -3,14 +3,14 @@
 
 //! Unrestricted admission without runtime accounting.
 
-use super::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, RouteAdmission};
+use crate::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, AdmissionRule};
 
 /// Accepts requests without allocating capacity or queue state.
 #[derive(Default)]
 pub struct AllowAllAdmission;
 
 impl AllowAllAdmission {
-    /// Builds the parameter-free rule selected by the pipeline configuration.
+    /// Builds the parameter-free rule selected by the admission configuration.
     pub fn from_parameters(parameters: serde_json::Value) -> Result<Self, String> {
         if parameters
             .as_object()
@@ -24,7 +24,7 @@ impl AllowAllAdmission {
 }
 
 #[async_trait::async_trait]
-impl RouteAdmission for AllowAllAdmission {
+impl AdmissionRule for AllowAllAdmission {
     async fn admit(
         &self,
         _request: &AdmissionRequest,

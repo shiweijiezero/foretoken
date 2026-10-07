@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use foretoken_router::algorithm::admission::AdmissionApi;
+use foretoken_admission::AdmissionApi;
 use serde_json::json;
 
 use self::convert::{prepare_count_tokens_request, prepare_messages_request};

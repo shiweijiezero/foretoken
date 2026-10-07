@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::launch::{Artifacts, LaunchPlanV1};
+use crate::launch::{Artifacts, LaunchPlanV1, PYTHON_MODULE_PATH};
 
 /// Controller-owned publication scope shared by replicas of one Pool revision.
 pub const PREPARATION_SCOPE_ENV: &str = "FORETOKEN_MODEL_PREPARATION_SCOPE";
@@ -152,12 +152,10 @@ fn provider_command(plan: &LaunchPlanV1, model_root: &Path) -> io::Result<Comman
             ));
         }
     };
-    let script = match std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV) {
-        Some(directory) => {
-            fs::read_to_string(Path::new(&directory).join("python/foretoken_prepare.py"))?
-        }
-        None => include_str!("../python/foretoken_prepare.py").to_owned(),
-    };
+    let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
+        .map(|directory| PathBuf::from(directory).join("python"))
+        .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
+    let script = fs::read_to_string(directory.join("foretoken_prepare.py"))?;
     let mut command = Command::new(plan.python_executable());
     command
         .args(["-c", &script])

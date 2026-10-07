@@ -55,13 +55,8 @@ pub trait RouteSession: Send {
 /// Creates isolated request-local routing state for tokenized generation requests.
 #[async_trait::async_trait]
 pub trait Router: Send + Sync {
-    /// Binds already-admitted work to fresh routing observations after preprocessing.
-    /// The session retains its permit across every E/P/D selection round.
-    async fn start(
-        &self,
-        request: RouterRequest,
-        admission: crate::AdmissionPermit,
-    ) -> Box<dyn RouteSession>;
+    /// Binds a prepared request to fresh routing observations and retains its routing load.
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
 }
 
 /// Failure returned while selecting one model-server routing stage.

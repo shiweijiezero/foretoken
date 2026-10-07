@@ -51,7 +51,7 @@ groups:
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenfrontendhttpresponsestart5xxratiohigh'
 
       - alert: ForetokenNVIDIAGPUTemperatureHigh
-        expr: foretoken:accelerator_gpu_temperature_celsius{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups"} >= foretoken_alert_threshold_nvidia_temperature_celsius
+        expr: foretoken:accelerator_gpu_temperature_celsius{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups", vendor="nvidia"} >= foretoken_alert_threshold_nvidia_temperature_celsius
         for: 2m
         labels:
           service: foretoken
@@ -65,7 +65,7 @@ groups:
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagputemperaturehigh'
 
       - alert: ForetokenNVIDIAGPUPowerUsageHigh
-        expr: foretoken:accelerator_gpu_power_watts{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups"} >= foretoken_alert_threshold_nvidia_power_watts
+        expr: foretoken:accelerator_gpu_power_watts{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups", vendor="nvidia"} >= foretoken_alert_threshold_nvidia_power_watts
         for: 5m
         labels:
           service: foretoken
@@ -77,3 +77,129 @@ groups:
           description: 'NVIDIA GPU {{ $labels.device_id }} power usage is {{ $value | printf "%.1f" }} W, at or above threshold foretoken_alert_threshold_nvidia_power_watts W for 5 minutes.'
           description_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗为 {{ $value | printf "%.1f" }} W，已达到或超过阈值 foretoken_alert_threshold_nvidia_power_watts W，持续 5 分钟。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagpupowerusagehigh'
+
+      # The 1s ranges keep this catalogue valid PromQL; Render replaces them with the configured window.
+      - alert: ForetokenAdmissionCapacityRejectionRatioHigh
+        expr: |
+          (
+            sum by (foretoken_alert_admission_grouping) (
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work", result="capacity_rejected"}[1s])
+            )
+            /
+            sum by (foretoken_alert_admission_grouping) (
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[1s])
+            )
+          ) > foretoken_alert_threshold_capacity_rejection_ratio
+          and on (foretoken_alert_admission_grouping)
+          sum by (foretoken_alert_admission_grouping) (
+            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage=~"intake|work"}[1s])
+          ) >= foretoken_alert_threshold_min_result_rate
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken 准入容量拒绝比例过高'
+          summary: 'Frontend {{ $labels.frontend_service }} {{ $labels.stage }} capacity rejection ratio is high'
+          summary_zh: '前端 {{ $labels.frontend_service }} 的 {{ $labels.stage }} 准入容量拒绝比例过高'
+          description: 'HTTP admission capacity rejection ratio is {{ $value | printf "%.3f" }} in {{ $labels.scope }} scope. Inspect configured frontend capacity and Pod admission results.'
+          description_zh: '在 {{ $labels.scope }} 作用域内，HTTP 准入容量拒绝比例为 {{ $value | printf "%.3f" }}。请查看前端配置容量及各 Pod 的准入结果。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenadmissioncapacityrejectionratiohigh'
+
+      - alert: ForetokenAdmissionTimeoutRatioHigh
+        expr: |
+          (
+            sum by (foretoken_alert_admission_grouping) (
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work", result=~"queue_timeout|deadline_exceeded"}[1s])
+            )
+            /
+            sum by (foretoken_alert_admission_grouping) (
+              rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[1s])
+            )
+          ) > foretoken_alert_threshold_timeout_ratio
+          and on (foretoken_alert_admission_grouping)
+          sum by (foretoken_alert_admission_grouping) (
+            rate(foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}[1s])
+          ) >= foretoken_alert_threshold_min_result_rate
+        labels:
+          service: foretoken
+          severity: warning
+          stage: work
+        annotations:
+          alertname_zh: 'Foretoken 工作准入超时比例过高'
+          summary: 'Frontend {{ $labels.frontend_service }} admission timeout ratio is high'
+          summary_zh: '前端 {{ $labels.frontend_service }} 的工作准入超时比例过高'
+          description: 'HTTP work admission timeout ratio is {{ $value | printf "%.3f" }} in {{ $labels.scope }} scope. Compare queue timeouts with request deadlines before admission completes.'
+          description_zh: '在 {{ $labels.scope }} 作用域内，HTTP 工作准入超时比例为 {{ $value | printf "%.3f" }}。请区分队列等待超时与获准前请求预算耗尽。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenadmissiontimeoutratiohigh'
+
+      - alert: ForetokenAdmissionAdmittedQueueP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (foretoken_alert_admission_grouping, le) (
+              rate(foretoken_admission_queue_wait_seconds_bucket{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[1s])
+            )
+          ) > foretoken_alert_threshold_admitted_queue_p95_seconds
+          and on (foretoken_alert_admission_grouping)
+          sum by (foretoken_alert_admission_grouping) (
+            rate(foretoken_admission_queue_wait_seconds_count{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", result="admitted"}[1s])
+          ) >= foretoken_alert_threshold_min_queued_admission_rate
+        labels:
+          service: foretoken
+          severity: warning
+          stage: work
+        annotations:
+          alertname_zh: 'Foretoken 获准排队 p95 过高'
+          summary: 'Frontend {{ $labels.frontend_service }} admitted queue p95 is high'
+          summary_zh: '前端 {{ $labels.frontend_service }} 的获准排队 p95 过高'
+          description: 'HTTP requests that queued and were admitted waited {{ $value | printf "%.3f" }} seconds at p95 in {{ $labels.scope }} scope. Inspect queued work and backend capacity.'
+          description_zh: '在 {{ $labels.scope }} 作用域内，实际排队后获准的 HTTP 调用等待 p95 为 {{ $value | printf "%.3f" }} 秒。请查看排队工作量和后端容量。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenadmissionadmittedqueuep95high'
+
+      # Each successful scrape must publish baseline telemetry, even without requests.
+      # Only the running concurrency algorithm requires finite-capacity resource gauges.
+      - alert: ForetokenAdmissionTelemetryMissing
+        expr: |
+          up{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"} == 1
+          unless on (namespace, pod, instance)
+          (
+            (
+              foretoken_admission_info{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", algorithm!="concurrency"}
+              or
+              (
+                foretoken_admission_info{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", algorithm="concurrency"}
+                and on (namespace, pod, instance)
+                foretoken_admission_active_work_units{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+                and on (namespace, pod, instance)
+                foretoken_admission_queued_work_units{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+                and on (namespace, pod, instance)
+                foretoken_admission_resident_requests{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+                and on (namespace, pod, instance)
+                foretoken_admission_concurrency_limit_work_units{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+                and on (namespace, pod, instance)
+                foretoken_admission_queue_limit_work_units{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+                and on (namespace, pod, instance)
+                foretoken_admission_resident_limit_requests{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend"}
+              )
+            )
+            and on (namespace, pod, instance)
+            foretoken_admission_attempts_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="intake"}
+            and on (namespace, pod, instance)
+            foretoken_admission_attempts_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work"}
+            and on (namespace, pod, instance)
+            foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="intake", result="admitted"}
+            and on (namespace, pod, instance)
+            foretoken_admission_results_total{endpoint="http", namespace="foretoken_alert_namespace", inference_foretoken_io_frontend_service="foretoken_alert_frontend", origin="http", stage="work", result="admitted"}
+          )
+        for: 5m
+        labels:
+          service: foretoken
+          severity: warning
+          scope: pod
+        annotations:
+          alertname_zh: 'Foretoken 准入指标不完整'
+          summary: 'Frontend {{ $labels.frontend_service }} Pod {{ $labels.pod }} admission telemetry is incomplete'
+          summary_zh: '前端 {{ $labels.frontend_service }} 的 Pod {{ $labels.pod }} 准入指标不完整'
+          description: 'Scraping succeeds, but required admission telemetry has been missing for 5 minutes. Check Pod runtime versions and metric coverage; this does not indicate inference unavailability.'
+          description_zh: '指标抓取成功，但必要准入指标已缺失 5 分钟。请核对 Pod 运行版本和指标覆盖情况；此告警不表示推理不可用。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenadmissiontelemetrymissing'

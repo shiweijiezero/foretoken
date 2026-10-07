@@ -104,7 +104,7 @@ class ExporterDiscovery:
             (daemonset, target_pods)
             for daemonset in candidates
             if (
-                target_pods := self._daemonset_pods_on_nodes(
+                target_pods := self.daemonset_pods_on_nodes(
                     daemonset, node_names
                 )
             )
@@ -285,10 +285,10 @@ class ExporterDiscovery:
                 f"({', '.join(missing)}); {repair_hint}"
             )
 
-    def _daemonset_pods_on_nodes(
+    def daemonset_pods_on_nodes(
         self, daemonset: dict[str, Any], node_names: set[str]
     ) -> frozenset[str]:
-        """Return ready exporter Pod names when they cover every selected node."""
+        """Return owned Ready Pod names when a DaemonSet covers every selected node."""
         metadata = daemonset.get("metadata") or {}
         namespace = str(metadata.get("namespace") or "")
         uid = str(metadata.get("uid") or "")

@@ -41,10 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
+    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential)?);
     let generation = Arc::new(RuntimeGeneration::new(
         config.request_timeout,
-        builder.admission()?,
+        Arc::new(config.admission.build()?),
     ));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain

@@ -115,6 +115,23 @@ The response contains a task `id`, `status_url`, and `content_url`. Use the same
 
 Cancellation and deletion continue after the HTTP `202` response. The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files are retained.
 
+## Configure admission rules
+
+Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). To limit each frontend replica to 64 concurrent candidates, add this to its `FrontendService` configuration:
+
+```yaml
+spec:
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
+```
+
+Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
+
+See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
+
+
 ## Operations
 
 Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.

@@ -4,6 +4,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "frontend/src/admission",
     "frontend/src/backend-registry",
     "frontend/src/chat",
     "frontend/src/cmd",
@@ -15,6 +16,7 @@ members = [
     "frontend/src/router",
     "frontend/src/runtime-builder",
     "frontend/src/server",
+    "frontend/src/serving-types",
     "frontend/src/text",
     "frontend/src/tokenizer",
     "frontend/src/tracing",

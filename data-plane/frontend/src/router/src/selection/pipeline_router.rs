@@ -407,7 +407,6 @@ struct Session<C: Send + 'static> {
     router: PipelineRouter<C>,
     request: RouterRequest,
     customized_context: C,
-    _admission: crate::AdmissionPermit,
     stage: SessionStage,
     selected: Vec<ReservationKey>,
 }
@@ -536,11 +535,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
 }
 #[async_trait::async_trait]
 impl<C: Send + 'static> Router for PipelineRouter<C> {
-    async fn start(
-        &self,
-        request: RouterRequest,
-        admission: crate::AdmissionPermit,
-    ) -> Box<dyn RouteSession> {
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
         let kv_prefix_indexer =
             if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
                 let candidates = {
@@ -586,7 +581,6 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 metrics: self.metrics.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
-            _admission: admission,
             request,
             stage: SessionStage::Initial,
             selected: Vec::new(),

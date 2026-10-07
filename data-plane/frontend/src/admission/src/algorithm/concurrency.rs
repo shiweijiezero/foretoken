@@ -4,14 +4,17 @@
 //! Bounded concurrency and FIFO waiting shared by successive routing generations.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
-use crate::metrics::{AdmissionRejectionLabels, METRICS};
+use crate::telemetry::METRICS;
 
-use super::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, AdmissionReservation, RouteAdmission};
+use crate::{
+    AdmissionCapacity, AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest,
+    AdmissionReservation, AdmissionRule,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -23,9 +26,10 @@ struct Parameters {
 }
 
 /// Runtime state for one frontend's concurrency admission rule.
-/// The pipeline retains this owner across serving-snapshot replacements.
+/// The frontend retains this owner across serving-snapshot replacements.
 pub struct ConcurrencyAdmission {
     capacity: u32,
+    queue_capacity: u32,
     active: Arc<Semaphore>,
     queued: Arc<Semaphore>,
     resident: Arc<Semaphore>,
@@ -36,30 +40,23 @@ impl ConcurrencyAdmission {
     /// Resolves the concurrency stage once at process startup, without guessing capacity.
     pub fn from_parameters(parameters: serde_json::Value) -> Result<Self, String> {
         let parameters: Parameters = serde_json::from_value(parameters)
-            .map_err(|error| format!("routerPipeline.admission.parameters: {error}"))?;
+            .map_err(|error| format!("admission.parameters: {error}"))?;
         let capacity = parameters.max_concurrent_requests;
         if capacity == 0 {
-            return Err(
-                "routerPipeline.admission.parameters.maxConcurrentRequests must be positive".into(),
-            );
+            return Err("admission.parameters.maxConcurrentRequests must be positive".into());
         }
         let resident = (capacity as usize)
             .checked_add(parameters.max_queued_requests as usize)
             .filter(|total| *total <= Semaphore::MAX_PERMITS)
-            .ok_or("routerPipeline.admission request limits exceed supported capacity")?;
+            .ok_or("admission request limits exceed supported capacity")?;
         let queue_timeout = parameters
             .queue_timeout
             .map(|value| {
                 humantime::parse_duration(&value)
-                    .map_err(|error| {
-                        format!("routerPipeline.admission.parameters.queueTimeout: {error}")
-                    })
+                    .map_err(|error| format!("admission.parameters.queueTimeout: {error}"))
                     .and_then(|duration| {
                         if duration.is_zero() {
-                            Err(
-                                "routerPipeline.admission.parameters.queueTimeout must be positive"
-                                    .into(),
-                            )
+                            Err("admission.parameters.queueTimeout must be positive".into())
                         } else {
                             Ok(duration)
                         }
@@ -68,17 +65,25 @@ impl ConcurrencyAdmission {
             .transpose()?;
         Ok(Self {
             capacity,
+            queue_capacity: parameters.max_queued_requests,
             active: Arc::new(Semaphore::new(capacity as usize)),
             queued: Arc::new(Semaphore::new(parameters.max_queued_requests as usize)),
             resident: Arc::new(Semaphore::new(resident)),
             queue_timeout,
         })
     }
-
 }
 
 #[async_trait::async_trait]
-impl RouteAdmission for ConcurrencyAdmission {
+impl AdmissionRule for ConcurrencyAdmission {
+    fn capacity(&self) -> Option<AdmissionCapacity> {
+        Some(AdmissionCapacity {
+            concurrent_work_units: self.capacity,
+            queued_work_units: self.queue_capacity,
+            resident_requests: u64::from(self.capacity) + u64::from(self.queue_capacity),
+        })
+    }
+
     fn requires_ready_runtime(&self) -> bool {
         true
     }
@@ -90,7 +95,7 @@ impl RouteAdmission for ConcurrencyAdmission {
             .map(|permit| Reservation::counted(permit, PermitKind::Resident))
             .map_err(|error| match error {
                 TryAcquireError::Closed => AdmissionError::Closed,
-                TryAcquireError::NoPermits => rejected("resident_full", AdmissionError::Overloaded),
+                TryAcquireError::NoPermits => AdmissionError::Overloaded,
             })
     }
 
@@ -99,10 +104,10 @@ impl RouteAdmission for ConcurrencyAdmission {
         request: &AdmissionRequest,
         context: &AdmissionContext<'_>,
     ) -> Result<AdmissionPermit, AdmissionError> {
-        let units = request.units().ok_or_else(|| rejected("batch_too_large", AdmissionError::BatchTooLarge))?;
+        let units = request.units().ok_or(AdmissionError::BatchTooLarge)?;
         let deadline = context.deadline;
         if units == 0 || units > self.capacity {
-            return Err(rejected("batch_too_large", AdmissionError::BatchTooLarge));
+            return Err(AdmissionError::BatchTooLarge);
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(AdmissionError::DeadlineExceeded);
@@ -118,15 +123,11 @@ impl RouteAdmission for ConcurrencyAdmission {
                 .try_acquire_many_owned(units)
                 .map_err(|error| match error {
                     TryAcquireError::Closed => AdmissionError::Closed,
-                    TryAcquireError::NoPermits => {
-                        rejected("queue_full", AdmissionError::Overloaded)
-                    }
+                    TryAcquireError::NoPermits => AdmissionError::Overloaded,
                 })?;
         let started = tokio::time::Instant::now();
-        let _waiting = QueueWait {
-            _permit: Reservation::counted(queued, PermitKind::Queued),
-            started: started.into_std(),
-        };
+        let _queued = Reservation::counted(queued, PermitKind::Queued);
+        let _waiting = context.queue.begin_wait();
         let expires = self
             .queue_timeout
             .and_then(|duration| started.checked_add(duration))
@@ -144,7 +145,7 @@ impl RouteAdmission for ConcurrencyAdmission {
                 Ok(Reservation::counted(permit, PermitKind::Active))
             }
             _ if expires == deadline => Err(AdmissionError::DeadlineExceeded),
-            _ => Err(rejected("queue_timeout", AdmissionError::QueueTimeout)),
+            _ => Err(AdmissionError::QueueTimeout),
         }
     }
 
@@ -171,15 +172,17 @@ struct Reservation {
 impl Reservation {
     fn counted(permit: OwnedSemaphorePermit, kind: PermitKind) -> AdmissionPermit {
         let reservation = Self { permit, kind };
-        reservation.gauge().inc_by(reservation.permit.num_permits() as i64);
+        reservation
+            .gauge()
+            .inc_by(reservation.permit.num_permits() as i64);
         AdmissionPermit::new(reservation)
     }
 
     fn gauge(&self) -> &prometheus_client::metrics::gauge::Gauge {
         match self.kind {
-            PermitKind::Active => &METRICS.admission_active,
-            PermitKind::Queued => &METRICS.admission_queued,
-            PermitKind::Resident => &METRICS.admission_resident,
+            PermitKind::Active => &METRICS.active,
+            PermitKind::Queued => &METRICS.queued,
+            PermitKind::Resident => &METRICS.resident,
         }
     }
 }
@@ -187,7 +190,10 @@ impl Reservation {
 impl AdmissionReservation for Reservation {
     fn split_one(&mut self) -> Box<dyn AdmissionReservation> {
         Box::new(Self {
-            permit: self.permit.split(1).expect("generation batch has a reserved unit for each child"),
+            permit: self
+                .permit
+                .split(1)
+                .expect("generation batch has a reserved unit for each child"),
             kind: self.kind,
         })
     }
@@ -197,25 +203,4 @@ impl Drop for Reservation {
     fn drop(&mut self) {
         self.gauge().dec_by(self.permit.num_permits() as i64);
     }
-}
-
-struct QueueWait {
-    _permit: AdmissionPermit,
-    started: Instant,
-}
-
-impl Drop for QueueWait {
-    fn drop(&mut self) {
-        METRICS
-            .admission_wait
-            .observe(self.started.elapsed().as_secs_f64());
-    }
-}
-
-fn rejected(reason: &'static str, error: AdmissionError) -> AdmissionError {
-    METRICS
-        .admission_rejected
-        .get_or_create(&AdmissionRejectionLabels { reason })
-        .inc();
-    error
 }

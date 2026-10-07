@@ -135,6 +135,11 @@ spec:
                 - vllm
                 - vllm-omni
                 type: string
+              deploymentRevision:
+                description: |-
+                  DeploymentRevision requests current platform applications on an explicit deployment.
+                  It carries no executable, image or external URL supplied by model intent.
+                type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
                   for a complete E/P/D topology.
@@ -928,6 +933,33 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              poolApplications:
+                additionalProperties:
+                  description: |-
+                    ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+                    Controllers persist it before creating consumers so recovery never reselects platform defaults.
+                  properties:
+                    applicationURL:
+                      type: string
+                    deploymentRevision:
+                      type: string
+                    image:
+                      type: string
+                    imageProfile:
+                      description: ImageProfile distinguishes serving, Omni and diagnostic
+                        environments during selection.
+                      type: string
+                    sourceRevision:
+                      description: SourceRevision retains the admitted source intent
+                        independently of source-mode defaults.
+                      type: string
+                  required:
+                  - image
+                  type: object
+                description: |-
+                  PoolApplications retains controller-selected execution settings when a Pool is recreated.
+                  The controller publishes selections before materializing their Pool and Group contracts.
+                type: object
               servingGeneration:
                 description: ServingGeneration is the ModelService generation whose
                   complete Pool revision set is admitted to routing.

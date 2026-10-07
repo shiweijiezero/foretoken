@@ -1162,6 +1162,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
+name = "foretoken-admission"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "foretoken-serving-types",
+ "humantime",
+ "inventory",
+ "prometheus-client",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "foretoken-artifacts"
 version = "0.0.1"
 dependencies = [
@@ -1207,6 +1222,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "axum",
+ "foretoken-admission",
  "foretoken-artifacts",
  "foretoken-backend-registry",
  "foretoken-kv-indexer",
@@ -1259,6 +1275,7 @@ name = "foretoken-metrics"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-admission",
  "foretoken-router",
  "serde",
  "vllm-metrics",
@@ -1323,13 +1340,12 @@ dependencies = [
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-model-protocol",
- "humantime",
+ "foretoken-serving-types",
  "inventory",
  "prometheus-client",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "vllm-llm",
 ]
@@ -1339,6 +1355,7 @@ name = "foretoken-runtime-builder"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "foretoken-admission",
  "foretoken-backend-registry",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",
@@ -1361,6 +1378,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "foretoken-admission",
  "foretoken-chat",
  "foretoken-engine-core-client",
  "foretoken-llm-facade",
@@ -1379,6 +1397,14 @@ dependencies = [
  "tokio-util",
  "uuid",
  "vllm-llm",
+]
+
+[[package]]
+name = "foretoken-serving-types"
+version = "0.0.1"
+dependencies = [
+ "foretoken-model-protocol",
+ "serde",
 ]
 
 [[package]]

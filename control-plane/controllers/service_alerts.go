@@ -58,7 +58,7 @@ func NewServiceAlerts(manager ctrl.Manager, reference string, ruleLabels map[str
 }
 
 // reconcile creates, updates or removes one owner-bound PrometheusRule after selection checks.
-func (alerts *ServiceAlerts) reconcile(ctx context.Context, owner client.Object, selected []string, scope observability.Scope, thresholds *inferencev1alpha1.ModelAlertThresholds) error {
+func (alerts *ServiceAlerts) reconcile(ctx context.Context, owner client.Object, selected []string, scope observability.Scope, thresholds *inferencev1alpha1.ModelAlertThresholds, admission *inferencev1alpha1.AdmissionAlertThresholds) error {
 	active := len(selected) != 0 && owner.GetDeletionTimestamp().IsZero()
 	if alerts == nil {
 		if active {
@@ -94,7 +94,7 @@ func (alerts *ServiceAlerts) reconcile(ctx context.Context, owner client.Object,
 	if err := alerts.requireSelection(ctx, owner.GetNamespace()); err != nil {
 		return err
 	}
-	spec, err := observability.Render(selected, scope, thresholds)
+	spec, err := observability.Render(selected, scope, thresholds, admission)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (reconciler *ModelServiceReconciler) reconcileAlerts(ctx context.Context, s
 		scope, err = reconciler.alertScope(ctx, service)
 	}
 	if err == nil {
-		err = reconciler.Alerts.reconcile(ctx, service, selected, scope, thresholds)
+		err = reconciler.Alerts.reconcile(ctx, service, selected, scope, thresholds, nil)
 	}
 	return errors.Join(err, updateAlertsCondition(ctx, reconciler.Client, service, len(selected) != 0, err))
 }
@@ -202,10 +202,15 @@ func (reconciler *ModelServiceReconciler) alertScope(ctx context.Context, servic
 // reconcileAlerts keeps HTTP alert scope on the frontend rather than assigning shared failures to models.
 func (reconciler *FrontendServiceReconciler) reconcileAlerts(ctx context.Context, frontend *inferencev1alpha1.FrontendService) error {
 	var selected []string
+	var admission *inferencev1alpha1.AdmissionAlertThresholds
 	if frontend.Spec.Observability != nil && frontend.Spec.Observability.Alerts != nil {
-		selected = frontend.Spec.Observability.Alerts.Rules
+		settings := frontend.Spec.Observability.Alerts
+		selected = settings.Rules
+		if settings.Thresholds != nil {
+			admission = settings.Thresholds.Admission
+		}
 	}
-	err := reconciler.Alerts.reconcile(ctx, frontend, selected, observability.Scope{Namespace: frontend.Namespace, Frontend: frontend.Name}, nil)
+	err := reconciler.Alerts.reconcile(ctx, frontend, selected, observability.Scope{Namespace: frontend.Namespace, Frontend: frontend.Name}, nil, admission)
 	return errors.Join(err, updateAlertsCondition(ctx, reconciler.Client, frontend, len(selected) != 0, err))
 }
 

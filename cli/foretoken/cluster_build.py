@@ -63,7 +63,10 @@ def remove_build_pods(
         )
         return
     for pod in kubectl.list_all_resources(("pods",), label_selector=selector):
-        if _pod_ready(pod):
+        # Retire obsolete cache-mounted publishers even when their compiler is healthy.
+        if _pod_ready(pod) and not any(
+            container["name"] == "publisher" for container in pod["spec"]["containers"]
+        ):
             continue
         metadata = pod.get("metadata", {})
         name, namespace = metadata.get("name"), metadata.get("namespace")
@@ -80,6 +83,33 @@ def remove_build_pods(
                     "--timeout=" + timeout,
                 ]
             )
+
+
+def find_build_cache(
+    kubectl: Kubectl, namespace: str, binding: str, node: str, mount: str
+) -> str | None:
+    """Find this binding's existing compiler volume on the requested node and mount."""
+    selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={binding}"
+    for pod in kubectl.list_resources(("pods",), namespace, label_selector=selector):
+        if pod["spec"].get("nodeName") != node:
+            continue
+        builders = [
+            container
+            for container in pod["spec"]["containers"]
+            if container["name"] == "builder"
+        ]
+        if not any(
+            volume["name"] == "cache" and volume["mountPath"] == mount
+            for builder in builders
+            for volume in builder.get("volumeMounts", [])
+        ):
+            continue
+        return next(
+            volume["persistentVolumeClaim"]["claimName"]
+            for volume in pod["spec"]["volumes"]
+            if volume["name"] == "cache"
+        )
+    return None
 
 
 def registry_credentials(images: list[str]) -> dict[str, Any]:
@@ -173,13 +203,10 @@ class ClusterBuilder(AbstractContextManager):
         binding: str,
         timeout: str,
         *,
+        tools_image: str,
         node: str = "",
         containerd_socket: str = "",
         pull_secrets: tuple[str, ...] = (),
-        publisher_image: str = "",
-        runtime_claim: str = "",
-        runtime_mount: str = "",
-        runtime_owner: tuple[int, int] | None = None,
         credentials: dict[str, Any] | None = None,
     ) -> None:
         self.kubectl = kubectl
@@ -187,30 +214,25 @@ class ClusterBuilder(AbstractContextManager):
         self.claim = claim
         self.mount = mount.rstrip("/")
         self.image = image
+        self.tools_image = tools_image
         self.binding = binding
         self.timeout = timeout
         self.node = node
         self.containerd_socket = containerd_socket
         self.containerd_client = "/usr/local/bin/ctr"
         self.pull_secrets = pull_secrets
-        self.publisher_image = publisher_image
-        self.runtime_claim = runtime_claim
-        self.runtime_mount = runtime_mount
-        self.runtime_owner = runtime_owner
-        self.publisher_uid, self.publisher_gid = runtime_owner or (1000, 1000)
         self.credentials = credentials or {}
-        self._secret_created = False
         self.name = "foretoken-build-" + uuid.uuid4().hex[:12]
         self.root = f"{self.mount}/build/{binding}"
         self.workspace = f"{self.root}/workspace"
         self._created = False
         self._generated_layouts: dict[str, dict[str, str]] = {}
         self._used_images: set[str] = set()
+        self._built_images: set[str] = set()
 
     def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
         """Select a compatible daemon and retire other builders sharing its compiler cache."""
         selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={self.binding}"
-        expected_publisher = bool(self.publisher_image)
         occupants = []
         candidates = []
         for pod in self.kubectl.list_resources(
@@ -218,7 +240,8 @@ class ClusterBuilder(AbstractContextManager):
         ):
             if not any(
                 volume["name"] == "cache"
-                and volume.get("persistentVolumeClaim", {}).get("claimName") == self.claim
+                and volume.get("persistentVolumeClaim", {}).get("claimName")
+                == self.claim
                 for volume in pod["spec"].get("volumes", [])
             ):
                 continue
@@ -229,29 +252,47 @@ class ClusterBuilder(AbstractContextManager):
                 continue
             containers = pod.get("spec", {}).get("containers", [])
             builder = next(
-                (container for container in containers if container.get("name") == "builder"),
+                (
+                    container
+                    for container in containers
+                    if container.get("name") == "builder"
+                ),
                 None,
             )
             if builder is None or builder.get("image") != self.image:
                 continue
-            publisher = next(
-                (container for container in containers if container.get("name") == "publisher"),
+            images = next(
+                (
+                    container
+                    for container in containers
+                    if container.get("name") == "images"
+                ),
                 None,
             )
-            if (publisher is not None) != expected_publisher:
+            # File-only exports can reuse a daemon with an idle image-import helper.
+            if self.containerd_socket and (
+                images is None or images.get("image") != self.tools_image
+            ):
                 continue
-            if publisher is not None:
-                identity = publisher.get("securityContext", {})
-                if (identity.get("runAsUser"), identity.get("runAsGroup")) != (
-                    self.publisher_uid, self.publisher_gid
-                ):
+            auth = next(
+                (
+                    volume.get("secret")
+                    for volume in pod["spec"].get("volumes", [])
+                    if volume["name"] == "registry-auth"
+                ),
+                None,
+            )
+            if bool(auth) != bool(self.credentials):
+                continue
+            if auth is not None:
+                secret = self.kubectl.get_if_exists(
+                    "secret", auth["secretName"], self.namespace
+                )
+                # A new Pod mounts current credentials before its first build starts.
+                if secret is None or json.loads(
+                    base64.b64decode(secret["data"][".dockerconfigjson"])
+                ) != self.credentials:
                     continue
-            claim_names = {
-                volume.get("persistentVolumeClaim", {}).get("claimName")
-                for volume in pod.get("spec", {}).get("volumes", [])
-            }
-            if self.runtime_claim and self.runtime_claim not in claim_names:
-                continue
             candidates.append(pod)
         reusable = min(
             candidates,
@@ -265,9 +306,14 @@ class ClusterBuilder(AbstractContextManager):
                 continue
             self.kubectl.run(
                 [
-                    "delete", "pod", pod["metadata"]["name"],
-                    "--namespace", self.namespace,
-                    "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
+                    "delete",
+                    "pod",
+                    pod["metadata"]["name"],
+                    "--namespace",
+                    self.namespace,
+                    "--ignore-not-found",
+                    "--wait=true",
+                    "--timeout=" + self.timeout,
                 ]
             )
         return reusable
@@ -278,7 +324,9 @@ class ClusterBuilder(AbstractContextManager):
         if reusable is not None:
             self.name = reusable["metadata"]["name"]
             print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
-            self.run(["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"])
+            self.run(
+                ["rm", "-rf", "--", self.root + "/transfers", self.root + "/output"]
+            )
             return self
         image = self.image
         pvc = self.kubectl.get("pvc", self.claim, self.namespace)
@@ -389,6 +437,7 @@ class ClusterBuilder(AbstractContextManager):
         if self.containerd_socket:
             # Only local kind/k3d installation uses node image import. The compiler
             # never receives the runtime socket; archives remain on the cluster volume.
+            # GNU tar preserves PAX sizes for OCI layer blobs larger than 8 GiB.
             client = (
                 "/bin/k3s"
                 if "/k3s/" in self.containerd_socket
@@ -407,7 +456,7 @@ class ClusterBuilder(AbstractContextManager):
             spec["containers"].append(
                 {
                     "name": "images",
-                    "image": image,
+                    "image": self.tools_image,
                     "command": idle_command,
                     "env": [
                         {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
@@ -430,62 +479,6 @@ class ClusterBuilder(AbstractContextManager):
                             "readOnly": True,
                         },
                     ],
-                }
-            )
-        if self.publisher_image:
-            publisher_mounts = [{"name": "cache", "mountPath": self.mount}]
-            if self.runtime_claim:
-                spec["volumes"].append(
-                    {
-                        "name": "runtime",
-                        "persistentVolumeClaim": {"claimName": self.runtime_claim},
-                    }
-                )
-                publisher_mounts.append(
-                    {"name": "runtime", "mountPath": self.runtime_mount}
-                )
-                prepare_runtime = 'mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"'
-                if self.runtime_owner is not None:
-                    # Compiler leftovers were written by root; source bundles were
-                    # published by the previous publisher identity on its own subtree.
-                    prepare_runtime = (
-                        r'find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; '
-                        'if test -d "$1/source" && ! test -L "$1/source"; then '
-                        r'find "$1/source" -xdev -user 1000 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; fi; '
-                        'chmod u+rwx "$1"'
-                    )
-                spec["initContainers"].append(
-                    {
-                        "name": "runtime-storage",
-                        "image": image,
-                        "command": [
-                            "sh",
-                            "-ec",
-                            prepare_runtime,
-                            "prepare",
-                            self.runtime_mount,
-                            str(self.publisher_uid),
-                            str(self.publisher_gid),
-                        ],
-                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                        "volumeMounts": [
-                            {"name": "runtime", "mountPath": self.runtime_mount}
-                        ],
-                    }
-                )
-            spec["containers"].append(
-                {
-                    "name": "publisher",
-                    "image": self.publisher_image,
-                    "command": idle_command,
-                    "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
-                    "securityContext": {
-                        "runAsUser": self.publisher_uid,
-                        "runAsGroup": self.publisher_gid,
-                        "allowPrivilegeEscalation": False,
-                        "capabilities": {"drop": ["ALL"]},
-                    },
-                    "volumeMounts": publisher_mounts,
                 }
             )
         pod = {
@@ -536,7 +529,6 @@ class ClusterBuilder(AbstractContextManager):
                         }
                     ),
                 )
-                self._secret_created = True
             self.kubectl.run(
                 [
                     "wait",
@@ -738,6 +730,23 @@ rm -rf "$incoming"
             if len(columns := line.split()) >= 3
         }
 
+    def _node_image_matches(self, image: str, digest: str) -> bool:
+        """Compare a node image with BuildKit's output, including containerd's OCI index wrapper."""
+        node_digest = self._node_images().get(image)
+        if node_digest is None:
+            return False
+        if node_digest == digest:
+            return True
+        descriptor = json.loads(
+            self.run(
+                [*self._containerd(), "content", "get", node_digest],
+                capture=True,
+                container="images",
+            )
+        )
+        manifests = descriptor.get("manifests", [])
+        return len(manifests) == 1 and manifests[0]["digest"] == digest
+
     def _save_layout(self, image: str, layout: str, digest: str) -> None:
         """Retain the cluster-local OCI layout corresponding to an imported image reference."""
         path = self.root + "/images.json"
@@ -802,10 +811,11 @@ rm -rf "$incoming"
             [
                 "sh",
                 "-ec",
-                'tar -xf "$1/image.tar" -C "$1"; rm "$1/image.tar"',
+                'tar --no-same-owner -xf "$1/image.tar" -C "$1"; rm "$1/image.tar"',
                 "extract",
                 layout,
-            ]
+            ],
+            container="images",
         )
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
         self._save_layout(name, layout, digest)
@@ -820,8 +830,9 @@ rm -rf "$incoming"
         image: str = "",
         push: bool = False,
         arguments: dict[str, str] | None = None,
+        reuse_image: str = "",
     ) -> dict[str, Any]:
-        """Run the owning Dockerfile with cache mounts and leave its output in the cluster."""
+        """Build cluster-local outputs, reusing identical installed images before OCI transfer."""
         metadata = self.root + "/result.json"
         args = [
             "buildctl",
@@ -844,7 +855,9 @@ rm -rf "$incoming"
         syntax_image = (arguments or {}).get("BUILDKIT_SYNTAX_IMAGE")
         if syntax_image:
             source = self.workspace + "/" + dockerfile
-            generated = f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            generated = (
+                f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            )
             # BuildKit resolves Dockerfile-specific exclusions from the generated filename.
             self.run(
                 [
@@ -877,9 +890,26 @@ rm -rf "$incoming"
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
+        # Resolve the actual image through BuildKit without copying its layers to an
+        # OCI layout. Only a matching image still present on this node can skip import.
+        if self.containerd_socket and reuse_image and not destination:
+            self.run(
+                [
+                    *args,
+                    "--output",
+                    f"type=image,name={image},oci-mediatypes=true,store=false,push=false",
+                ]
+            )
+            result = self.read_json(metadata)
+            if self._node_image_matches(reuse_image, result["containerimage.digest"]):
+                self.reuse_image_reference(reuse_image, image)
+                self._built_images.add(image)
+                print(f"Reusing unchanged node image {reuse_image}", flush=True)
+                return result
         layout = ""
         if destination:
-            args += ["--output", "type=local,dest=" + destination]
+            # BuildKit mirrors each owned export directory so retries cannot revive removed files.
+            args += ["--output", "type=local,mode=delete,dest=" + destination]
         elif self.containerd_socket:
             layout = self.root + "/transfers/" + uuid.uuid4().hex
             args += ["--output", f"type=oci,name={image},dest={layout},tar=false"]
@@ -898,7 +928,7 @@ rm -rf "$incoming"
                 import_command.append("--local")
             self.run(
                 [
-                    "sh",
+                    "bash",
                     "-ec",
                     'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
                     "import",
@@ -916,6 +946,7 @@ rm -rf "$incoming"
                 "digest": digest,
                 "nodeDigest": self._node_images()[image],
             }
+            self._built_images.add(image)
         return result
 
     def reuse_image_reference(self, image: str, reference: str) -> None:
@@ -928,31 +959,9 @@ rm -rf "$incoming"
     def discard_unselected_images(self, retained: set[str]) -> None:
         """Remove only this build's unselected local references after every node has been compared."""
         if self.containerd_socket:
-            unused = self._generated_layouts.keys() - retained
+            unused = self._built_images - retained
             if unused:
                 self.run(
                     [*self._containerd(), "images", "remove", *sorted(unused)],
                     container="images",
                 )
-
-    def publish(self, staging: str, destination: str, bundle: dict[str, Any]) -> None:
-        """Expose a fully prepared runtime payload once, without changing active revisions."""
-        manifest = shlex.quote(json.dumps(bundle))
-        self.run(["sh", "-ec", 'chmod -R a+rX "$1"', "prepare", staging])
-        script = f"""set -eu
-mkdir -p -m 2775 "${{2%/*}}"
-prefix="${{2%/*}}/.$3.staging"
-rm -rf -- "$prefix".*
-if test -f "$2/complete.json"; then exit 0; fi
-stage=$(mktemp -d "$prefix.XXXXXX")
-trap 'rm -rf -- "$stage"' EXIT
-cp -R "$1/." "$stage/"
-printf %s {manifest} > "$stage/complete.json"
-chmod -R a+rX "$stage"
-mv "$stage" "$2"
-"""
-        self.run(
-            ["sh", "-ec", script, "publish", staging, destination, self.binding],
-            container="publisher" if self.publisher_image else "builder",
-        )
-        self.run(["rm", "-rf", "--", staging])

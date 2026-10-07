@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::{RouteTarget, RouteTargetStats, RoutingLoadSnapshot};
+use foretoken_serving_types::{RouteTarget, RouteTargetStats, RoutingLoadSnapshot};
 
 /// Identity resolved by a trusted authentication boundary, never inferred from client hints.
 #[derive(Clone, Debug)]
@@ -78,4 +78,6 @@ pub struct AdmissionContext<'a> {
     pub deadline: tokio::time::Instant,
     pub service: AdmissionService,
     pub state: &'a dyn AdmissionStateReader,
+    /// Queue timing supplied by the framework; rules keep capacity and scheduling ownership.
+    pub queue: super::AdmissionQueueObservation,
 }

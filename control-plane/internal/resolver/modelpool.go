@@ -49,7 +49,6 @@ type ECProfile struct {
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
-	SourceMode         bool
 	Image              string
 	OmniImage          string
 	NsightImage        string
@@ -110,7 +109,7 @@ type resolvedModelRuntime struct {
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if err := runtimeconfig.ValidateSourceRuntime(template.SourceRevision, profile.SourceMode, template.RuntimeCache); err != nil {
+	if err := runtimeconfig.ValidateSourceRevision(template.SourceRevision); err != nil {
 		return ModelGroupTemplate{}, err
 	}
 	if template.SourceRevision != "" && template.Backend != "vllm" {
@@ -128,7 +127,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM Groups require one member per node")
 	}
-	if profile.Image == "" {
+	image := profile.Image
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
 	}
 	if err := validateRuntimeProfile(profile, 65535); err != nil {
@@ -156,12 +159,13 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
-	image := profile.Image
 	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
-		if profile.NsightImage == "" {
-			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+		if template.Application == nil {
+			if profile.NsightImage == "" {
+				return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+			}
+			image = profile.NsightImage
 		}
-		image = profile.NsightImage
 		if profile.DeviceResourceName != "nvidia.com/gpu" {
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
 		}
@@ -219,7 +223,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 }
 
 func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if profile.OmniImage == "" {
+	image := profile.OmniImage
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni inference engine image is not configured")
 	}
 	if err := validateRuntimeProfile(profile, 65533); err != nil {
@@ -237,7 +245,7 @@ func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, prof
 		return ModelGroupTemplate{}, err
 	}
 	return projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
-		Image: profile.OmniImage, Model: effective.Model, Source: effective.Source,
+		Image: image, Model: effective.Model, Source: effective.Source,
 		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
 		TokenizerRevision: effective.TokenizerRevision,
 		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
@@ -276,6 +284,10 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 }
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
+	applicationURL := ""
+	if template.Application != nil {
+		applicationURL = template.Application.ApplicationURL
+	}
 	return ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
@@ -285,6 +297,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			SourceRevision: template.SourceRevision,
+			ApplicationURL: applicationURL,
 			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),

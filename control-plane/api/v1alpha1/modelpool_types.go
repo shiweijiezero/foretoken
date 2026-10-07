@@ -98,6 +98,22 @@ type HuggingFaceAccess struct {
 	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
 }
 
+// ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+// Controllers persist it before creating consumers so recovery never reselects platform defaults.
+type ApplicationSelection struct {
+	Image string `json:"image"`
+	// ImageProfile distinguishes serving, Omni and diagnostic environments during selection.
+	// +optional
+	ImageProfile string `json:"imageProfile,omitempty"`
+	// SourceRevision retains the admitted source intent independently of source-mode defaults.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+	// +optional
+	ApplicationURL string `json:"applicationURL,omitempty"`
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+}
+
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
@@ -126,6 +142,10 @@ type NormalizedPoolTemplate struct {
 	// SourceRevision pins the CLI-published source bundle used by this Pool's Groups.
 	// +optional
 	SourceRevision string `json:"sourceRevision,omitempty"`
+
+	// Application is selected by the ModelService controller, not by user model intent.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
 
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional

@@ -1,13 +1,15 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Router
+# Request Routing
 
-The Router chooses a healthy target that supports the requested model, input length, and capabilities. It also keeps the stages of separate prefill/decode or encoder/prefill/decode services compatible.
+English | [简体中文](README_zh.md)
+
+Route requests to healthy replicas that support the model, input length, and required capabilities. Routing also keeps the stages of prefill/decode and encoder/prefill/decode services compatible.
 
 ## Select a routing strategy
 
-To route toward targets with fewer queued requests, add this to a `FrontendService`:
+To prefer replicas with fewer waiting requests, set the scorer in a `FrontendService`:
 
 ```yaml
 spec:
@@ -16,42 +18,49 @@ spec:
       algorithm: queue_depth
 ```
 
-Omit `filter`, `scorer`, and `picker` to use the default routing strategy. By default, all compatible targets are considered (`allow_all`), ranked with `kv_least_loaded`, then selected with `gamble_sampling`. Each stage accepts an `algorithm`; scorer-specific options belong under `scorer.parameters`.
+Redeploy the frontend configuration to apply the change. With no `routerPipeline` settings, routing considers every compatible healthy target (`allow_all`), ranks them with `kv_least_loaded`, and selects one with `gamble_sampling`.
 
-| Stage | Algorithm | Selection behavior |
-| --- | --- | --- |
-| Filter | `allow_all` (default) | Consider every compatible, healthy target. |
-| Scorer | `kv_least_loaded` (default) | Prefer reusable KV prefixes, confirmed cache locality, then current and downstream Decode load. |
-| Scorer | `least_loaded` · `uniform` | Prefer lower load · give every target an equal score. |
-| Scorer | `queue_depth` · `running_request` · `kv_cache_utilization` | Prefer fewer queued requests · fewer running requests · lower measured KV-cache utilization. |
-| Scorer | `active_request` | Prefer fewer requests active in this frontend; tune with `idleThreshold` and `maxBusyScore`. |
-| Scorer | `token_load` | Prefer lower in-flight and incoming uncached prompt token load; tune with `queueThresholdTokens`. |
-| Scorer | `prefix` | Prefer reusable prompt cache blocks; tune match-length preference with `matchLengthWeight` and `matchLengthScaleTokens`. |
-| Scorer | `no_hit_lru` | Prefer endpoints not previously selected for cold requests, then least recently selected endpoints; retain up to `lruSize` entries. |
-| Scorer | `load_aware` | Score an empty waiting queue at 0.5 and decrease linearly to zero at `threshold`. |
-| Scorer | `two_tier` | Prefer lower active-request load when both imbalance thresholds are exceeded; otherwise prefer maximum Device-prefix overlap above `cache_threshold`. Requires the `max` picker. |
-| Picker | `gamble_sampling` (default) | Sample from the full score ranking: higher ranks are more likely, ties have equal probability, and lower-ranked targets remain eligible. |
-| Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
+Choose a scorer for the workload:
 
-When the KV index is unavailable, targets remain eligible without KV-prefix preference. See the [KV prefix index](../kv-indexer/README.md) for cache-locality behavior.
+| Goal | Scorer |
+| --- | --- |
+| Combine prompt-cache reuse with load balancing | `kv_least_loaded` (default) |
+| Prefer lower load | `least_loaded` |
+| Prefer fewer waiting or running requests | `queue_depth` or `running_request`, respectively |
+| Prefer lower measured KV-cache occupancy | `kv_cache_utilization` |
+| Balance requests active in this frontend replica | `active_request` |
+| Prefer shorter model-server waiting queues | `load_aware` |
+| Balance uncached prompt-token load in this frontend replica | `token_load` |
+| Prefer reusable prompt prefixes | `prefix` |
+| Spread cold requests toward less recently selected targets | `no_hit_lru` |
+| Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
+| Give every target an equal score | `uniform` |
 
-## Configure admission rules
-
-Admission rules determine whether requests proceed, wait, or are rejected. The default, `allow_all`, adds no admission limit. Select `concurrency` to enable concurrency-based flow control:
+Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
 
 ```yaml
 spec:
   routerPipeline:
-    admission:
-      algorithm: concurrency
+    scorer:
+      algorithm: prefix
       parameters:
-        maxConcurrentRequests: 64
+        matchLengthWeight: 0.5
 ```
 
-This example allows 64 concurrent output candidates per frontend replica; choose the limit from measurements of your workload. Batched completions count each candidate separately: four prompts with `n: 2` use eight slots.
+When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
-For short bursts, add `maxQueuedRequests: 128` and `queueTimeout: 2s` under `parameters`. By default, requests do not queue; when queueing is enabled without a timeout, the remaining request budget applies. Full capacity without queue space and queue expiry return HTTP 503. A batch larger than the concurrency limit returns HTTP 400.
+## Choose from the scores
 
-Limits are shared across models on each frontend replica, not across the cluster. Text generation and tokenization use these rules; video requests do not. Health probes remain available.
+Set `routerPipeline.picker.algorithm` to control selection:
 
-To implement a custom rule, see the [admission-rule development guide](../../../../docs/development/admission-rules.md).
+| Picker | Selection |
+| --- | --- |
+| `gamble_sampling` (default) | Higher ranks are more likely; ties have equal probability and lower-ranked targets remain eligible. |
+| `max` | Select the highest score. |
+| `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
+
+## Inspect routing behavior
+
+Use the Routing decisions panels in [Grafana](../../../../observability/README.md) to compare selection shares, outcomes, eligible targets, and selection latency while sending traffic.
+
+Request limits and queueing are configured separately through the frontend's [admission rules](../../README.md#configure-admission-rules).

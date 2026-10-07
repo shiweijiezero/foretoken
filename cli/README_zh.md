@@ -59,11 +59,13 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## 安装 Kubernetes 平台
 
-`foretoken install` 会在当前 Kubernetes context 中安装 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+`foretoken install` 会在当前 Kubernetes context 中安装或更新 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+
+平台更新后，新服务使用更新后的版本；已有模型和前端服务保持原运行版本，重新部署时才更新。
 
 ### 默认安装
 
-默认使用发布镜像，并通过 `LoadBalancer` Service 提供本地访问入口：
+默认安装已发布的平台，并通过 `LoadBalancer` Service 提供本地访问入口：
 
 ```bash
 foretoken install
@@ -100,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-命令在集群专用 Pod 中构建平台，并将源码目录绑定到目标集群。
+命令将源码目录与目标集群关联，后续从该目录更新服务。
 
 修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 
@@ -122,7 +124,7 @@ modelDistribution:
     enabled: true
 ```
 
-使用发布镜像的平台执行：
+使用已发布平台时，执行：
 
 ```bash
 foretoken install --values deploy/platform-values.yaml
@@ -166,7 +168,9 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-命令会应用配置；等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
+命令会应用配置，使用当前平台提供的运行版本部署服务，并更新已有服务。
+
+等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 不应用配置，直接查看同一部署的状态：
 

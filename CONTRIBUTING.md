@@ -26,7 +26,7 @@ Open an issue or design proposal before implementing changes that:
 
 A bug issue should include reproduction steps, expected and actual behavior, environment details, and minimal relevant logs.
 
-For a major change, first open an issue whose title starts with `[Proposal]`. Include:
+Use a GitHub Issue titled `[Proposal] RFC: <short title>` for a major design proposal. Include:
 
 - the problem, context, and user scenarios;
 - goals, non-goals, and affected components;

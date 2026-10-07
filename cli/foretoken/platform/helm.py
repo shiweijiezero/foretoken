@@ -6,16 +6,22 @@
 from __future__ import annotations
 
 import json
+import os
 import tarfile
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from foretoken.application_files import ApplicationFiles, application_references
+from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.network_sources import (
     platform_image_reference,
+    select_github_download,
     select_platform_oci_reference,
 )
 from foretoken.platform.config import (
@@ -35,9 +41,13 @@ class Helm(HelmClient):
     """Build and execute Helm operations for platform-owned charts."""
 
     def _chart_source(self, source: str, version: str | None) -> str:
-        """Resolve a managed OCI chart without overriding an explicit mirror."""
-        if self._config.image_registry is not None or not source.startswith("oci://"):
+        """Resolve a managed chart source without overriding explicit registry choices."""
+        if self._config.image_registry is not None:
             return source
+        if not source.startswith("oci://"):
+            return select_github_download(
+                source, os.environ.get("FORETOKEN_GITHUB_MIRROR")
+            )
         reference = f"{source}:{version}" if version is not None else source
         selected = select_platform_oci_reference(reference)
         return selected.removesuffix(f":{version}") if version is not None else selected
@@ -57,10 +67,11 @@ class Helm(HelmClient):
         # dependencies without extracting files; Helm still owns actual rendering.
         with tempfile.TemporaryDirectory(prefix="foretoken-chart-images-") as directory:
             self.run(["pull", *chart_args, "--destination", directory])
-            archive_path, = Path(directory).glob("*.tgz")
+            (archive_path,) = Path(directory).glob("*.tgz")
             with tarfile.open(archive_path) as archive:
                 metadata_path = next(
-                    name for name in archive.getnames()
+                    name
+                    for name in archive.getnames()
                     if name.count("/") == 1 and name.endswith("/Chart.yaml")
                 )
                 root = metadata_path.removesuffix("Chart.yaml")
@@ -70,7 +81,9 @@ class Helm(HelmClient):
                 for name in subcharts:
                     prefix = f"{root}charts/{name}/"
                     child = yaml.safe_load(archive.extractfile(prefix + "values.yaml"))
-                    child_metadata = yaml.safe_load(archive.extractfile(prefix + "Chart.yaml"))
+                    child_metadata = yaml.safe_load(
+                        archive.extractfile(prefix + "Chart.yaml")
+                    )
                     values[name] = _merge_values(child, values.get(name, {}))
                     versions[name] = str(child_metadata["appVersion"])
                 return values, versions
@@ -110,7 +123,8 @@ class Helm(HelmClient):
             if selected != reference:
                 repository = (
                     selected.rsplit("@", 1)[0]
-                    if digest else _image_repository_tag(selected)[0]
+                    if digest
+                    else _image_repository_tag(selected)[0]
                 )
                 if registry:
                     registry, repository = repository.split("/", 1)
@@ -124,12 +138,19 @@ class Helm(HelmClient):
         command = ["template", args[2], args[3]]
         for index, value in enumerate(args):
             if value in {
-                "--version", "--namespace", "--values", "--set", "--set-string", "--set-json"
+                "--version",
+                "--namespace",
+                "--values",
+                "--set",
+                "--set-string",
+                "--set-json",
             }:
                 command.extend([value, args[index + 1]])
         rendered = self.run(command, input_text=input_text).stdout
         return tuple(
-            document for document in yaml.safe_load_all(rendered) if document is not None
+            document
+            for document in yaml.safe_load_all(rendered)
+            if document is not None
         )
 
     def platform_release(self) -> ReleaseRef:
@@ -146,7 +167,9 @@ class Helm(HelmClient):
 
     def log_collector_release(self) -> ReleaseRef:
         """Return the node log-collector release identity."""
-        return ReleaseRef(self._config.log_collector.release_name, self._config.namespace)
+        return ReleaseRef(
+            self._config.log_collector.release_name, self._config.namespace
+        )
 
     def install_loki(
         self, release: ReleaseRef, values: dict[str, Any], timeout: str
@@ -156,7 +179,9 @@ class Helm(HelmClient):
         # the control plane grows live PVCs without changing that template.
         if self.release_exists(release):
             stored = self.release_user_values(release)
-            values["singleBinary"]["persistence"]["size"] = stored["singleBinary"]["persistence"]["size"]
+            values["singleBinary"]["persistence"]["size"] = stored["singleBinary"][
+                "persistence"
+            ]["size"]
         chart = self._config.loki
         args = self._managed_chart_args(release, chart.source, chart.version, timeout)
         self._add_chart_image_sources(args, ("loki.image",))
@@ -166,7 +191,9 @@ class Helm(HelmClient):
     def loki_statefulset(self, release: ReleaseRef) -> ResourceRef:
         """Read the installed log store identity for control-plane volume expansion."""
         return self._managed_chart_resource(
-            release, api_version="apps/v1", kind="StatefulSet",
+            release,
+            api_version="apps/v1",
+            kind="StatefulSet",
             chart_description="managed Loki chart",
         )
 
@@ -208,13 +235,9 @@ class Helm(HelmClient):
                 and item.get("kind") == kind
             ]
         except yaml.YAMLError as exc:
-            raise DeploymentError(
-                f"{chart_description} returned invalid YAML"
-            ) from exc
+            raise DeploymentError(f"{chart_description} returned invalid YAML") from exc
         if len(resources) != 1:
-            raise DeploymentError(
-                f"{chart_description} must contain one {kind}"
-            )
+            raise DeploymentError(f"{chart_description} must contain one {kind}")
         metadata = resources[0]["metadata"]
         return ResourceRef(
             kind,
@@ -261,7 +284,9 @@ class Helm(HelmClient):
 
     def leader_worker_release(self) -> ReleaseRef:
         """Return the LeaderWorkerSet controller release managed with the platform."""
-        return ReleaseRef(self._config.leader_worker.release_name, self._config.namespace)
+        return ReleaseRef(
+            self._config.leader_worker.release_name, self._config.namespace
+        )
 
     def leader_worker_crds(self) -> str:
         """Read the CRDs shipped with the selected LeaderWorkerSet chart for upgrades."""
@@ -293,30 +318,56 @@ class Helm(HelmClient):
         )
 
     def install_dragonfly(
-        self, release: ReleaseRef, accelerator_resource: str,
-        image_pull_secrets: tuple[dict[str, str], ...], timeout: str,
+        self,
+        release: ReleaseRef,
+        accelerator_resource: str,
+        image_pull_secrets: tuple[dict[str, str], ...],
+        timeout: str,
     ) -> None:
         """Install standalone scheduling and node peers without databases or runtime rewrites."""
         chart = self._config.dragonfly
         args = self._upgrade_install_args(release, chart.source, chart.version)
-        args.extend([
-            "--set", "manager.enable=false",
-            "--set", "mysql.enable=false",
-            "--set", "redis.enable=false",
-            "--set", "seedClient.enable=false",
-            "--set", "client.hostNetwork=false",
-            "--set", "client.hostPID=false",
-            "--set", "client.hostIPC=false",
-            "--set", "client.dfinit.enable=false",
-            "--set-json", "global.imagePullSecrets=" + json.dumps(image_pull_secrets),
-        ])
+        args.extend(
+            [
+                "--set",
+                "manager.enable=false",
+                "--set",
+                "mysql.enable=false",
+                "--set",
+                "redis.enable=false",
+                "--set",
+                "seedClient.enable=false",
+                "--set",
+                "client.hostNetwork=false",
+                "--set",
+                "client.hostPID=false",
+                "--set",
+                "client.hostIPC=false",
+                "--set",
+                "client.dfinit.enable=false",
+                "--set-json",
+                "global.imagePullSecrets=" + json.dumps(image_pull_secrets),
+            ]
+        )
         if accelerator_resource:
-            args.extend([
-                "--set-json", "client.tolerations=" + json.dumps([
-                    {"key": accelerator_resource, "operator": "Exists", "effect": "NoSchedule"},
-                ]),
-            ])
-        self._add_chart_image_sources(args, ("scheduler.image", "client.image", "client.initContainer.image"))
+            args.extend(
+                [
+                    "--set-json",
+                    "client.tolerations="
+                    + json.dumps(
+                        [
+                            {
+                                "key": accelerator_resource,
+                                "operator": "Exists",
+                                "effect": "NoSchedule",
+                            },
+                        ]
+                    ),
+                ]
+            )
+        self._add_chart_image_sources(
+            args, ("scheduler.image", "client.image", "client.initContainer.image")
+        )
         self._finish_upgrade(args, timeout)
         self.run(args)
 
@@ -364,9 +415,7 @@ class Helm(HelmClient):
             section_name=str(gateway.get("sectionName") or ""),
         )
 
-    def platform_image_references(
-        self, release: ReleaseRef
-    ) -> tuple[str, str, str]:
+    def platform_image_references(self, release: ReleaseRef) -> tuple[str, str, str]:
         """Return the image references currently stored for a source release."""
         values = self._release_values(release)
         image = values.get("image") or {}
@@ -483,9 +532,7 @@ class Helm(HelmClient):
             args.extend(
                 ["--set-string", f"frontend.gateway.namespace={gateway_namespace}"]
             )
-        if gateway_section_name or (
-            frontend_mode == "gateway" and gateway_name
-        ):
+        if gateway_section_name or (frontend_mode == "gateway" and gateway_name):
             args.extend(
                 [
                     "--set-string",
@@ -505,7 +552,9 @@ class Helm(HelmClient):
         for document in self._render_chart(args, input_text=input_text):
             if (
                 document["kind"] == "ConfigMap"
-                and document["metadata"].get("labels", {}).get("foretoken.io/profile-viewer")
+                and document["metadata"]
+                .get("labels", {})
+                .get("foretoken.io/profile-viewer")
                 == "configuration"
                 and document["data"]["nsightImage"]
             ):
@@ -515,9 +564,25 @@ class Helm(HelmClient):
                 ):
                     if reference := document["data"][key]:
                         images[path] = reference
+            if (
+                document["kind"] == "ConfigMap"
+                and document["metadata"]
+                .get("labels", {})
+                .get("foretoken.io/application-files")
+                == "configuration"
+            ):
+                images["applicationFiles.clientImage"] = document["data"]["clientImage"]
             if document["kind"] not in {"Deployment", "DaemonSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
+                if (
+                    container["name"] == "files"
+                    and document["metadata"]
+                    .get("labels", {})
+                    .get("foretoken.io/application-files")
+                    == "server"
+                ):
+                    images["applicationFiles.serverImage"] = container["image"]
                 if container["name"] == "rdma-device-plugin":
                     images["rdma.image"] = container["image"]
                 if container["name"] == "manager":
@@ -531,7 +596,9 @@ class Helm(HelmClient):
                                 images[path] = argument.removeprefix(prefix)
         for path, reference in images.items():
             if source_images is not None and path in {
-                "image.repository", "frontend.image", "runtime.vllm.image"
+                "image.repository",
+                "frontend.image",
+                "runtime.vllm.image",
             }:
                 continue
             try:
@@ -546,9 +613,190 @@ class Helm(HelmClient):
             if path == "image.repository":
                 selected = (
                     selected.split("@", 1)[0]
-                    if "@" in selected else _image_repository_tag(selected)[0]
+                    if "@" in selected
+                    else _image_repository_tag(selected)[0]
                 )
             args.extend(["--set-string", f"{path}={selected}"])
+
+    def prepare_source_origin(
+        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
+    ) -> None:
+        """Prepare chart-owned file storage before source builds or controller startup."""
+        release = self.platform_release()
+        args = self._upgrade_install_args(
+            release, str(root / "deploy/charts/foretoken"), None
+        )
+        merged: dict[str, Any] = {}
+        for value in values:
+            merged = _merge_values(merged, value)
+        args.extend(
+            [
+                "--values",
+                "-",
+                "--set",
+                "development.enabled=true",
+                "--set-string",
+                "observability.mode=disabled",
+                "--set-string",
+                "applicationFiles.releaseURL=",
+            ]
+        )
+        input_text = yaml.safe_dump(merged)
+        self._add_platform_image_sources(args, merged, None, input_text)
+        with self._prepare_application_origin(args, input_text, timeout):
+            pass
+
+    @contextmanager
+    def _prepare_application_origin(
+        self, args: list[str], input_text: str | None, timeout: str
+    ) -> Iterator[None]:
+        """Bootstrap native storage and hold release publication ownership through Helm selection."""
+        release = self.platform_release()
+        rendered = self._render_chart(args, input_text=input_text)
+        documents = [
+            document
+            for document in rendered
+            if document["metadata"].get("labels", {}).get("app.kubernetes.io/name")
+            == "foretoken-application-files"
+        ]
+        if not documents:
+            yield
+            return
+        kubectl = Kubectl()
+        if not kubectl.exists("namespace", release.namespace):
+            kubectl.run(["create", "namespace", release.namespace])
+        operations = []
+        for document in documents:
+            metadata = document["metadata"]
+            current = kubectl.get_if_exists(
+                document["kind"], metadata["name"], release.namespace
+            )
+            if current is not None:
+                if not _owned_by_release(current, release):
+                    raise DeploymentError(
+                        f"{document['kind']}/{metadata['name']} is not owned by Helm release "
+                        f"{release.display_name}"
+                    )
+                metadata["resourceVersion"] = current["metadata"]["resourceVersion"]
+            metadata.setdefault("annotations", {}).update(
+                {
+                    "meta.helm.sh/release-name": release.name,
+                    "meta.helm.sh/release-namespace": release.namespace,
+                }
+            )
+            operations.append(("create" if current is None else "apply", document))
+        # Check every existing resource before writing; create and resourceVersion
+        # preconditions prevent taking over a concurrently replaced object.
+        for operation, document in operations:
+            kubectl.run([operation, "-f", "-"], input_text=yaml.safe_dump(document))
+        origin = ApplicationFiles(kubectl, release.namespace)
+        origin.prepare(timeout)
+        configuration = next(
+            document["data"]
+            for document in documents
+            if document["kind"] == "ConfigMap"
+        )
+        if not configuration.get("releaseURL"):
+            yield
+            return
+
+        def retained() -> set[str] | None:
+            """Read live consumers and Helm history only after release Job ownership."""
+            references = origin.references(self.application_history())
+            if references is not None:
+                references.update(application_references(rendered))
+                references.add(configuration["revision"])
+            return references
+
+        def previous() -> dict[str, str]:
+            """Find installed component directories for immutable-file reuse."""
+            if not self.release_exists(release):
+                return {}
+            manifest = self.run(
+                [
+                    "get",
+                    "manifest",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                ]
+            ).stdout
+            references = application_references(
+                document
+                for document in yaml.safe_load_all(manifest)
+                if document is not None
+            )
+            prefix = origin.endpoint.rstrip("/") + "/"
+            return {
+                component: revision
+                for reference in sorted(references)
+                if reference.startswith(prefix)
+                for component, revision in [
+                    reference.removeprefix(prefix).rstrip("/").split("/", 1)
+                ]
+            }
+
+        with origin.import_release(
+            configuration["releaseURL"],
+            configuration["revision"],
+            retained,
+            previous,
+            timeout=timeout,
+            credentials_secret=configuration["credentialsSecret"],
+        ):
+            yield
+
+    def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
+        """Find native file-origin resources owned by this release, including failed bootstraps."""
+        release = self.platform_release()
+        kubectl = Kubectl()
+        if not kubectl.exists("namespace", release.namespace):
+            return ()
+        return tuple(
+            document
+            for document in kubectl.list_resources(
+                ("persistentvolumeclaims", "configmaps", "deployments", "services"),
+                release.namespace,
+                label_selector="app.kubernetes.io/name=foretoken-application-files",
+            )
+            if _owned_by_release(document, release)
+        )
+
+    def remove_application_origin(
+        self, resources: tuple[dict[str, Any], ...], timeout: str
+    ) -> None:
+        """Remove an unadopted file origin and its PVC-owned writers during explicit uninstall."""
+        if not resources:
+            return
+        kubectl = Kubectl()
+        release = self.platform_release()
+        claims = {
+            document["metadata"]["uid"]
+            for document in resources
+            if document["kind"] == "PersistentVolumeClaim"
+        }
+        for job in kubectl.list_resources(
+            ("jobs",),
+            release.namespace,
+            label_selector="foretoken.io/application-files=publisher",
+        ):
+            if any(
+                owner["kind"] == "PersistentVolumeClaim" and owner["uid"] in claims
+                for owner in job["metadata"].get("ownerReferences", [])
+            ):
+                kubectl.run(
+                    [
+                        "delete",
+                        "job",
+                        job["metadata"]["name"],
+                        "-n",
+                        release.namespace,
+                        "--cascade=foreground",
+                        "--wait=true",
+                        "--timeout=" + timeout,
+                    ]
+                )
+        kubectl.delete(yaml.safe_dump_all(resources), timeout)
 
     def install_platform(
         self,
@@ -608,14 +856,26 @@ class Helm(HelmClient):
             observability_labels,
         )
         args.extend(["--set", f"development.enabled={str(source_mode).lower()}"])
-        args.extend(["--set-string", f"observability.prometheus={observability_prometheus}"])
-        args.extend(["--set-string", f"observability.logs.datasourceURL={log_endpoint}"])
-        args.extend(["--set-string", f"observability.logs.managedStatefulSet={log_storage_statefulset}"])
+        args.extend(
+            ["--set-string", f"observability.prometheus={observability_prometheus}"]
+        )
+        args.extend(
+            ["--set-string", f"observability.logs.datasourceURL={log_endpoint}"]
+        )
+        args.extend(
+            [
+                "--set-string",
+                f"observability.logs.managedStatefulSet={log_storage_statefulset}",
+            ]
+        )
         if grafana_anonymous_access is not None:
-            args.extend([
-                "--set-json",
-                "observability.grafana.anonymousAccess=" + json.dumps(grafana_anonymous_access),
-            ])
+            args.extend(
+                [
+                    "--set-json",
+                    "observability.grafana.anonymousAccess="
+                    + json.dumps(grafana_anonymous_access),
+                ]
+            )
         if gpu_resource_name is not None:
             args.extend(
                 [
@@ -623,21 +883,23 @@ class Helm(HelmClient):
                     f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
                 ]
             )
-        args.extend([
-            "--set-string",
-            f"modelDistribution.dragonfly.socketPath={dragonfly_socket_path}",
-        ])
+        args.extend(
+            [
+                "--set-string",
+                f"modelDistribution.dragonfly.socketPath={dragonfly_socket_path}",
+            ]
+        )
         if rdma_managed:
             args.extend(
                 [
-                    "--set", "rdma.managed=true",
-                    "--set-json", "rdma.nodeNames=" + json.dumps(rdma_node_names),
+                    "--set",
+                    "rdma.managed=true",
+                    "--set-json",
+                    "rdma.nodeNames=" + json.dumps(rdma_node_names),
                 ]
             )
         if rdma_resource_name is not None:
-            args.extend(
-                ["--set-string", f"rdma.resourceName={rdma_resource_name}"]
-            )
+            args.extend(["--set-string", f"rdma.resourceName={rdma_resource_name}"])
         # Individual values retain their own source registry and explicit overrides.
         # A blanket registry override would also rewrite user and source images.
         args.extend(["--set-string", "global.imageRegistry="])
@@ -648,6 +910,16 @@ class Helm(HelmClient):
             repository, tag = _image_repository_tag(control_plane_image)
             args.extend(
                 [
+                    "--set-string",
+                    "controller.applicationURL="
+                    + source_images.applications["control-plane"],
+                    "--set-string",
+                    "frontend.applicationURL=" + source_images.applications["frontend"],
+                    "--set-string",
+                    "runtime.vllm.applicationURL="
+                    + source_images.applications["model-server"],
+                    "--set-string",
+                    "applicationFiles.releaseURL=",
                     "--set-string",
                     f"image.repository={repository}",
                     "--set-string",
@@ -667,13 +939,93 @@ class Helm(HelmClient):
                     f"runtime.vllm.image={model_server_image}",
                 ]
             )
-        input_text = yaml.safe_dump(stored_values) if stored_values is not None else None
+        input_text = (
+            yaml.safe_dump(stored_values) if stored_values is not None else None
+        )
         overrides = stored_values or {}
         for value in load_platform_values(values):
             overrides = _merge_values(overrides, value)
         self._add_platform_image_sources(args, overrides, source_images, input_text)
+        with self._prepare_application_origin(args, input_text, timeout):
+            self._finish_upgrade(args, timeout)
+            self.run(args, input_text=input_text)
+
+    def update_control_plane_application(
+        self, root: Path, reference: str, timeout: str
+    ) -> None:
+        """Select published control-plane files through the existing Helm release lifecycle."""
+        release = self.platform_release()
+        args = self._upgrade_install_args(
+            release,
+            str(root / "deploy/charts/foretoken"),
+            None,
+            ((self._config.install_source_label, "source"),),
+        )
+        args.extend(
+            [
+                "--reuse-values",
+                "--set-string",
+                f"controller.applicationURL={reference}",
+            ]
+        )
         self._finish_upgrade(args, timeout)
-        self.run(args, input_text=input_text)
+        self.run(args)
+
+    def application_history(self) -> set[str] | None:
+        """Retain all rendered application defaults and defer cleanup if Helm history advances."""
+        release = self.platform_release()
+        if not self.release_exists(release):
+            return set()
+        status = json.loads(
+            self.run(
+                [
+                    "status",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--output",
+                    "json",
+                ]
+            ).stdout
+        )
+        revision = int(status["version"])
+        history = json.loads(
+            self.run(
+                [
+                    "history",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--max",
+                    str(revision),
+                    "--output",
+                    "json",
+                ]
+            ).stdout
+        )
+        if any(int(item["revision"]) > revision for item in history):
+            return None
+        references = set()
+        for item in history:
+            manifest = self.run(
+                [
+                    "get",
+                    "manifest",
+                    release.name,
+                    "--namespace",
+                    release.namespace,
+                    "--revision",
+                    str(item["revision"]),
+                ]
+            ).stdout
+            references.update(
+                application_references(
+                    document
+                    for document in yaml.safe_load_all(manifest)
+                    if document is not None
+                )
+            )
+        return references
 
     def install_metallb(
         self,
@@ -724,21 +1076,24 @@ class Helm(HelmClient):
         )
         # Materialize the proxy default through the upstream chart helper. Its
         # version is not the Gateway version and must remain owned by the chart.
-        args.extend([
-            "--set-string", "global.images.envoyProxy.image=docker.io/envoyproxy/envoy",
-        ])
+        args.extend(
+            [
+                "--set-string",
+                "global.images.envoyProxy.image=docker.io/envoyproxy/envoy",
+            ]
+        )
         images: dict[str, str] = {}
         for document in self._render_chart(args):
             if document["kind"] == "Deployment":
                 containers = document["spec"]["template"]["spec"]["containers"]
                 images["envoyGateway"] = containers[0]["image"]
-            if (
-                document["kind"] == "ConfigMap"
-                and "envoy-gateway.yaml" in document.get("data", {})
+            if document["kind"] == "ConfigMap" and "envoy-gateway.yaml" in document.get(
+                "data", {}
             ):
                 config = yaml.safe_load(document["data"]["envoy-gateway.yaml"])
                 images["envoyProxy"] = _value_at(
-                    config, "envoyProxy.provider.kubernetes.envoyDeployment.container.image"
+                    config,
+                    "envoyProxy.provider.kubernetes.envoyDeployment.container.image",
                 )
                 images["ratelimit"] = _value_at(
                     config, "provider.kubernetes.rateLimitDeployment.container.image"
@@ -776,9 +1131,16 @@ class Helm(HelmClient):
         if anonymous_access is not None:
             values = _merge_values(
                 values,
-                {"grafana": {"grafana.ini": {"auth.anonymous": {
-                    **anonymous_settings, "enabled": anonymous_access,
-                }}}},
+                {
+                    "grafana": {
+                        "grafana.ini": {
+                            "auth.anonymous": {
+                                **anonymous_settings,
+                                "enabled": anonymous_access,
+                            }
+                        }
+                    }
+                },
             )
         selected_namespaces = tuple(sorted(set(service_monitor_namespaces)))
         if not selected_namespaces:
@@ -831,7 +1193,10 @@ class Helm(HelmClient):
                 "prometheus-node-exporter.image",
             ),
             subcharts=("grafana", "kube-state-metrics", "prometheus-node-exporter"),
-            version_prefixes=("kube-state-metrics.image", "prometheus-node-exporter.image"),
+            version_prefixes=(
+                "kube-state-metrics.image",
+                "prometheus-node-exporter.image",
+            ),
         )
         args.extend(
             [
@@ -883,6 +1248,8 @@ class Helm(HelmClient):
         node_selector: tuple[str, str] | None,
         reuse_values: bool,
         timeout: str,
+        *,
+        visible_devices: str | None,
     ) -> None:
         """Install or upgrade the CLI-managed NVIDIA DCGM Exporter release."""
         args = self._managed_chart_args(
@@ -904,7 +1271,7 @@ class Helm(HelmClient):
                 "--set",
                 "kubernetes.enablePodLabels=true",
                 "--set-json",
-                "kubernetes.podLabelAllowlistRegex=[\"^inference\\\\.foretoken\\\\.io/.*$\"]",
+                'kubernetes.podLabelAllowlistRegex=["^inference\\\\.foretoken\\\\.io/.*$"]',
                 "--set-string",
                 "customMetrics=" + self._config.dcgm_metrics.replace(",", "\\,"),
                 "--set-json",
@@ -913,6 +1280,17 @@ class Helm(HelmClient):
         )
         if not reuse_values:
             self._add_chart_image_sources(args, ("image",))
+        if visible_devices is not None:
+            stored = self.release_user_values(release) if reuse_values else {}
+            environment = [
+                entry
+                for entry in stored.get("extraEnv") or []
+                if entry["name"] != "NVIDIA_VISIBLE_DEVICES"
+            ]
+            environment.append(
+                {"name": "NVIDIA_VISIBLE_DEVICES", "value": visible_devices}
+            )
+            args.extend(["--set-json", "extraEnv=" + json.dumps(environment)])
         if observability_labels:
             args.extend(
                 [
@@ -934,6 +1312,17 @@ class Helm(HelmClient):
         self.run(args)
 
 
+def _owned_by_release(document: dict[str, Any], release: ReleaseRef) -> bool:
+    """Match Helm ownership before bootstrapping or removing native file-origin resources."""
+    metadata = document["metadata"]
+    annotations = metadata.get("annotations", {})
+    return (
+        metadata.get("labels", {}).get("app.kubernetes.io/managed-by") == "Helm"
+        and annotations.get("meta.helm.sh/release-name") == release.name
+        and annotations.get("meta.helm.sh/release-namespace") == release.namespace
+    )
+
+
 def _value_at(values: dict[str, Any], path: str) -> Any:
     """Read a field whose shape is owned by the selected native chart."""
     value: Any = values
@@ -942,7 +1331,9 @@ def _value_at(values: dict[str, Any], path: str) -> Any:
     return value
 
 
-def _merge_values(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+def _merge_values(
+    defaults: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
     """Overlay chart mappings for image selection; Helm owns rendering and validation."""
     merged = defaults.copy()
     for key, value in overrides.items():

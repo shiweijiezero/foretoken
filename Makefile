@@ -14,6 +14,9 @@ MOONCAKE_VERSION ?=
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell git rev-parse HEAD)
+IMAGE_TARGET ?= runtime
+IMAGE_OUTPUT ?=
+VLLM_REVISION ?= $(shell git ls-files --stage -- data-plane/third_party/vllm | cut -d' ' -f2)
 
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
@@ -57,9 +60,10 @@ image-control-plane:
 		--build-arg GOSUMDB \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
 		-f control-plane/Dockerfile -t "$(CONTROL_PLANE_IMAGE)" .
 
-image-frontend: vllm-source
+image-frontend:
 	docker build \
 		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
@@ -67,6 +71,8 @@ image-frontend: vllm-source
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
+		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
 image-vllm-metax: mooncake-source
@@ -84,7 +90,7 @@ image-vllm-metax: mooncake-source
 		-f deploy/inference-engines/vllm-metax/Dockerfile \
 		-t "$(VLLM_METAX_IMAGE)" .
 
-image-model-server: vllm-source
+image-model-server:
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
 		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
 	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
@@ -98,6 +104,8 @@ image-model-server: vllm-source
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
+		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
 
 image-vllm-omni:

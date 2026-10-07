@@ -3,7 +3,7 @@
 
 //! Frontend-owned routing reservations and request-specific load projections.
 
-use crate::{RouteCandidate, RouteTargetId, RouterRequest};
+use crate::{RouteCandidate, RouteTargetId, RouterRequest, RoutingLoadSnapshot};
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 use std::collections::BTreeMap;
@@ -25,16 +25,6 @@ impl RoutingLoadState {
 }
 
 pub(crate) type ReservationKey = (RouteTargetId, u32);
-
-/// Snapshot of this frontend's reservations for one route target and data-parallel rank.
-/// Engine telemetry is deliberately not added to these values.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct RoutingLoadSnapshot {
-    /// Requests reserved by a selected stage or response stream.
-    pub requests: i64,
-    /// Uncached prompt tokens reserved by this frontend.
-    pub tokens: i64,
-}
 
 #[derive(Default)]
 pub(crate) struct RoutingReservations {

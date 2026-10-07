@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
+use foretoken_admission::AdmissionApi;
 use foretoken_chat::{ChatRequest, ParserSelection};
-use foretoken_router::algorithm::admission::AdmissionApi;
 use foretoken_text::Prompt;
 use uuid::Uuid;
 

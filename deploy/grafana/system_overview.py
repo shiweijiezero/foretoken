@@ -52,8 +52,8 @@ ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
     "Reading this dashboard": "看板读法",
-    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window.":
-        "**模型总计**按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
+    "Select a model for inference metrics or a frontend for traffic and admission. Adjust the time range to inspect trends.":
+        "查看推理指标时选择模型；查看流量和准入时选择前端。调整时间范围查看趋势。",
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
@@ -76,16 +76,15 @@ ZH = {
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Online frontend services": "在线前端服务数",
+    "Online frontend replicas": "在线前端副本数",
     "Online model servers": "在线模型服务数",
     "Frontend response starts / s": "HTTP 响应速率",
     "Input throughput": "输入吞吐量",
     "Output throughput": "输出吞吐量",
-    "Frontend queued requests": "前端排队请求",
     "Frontend responses by HTTP status": "HTTP 响应速率（按状态码）",
     "Frontend responses by endpoint": "HTTP 响应速率（按接口）",
     "Frontend response-header latency": "HTTP 响应头延迟",
-    "Frontend admission queue": "前端准入队列",
+    "Model preparation and dispatch wait": "模型准备与派发等待",
     "Completed request rate": "完成请求速率",
     "Total / {{model_name}}": "模型总计 / {{model_name}}",
     "Running total / {{model_name}}": "运行总数 / {{model_name}}",
@@ -149,22 +148,21 @@ ZH = {
     "routable / {{modelservice}} / {{target_name}} / {{role}}": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
     "observation / {{modelservice}} / {{target_name}} / {{role}}": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
     "evaluation / {{modelservice}} / {{target_name}} / {{role}}": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
-    "Number of online frontend services in the selected frontend services.":
-        "所选前端服务中的在线前端服务数。",
+    "Number of successfully scraped frontend replicas in the selected services.":
+        "所选前端服务中指标抓取成功的副本数。",
     "Number of online model servers in the selected model groups and roles.":
         "所选模型组和执行角色中的在线模型服务数。",
     "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 HTTP 响应数。",
     "Input tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和引擎编号每秒处理的输入 token 总数。",
     "Output tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和引擎编号每秒生成的输出 token 总数。",
-    "Requests waiting for frontend admission.": "等待前端准入的请求数。",
     "Frontend response starts grouped by HTTP status class.": "按 HTTP 状态类别分组的响应速率。",
     "Frontend response starts grouped by HTTP endpoint.": "按 HTTP 接口分组的响应速率。",
-    "Time to HTTP response headers, in seconds; excludes SSE body delivery.":
-        "到 HTTP 响应头的时间，单位为秒；不包含 SSE 正文传输。",
+    "Time to HTTP response headers, in seconds.":
+        "收到 HTTP 响应头的等待时间，单位秒。",
     "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.":
         "按扩缩容目标类型分组，等待运行时准备或后端派发的请求数。",
-    "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.":
-        "模型总计只统计一次聚合或解码阶段的完成请求；后端曲线保留执行阶段和结束原因。",
+    "Completed generation requests per second, with backend details.":
+        "每秒完成的生成请求数及后端明细。",
     "Whole-model running and queued execution totals across all roles, with selected backend details.":
         "每个模型全部执行角色的运行与排队总数，并展示所选后端明细。",
     "Whole-model latency from Frontend processing to generation completion, in seconds; aggregate and decode requests are combined.":
@@ -173,8 +171,8 @@ ZH = {
         "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
     "Whole-model time per output token, in milliseconds; each request contributes its average interval.":
         "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
-    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.":
-        "聚合和解码引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
+    "Time between output tokens, in milliseconds.":
+        "相邻输出 token 的时间间隔，单位毫秒。",
     "Draft and accepted token rates for each whole model.":
         "每个模型的草稿与接受 token 速率。",
     "Accepted draft tokens divided by proposed draft tokens across all engines.":
@@ -189,17 +187,17 @@ ZH = {
     "Target forward / {{model_name}}": "目标模型前向计算 / {{model_name}}",
     "Draft share / {{model_name}}": "草稿占比 / {{model_name}}",
     "Target forward share / {{model_name}}": "目标模型前向计算占比 / {{model_name}}",
-    "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.":
-        "每个引擎在一个输出引擎编号上统计完整的推测解码批次。GPU 事件耗时包含排队内核之间的主机间隙；目标模型前向计算包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
-    "Draft and target-forward durations each divided by their sum over the same measured steps.":
-        "同一批计时步中，草稿与目标模型前向计算耗时分别除以两者之和。",
-    "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
-        "使用 GPU 起草时自动采集的纯推测解码批次计时数量（每秒）。",
+    "Average draft and target-forward time per measured step.":
+        "每个计时步中草稿与目标模型前向计算的平均耗时。",
+    "Share of measured time spent on drafting and target forward.":
+        "草稿与目标模型前向计算各自的耗时占比。",
+    "Measured speculative decoding steps per second.":
+        "每秒计时的推测解码步数。",
     "ITL / {{model_name}}": "ITL / {{model_name}}",
     "TTFT / {{model_name}}": "TTFT / {{model_name}}",
     "E2EL / {{model_name}}": "E2EL / {{model_name}}",
-    "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.":
-        "本窗口内已完成请求在排队、预填充和解码阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
+    "P95 queue, prefill and decode time for completed requests, in seconds.":
+        "已完成请求的排队、预填充和解码耗时 P95，单位秒。",
     "Whole-model preemption events per second across every engine, with selected backend details.":
         "每个模型全部引擎每秒发生的抢占事件总数，并展示所选后端明细。",
     "Distribution of prompt tokens per request across selected engines.": "所选引擎每次请求的输入 token 数分布。",
@@ -238,8 +236,8 @@ ZH = {
         "所选模型服务最近一次扩缩容评估的触发、决策和调整结果。",
     "Engine rank": "引擎编号",
     "Routing share by backend": "各后端路由占比",
-    "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.":
-        "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行副本，分母为该模型该角色的全部后端。",
+    "Routing share by backend within each model and execution role.":
+        "各模型、执行角色内的后端路由占比。",
     "Scheduler queued requests": "引擎排队请求",
     "Queued execution requests across all instances, roles and ranks of each model.":
         "每个模型全部实例、角色和引擎编号中等待调度的执行请求总数。",
@@ -247,9 +245,77 @@ ZH = {
         "运行中 / {{model_group_display}} / 编号 {{engine}}",
     "Waiting / {{model_group_display}} / rank {{engine}}":
         "等待中 / {{model_group_display}} / 编号 {{engine}}",
+    "Frontend pod": "前端 Pod",
+    "Admission": "准入",
+    "Admission results and wait": "准入结果与等待",
+    "Admission resources": "准入资源",
+    "Admission replicas": "准入指标副本数",
+    "Online / {{namespace}} / {{frontend_service}}": "在线 / {{namespace}} / {{frontend_service}}",
+    "Covered / {{namespace}} / {{frontend_service}}": "指标完整 / {{namespace}} / {{frontend_service}}",
+    "Online frontend replicas and those with complete admission metrics.":
+        "在线前端副本数及其中指标完整的副本数。",
+    "Intake calls / s": "入口准入调用速率",
+    "HTTP requests entering admission per second.":
+        "每秒进入准入的 HTTP 请求数。",
+    "Work admitted calls / s": "工作准入获准速率",
+    "HTTP requests admitted for processing per second; batches count once.":
+        "每秒获准处理的 HTTP 请求数，批次计一次。",
+    "Capacity rejection ratio": "容量拒绝比例",
+    "Share of completed admission calls rejected for capacity, by stage.":
+        "各准入阶段已结束的调用中，因容量不足被拒绝的占比。",
+    "Work timeout ratio": "工作准入超时比例",
+    "Share of completed work-admission calls that timed out.":
+        "已结束的工作准入调用中，超时调用的占比。",
+    "Admitted queue wait (p95)": "获准排队等待（P95）",
+    "Queue-wait p95 for HTTP requests that were admitted.":
+        "排队后获准的 HTTP 请求等待 P95。",
+    "No samples": "无样本",
+    "Unlimited": "无限流",
+    "Concurrency": "并发限流",
+    "No queue": "不排队",
+    "Admission by replica": "各副本准入状态",
+    "Compare admission status and results across frontend replicas.":
+        "对比各前端副本的准入状态与结果。",
+    "Current usage and configured limits for each frontend replica.":
+        "各前端副本的当前占用和配置上限。",
+    "Intake results / s": "入口准入结果速率",
+    "Work calls and results / s": "工作准入到达与结果速率",
+    "{{namespace}} / {{frontend_service}} / {{origin}} / arrivals": "{{namespace}} / {{frontend_service}} / {{origin}} / 到达",
+    "Admission capacity by replica": "各副本准入容量",
+    "Admission calls per second by result, with work arrivals shown separately.":
+        "各结果的准入调用速率，另列工作准入到达速率。",
+    "Queue wait by result": "各结果的排队等待",
+    "Compare queue waits for admitted, timed-out and cancelled calls.":
+        "对比获准、超时和取消调用的排队等待。",
+    "Queue exit samples / s": "排队退出样本速率",
+    "Completed queue-wait observations per second, grouped by result.":
+        "按结果展示每秒结束的排队等待样本数。",
+    "Active work units": "活跃工作单位",
+    "Queued work units": "排队工作单位",
+    "Resident HTTP requests": "驻留 HTTP 请求",
+    "Admitted work units and their concurrency limit.":
+        "已准入的工作单位及并发上限。",
+    "Waiting work units and the queue limit.":
+        "等待中的工作单位及队列上限。",
+    "HTTP requests still being handled and the residency limit.":
+        "仍在处理的 HTTP 请求数及驻留上限。",
+    "Occupancy / {{namespace}} / {{frontend_service}}": "占用 / {{namespace}} / {{frontend_service}}",
+    "Limit / {{namespace}} / {{frontend_service}}": "上限 / {{namespace}} / {{frontend_service}}",
+    "Replica": "副本",
+    "Admission rule": "准入规则",
+    "Scrape": "抓取",
+    "Telemetry complete": "指标完整",
+    "Concurrency limit": "并发上限",
+    "Queue limit": "队列上限",
+    "Resident requests": "驻留请求",
+    "Resident limit": "驻留上限",
+    "Intake rejection": "入口拒绝比例",
+    "Work rejection": "工作拒绝比例",
+    "Work timeout": "工作超时比例",
+    "Admitted wait p95": "获准等待 P95",
 }
 
-AUTOSCALING_COLUMNS_ZH = {
+TABLE_COLUMNS_ZH = {
     "namespace": "命名空间",
     "modelservice": "模型服务",
     "target_kind": "目标类型",
@@ -615,9 +681,16 @@ def localize_dashboard(value: object) -> object:
             for key, item in value.items()
         }
         if value.get("id") == "byName" and isinstance(value.get("options"), str):
-            localized["options"] = ZH.get(value["options"], value["options"])
+            name = value["options"]
+            localized["options"] = TABLE_COLUMNS_ZH.get(name, ZH.get(name, name))
         if value.get("id") == "organize" and isinstance(localized.get("options"), dict):
-            localized["options"]["renameByName"] = AUTOSCALING_COLUMNS_ZH
+            options = localized["options"]
+            names = dict.fromkeys(options.get("indexByName", {}))
+            names.update(options.get("renameByName", {}))
+            options["renameByName"] = {
+                name: TABLE_COLUMNS_ZH.get(display or name, ZH.get(display or name, display or name))
+                for name, display in names.items()
+            }
         return localized
     if isinstance(value, list):
         return [localize_dashboard(item) for item in value]
@@ -632,6 +705,268 @@ def render(locale: str) -> str:
     payload = localize_dashboard(json.loads(encoded))
     payload["uid"] = "foretoken-system-overview-zh"
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def admission_panels(board: dashboard.Dashboard) -> None:
+    """Add service-level admission summaries and Pod diagnostics from live frontend metrics.
+
+    Intake and work keep separate result denominators. Capacity comes from the same Pods as
+    occupancy, never desired configuration; availability anchors rows with missing telemetry.
+    """
+    pod_keys = "namespace,frontend_service,pod"
+    service_keys = "namespace,frontend_service"
+    service_legend = "{{namespace}} / {{frontend_service}}"
+
+    def metric(name: str, extra: str = "", *, rate: bool = False) -> str:
+        labels = 'pod=~"$frontend_pod"' + ("," + extra if extra else "")
+        return frontend_metric(name, extra=labels, rate=rate)
+
+    def results(stage: str, keys: str, result: str = "") -> str:
+        labels = f'stage="{stage}",origin="http"'
+        if result:
+            labels += f',result=~"{result}"'
+        return f"sum by({keys}) ({metric('foretoken_admission_results_total', labels, rate=True)})"
+
+    def ratio(stage: str, keys: str, result: str) -> str:
+        total = results(stage, keys)
+        matched = results(stage, keys, result)
+        return f"(({matched}) or (0 * ({total}))) / (({total}) > 0)"
+
+    def wait(quantile: float, keys: str, extra: str) -> str:
+        buckets = metric("foretoken_admission_queue_wait_seconds_bucket", extra, rate=True)
+        return f"histogram_quantile({quantile}, sum by({keys},le) ({buckets}))"
+
+    up = f"max by({pod_keys}) ({metric('up')})"
+    info = f"max by({pod_keys},algorithm) ({metric('foretoken_admission_info')})"
+    # Zero-event base counters must exist; histogram samples are required only after a wait.
+    complete = info
+    for stage in ("intake", "work"):
+        for name in ("attempts_total", "results_total"):
+            present = metric(f"foretoken_admission_{name}", f'stage="{stage}",origin="http"')
+            complete = f"({complete}) and on({pod_keys}) ({present})"
+    concurrency = metric("foretoken_admission_info", 'algorithm="concurrency"')
+    bounded = f"({info}) and on({pod_keys}) ({concurrency})"
+    for name in (
+        "active_work_units", "queued_work_units", "resident_requests",
+        "concurrency_limit_work_units", "queue_limit_work_units", "resident_limit_requests",
+    ):
+        bounded = f"({bounded}) and on({pod_keys}) ({metric('foretoken_admission_' + name)})"
+    other_rules = f"({complete}) unless on({pod_keys}) ({concurrency})"
+    covered = (
+        f"max by({pod_keys}) (({other_rules}) or (({complete}) and on({pod_keys}) ({bounded}))) "
+        f"and on({pod_keys}) (({up}) == 1)"
+    )
+    coverage = f"({covered}) or (0 * ({up}))"
+    admitted_wait = wait(0.95, service_keys, 'origin="http",result="admitted"')
+
+    board.with_row(dashboard.Row("Admission"))
+    board.with_panel(
+        headline(
+            "Admission replicas",
+            "Online frontend replicas and those with complete admission metrics.",
+            f"sum by({service_keys}) ({up})", legend="Online / " + service_legend,
+        ).targets([
+            query(f"sum by({service_keys}) ({up})", "Online / " + service_legend, instant=True).ref_id("A"),
+            query(f"sum by({service_keys}) ({coverage})", "Covered / " + service_legend, instant=True).ref_id("B"),
+        ]).span(8).height(5)
+    )
+    intake_attempts = metric("foretoken_admission_attempts_total", 'stage="intake",origin="http"', rate=True)
+    for title, description, expr in (
+        (
+            "Intake calls / s",
+            "HTTP requests entering admission per second.",
+            f"sum by({service_keys}) ({intake_attempts})",
+        ),
+        (
+            "Work admitted calls / s",
+            "HTTP requests admitted for processing per second; batches count once.",
+            results("work", service_keys, "admitted"),
+        ),
+    ):
+        board.with_panel(headline(title, description, expr, unit="suffix: calls/s", legend=service_legend).span(8).height(5))
+    rejection = (
+        f'label_replace(({ratio("intake", service_keys, "capacity_rejected")}), "stage", "intake", "", "") '
+        f'or label_replace(({ratio("work", service_keys, "capacity_rejected")}), "stage", "work", "", "")'
+    )
+    for title, description, expr, unit, legend in (
+        (
+            "Capacity rejection ratio",
+            "Share of completed admission calls rejected for capacity, by stage.",
+            rejection, "percentunit", service_legend + " / {{stage}}",
+        ),
+        (
+            "Work timeout ratio",
+            "Share of completed work-admission calls that timed out.",
+            ratio("work", service_keys, "queue_timeout|deadline_exceeded"), "percentunit", service_legend,
+        ),
+        (
+            "Admitted queue wait (p95)",
+            "Queue-wait p95 for HTTP requests that were admitted.",
+            admitted_wait, "s", service_legend,
+        ),
+    ):
+        board.with_panel(headline(title, description, expr, unit=unit, legend=legend, no_value="No samples").span(8).height(5))
+
+    # Join on a namespace-qualified replica key, so equal Pod names cannot merge across services.
+    live = f"({up}) == 1"
+    unknown_rule = f'label_replace(0 * ({up}), "algorithm", "unreported", "", "")'
+    identity = f"(({info}) and on({pod_keys}) ({live})) or on({pod_keys}) ({unknown_rule})"
+
+    def replica_table(title: str, description: str, columns: list[tuple[str, str, str]]) -> table.Panel:
+        """Join instant Pod observations without losing unavailable targets or mixing resource units."""
+        targets = []
+        for index, expr in enumerate([identity, *(expr for _, expr, _ in columns)]):
+            # Restrict rows to discovered Pods; recent counters can outlive a removed target.
+            # NaN cells keep unsampled columns without inventing zero values or extra rows.
+            if index:
+                expr = f"(({expr}) and on({pod_keys}) ({up})) or on({pod_keys}) (({up}) * (0 / 0))"
+            joined = f'label_join(({expr}), "replica", " / ", "namespace", "frontend_service", "pod")'
+            if index:
+                joined = f"max by(replica) ({joined})"
+            targets.append(
+                query(joined, instant=True).format(prometheus_models.PromQueryFormat.TABLE).ref_id(chr(ord("A") + index))
+            )
+        names = {f"Value #{chr(ord('B') + index)}": name for index, (name, _, _) in enumerate(columns)}
+        ordered = ["replica", "algorithm", *names]
+        names.update({"replica": "Replica", "algorithm": "Admission rule"})
+        no_data = dashboard_models.SpecialValueMap(
+            options=dashboard_models.DashboardSpecialValueMapOptions(
+                match=dashboard_models.SpecialValueMatch.NULL_AND_NAN,
+                result=dashboard_models.ValueMappingResult(text="No data"),
+            )
+        )
+        panel = (
+            table.Panel().title(title).description(description).datasource(PROMETHEUS)
+            .show_header(True).cell_height(models.TableCellHeight.SM).no_value("No data").mappings([no_data]).targets(targets)
+            .with_transformation(dashboard_models.DataTransformerConfig(id_val="joinByField", options={"byField": "replica", "mode": "outerTabular"}))
+            .with_transformation(dashboard_models.DataTransformerConfig(id_val="filterFieldsByName", options={"include": {"names": ordered}}))
+            .with_transformation(dashboard_models.DataTransformerConfig(id_val="organize", options={
+                "indexByName": {name: index for index, name in enumerate(ordered)},
+                "renameByName": names,
+            }))
+            .override_by_name("Replica", [dashboard_models.DynamicConfigValue(id_val="custom.width", value=360)])
+            .override_by_name("Admission rule", [dashboard_models.DynamicConfigValue(id_val="mappings", value=[{
+                "type": "value", "options": {
+                    "allow_all": {"text": "Unlimited"},
+                    "concurrency": {"text": "Concurrency"},
+                    "unreported": {"text": "No data"},
+                },
+            }])])
+            .span(24).height(6)
+        )
+        for name, _, unit in columns:
+            panel.override_by_name(name, [dashboard_models.DynamicConfigValue(id_val="unit", value=unit)])
+        if any(name == "Queue limit" for name, _, _ in columns):
+            panel.override_by_name("Queue limit", [dashboard_models.DynamicConfigValue(id_val="mappings", value=[
+                no_data, {"type": "value", "options": {"0": {"text": "No queue"}}},
+            ])])
+        return panel
+
+    board.with_panel(replica_table(
+        "Admission by replica",
+        "Compare admission status and results across frontend replicas.",
+        [
+            ("Scrape", up, "short"),
+            ("Telemetry complete", coverage, "short"),
+            ("Intake rejection", ratio("intake", pod_keys, "capacity_rejected"), "percentunit"),
+            ("Work rejection", ratio("work", pod_keys, "capacity_rejected"), "percentunit"),
+            ("Work timeout", ratio("work", pod_keys, "queue_timeout|deadline_exceeded"), "percentunit"),
+            ("Admitted wait p95", wait(0.95, pod_keys, 'origin="http",result="admitted"'), "s"),
+        ],
+    ))
+
+    details = dashboard.Row("Admission results and wait")
+    for stage, title in (("intake", "Intake results / s"), ("work", "Work calls and results / s")):
+        rates = metric("foretoken_admission_results_total", f'stage="{stage}"', rate=True)
+        targets = [foretoken_query(
+            f"sum by({service_keys},origin,result) ({rates})",
+            service_legend + " / {{origin}} / {{result}}",
+        )]
+        if stage == "work":
+            arrivals = metric("foretoken_admission_attempts_total", 'stage="work"', rate=True)
+            targets.append(foretoken_query(
+                f"sum by({service_keys},origin) ({arrivals})", service_legend + " / {{origin}} / arrivals",
+            ))
+        result_panel = series(
+            title,
+            "Admission calls per second by result, with work arrivals shown separately.",
+            targets, unit="suffix: calls/s", span=12,
+        )
+        if stage == "work":
+            # Arrivals include pending calls; distinguish offered demand from completed results.
+            result_panel.override_by_query("B", [
+                dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": "#808080"}),
+                dashboard_models.DynamicConfigValue(id_val="custom.lineStyle", value={"fill": "dash", "dash": [6, 4]}),
+                dashboard_models.DynamicConfigValue(id_val="custom.fillOpacity", value=0),
+            ])
+        details.with_panel(result_panel)
+    details.with_panel(series(
+        "Queue wait by result",
+        "Compare queue waits for admitted, timed-out and cancelled calls.",
+        [
+            foretoken_query(wait(quantile, service_keys + ",origin,result", extra), service_legend + " / {{origin}} / {{result}} / " + label)
+            for quantile, extra, label in (
+                (0.50, 'result="admitted"', "p50"),
+                (0.95, 'result="admitted"', "p95"),
+                (0.95, 'result!="admitted"', "p95"),
+            )
+        ], unit="s", span=12,
+    ))
+    details.with_panel(series(
+        "Queue exit samples / s",
+        "Completed queue-wait observations per second, grouped by result.",
+        [foretoken_query(
+            f"sum by({service_keys},origin,result) ({metric('foretoken_admission_queue_wait_seconds_count', rate=True)})",
+            service_legend + " / {{origin}} / {{result}}",
+        )], unit="suffix: samples/s", span=12,
+    ))
+    board.with_row(details)
+
+    resources = dashboard.Row("Admission resources")
+    capacity_columns = []
+    for name, suffix in (
+        ("Active work units", "active_work_units"),
+        ("Concurrency limit", "concurrency_limit_work_units"),
+        ("Queued work units", "queued_work_units"),
+        ("Queue limit", "queue_limit_work_units"),
+        ("Resident requests", "resident_requests"),
+        ("Resident limit", "resident_limit_requests"),
+    ):
+        observed = metric("foretoken_admission_" + suffix)
+        capacity_columns.append((name, f"({observed}) and on({pod_keys}) ({live})", "short"))
+    resources.with_panel(replica_table(
+        "Admission capacity by replica",
+        "Current usage and configured limits for each frontend replica.",
+        capacity_columns,
+    ))
+    for title, description, occupancy, limit, unit in (
+        (
+            "Active work units",
+            "Admitted work units and their concurrency limit.",
+            "active_work_units", "concurrency_limit_work_units", "suffix: work units",
+        ),
+        (
+            "Queued work units",
+            "Waiting work units and the queue limit.",
+            "queued_work_units", "queue_limit_work_units", "suffix: work units",
+        ),
+        (
+            "Resident HTTP requests",
+            "HTTP requests still being handled and the residency limit.",
+            "resident_requests", "resident_limit_requests", "suffix: HTTP requests",
+        ),
+    ):
+        usage = f"max by({pod_keys}) ({metric('foretoken_admission_' + occupancy)}) and on({pod_keys}) ({live})"
+        capacity = f"max by({pod_keys}) ({metric('foretoken_admission_' + limit)}) and on({pod_keys}) ({live})"
+        resources.with_panel(series(
+            title, description,
+            [
+                foretoken_query(f"sum by({service_keys}) (({usage}) and on({pod_keys}) ({capacity}))", "Occupancy / " + service_legend),
+                foretoken_query(f"sum by({service_keys}) (({capacity}) and on({pod_keys}) ({usage}))", "Limit / " + service_legend),
+            ], unit=unit, span=8,
+            colors={"Occupancy / " + service_legend: TEAL, "Limit / " + service_legend: BLUE},
+        ))
+    board.with_row(resources)
 
 
 def build() -> dashboard_models.Dashboard:
@@ -667,6 +1002,14 @@ def build() -> dashboard_models.Dashboard:
                 "frontend_service",
                 "Frontend service",
                 'label_values(foretoken:frontend_up:sum{namespace=~"$namespace"}, frontend_service)',
+            )
+        )
+        .with_variable(
+            variable(
+                "frontend_pod", "Frontend pod",
+                'label_values(up{endpoint="http",namespace=~"$namespace",'
+                'inference_foretoken_io_frontend_service=~"$frontend_service",'
+                'inference_foretoken_io_frontend_service!=""}, pod)',
             )
         )
         .with_variable(
@@ -715,9 +1058,8 @@ def build() -> dashboard_models.Dashboard:
         .title("Reading this dashboard")
         .mode(text_models.TextMode.MARKDOWN)
         .content(
-            "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. "
-            "**Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\n"
-            "Rates use a rolling window."
+            "Select a model for inference metrics or a frontend for traffic and admission. "
+            "Adjust the time range to inspect trends."
         )
         .span(24)
         .height(4)
@@ -793,7 +1135,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Completed request rate",
-            "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.",
+            "Completed generation requests per second, with backend details.",
             [
                 foretoken_query(model_total("vllm:request_success_total", rate=True, roles="aggregate|decode"), "Total / {{model_name}}"),
                 foretoken_query(
@@ -853,7 +1195,7 @@ def build() -> dashboard_models.Dashboard:
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
             "Inter-token latency (ITL)",
-            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
+            "Time between output tokens, in milliseconds.",
             unit="suffix: ms",
             scale=1_000,
             mean_rates=(
@@ -865,7 +1207,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Stage latency (p95)",
-            "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.",
+            "P95 queue, prefill and decode time for completed requests, in seconds.",
             [
                 foretoken_query(
                     f"histogram_quantile(0.95, sum by(model_name,model_role,le) ({model_metric(metric, rate=True)}))",
@@ -995,7 +1337,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative stage GPU time",
-            "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
+            "Average draft and target-forward time per measured step.",
             [
                 foretoken_query(f"({target_time}) / (({timed_steps}) > 0)", "Target forward / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({timed_steps}) > 0)", "Draft / {{model_name}}"),
@@ -1011,7 +1353,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative GPU time shares",
-            "Draft and target-forward durations each divided by their sum over the same measured steps.",
+            "Share of measured time spent on drafting and target forward.",
             [
                 foretoken_query(f"({target_time}) / (({stage_time}) > 0)", "Target forward share / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({stage_time}) > 0)", "Draft share / {{model_name}}"),
@@ -1027,7 +1369,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Timed speculative steps / s",
-            "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
+            "Measured speculative decoding steps per second.",
             [foretoken_query(timed_steps, "{{model_name}}")],
             unit="ops",
             span=24,
@@ -1191,7 +1533,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Routing share by backend",
-            "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.",
+            "Routing share by backend within each model and execution role.",
             [foretoken_query(
                 f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})",
                 "{{model_group_display}} / rank {{data_parallel_rank}}",
@@ -1248,11 +1590,11 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Shared frontend"))
     board.with_panel(
         headline(
-            "Online frontend services",
-            "Number of online frontend services in the selected frontend services.",
+            "Online frontend replicas",
+            "Number of successfully scraped frontend replicas in the selected services.",
             f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
             color=BLUE,
-        ).span(8)
+        ).span(12)
     )
     board.with_panel(
         headline(
@@ -1261,16 +1603,7 @@ def build() -> dashboard_models.Dashboard:
             f"sum({frontend_request_rates})",
             unit="reqps",
             interval="5s",
-        ).span(8)
-    )
-    board.with_panel(
-        headline(
-            "Frontend queued requests",
-            "Requests waiting for frontend admission.",
-            f"sum(foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
-            color=None,
-            thresholds=steps((None, GREEN), (1, ORANGE)),
-        ).span(8)
+        ).span(12)
     )
     board.with_panel(
         series(
@@ -1300,7 +1633,7 @@ def build() -> dashboard_models.Dashboard:
                 rate=True,
             ),
             "Frontend response-header latency",
-            "Time to HTTP response headers, in seconds; excludes SSE body delivery.",
+            "Time to HTTP response headers, in seconds.",
             unit="suffix: s",
             span=8,
             dimensions="",
@@ -1308,7 +1641,7 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Frontend admission queue",
+            "Model preparation and dispatch wait",
             "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.",
             [
                 query(
@@ -1318,7 +1651,7 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="short",
             span=8,
-            colors={"Pool": BLUE, "EPDPipelineScope": ORANGE},
+            colors={"Pool": BLUE},
         )
     )
 
@@ -1331,6 +1664,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
+    admission_panels(board)
     control_plane = dashboard.Row("Control plane")
     control_plane.with_panel(
         series(

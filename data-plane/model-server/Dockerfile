@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.19
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -47,13 +47,16 @@ ARG VLLM_REVISION
 
 WORKDIR /workspace
 
-COPY data-plane/ ./data-plane/
+# Python adapters belong to the file export, not the Rust compilation input.
+COPY --exclude=model-server/python data-plane/ ./data-plane/
 
 # Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
+# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
+# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
     --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-model-server,target=/workspace/data-plane/target,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
         "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
@@ -76,6 +79,17 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
+    && mkdir -p data-plane/target/vllm-rust \
+    && if git diff --no-index --quiet data-plane/target/vllm-rust data-plane/third_party/vllm/rust; then \
+      :; \
+    else \
+      result=$?; \
+      test "$result" -eq 1 \
+      && rm -rf data-plane/target/vllm-rust \
+      && cp -R data-plane/third_party/vllm/rust data-plane/target/vllm-rust; \
+    fi \
+    && rm -rf data-plane/third_party/vllm/rust \
+    && cp -a data-plane/target/vllm-rust data-plane/third_party/vllm/rust \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
@@ -85,6 +99,11 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
 
 FROM scratch AS source-export
 COPY --from=builder /out/model-server /bin/foretoken-model-server
+COPY data-plane/model-server/python/ /python/
+COPY LICENSE /LICENSE
+COPY <<EOF /complete.json
+{"component":"model-server"}
+EOF
 
 # vLLM-Omni images already contain their Python runtime and model plugins. This
 # target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
@@ -130,15 +149,16 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     && uv pip check --python "$python_path" \
     && rm /tmp/foretoken-engine-constraints.txt
 
-FROM engine-runtime AS runtime
-
+FROM engine-runtime AS environment
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
 COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
 COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
+
+FROM environment AS runtime
+COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its

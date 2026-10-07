@@ -99,13 +99,16 @@ type VideoExecutionPlan struct {
 	// +optional
 	ServingGeneration int64 `json:"servingGeneration,omitempty"`
 	// +optional
-	Revisions        []ServingPoolRevision `json:"revisions,omitempty"`
-	JobName          string                `json:"jobName"`
-	OutputClaimName  string                `json:"outputClaimName"`
-	OutputPath       string                `json:"outputPath"`
-	WorkerImage      string                `json:"workerImage"`
-	RetentionSeconds int64                 `json:"retentionSeconds"`
-	TimeoutSeconds   int64                 `json:"timeoutSeconds"`
+	Revisions       []ServingPoolRevision `json:"revisions,omitempty"`
+	JobName         string                `json:"jobName"`
+	OutputClaimName string                `json:"outputClaimName"`
+	OutputPath      string                `json:"outputPath"`
+	WorkerImage     string                `json:"workerImage"`
+	// WorkerApplicationURL retains the published executable used by this task and its cleanup.
+	// +optional
+	WorkerApplicationURL string `json:"workerApplicationURL,omitempty"`
+	RetentionSeconds     int64  `json:"retentionSeconds"`
+	TimeoutSeconds       int64  `json:"timeoutSeconds"`
 }
 
 // VideoArtifactReference identifies the worker-produced artifact on retained storage.

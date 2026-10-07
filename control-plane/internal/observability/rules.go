@@ -13,8 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"github.com/prometheus/common/model"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
@@ -46,7 +48,7 @@ type Scope struct {
 
 // Render returns only selected rules, scoped to the owner's current resources.
 // Threshold defaults come from API admission; this compiler never guesses missing values.
-func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelAlertThresholds) (monitoringv1.PrometheusRuleSpec, error) {
+func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelAlertThresholds, admission *inferencev1alpha1.AdmissionAlertThresholds) (monitoringv1.PrometheusRuleSpec, error) {
 	templates, err := catalogue()
 	if err != nil {
 		return monitoringv1.PrometheusRuleSpec{}, err
@@ -71,6 +73,13 @@ func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelA
 		values["foretoken_alert_threshold_nvidia_temperature_celsius"] = thresholds.NVIDIATemperatureCelsius
 		values["foretoken_alert_threshold_nvidia_power_watts"] = thresholds.NVIDIAPowerWatts
 	}
+	if admission != nil {
+		values["foretoken_alert_threshold_capacity_rejection_ratio"] = admission.CapacityRejectionRatio
+		values["foretoken_alert_threshold_timeout_ratio"] = admission.TimeoutRatio
+		values["foretoken_alert_threshold_admitted_queue_p95_seconds"] = admission.AdmittedQueueP95Seconds
+		values["foretoken_alert_threshold_min_result_rate"] = admission.MinResultRate
+		values["foretoken_alert_threshold_min_queued_admission_rate"] = admission.MinQueuedAdmissionRate
+	}
 	rules := make([]monitoringv1.Rule, 0, len(selected))
 	for _, name := range selected {
 		template, found := templates[name]
@@ -79,6 +88,35 @@ func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelA
 		}
 		rule := template.DeepCopy()
 		expression := scopeValues.Replace(rule.Expr.String())
+		// Business admission rules retain stage and optionally Pod identity after aggregation.
+		if strings.Contains(expression, "foretoken_alert_admission_grouping") {
+			if admission == nil {
+				return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires admission thresholds", name)
+			}
+			grouping := "namespace, stage"
+			switch admission.Scope {
+			case "service":
+			case "pod":
+				grouping += ", pod"
+			default:
+				return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("invalid admission alert scope %q", admission.Scope)
+			}
+			window, err := time.ParseDuration(string(admission.Window))
+			if err != nil || window <= 0 {
+				return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires a positive admission window", name)
+			}
+			persistence, err := time.ParseDuration(string(admission.For))
+			if err != nil || persistence <= 0 {
+				return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires a positive admission for duration", name)
+			}
+			expression = strings.NewReplacer(
+				"foretoken_alert_admission_grouping", grouping,
+				"[1s]", "["+model.Duration(window).String()+"]",
+			).Replace(expression)
+			forDuration := monitoringv1.Duration(model.Duration(persistence).String())
+			rule.For = &forDuration
+			rule.Labels["scope"] = admission.Scope
+		}
 		for token, value := range values {
 			if !strings.Contains(expression, token) {
 				continue
@@ -94,7 +132,7 @@ func Render(selected []string, scope Scope, thresholds *inferencev1alpha1.ModelA
 			}
 		}
 		if strings.Contains(expression, "foretoken_alert_threshold_") {
-			return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires model thresholds", name)
+			return monitoringv1.PrometheusRuleSpec{}, fmt.Errorf("alert %s requires its configured thresholds", name)
 		}
 		rule.Expr = intstr.FromString(expression)
 		rules = append(rules, *rule)
