@@ -7,5 +7,3 @@
 补充资料时，说明它解决的问题、核心思路和适用条件，链接原始来源，并区分资料中的结论与在 Foretoken 中验证过的结果。
 
 具体技巧的写法见[知识条目模板](../templates/guidance-template_zh.md)。
-
-- [按层组推进 MoE 预填充](layered-prefill_zh.md)：改变 prefill 的调度维度，减少小 token 分块引起的专家权重重复读取；适用于 prefill/decode 共置负载。

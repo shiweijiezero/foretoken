@@ -7,5 +7,3 @@ Reference material for understanding and improving inference systems: research p
 When adding a reference, explain the problem it addresses, the main idea, and its applicable conditions. Link the original source and distinguish reported results from findings verified in Foretoken.
 
 Use the [technique note template](../templates/guidance-template.md) when documenting a specific technique.
-
-- [Layer-group prefill for MoE](layered-prefill.md): change the prefill scheduling dimension to reduce repeated expert-weight reads from small token chunks in colocated prefill/decode workloads.
