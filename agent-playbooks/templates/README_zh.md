@@ -7,4 +7,4 @@
 - [实验说明](experiment-template_zh.md)：整体目标、优化范围、比较方法和多轮尝试的结论。
 - [迭代说明](iteration-template_zh.md)：一轮方案的分析、假设、设计、实现、测量和决策。
 
-说明随工作推进持续更新。记录组织与运行证据的保存方式见[实验指导](../guidance/experiments_zh.md)。
+每轮结束后更新本轮迭代说明，再将新增结论汇入实验说明；具体动作见[迭代收尾步骤](../guidance/experiments_zh.md#每轮结束后)。

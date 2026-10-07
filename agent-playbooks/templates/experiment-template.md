@@ -6,20 +6,20 @@ Reference for `results/<goal>/<motivation>/notes/experiment.md`. Update the over
 
 ## Goal
 
-What should improve, and how will success be judged?
+State the behavior to improve and the success criteria, such as a latency target under a specified workload and the answer quality to preserve.
 
 ## Scope
 
-Which parts of the system may change? Is the experiment focused on a component or open to system-wide changes? What constraints apply?
+Name the components that may change, or explicitly leave the scope open to the whole system. List the functionality and resource constraints to preserve.
 
 ## Comparison
 
-Which models, workloads, and metrics will answer the question? What should remain comparable across approaches? Link the configurations and reference measurements.
+List the models, workloads, and metrics for comparison. State which conditions must remain the same across approaches and link the configurations and reference measurements.
 
 ## Findings
 
-What has been learned across iterations? Link the supporting results and explain which approaches were retained or rejected.
+After each iteration, add new or revised findings with links to the iteration note and results. Explain why the approach was retained or rejected.
 
 ## Next questions
 
-What remains unresolved, and what should be investigated next?
+List unresolved questions and the hypothesis to test next. When the experiment ends, state whether its goal was met.

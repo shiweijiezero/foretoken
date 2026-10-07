@@ -49,6 +49,17 @@ Use `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--it
 
 With this output selected, `generated/` holds captured commands, timing, status, and available source snapshots; `artifacts/` holds evaluation configurations and results. Notes are maintained by the developer or agent and link to these records. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
 
+## At the end of each iteration
+
+1. Inspect each run's exit status, metrics, and model outputs. Link the records from `iterations/<name>/notes/iteration.md`; explain failed or interrupted runs and identify the evidence still available.
+2. Update that iteration note with the actual changes, differences from the reference results, whether the hypothesis was supported, and time spent investigating, designing, deploying, evaluating, and analyzing. If the evidence is insufficient, name the missing measurement.
+3. State and carry out the decision to retain, refine, or revert the iteration's changes. Record the resulting code and deployment state and the next question to test. Revert only changes made for this iteration.
+4. Update the experiment's `notes/experiment.md` with new or revised findings and a link to the iteration note. Keep detailed results in the individual iterations and preserve earlier run artifacts.
+5. Add verified, reusable methods to `guidance/`; update the relevant `tasks/` playbook for task-specific procedures. State applicable conditions and cite evidence. Keep untested hypotheses in experiment notes.
+6. Clean up temporary environments, background tasks, and caches no longer needed by the iteration. Check ownership and active use first. Preserve results, source records, and resources needed by the next iteration, and state why retained resources are still needed in the iteration note.
+
+Additional runs of the same approach update the same iteration note and add run records. Use a new iteration name when starting a different approach.
+
 ## Explain the results
 
 State which hypothesis the measurements support or contradict, and what remains unresolved. Account for differences in workload, precision, cache state, or hardware when comparing results. Link the measurements and model outputs used to reach the conclusion.

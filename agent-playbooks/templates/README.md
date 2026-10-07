@@ -7,4 +7,4 @@ Refer to these templates when writing notes, choosing the sections relevant to t
 - [Experiment notes](experiment-template.md): overall goal, scope, comparison method, and findings across iterations.
 - [Iteration notes](iteration-template.md): analysis, hypothesis, design, implementation, measurements, and decisions for one approach.
 
-Update notes as the work progresses. See [experiment guidance](../guidance/experiments.md) for organizing records and retaining execution evidence.
+At the end of each iteration, update its note and incorporate new findings into the experiment summary. Follow the [completion steps](../guidance/experiments.md#at-the-end-of-each-iteration).
