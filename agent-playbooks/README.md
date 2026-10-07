@@ -94,7 +94,7 @@ The command creates blank note templates only when they do not exist. Developers
 
 ### Record code changes
 
-Run evaluations from the Git checkout you are editing. `--output experiment` records the current Git commit ID and saves copies of uncommitted file changes so you can trace the code used for each experiment:
+Run evaluations with `--output experiment` from the source checkout. The command records the current Git commit ID and copies modified or newly added, uncommitted files so you can inspect the code changes for this experiment later:
 
 - `generated/context.json`: commit ID and change list.
 - `generated/changes/`: copies of changed files at their original paths, excluding Git-ignored files.

@@ -94,7 +94,7 @@ results/<goal>/<motivation>/
 
 ### 记录代码改动
 
-在正在修改的 Git 仓库中执行评测，`--output experiment` 会记录当前 Git 提交编号，并另存尚未提交的文件改动，方便追溯每次实验使用的代码：
+在源码仓库中使用 `--output experiment` 运行评测，程序会记下当前 Git 提交编号，并复制修改或新增、尚未提交的文件，方便以后查看本次实验的代码改动：
 
 - `generated/context.json`：提交编号和变更清单。
 - `generated/changes/`：改动文件的副本，保持原目录结构；Git 忽略的文件除外。
