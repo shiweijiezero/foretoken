@@ -6,16 +6,34 @@ In colocated MoE prefill/decode serving, advancing prefill through contiguous la
 
 ## Idea
 
-Conventional chunked prefill splits a prompt along the token dimension. Each iteration processes part of the prompt through every model layer. In fine-grained MoE models, even a small chunk may activate most experts while assigning few tokens to each. Subsequent chunks must read those expert weights again at the same layer.
+### Why split prefill
 
-Layered prefill changes the scheduling dimension: a complete prompt advances through one contiguous group of layers, retains intermediate state, and resumes at the next group in a later iteration. Existing decode requests still traverse all layers each iteration.
+Prefill processes a request's input sequence and builds each layer's KV cache; decode then generates tokens one at a time. When both share the same GPUs, a newly arriving long prompt can occupy the devices long enough to delay ongoing decode requests.
 
-```text
-token chunks: chunk 1 → all layers; chunk 2 → all layers
-layer groups: full prompt → group 1; full prompt → group 2
-```
+Chunked prefill splits the input along the token dimension. Each iteration processes a small input chunk while advancing ongoing decode requests. This shortens individual iterations, but every input chunk still traverses all model layers.
 
-Processing more prompt tokens together at an MoE layer increases reuse of each expert-weight load. Very long prompts can still use larger token chunks, with each chunk advancing through layer groups.
+For MoE, this can add expert-weight reads. Each token selects only a few experts, yet the tokens in even a small chunk may collectively select most experts. Consecutive chunks therefore read many of the same weights while assigning few tokens to each expert. These are primarily GPU reads from device memory; the weights can remain GPU-resident throughout.
+
+### Split along layers instead
+
+Layered prefill retains a larger input batch and divides the model into contiguous layer groups. A new request traverses one group per iteration and resumes from that group's output in the next iteration. Existing decode requests still traverse all layers each iteration to produce their next token.
+
+Consider a four-layer model and an eight-token input. Token chunking uses four tokens per chunk; layer grouping uses two layers per group. The table shows only the new request's prefill work:
+
+| Iteration | Token chunks | Layer groups |
+| --- | --- | --- |
+| 1 | Tokens 1–4 traverse layers 1–4 | Tokens 1–8 traverse layers 1–2 |
+| 2 | Tokens 5–8 traverse layers 1–4 | Tokens 1–8 resume from saved state through layers 3–4 |
+
+With layer grouping, layers 1–2 process both prefill and decode in the first iteration, while layers 3–4 process decode only. The roles reverse in the second iteration. The new request produces its first output token after completing all groups. Both schedules execute every input token through every layer; they distribute that work differently across iterations.
+
+### Why MoE can benefit
+
+Consider one MoE layer in the table. Token chunking processes the input in two visits to that layer, potentially reading the same expert weights in both visits. Layer grouping processes all eight input tokens in one visit, allowing each weight read to serve more tokens.
+
+The benefit depends on expert overlap between chunks and how efficiently each expert calculation reuses its weights. The reduction is in repeated memory traffic caused by small chunks, not in the model computation required for each token. Ongoing decode requests still read the weights of their selected experts.
+
+Very long inputs can combine both methods: divide the input into larger token chunks, then advance each chunk through layer groups. This controls intermediate-state memory while retaining larger per-expert batches.
 
 ## Applicable scenarios
 
@@ -32,9 +50,9 @@ vLLM expresses scheduled work as per-request token counts in [scheduler output](
 
 A port would need the following state and execution changes:
 
-1. Track each prefill request's layer group and prompt/chunk range, distinguishing group completion from completion of all prefill work.
-2. Execute a selected layer group and retain hidden states, required residuals, positions, and KV mappings across iterations. Produce the first token only after the final group completes.
-3. Account for preemption, cancellation, batch regrouping, and CUDA Graph state and shape constraints. Intermediate state consumes memory; overly large layer groups can increase decode waiting time.
+1. Track token progress and layer-group progress separately. Completing a group does not mean that the input has traversed the entire model.
+2. Allow the model execution entry point to run a selected layer range. Retain the group output hidden states, required residuals, positions, and KV mappings for the next group. Completed layers keep their KV caches; later layers still await prefill.
+3. Include this cross-iteration state in preemption, cancellation, batch regrouping, and CUDA Graph management. Larger groups add more prefill work to an iteration and can delay decode; smaller groups add iterations and state-management overhead. Measure first-token latency, inter-token latency, and intermediate-state memory together.
 
 Compare token-chunk and layer-group scheduling on identical request traces. Measure TTFT, tail inter-token latency, peak memory, and expert-weight reads, holding model and sampling settings constant and checking output agreement. Measure end-to-end gains under mixed serving load.
 
