@@ -60,6 +60,7 @@ foretoken eval examples/quickstart \
 | `local` | 打印结果并保存本地文件 |
 | `wandb` | 打印结果并上传 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
+| `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
@@ -67,6 +68,16 @@ foretoken eval examples/quickstart \
 `quiet` 将准备和执行日志保存到 `run.log`，不打印进度，错误仍会显示。选择 W&B 时，该日志也作为附件上传。
 
 每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
+
+使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
+
+```bash
+foretoken perf examples/quickstart --num-prompts 20 \
+  --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
+  --iteration baseline
+```
+
+`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[任务手册](../agent-playbooks/README_zh.md#组织记录)。
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 

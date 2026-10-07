@@ -121,6 +121,7 @@ def parse_video_arguments(
         outputs=BenchmarkOutputConfig(
             destinations=parsed.output,
             output_dir=parsed.output_dir,
+            iteration=parsed.iteration,
         ),
         wandb=WandbRunConfig(
             project=parsed.wandb_project,

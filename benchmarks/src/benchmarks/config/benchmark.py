@@ -295,10 +295,11 @@ class ArrivalTraceSchedule:
 
 @dataclass
 class BenchmarkOutputConfig:
-    """Store HTTP benchmark output destinations and the local directory."""
+    """Store benchmark output destinations, the result root, and an optional iteration name."""
 
     destinations: tuple[str, ...] = ("local", "wandb")
     output_dir: str = "results"
+    iteration: str = ""
 
     def includes(self, destination: str) -> bool:
         """Return whether the specified output destination is enabled."""
@@ -306,8 +307,8 @@ class BenchmarkOutputConfig:
 
     @property
     def saves_local(self) -> bool:
-        """Keep plot inputs alongside exported figures so they can be redrawn."""
-        return self.includes("local") or self.includes("plot")
+        """Keep plot and experiment inputs in the persistent result directory."""
+        return self.includes("local") or self.includes("plot") or self.includes("experiment")
 
     def for_child_run(self) -> BenchmarkOutputConfig:
         """Retain child measurements while the enclosing sweep or search exports comparison plots."""
@@ -320,7 +321,14 @@ class BenchmarkOutputConfig:
         """Validate the selected HTTP benchmark output destinations."""
         if not self.destinations:
             raise ValueError("--output must select at least one output option")
-        allowed = {"local", "wandb", "plot", "quiet"}
+        if self.iteration and not self.includes("experiment"):
+            raise ValueError("--iteration requires --output experiment")
+        if self.iteration and (
+            self.iteration in {".", ".."} or "/" in self.iteration or "\\" in self.iteration
+            or not self.iteration.strip()
+        ):
+            raise ValueError("--iteration must be a directory name, not a path")
+        allowed = {"local", "wandb", "plot", "experiment", "quiet"}
         unknown = set(self.destinations) - allowed
         if unknown:
             names = ", ".join(sorted(unknown))
