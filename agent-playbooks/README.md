@@ -25,8 +25,10 @@ We provide these playbooks to help developers and agents find references, conduc
 
 ## Steps
 
-1. Choose an optimization goal. Refer to the [experiment template](templates/experiment-template.md) to record the question, expected outcome, and comparison method.
-2. Review relevant references and code, propose a change, and apply it to the inference service through the [source deployment workflow](../docs/custom-deployment.md).
-3. Select [evaluations](../benchmarks/README.md) that test the current approach, then examine model outputs, metrics, and logs to assess its effects.
-4. Refer to the [iteration template](templates/iteration-template.md) to record changes, results, and conclusions. Retain execution evidence as described in the [experiment guidance](guidance/experiments.md).
-5. Keep, refine, or revert the change based on the results. Continue with the next iteration and add reusable findings to the task guidance and references.
+1. Define the behavior to improve and how to judge success, such as reducing time to first token under a given workload while preserving answer quality.
+2. Review relevant references, code, and existing measurements. Choose an approach for this iteration and the workload and metrics for comparison.
+3. Change the code or configuration and update the inference service through the [source deployment workflow](../docs/custom-deployment.md).
+4. Run the selected [evaluations](../benchmarks/README.md) and compare results before and after the change. Use model outputs, logs, and profiling to determine what accounts for the differences.
+5. Keep, refine, or revert the change, then choose the next question to investigate. Add reusable findings to the guidance and references.
+
+Record your reasoning, changes, results, and time spent throughout the experiment, referring to the [experiment template](templates/experiment-template.md) and [iteration template](templates/iteration-template.md). See [experiment guidance](guidance/experiments.md) for organizing records and retaining execution evidence.

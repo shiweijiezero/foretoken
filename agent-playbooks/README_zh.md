@@ -25,8 +25,10 @@
 
 ## 使用步骤
 
-1. 确定优化目标，参考[实验模板](templates/experiment-template_zh.md)记录问题、预期和比较方法。
-2. 查阅相关资料和代码，提出改进方案，按[源码部署流程](../docs/custom-deployment_zh.md)将改动应用到推理服务。
-3. 选择能验证本轮方案的[评测](../benchmarks/README_zh.md)，结合模型输出、指标和日志分析效果。
-4. 参考[迭代模板](templates/iteration-template_zh.md)记录改动、结果和结论，按[实验指导](guidance/experiments_zh.md)保留运行证据。
-5. 根据结果保留、调整或回退改动，继续下一轮尝试，并将可复用的发现补充到任务指导和参考资料中。
+1. 明确要改善的行为和判断标准，例如降低给定负载下的首 token 延迟，同时保持回答质量。
+2. 查阅相关资料、代码和已有测量，选择本轮改进方案，确定用于比较的负载与指标。
+3. 修改代码或配置，按[源码部署流程](../docs/custom-deployment_zh.md)更新推理服务。
+4. 执行选定的[评测](../benchmarks/README_zh.md)，比较改动前后的结果，结合模型输出、日志和性能剖析判断差异来源。
+5. 根据结果保留、调整或回退改动，再选择下一轮要解决的问题。将可复用的发现补充到指导和参考资料中。
+
+实验过程中持续记录思路、改动、结果和耗时，可参考[实验模板](templates/experiment-template_zh.md)和[迭代模板](templates/iteration-template_zh.md)。记录组织与运行证据的保存方式见[实验指导](guidance/experiments_zh.md)。
