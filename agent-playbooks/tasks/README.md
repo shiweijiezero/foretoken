@@ -2,6 +2,6 @@
 
 English | [简体中文](README_zh.md)
 
-Common optimization tasks serve as starting points, with goals, exploration directions, and evaluation methods. They may focus on routing, autoscaling, the inference engine, or the whole system; developers and agents analyze the problem and design their own approaches.
+These optimization tasks define goals, exploration directions, and evaluation methods. They may focus on routing, autoscaling, the inference engine, or the whole system; developers and agents analyze the problem and design their own approaches.
 
-No task-specific playbooks are available yet. Start with the [general steps](../README.md#steps) and [experiment records](../templates/experiments.md).
+- [Qwen decode optimization](qwen-decode.md): investigate decode bottlenecks in Qwen3.5-35B-A3B BF16 without restricting the component scope, and evaluate speed and answer quality.

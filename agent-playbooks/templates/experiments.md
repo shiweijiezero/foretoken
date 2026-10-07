@@ -4,9 +4,22 @@ English | [简体中文](experiments_zh.md)
 
 Keep related approaches and measurements together so that later iterations can build on earlier findings. An experiment describes an overall goal; an iteration explores an approach; a run is one performance or quality evaluation command.
 
+## Choose evaluations
+
+Choose evaluations for the current question rather than running every suite. Use the [experiment command reference](../../benchmarks/docs/recipes.md), replacing its output options with the `experiment` settings described below.
+
+| Question | Entry point | What to inspect |
+| --- | --- | --- |
+| Did latency, decode speed, or throughput improve? | [Performance evaluation](../../benchmarks/docs/perf/README.md), `foretoken perf` | Success count, latency distribution, TPOT, throughput, and actual output length |
+| Did answer quality change? | [Quality evaluation](../../benchmarks/docs/eval/README.md), `foretoken eval` | Scores, sample counts, scoring method, and individual answers |
+| Is time spent computing, communicating, or waiting? | [Profiling](../../benchmarks/docs/profile/README.md), `foretoken perf --profile` | Execution timeline; use separate unprofiled runs for speed comparisons |
+| What changes with concurrency, input length, or traffic? | [Sweep and workload configurations](../../benchmarks/docs/recipes.md) | Results at each workload point rather than only an overall average |
+
+For decode optimization, follow [Qwen decode optimization](../tasks/qwen-decode.md). Inspect command options with `foretoken perf --help` and `foretoken eval --help`.
+
 ## Organize the records
 
-Choose an experiment directory under `results/<goal>/<motivation>/` and a name for the current approach, such as `queue-aware-routing`. The example below shows two performance runs and one quality evaluation for that approach, plus the location for another approach.
+Choose an experiment directory under `results/<goal>/<motivation>/` and a name for the current approach, such as `queue-aware-routing`. The directory layout below contains two performance runs and one quality evaluation for that approach, plus the location for another approach.
 
 ```text
 results/<goal>/<motivation>/
@@ -45,6 +58,28 @@ This layout is produced by `--output experiment`. `context.json` records the com
 Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-dir results/<goal>/<motivation>`, and `--iteration <name>`. Replace the placeholders with the chosen goal, motivation, and iteration name. Reuse these options for the same approach; each command adds a run directory. Without `--iteration`, each command creates a new numbered iteration.
 
 The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
+
+## Inspect the results
+
+Find the run under `iterations/<name>/runs/`. The benchmark result directory printed by the runner is inside its `artifacts/`; a sweep command may contain several result directories.
+
+| Order | File | What to check |
+| --- | --- | --- |
+| 1 | `generated/context.json` | Completed, failed, or interrupted status; exit code, command, and source capture status |
+| 2 | `config.json` and `environment.json` in the result directory | Whether workloads, generation settings, and client and serving environments are comparable |
+| 3 | `metrics.json` in the result directory | Performance metrics or quality scores, together with success counts, sample counts, and scoring methods |
+| 4 | Performance `raw_output.json`, or quality `native/` | Raw responses, individual answers, and completion status to check the behavior behind aggregate metrics |
+| 5 | `generated/run.log` (with `quiet`), benchmark logs, or `evaluator.log` | Failure causes, preparation, and actual execution |
+
+For per-sample quality records, add `--log_samples` with lm-evaluation-harness. See [performance results](../../benchmarks/docs/perf/wandb.md) for resource and serving metric charts; log in before selecting W&B output.
+
+To redraw saved results, set `RESULT_DIR` to the concrete result directory printed by the runner, not the experiment root:
+
+```bash
+foretoken plot "$RESULT_DIR" --columns 2
+```
+
+This does not rerun inference. If a profile was captured, use `foretoken profile view` following the [viewing guide](../../benchmarks/docs/profile/README.md) to open the timeline. After inspecting results, write the notes described below.
 
 ## Add notes after each run
 
