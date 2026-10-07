@@ -15,7 +15,7 @@ We provide these playbooks to help developers and agents find references, conduc
 - References and shared experience: find and update references, and turn experimental findings into reusable guidance.
 - Behavior and attribution checks: examine actual model behavior, identify metric gaming, and determine whether gains come from the intended change.
 
-## Contents and use
+## Directory structure
 
 | Directory | Purpose |
 | --- | --- |
