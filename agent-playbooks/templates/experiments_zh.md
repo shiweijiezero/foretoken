@@ -6,14 +6,14 @@
 
 ## 选择评测
 
-每轮按问题选择评测，不必运行全部套件。具体命令见[实验命令参考](../../benchmarks/docs/recipes_zh.md)，使用其中的命令时将其输出选项改为本页的 `experiment` 设置。
+按本轮优化目标选择评测。具体命令见[实验命令参考](../../benchmarks/docs/recipes_zh.md)，使用其中的命令时将其输出选项改为本页的 `experiment` 设置。
 
-| 要回答的问题 | 使用入口 | 重点查看 |
+| 评测目的 | 工具与命令 | 查看内容 |
 | --- | --- | --- |
-| 延迟、解码速度或吞吐是否改善 | [性能评测](../../benchmarks/docs/perf/README_zh.md)，`foretoken perf` | 成功数、延迟分布、TPOT、吞吐及实际输出长度 |
-| 回答质量是否变化 | [质量评测](../../benchmarks/docs/eval/README_zh.md)，`foretoken eval` | 得分、样本数、评分方式和逐题回答 |
-| 时间花在计算、通信还是等待 | [性能剖析](../../benchmarks/docs/profile/README_zh.md)，`foretoken perf --profile` | 执行时间线；速度对比另用不带剖析的运行 |
-| 并发、输入长度或流量变化有何影响 | [参数扫描与负载配置](../../benchmarks/docs/recipes_zh.md) | 各负载点的结果，而非仅看总平均值 |
+| 比较延迟、解码速度和吞吐 | [性能评测](../../benchmarks/docs/perf/README_zh.md)，`foretoken perf` | 成功数、延迟分布、TPOT、吞吐及实际输出长度 |
+| 评估回答质量 | [质量评测](../../benchmarks/docs/eval/README_zh.md)，`foretoken eval` | 得分、样本数、评分方式和逐题回答 |
+| 定位计算、通信和等待开销 | [性能剖析](../../benchmarks/docs/profile/README_zh.md)，`foretoken perf --profile` | 执行时间线；速度对比另用不带剖析的运行 |
+| 比较不同并发、输入长度和流量下的表现 | [参数扫描与负载配置](../../benchmarks/docs/recipes_zh.md) | 各负载点的指标及变化趋势 |
 
 解码优化任务见[Qwen 解码速度优化](../tasks/qwen-decode_zh.md)。命令选项可用 `foretoken perf --help` 和 `foretoken eval --help` 查询。
 

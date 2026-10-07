@@ -6,14 +6,14 @@ Keep related approaches and measurements together so that later iterations can b
 
 ## Choose evaluations
 
-Choose evaluations for the current question rather than running every suite. Use the [experiment command reference](../../benchmarks/docs/recipes.md), replacing its output options with the `experiment` settings described below.
+Select evaluations for the current optimization goal. Use the [experiment command reference](../../benchmarks/docs/recipes.md), replacing its output options with the `experiment` settings described below.
 
-| Question | Entry point | What to inspect |
+| Evaluation goal | Tools and commands | Results to inspect |
 | --- | --- | --- |
-| Did latency, decode speed, or throughput improve? | [Performance evaluation](../../benchmarks/docs/perf/README.md), `foretoken perf` | Success count, latency distribution, TPOT, throughput, and actual output length |
-| Did answer quality change? | [Quality evaluation](../../benchmarks/docs/eval/README.md), `foretoken eval` | Scores, sample counts, scoring method, and individual answers |
-| Is time spent computing, communicating, or waiting? | [Profiling](../../benchmarks/docs/profile/README.md), `foretoken perf --profile` | Execution timeline; use separate unprofiled runs for speed comparisons |
-| What changes with concurrency, input length, or traffic? | [Sweep and workload configurations](../../benchmarks/docs/recipes.md) | Results at each workload point rather than only an overall average |
+| Compare latency, decode speed, and throughput | [Performance evaluation](../../benchmarks/docs/perf/README.md), `foretoken perf` | Success count, latency distribution, TPOT, throughput, and actual output length |
+| Evaluate answer quality | [Quality evaluation](../../benchmarks/docs/eval/README.md), `foretoken eval` | Scores, sample counts, scoring method, and individual answers |
+| Locate computation, communication, and waiting costs | [Profiling](../../benchmarks/docs/profile/README.md), `foretoken perf --profile` | Execution timeline; use separate unprofiled runs for speed comparisons |
+| Compare concurrency, input lengths, and traffic patterns | [Sweep and workload configurations](../../benchmarks/docs/recipes.md) | Metrics and trends across workload points |
 
 For decode optimization, follow [Qwen decode optimization](../tasks/qwen-decode.md). Inspect command options with `foretoken perf --help` and `foretoken eval --help`.
 
