@@ -93,20 +93,13 @@ Keep earlier explanations when adding runs, identifying each by its run name. Le
 
 ## At the end of each iteration
 
-1. Inspect each run's exit status, metrics, and model outputs. Link the records from `iterations/<name>/notes/iteration.md`; explain failed or interrupted runs and identify the evidence still available.
-2. Update that iteration note with the actual changes, differences from the reference results, whether the hypothesis was supported, and time spent investigating, designing, deploying, evaluating, and analyzing. If the evidence is insufficient, name the missing measurement.
-3. State and carry out the decision to retain, refine, or revert the iteration's changes. Record the resulting code and deployment state and the next question to test. Revert only changes made for this iteration.
-4. Update the experiment's `notes/experiment.md` with new or revised findings and a link to the iteration note. Preserve earlier run artifacts.
-5. When a finding is reusable, add the method and its applicable conditions to `guidance/`, or update the relevant `tasks/` playbook for task-specific procedures. Cite the supporting evidence.
-6. Clean up temporary environments, background tasks, and caches no longer needed by the iteration. Check ownership and active use first. Preserve results, source records, and resources needed by the next iteration, and state why retained resources are still needed in the iteration note.
+1. Summarize the runs in `iterations/<name>/notes/iteration.md`: whether they support the hypothesis, whether workload, precision, cache, or hardware differences affect the conclusion, and what remains unresolved. Optionally review the implementation and raw outputs for benchmark-specific shortcuts and changes in model behavior.
+2. Decide whether to retain, refine, or revert the iteration's changes. Record the resulting code and deployment state and the next question. Revert only changes made for this iteration.
+3. Update the experiment root's `notes/experiment.md` with new or revised findings and a link to the iteration note. Preserve the original run artifacts.
+4. When findings are reusable, add the knowledge and applicable conditions to `guidance/`, or task-specific methods to `tasks/`, citing evidence.
+5. Check ownership and active use before cleaning up temporary environments, background tasks, and caches no longer needed. Preserve experiment records and resources needed by the next iteration, noting why those resources are retained.
 
-Additional runs of the same approach update the same iteration note and add run records. Use a new iteration name when starting a different approach.
-
-## Explain the results
-
-State which hypothesis the measurements support or contradict, and what remains unresolved. Account for differences in workload, precision, cache state, or hardware when comparing results. Link the measurements and model outputs used to reach the conclusion.
-
-An optional final review can inspect the implementation and raw outputs for benchmark-specific shortcuts, changes in model behavior, and unsupported attribution of gains.
+Additional runs of the same approach update the existing iteration note. Use a new iteration name for a different approach.
 
 ## Track iteration time
 

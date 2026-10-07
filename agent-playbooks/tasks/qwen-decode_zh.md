@@ -26,23 +26,31 @@ foretoken perf "$MODEL_CONFIG" --dataset random \
 
 该负载使用 128 token 输入、512 token 输出和单请求并发，用于测量解码性能。[定长输出](../../benchmarks/docs/perf/random_zh.md)要求服务支持 `min_tokens`、`ignore_eos` 并返回输出用量。输入长度应按目标场景调整；同一组比较使用相同负载。
 
-## 分析与设计
+## 测量改动前的回答质量
 
-先看每输出 token 耗时（TPOT）、请求延迟、实际输出长度和成功数。需要定位瓶颈时，另跑一次[性能剖析](../../benchmarks/docs/profile/README_zh.md)，观察计算、通信和等待分别占用多少时间。剖析会增加开销，速度比较使用不带剖析的结果。
-
-根据证据提出假设，例如减少某段通信等待是否能降低 TPOT。设计具体改动和验证方法，不预先限定必须改引擎或路由。修改后重新部署，将 `ITERATION` 改为方案名称，再执行上面的同一负载。
-
-## 验证回答质量
-
-随机定长负载用于速度比较，回答质量另用真实任务验证。保持模型和思考设置一致，对改动前后分别运行 GSM8K：
+随机定长负载用于速度比较，回答质量另用真实任务验证。在修改代码前，继续使用 `ITERATION=baseline` 运行 GSM8K，保存参考评分和逐题回答：
 
 ```bash
 foretoken eval "$MODEL_CONFIG" --tasks gsm8k --limit 20 --log_samples \
+  --gen_kwargs max_gen_toks=4096 \
   --output experiment --output-dir "$EXPERIMENT" \
   --iteration "$ITERATION"
 ```
 
-根据模型的思考开销设置足够的生成预算，参数见[质量评测](../../benchmarks/docs/eval/README_zh.md)。检查最终回答和结束原因，区分预算耗尽、答案格式不符与答案错误。少量样本用于快速发现问题，需要更强结论时再扩大评测。
+生成预算为 4096 token；若仍因思考开销耗尽预算，调整后对参考方案和新方案使用相同设置，参数见[质量评测](../../benchmarks/docs/eval/README_zh.md)。检查最终回答和结束原因，区分预算耗尽、答案格式不符与答案错误。少量样本用于快速发现问题，需要更强结论时再扩大评测。
+
+## 设计、部署和复测
+
+先看每输出 token 耗时（TPOT）、请求延迟、实际输出长度和成功数。需要定位瓶颈时，另跑一次[性能剖析](../../benchmarks/docs/profile/README_zh.md)，观察计算、通信和等待分别占用多少时间。剖析会增加开销，速度比较使用不带剖析的结果。
+
+根据证据提出假设，例如减少某段通信等待是否能降低 TPOT。设计具体改动和验证方法，不预先限定必须改引擎或路由。为方案选择迭代名称，修改代码或配置后更新服务：
+
+```bash
+ITERATION=decode-candidate
+foretoken deploy "$MODEL_CONFIG" --timeout 30m
+```
+
+将 `decode-candidate` 换成方案名称。服务就绪后，保持 `EXPERIMENT` 不变，重新执行前面的 perf 和 eval 命令，不再执行 `ITERATION=baseline` 的赋值。新结果会归入该方案的迭代目录。
 
 ## 每次运行后
 

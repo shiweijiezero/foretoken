@@ -26,23 +26,31 @@ foretoken perf "$MODEL_CONFIG" --dataset random \
 
 The workload uses 128 input tokens, 512 output tokens, and one concurrent request to measure decode performance. [Fixed output lengths](../../benchmarks/docs/perf/random.md) require the service to support `min_tokens` and `ignore_eos` and report output usage. Adjust the input length for the target scenario, keeping the workload identical within a comparison.
 
-## Analyze and design
+## Measure reference answer quality
 
-Start with time per output token (TPOT), request latency, actual output length, and successful request count. To locate a bottleneck, run a separate [profile](../../benchmarks/docs/profile/README.md) and examine computation, communication, and waiting time. Profiling adds overhead; compare speed using runs without profiling.
-
-Form a hypothesis from the evidence, such as whether reducing a communication wait could lower TPOT. Design the change and its evaluation without assuming that the engine or router must be modified. Redeploy the change, set `ITERATION` to the approach name, and repeat the same workload above.
-
-## Check answer quality
-
-Use random fixed-length requests for speed comparisons and real tasks for answer quality. Run GSM8K before and after the change with the same model and thinking settings:
+Use random fixed-length requests for speed comparisons and real tasks for answer quality. Before changing the code, keep `ITERATION=baseline` and run GSM8K to retain reference scores and individual answers:
 
 ```bash
 foretoken eval "$MODEL_CONFIG" --tasks gsm8k --limit 20 --log_samples \
+  --gen_kwargs max_gen_toks=4096 \
   --output experiment --output-dir "$EXPERIMENT" \
   --iteration "$ITERATION"
 ```
 
-Allow sufficient generation budget for the model's thinking; see [quality evaluation](../../benchmarks/docs/eval/README.md) for parameters. Inspect final answers and finish reasons, distinguishing budget exhaustion, answer-format mismatches, and incorrect answers. A small sample helps find problems quickly; expand the evaluation when stronger evidence is needed.
+The generation budget is 4096 tokens. If thinking still exhausts it, adjust the budget and use identical settings for reference and candidate evaluations; see [quality evaluation](../../benchmarks/docs/eval/README.md) for parameters. Inspect final answers and finish reasons, distinguishing budget exhaustion, answer-format mismatches, and incorrect answers. A small sample helps find problems quickly; expand the evaluation when stronger evidence is needed.
+
+## Design, deploy, and measure again
+
+Start with time per output token (TPOT), request latency, actual output length, and successful request count. To locate a bottleneck, run a separate [profile](../../benchmarks/docs/profile/README.md) and examine computation, communication, and waiting time. Profiling adds overhead; compare speed using runs without profiling.
+
+Form a hypothesis from the evidence, such as whether reducing a communication wait could lower TPOT. Design the change and its evaluation without assuming that the engine or router must be modified. Choose an iteration name for the approach, change the code or configuration, and update the service:
+
+```bash
+ITERATION=decode-candidate
+foretoken deploy "$MODEL_CONFIG" --timeout 30m
+```
+
+Replace `decode-candidate` with the approach name. Once the service is ready, keep `EXPERIMENT` unchanged and repeat the perf and eval commands above without repeating the `ITERATION=baseline` assignment. New results belong to the approach-specific iteration.
 
 ## After each run
 
