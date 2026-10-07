@@ -19,9 +19,9 @@ We provide these playbooks to help developers and agents find references, conduc
 
 | Directory | Purpose |
 | --- | --- |
-| [templates/](templates/README.md) | Templates to refer to when writing experiment and iteration notes |
-| [guidance/](guidance/README.md) | References and methods for understanding code, measuring behavior, and diagnosing problems |
-| [tasks/](tasks/README.md) | Goals, instructions, and result interpretation for specific optimization tasks |
+| [templates/](templates/README.md) | Experiment directory layout and reference templates for records |
+| [guidance/](guidance/README.md) | Reference material and knowledge for inference-system optimization |
+| [tasks/](tasks/README.md) | Common optimization tasks with goals, exploration directions, and evaluation methods |
 
 ## Steps
 
@@ -31,6 +31,6 @@ We provide these playbooks to help developers and agents find references, conduc
 4. Analyze the causes and opportunities for improvement, develop your own hypotheses, and design an approach. State the expected effects and choose workloads and metrics that test those hypotheses. If comparable results are unavailable, measure the service before making the change.
 5. Change the code or configuration and update the inference service through the [source deployment workflow](../docs/custom-deployment.md).
 6. Run the selected [evaluations](../benchmarks/README.md) and compare results before and after the change. Use model outputs, logs, and profiling to determine what accounts for the differences.
-7. Record the reasoning, changes, results, and time spent for this iteration. Refer to the [note templates](templates/README.md) and retain execution evidence following the [experiment guidance](guidance/experiments.md).
+7. After each evaluation, the developer or agent adds the run link, changes, result interpretation, and time spent to `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. At the end of the iteration, update the experiment root’s `notes/experiment.md`. Refer to the [note templates](templates/README.md) and [record layout](templates/experiments.md).
 8. Keep, refine, or revert the change, then choose the next question to investigate. Add reusable findings to the guidance and references.
 9. Optional: review the implementation and raw results for benchmark-specific shortcuts, changes in model behavior, or differences in comparison conditions, and check whether the claimed gains are attributable to the intended change.

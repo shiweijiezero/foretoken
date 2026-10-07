@@ -2,7 +2,7 @@
 
 [English](iteration-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。随方案推进更新说明，支撑证据引用本轮 `../runs/` 中的记录。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。每次 perf/eval 结束后，由用户或 Agent 在这份结果说明中追加本次运行的测量与解释，支撑证据引用本轮 `../runs/` 中的记录。
 
 ## 问题与分析
 
@@ -18,7 +18,7 @@
 
 ## 测量与解释
 
-说明负载和样本量的选择依据，链接每次运行，说明失败或中断对结论的影响。对比参考结果，写明假设是否得到支持，以及其他运行条件能否解释差异。
+按运行名称分别追加说明：链接 `../runs/<run>/` 中的结果，写明本次负载和样本量的选择依据、相对参考结果的变化，以及假设是否得到支持。失败或中断时写清原因及其对结论的影响；有其他可能成因时一并说明。
 
 ## 时间花费
 

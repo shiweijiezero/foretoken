@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Update it as the approach develops and link supporting records under `../runs/`.
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. After each perf/eval command, the developer or agent appends the measurements and interpretation to this note, linking supporting records under `../runs/`.
 
 ## Question and analysis
 
@@ -18,7 +18,7 @@ After implementation, describe the actual changes and link source and configurat
 
 ## Measurements and interpretation
 
-Explain the workload and sample-size choices. Link each run and explain how failures or interruptions affect the conclusions. Compare against the reference results, state whether the hypothesis was supported, and consider other conditions that could explain the differences.
+Append a separate explanation under each run name: link results under `../runs/<run>/`, explain workload and sample-size choices, compare with the reference result, and state whether the hypothesis was supported. Explain failures or interruptions and their effect on the conclusion, including other possible causes of the observed differences.
 
 ## Time spent
 

@@ -46,6 +46,16 @@ Run `foretoken perf` or `foretoken eval` with `--output experiment`, `--output-d
 
 The command creates blank note templates only when they do not exist. Developers or agents fill them in; subsequent runs do not overwrite the notes. Run from the checkout containing the changes to capture its source state; record the source of separately built serving code in the notes.
 
+## Add notes after each run
+
+After the command finishes, open `iterations/<name>/notes/iteration.md`. The developer or agent appends an explanation of the run there, rather than editing the reference template in this directory. Include:
+
+- A link to the run and the change or hypothesis it tested.
+- What differed from the reference result, whether model outputs met expectations, and what the evidence supports.
+- The cause and next action for a failure, interruption, or inconclusive result, plus time spent on work not recorded by the command.
+
+Keep earlier explanations when adding runs, identifying each by its run name. Leave raw metrics and logs in their run directories and link to them from the notes. Commands do not fill in this analysis.
+
 ## At the end of each iteration
 
 1. Inspect each run's exit status, metrics, and model outputs. Link the records from `iterations/<name>/notes/iteration.md`; explain failed or interrupted runs and identify the evidence still available.

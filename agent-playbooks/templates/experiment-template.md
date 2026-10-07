@@ -18,7 +18,7 @@ List the models, workloads, and metrics for comparison. State which conditions m
 
 ## Findings
 
-Add new or revised findings with links to the supporting iteration notes and results.
+At the end of each iteration, the developer or agent adds new or revised findings to this experiment summary, linking `../iterations/<name>/notes/iteration.md` and supporting results.
 
 ## Next questions
 

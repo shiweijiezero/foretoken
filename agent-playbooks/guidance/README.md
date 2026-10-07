@@ -1,9 +1,7 @@
-# Guidance
+# References and Knowledge
 
 English | [简体中文](README_zh.md)
 
-References and reusable methods for experiments, measurement, and diagnosis.
+Reference material for understanding and improving inference systems: research papers, engineering practice, architecture explanations, and lessons from experiments.
 
-- [Experiment records](experiments.md): organize iterations and runs, retain evidence, and track time spent. Follow its [completion steps](experiments.md#at-the-end-of-each-iteration) after each iteration.
-
-When adding a method, explain the problem it solves, applicable conditions, instructions, and supporting evidence. Keep individual experiment data under `results/` and reference it from the guide.
+When adding a reference, explain the problem it addresses, the main idea, and its applicable conditions. Link the original source and distinguish reported results from findings verified in Foretoken.

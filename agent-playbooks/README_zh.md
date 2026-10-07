@@ -19,9 +19,9 @@
 
 | 目录 | 用途 |
 | --- | --- |
-| [templates/](templates/README_zh.md) | 供编写实验与迭代记录时参考的模板 |
-| [guidance/](guidance/README_zh.md) | 整理参考资料，以及理解代码、测量和诊断的方法 |
-| [tasks/](tasks/README_zh.md) | 按具体优化任务组织目标、操作和结果分析方法 |
+| [templates/](templates/README_zh.md) | 实验目录结构及记录模板 |
+| [guidance/](guidance/README_zh.md) | 推理系统优化所需的参考资料与知识 |
+| [tasks/](tasks/README_zh.md) | 常用优化任务的目标、探索方向与验证方法 |
 
 ## 使用步骤
 
@@ -31,6 +31,6 @@
 4. 分析问题成因与改进空间，提出自己的假设并设计方案，说明预期效果，选择能验证假设的负载与指标。缺少可比结果时，先测量改动前的表现。
 5. 修改代码或配置，按[源码部署流程](../docs/custom-deployment_zh.md)更新推理服务。
 6. 执行选定的[评测](../benchmarks/README_zh.md)，比较改动前后的结果，结合模型输出、日志和性能剖析判断差异来源。
-7. 记录本轮思路、改动、结果和耗时，参考[记录模板](templates/README_zh.md)，按[实验指导](guidance/experiments_zh.md)保存运行证据。
+7. 每次评测结束后，由用户或 Agent 在 `results/<目标>/<动机>/iterations/<名称>/notes/iteration.md` 中追加运行链接、改动说明、结果解释和耗时；本轮结束后更新实验根目录的 `notes/experiment.md`。写法参考[记录模板](templates/README_zh.md)，目录见[实验记录](templates/experiments_zh.md)。
 8. 根据结果保留、调整或回退改动，再选择下一轮要解决的问题。将可复用的发现补充到指导和参考资料中。
 9. 可选：复核实现和原始结果，检查针对测试的取巧实现、模型行为变化或比较条件差异，确认收益归因是否成立。
