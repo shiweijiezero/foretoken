@@ -1,34 +1,33 @@
 # Iteration Notes
 
-Refer to this template when writing `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Continue editing the note as the work progresses. Link automatically generated records under `../runs/`.
+English | [简体中文](iteration-template_zh.md)
 
-## Question and reference
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Update this note throughout the iteration and link run records under `../runs/`.
 
-What does this trial investigate? Which earlier result or reference motivates it?
+## Question and analysis
 
-## Change and expectation
+What does this iteration investigate? What do the code, observations, prior results, or references suggest about the cause?
 
-What mechanism changed, and what outcome is expected? Link the relevant code snapshot or configuration.
+## Hypothesis and design
 
-## Experiment choice
+What is the proposed improvement, and why should it work? Describe the design, expected effects, and measurements that would support or contradict the hypothesis.
 
-Why is this workload and sample size useful for the question? Link the commands and results actually used.
+## Implementation and deployment
 
-## Interpretation
+What actually changed, and which version was deployed? Link source and configuration records, explaining material departures from the design.
 
-What do the results establish? Explain whether the change, workload, cache state, or another condition accounts for the observed difference.
+## Measurements and interpretation
+
+Why were this workload and sample size chosen? Link the runs, compare results, and explain what they establish. Account for other conditions that could explain the differences.
 
 ## Time spent
 
-Link measured run timings. Add work outside those measurements below and label estimates; do not add overlapping durations together.
-
-| Work | Duration or record link | Explanation |
-| --- | --- | --- |
-| References and code reading | | |
-| Implementation | | |
-| Environment and deployment | | |
-| Analysis | | |
+Link measured durations and label estimates for investigation, design, implementation, deployment, evaluation, and analysis. Keep overlapping durations separate.
 
 ## Decision
 
-What should be kept, reverted, or tried next? Which finding is useful enough to add to the shared guidance?
+What should be kept, refined, or reverted? What should the next iteration test, and which findings are useful for shared guidance?
+
+## Optional behavior and attribution review
+
+What did a review of the implementation and raw outputs establish about benchmark-specific shortcuts, model behavior, and the source of the gains? Link the evidence and any unresolved questions.

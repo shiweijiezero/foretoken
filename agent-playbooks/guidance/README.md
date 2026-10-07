@@ -2,6 +2,8 @@
 
 English | [简体中文](README_zh.md)
 
-References and reusable methods for designing experiments, understanding code, measuring behavior, diagnosing problems, and attributing results.
+Use these references and methods to investigate an optimization problem and design an experiment.
 
-- [Experiment guidance](experiments.md): organize experiment records, link execution evidence, and record time spent.
+- [Experiment records](experiments.md): organize iterations and runs, retain evidence, and track time spent.
+
+Instructions for a specific optimization belong in [tasks](../tasks/README.md); examples for writing notes are in [templates](../templates/README.md).
