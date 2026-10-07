@@ -129,6 +129,9 @@ RUN apt-get update \
       libyaml-cpp-dev libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Direct dispatch avoids the default SDK's GLM graph replay slowdown.
+ENV MACA_DIRECT_DISPATCH=1
+
 # Let Mooncake use verbs for inter-node transfers instead of MACA accelerator transport.
 ENV MC_MACA_HOST_TRANSPORT=1 \
     VIRTUAL_ENV=/opt/foretoken-vllm/.venv \
