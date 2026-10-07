@@ -2,7 +2,7 @@
 
 [English](layered-prefill.md) | 简体中文
 
-在预填充与解码共置的 MoE 服务中，按连续层组推进预填充，可以减少小 token 分块反复读取专家权重的开销，同时给已有请求保留解码机会。该方法来自 Layered Prefill 研究，有公开实现；Foretoken 尚未实测。
+在预填充与解码共置的 MoE 服务中，按连续层组推进预填充，可以减少小 token 分块反复读取专家权重的开销，同时给已有请求保留解码机会。
 
 ## 思路
 
@@ -15,7 +15,7 @@ Layered prefill 改变调度维度：一轮让完整 prompt 经过一组连续�
 按层组推进：  完整 prompt → 第 1 组层；完整 prompt → 第 2 组层
 ```
 
-在某个 MoE 层内一次处理更多 prompt tokens，可让同一批专家权重服务更多 tokens，减少分块造成的重复加载。超长 prompt 仍可切成较大的 token chunks，再在每个 chunk 内按层组推进；这不是简单地关闭 token 分块。
+在某个 MoE 层内一次处理更多 prompt tokens，可让同一批专家权重服务更多 tokens，减少分块造成的重复加载。超长 prompt 仍可切成较大的 token chunks，再在每个 chunk 内按层组推进。
 
 ## 适用场景
 
@@ -27,19 +27,19 @@ Layered prefill 改变调度维度：一轮让完整 prompt 经过一组连续�
 
 ## 实现线索
 
-[公开实现](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)基于 Nano-vLLM，提供层组调度及基准命令。它不是 Foretoken 或 vLLM 的现成配置项。
+[公开实现](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)基于 Nano-vLLM，提供层组调度及基准命令。
 
 核对日期为 2026-10-07。在 vLLM `1be36283678a9a94fc8fdaad6c95c2896d6b4015` 的[调度输出](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/v1/core/sched/output.py)中，工作量按每请求 token 数表达；[Qwen3 MoE 执行路径](https://github.com/vllm-project/vllm/blob/1be36283678a9a94fc8fdaad6c95c2896d6b4015/vllm/model_executor/models/qwen3_moe.py)遍历当前流水线阶段所属层。已审阅的路径没有跨轮保存请求层组进度的接口，不能通过修改 token budget 直接实现该机制。
 
-迁移时需要设计以下执行状态；这是根据机制推导的工程工作，不是已完成的 Foretoken 能力：
+迁移时需要设计以下执行状态：
 
 1. 调度器为 prefill 请求记录当前层组和 prompt/chunk 范围，区分“本组完成”与“全部 prefill 完成”。
 2. Runner 和模型 forward 支持执行指定层组，并跨轮保存 hidden states、所需 residual、位置与 KV 映射。只有最后一组完成后才能产出首 token。
 3. 重新处理抢占、取消、批次重组和 CUDA Graph 的状态与形状约束。中间状态会占用显存，层组过大也可能拉长 decode 等待。
 
-先用相同请求轨迹比较 token 分块与层组调度，观察 TTFT、token 间隔尾延迟、显存峰值及专家权重读取。对比时保持模型和采样条件一致，并检查输出一致性。收益应在混合服务负载下验证，不能用 MoE 单算子时间代替端到端结论。
+先用相同请求轨迹比较 token 分块与层组调度，观察 TTFT、token 间隔尾延迟、显存峰值及专家权重读取。对比时保持模型和采样条件一致，并检查输出一致性。在混合服务负载下测量端到端收益。
 
 ## 参考资料
 
-- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill，v2](https://arxiv.org/html/2510.08055v2)：主实验使用 2 张 H100 80GB、NVLink、TP2，测试 Qwen3-30B-A3B 和 GPT-OSS-20B 的 ShareGPT/arXiv 混合服务负载。作者报告专家权重加载计数分别下降 12% 和 39%；这是论文中的加载字节统计，不等同于硬件测得的全部 HBM 流量。
-- [Layered Prefill 实现与复现说明](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)：包含依赖、FlashAttention 补丁、服务与测量命令。上述结果来自论文，尚未在 Foretoken、Qwen3.5 或 MetaX 上复现。
+- [From Tokens to Layers: Redefining Stall-Free Scheduling for MoE Serving with Layered Prefill，v2](https://arxiv.org/html/2510.08055v2)：主实验使用 2 张 H100 80GB、NVLink、TP2，测试 Qwen3-30B-A3B 和 GPT-OSS-20B 的 ShareGPT/arXiv 混合服务负载。作者按专家权重加载字节数统计，报告两类负载分别下降 12% 和 39%。
+- [Layered Prefill 实现与复现说明](https://github.com/scale-snu/layered-prefill/tree/053f80e5201a7c0ab56e468e3d578907a2ca9cc3)：包含依赖、FlashAttention 补丁、服务与测量命令。
