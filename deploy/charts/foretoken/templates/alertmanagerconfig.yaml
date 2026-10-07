@@ -26,6 +26,17 @@ spec:
         matchType: "="
         value: foretoken
     receiver: slack
+    routes:
+      - receiver: slack
+        matchers:
+          - name: alertname
+            matchType: "=~"
+            value: '^ForetokenAdmission.*$'
+        groupBy:
+          - namespace
+          - frontend_service
+          - alertname
+          - stage
   receivers:
     - name: slack
       slackConfigs:

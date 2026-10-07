@@ -57,6 +57,49 @@ spec:
             description: FrontendServiceSpec defines the desired state of a frontend
               service.
             properties:
+              admission:
+                description: Admission is omitted to allow unrestricted request execution.
+                properties:
+                  algorithm:
+                    default: allow_all
+                    minLength: 1
+                    type: string
+                  parameters:
+                    description: AdmissionParameters sets process-local concurrency
+                      and queue limits for the frontend.
+                    properties:
+                      maxConcurrentRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                      maxQueuedRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 0
+                        type: integer
+                      queueTimeout:
+                        description: QueueTimeout limits queueing within the remaining
+                          request budget.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    required:
+                    - maxConcurrentRequests
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: concurrency admission requires parameters
+                  rule: self.algorithm != 'concurrency' || has(self.parameters)
+                - message: allow_all admission accepts no parameters
+                  rule: self.algorithm != 'allow_all' || !has(self.parameters)
+              deploymentRevision:
+                description: DeploymentRevision requests current platform applications
+                  on an explicit deployment.
+                type: string
               hostname:
                 description: Hostname is required when the platform exposes frontends
                   through a Gateway.
@@ -76,10 +119,93 @@ spec:
                           enum:
                           - ForetokenMetricsTargetDown
                           - ForetokenFrontendHTTPResponseStart5xxRatioHigh
+                          - ForetokenAdmissionCapacityRejectionRatioHigh
+                          - ForetokenAdmissionTimeoutRatioHigh
+                          - ForetokenAdmissionAdmittedQueueP95High
+                          - ForetokenAdmissionTelemetryMissing
                           type: string
+                        maxItems: 6
                         type: array
                         x-kubernetes-list-type: set
+                      thresholds:
+                        default: {}
+                        description: FrontendAlertThresholds configures selected frontend
+                          rules without enabling them.
+                        properties:
+                          admission:
+                            default: {}
+                            description: |-
+                              AdmissionAlertThresholds sets HTTP admission alert tolerances for one service or each Pod.
+                              Business thresholds have no defaults; operation defaults are applied by API admission.
+                            properties:
+                              admittedQueueP95Seconds:
+                                exclusiveMinimum: true
+                                minimum: 0
+                                type: number
+                              capacityRejectionRatio:
+                                maximum: 1
+                                minimum: 0
+                                type: number
+                              for:
+                                allOf:
+                                - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                                - pattern: ^([0-9]+(s|m|h))+$
+                                default: 5m
+                                description: Duration is a positive Go-style duration.
+                                minLength: 2
+                                type: string
+                                x-kubernetes-validations:
+                                - message: must be a positive duration
+                                  rule: duration(self) > duration('0s')
+                              minQueuedAdmissionRate:
+                                exclusiveMinimum: true
+                                minimum: 0
+                                type: number
+                              minResultRate:
+                                exclusiveMinimum: true
+                                minimum: 0
+                                type: number
+                              scope:
+                                default: service
+                                enum:
+                                - service
+                                - pod
+                                type: string
+                              timeoutRatio:
+                                maximum: 1
+                                minimum: 0
+                                type: number
+                              window:
+                                allOf:
+                                - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                                - pattern: ^([0-9]+(s|m|h))+$
+                                default: 1m
+                                description: Duration is a positive Go-style duration.
+                                minLength: 2
+                                type: string
+                                x-kubernetes-validations:
+                                - message: must be a positive duration
+                                  rule: duration(self) > duration('0s')
+                            type: object
+                        type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: the capacity rejection alert requires capacityRejectionRatio
+                        and minResultRate
+                      rule: '!has(self.rules) || !self.rules.exists(r, r == ''ForetokenAdmissionCapacityRejectionRatioHigh'')
+                        || (has(self.thresholds) && has(self.thresholds.admission)
+                        && has(self.thresholds.admission.capacityRejectionRatio) &&
+                        has(self.thresholds.admission.minResultRate))'
+                    - message: the timeout alert requires timeoutRatio and minResultRate
+                      rule: '!has(self.rules) || !self.rules.exists(r, r == ''ForetokenAdmissionTimeoutRatioHigh'')
+                        || (has(self.thresholds) && has(self.thresholds.admission)
+                        && has(self.thresholds.admission.timeoutRatio) && has(self.thresholds.admission.minResultRate))'
+                    - message: the queue latency alert requires admittedQueueP95Seconds
+                        and minQueuedAdmissionRate
+                      rule: '!has(self.rules) || !self.rules.exists(r, r == ''ForetokenAdmissionAdmittedQueueP95High'')
+                        || (has(self.thresholds) && has(self.thresholds.admission)
+                        && has(self.thresholds.admission.admittedQueueP95Seconds)
+                        && has(self.thresholds.admission.minQueuedAdmissionRate))'
                 type: object
               replicas:
                 default: 1
@@ -276,6 +402,27 @@ spec:
             description: FrontendServiceStatus defines the observed state of a frontend
               service.
             properties:
+              application:
+                description: Application retains the selected frontend environment
+                  and files across workload recovery.
+                properties:
+                  applicationURL:
+                    type: string
+                  deploymentRevision:
+                    type: string
+                  image:
+                    type: string
+                  imageProfile:
+                    description: ImageProfile distinguishes serving, Omni and diagnostic
+                      environments during selection.
+                    type: string
+                  sourceRevision:
+                    description: SourceRevision retains the admitted source intent
+                      independently of source-mode defaults.
+                    type: string
+                required:
+                - image
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

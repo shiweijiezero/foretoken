@@ -1,0 +1,162 @@
+--- a/vllm_metax/registry/custom_ops/__init__.py
++++ b/vllm_metax/registry/custom_ops/__init__.py
+@@ -1,4 +1,4 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # 2026 - Modified by MetaX Integrated Circuits (Shanghai) Co., Ltd. All Rights Reserved.
+-from . import activation, layernorm  # noqa: F401
++from . import activation, layernorm, mhc  # noqa: F401
+ from . import layers  # noqa: F401
+--- /dev/null
++++ b/vllm_metax/registry/custom_ops/mhc.py
+@@ -0,0 +1,151 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
++"""MetaX mHC operators using compiled upstream reference arithmetic."""
++
++import torch
++from vllm.model_executor.kernels.mhc.torch import mhc_post_torch, mhc_pre_torch
++from vllm.model_executor.layers.mhc import (
++    MHCFusedPostPreOp,
++    MHCPostOp,
++    MHCPreOp,
++    _apply_mhc_norm,
++)
++
++# Share compilation across layers and let Dynamo generalize changing token counts.
++# Fixed mixing dimensions remain available for fusion; the runner owns CUDA graphs.
++_pre_compiled = torch.compile(
++    mhc_pre_torch,
++    fullgraph=True,
++    options={"triton.cudagraphs": False},
++)
++_post_compiled = torch.compile(
++    mhc_post_torch,
++    fullgraph=True,
++    options={"triton.cudagraphs": False},
++)
++
++
++def _pre_with_norm(
++    residual: torch.Tensor,
++    fn: torch.Tensor,
++    hc_scale: torch.Tensor,
++    hc_base: torch.Tensor,
++    rms_eps: float,
++    hc_pre_eps: float,
++    hc_sinkhorn_eps: float,
++    hc_post_mult_value: float,
++    sinkhorn_repeat: int,
++    norm_weight: torch.Tensor | None,
++    norm_eps: float,
++) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
++    """Return the upstream pre-mix outputs and normalize its BF16 layer input."""
++    post_mix, comb_mix, layer_input = _pre_compiled(
++        residual,
++        fn,
++        hc_scale,
++        hc_base,
++        rms_eps,
++        hc_pre_eps,
++        hc_sinkhorn_eps,
++        hc_post_mult_value,
++        sinkhorn_repeat,
++    )
++    return post_mix, comb_mix, _apply_mhc_norm(layer_input, norm_weight, norm_eps)
++
++
++@MHCPreOp.register_oot
++class MacaMHCPreOp(MHCPreOp):
++    """Provide MetaX workers with locally compiled mHC pre arithmetic."""
++
++    def forward_oot(
++        self,
++        residual: torch.Tensor,
++        fn: torch.Tensor,
++        hc_scale: torch.Tensor,
++        hc_base: torch.Tensor,
++        rms_eps: float,
++        hc_pre_eps: float,
++        hc_sinkhorn_eps: float,
++        hc_post_mult_value: float,
++        sinkhorn_repeat: int,
++        n_splits: int = 1,
++        norm_weight: torch.Tensor | None = None,
++        norm_eps: float = 0.0,
++    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
++        """Return pre-mix coefficients and the normalized layer input for MetaX."""
++        return _pre_with_norm(
++            residual,
++            fn,
++            hc_scale,
++            hc_base,
++            rms_eps,
++            hc_pre_eps,
++            hc_sinkhorn_eps,
++            hc_post_mult_value,
++            sinkhorn_repeat,
++            norm_weight,
++            norm_eps,
++        )
++
++
++@MHCPostOp.register_oot
++class MacaMHCPostOp(MHCPostOp):
++    """Provide MetaX workers with locally compiled mHC residual combination."""
++
++    def forward_oot(
++        self,
++        x: torch.Tensor,
++        residual: torch.Tensor,
++        post_layer_mix: torch.Tensor,
++        comb_res_mix: torch.Tensor,
++    ) -> torch.Tensor:
++        """Return the BF16 residual update for the following mHC stage."""
++        return _post_compiled(x, residual, post_layer_mix, comb_res_mix)
++
++
++@MHCFusedPostPreOp.register_oot
++class MacaMHCFusedPostPreOp(MHCFusedPostPreOp):
++    """Compose compiled post and pre operations at the MetaX mHC seam."""
++
++    def forward_oot(
++        self,
++        x: torch.Tensor,
++        residual: torch.Tensor,
++        post_layer_mix: torch.Tensor,
++        comb_res_mix: torch.Tensor,
++        fn: torch.Tensor,
++        hc_scale: torch.Tensor,
++        hc_base: torch.Tensor,
++        rms_eps: float,
++        hc_pre_eps: float,
++        hc_sinkhorn_eps: float,
++        hc_post_mult_value: float,
++        sinkhorn_repeat: int,
++        n_splits: int = 1,
++        tile_n: int = 1,
++        norm_weight: torch.Tensor | None = None,
++        norm_eps: float = 0.0,
++    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
++        """Return updated residual state, pre-mix coefficients and normalized input."""
++        # Keep the reference BF16 materialization between post and pre.
++        residual_cur = _post_compiled(x, residual, post_layer_mix, comb_res_mix)
++        post_mix, comb_mix, layer_input = _pre_with_norm(
++            residual_cur,
++            fn,
++            hc_scale,
++            hc_base,
++            rms_eps,
++            hc_pre_eps,
++            hc_sinkhorn_eps,
++            hc_post_mult_value,
++            sinkhorn_repeat,
++            norm_weight,
++            norm_eps,
++        )
++        return residual_cur, post_mix, comb_mix, layer_input
++
++
++# OOT lookup uses class names; keep the original custom-op enable/disable selectors.
++MacaMHCPreOp.name = MHCPreOp.name
++MacaMHCPostOp.name = MHCPostOp.name
++MacaMHCFusedPostPreOp.name = MHCFusedPostPreOp.name

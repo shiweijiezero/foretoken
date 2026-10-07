@@ -115,6 +115,23 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
 
+## 配置准入规则
+
+准入规则控制文本生成和 tokenization 的并发与排队，默认不限流（`allow_all`）。例如，在 `FrontendService` 中配置每个前端副本最多同时处理 64 个候选：
+
+```yaml
+spec:
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
+```
+
+并发上限按实际负载选择，批量请求按输出候选数计数。需要排队时，在 `parameters` 下添加 `maxQueuedRequests`，并可用 `queueTimeout` 设置等待时限。
+
+查看准入结果见[可观测性](../../observability/README_zh.md)，新增算法见[开发准入规则](../../docs/development/admission-rules_zh.md)。
+
+
 ## 运维
 
 使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。

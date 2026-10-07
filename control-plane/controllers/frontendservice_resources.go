@@ -85,9 +85,18 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
+	if frontend.Spec.Admission != nil {
+		admission, err := json.Marshal(frontend.Spec.Admission)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("encode frontend admission: %w", err)
+		}
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_ADMISSION", Value: string(admission)})
+	}
 	var annotations map[string]string
+	if profile.ApplicationURL != "" {
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
+	}
 	if profile.SourceRevision != "" {
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: runtimeconfig.SourceDirectory(cacheMountPath, profile.SourceRevision)})
 		annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: profile.SourceRevision}
 	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
@@ -180,6 +189,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		securityContext.RunAsUser = &cache.DirectoryOwner.UID
 		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
 	}
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

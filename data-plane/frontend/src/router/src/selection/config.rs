@@ -167,6 +167,7 @@ pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
 
 /// Configured algorithms selected for each Router pipeline stage.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouterPipelineConfig {
     /// Filter used before scoring.
     #[serde(default)]
@@ -180,7 +181,7 @@ pub struct RouterPipelineConfig {
 }
 
 impl RouterPipelineConfig {
-    /// Builds the selected Filter, Scorer, and Picker implementations compiled into this binary.
+    /// Builds the selected target-selection algorithms compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
         let filter = filter_descriptor(self.filter.algorithm.as_str())?;
@@ -220,11 +221,6 @@ impl RouterPipelineConfig {
             RouterPipeline::new(configured_filter, configured_scorer, configured_picker);
         pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
         Ok(pipeline)
-    }
-
-    /// Validates all compiled descriptors and configured names before serving begins.
-    pub fn validate(&self) -> Result<(), RouterPipelineConfigError> {
-        self.build().map(|_| ())
     }
 }
 
@@ -303,8 +299,8 @@ fn validate_descriptor_names<'a>(
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
-    /// The selected scorer rejected its parameters.
-    #[error("invalid parameters for scorer {name:?}: {message}")]
+    /// The selected router algorithm rejected its parameters.
+    #[error("invalid parameters for router algorithm {name:?}: {message}")]
     InvalidParameters { name: String, message: String },
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]

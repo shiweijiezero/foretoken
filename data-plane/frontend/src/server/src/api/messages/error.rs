@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::runtime::GenerationError;
 
 /// A protocol failure returned before headers or encoded as an SSE error event.
-pub(super) struct AnthropicApiError {
+pub(crate) struct AnthropicApiError {
     pub status: StatusCode,
     pub kind: &'static str,
     pub message: String,
@@ -47,11 +47,17 @@ impl AnthropicApiError {
 impl From<GenerationError> for AnthropicApiError {
     fn from(error: GenerationError) -> Self {
         let (status, kind) = match error {
-            GenerationError::InvalidRequest | GenerationError::BackendRejected => {
+            GenerationError::InvalidRequest
+            | GenerationError::BackendRejected
+            | GenerationError::AdmissionCapacityExceeded => {
                 (StatusCode::BAD_REQUEST, "invalid_request_error")
             }
             GenerationError::ModelNotFound => (StatusCode::NOT_FOUND, "not_found_error"),
-            GenerationError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "overloaded_error"),
+            GenerationError::Unavailable
+            | GenerationError::Overloaded
+            | GenerationError::QueueTimeout => {
+                (StatusCode::SERVICE_UNAVAILABLE, "overloaded_error")
+            }
             GenerationError::DeadlineExceeded => (StatusCode::GATEWAY_TIMEOUT, "api_error"),
             GenerationError::BackendProtocol | GenerationError::RequestFailed => {
                 (StatusCode::BAD_GATEWAY, "api_error")

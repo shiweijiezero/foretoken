@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixUnavailableReason};
 
-/// Request information available to every routing algorithm stage.
+/// Preprocessed request information available to the target-selection stages.
 #[derive(Clone)]
 pub struct RouterRequest {
     /// Requested logical model name.

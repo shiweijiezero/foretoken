@@ -43,6 +43,37 @@ type RouterStage struct {
 	Parameters *runtime.RawExtension `json:"parameters,omitempty"`
 }
 
+// AdmissionParameters sets process-local concurrency and queue limits for the frontend.
+type AdmissionParameters struct {
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+
+	// +optional
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxQueuedRequests uint32 `json:"maxQueuedRequests,omitempty"`
+
+	// QueueTimeout limits queueing within the remaining request budget.
+	// +optional
+	QueueTimeout Duration `json:"queueTimeout,omitempty"`
+}
+
+// AdmissionConfig selects a request admission rule and its parameters.
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'concurrency' || has(self.parameters)",message="concurrency admission requires parameters"
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'allow_all' || !has(self.parameters)",message="allow_all admission accepts no parameters"
+type AdmissionConfig struct {
+	// +optional
+	// +kubebuilder:default=allow_all
+	// +kubebuilder:validation:MinLength=1
+	Algorithm string `json:"algorithm,omitempty"`
+
+	// +optional
+	Parameters *AdmissionParameters `json:"parameters,omitempty"`
+}
+
 // RouterPipeline selects each independently composable routing algorithm stage.
 type RouterPipeline struct {
 	// +kubebuilder:default={algorithm:allow_all,parameters:{}}
@@ -67,6 +98,10 @@ type VideoTaskStorage struct {
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
@@ -78,6 +113,10 @@ type FrontendServiceSpec struct {
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
+
+	// Admission is omitted to allow unrestricted request execution.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
 
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
@@ -96,6 +135,10 @@ type FrontendServiceSpec struct {
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// Application retains the selected frontend environment and files across workload recovery.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

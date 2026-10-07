@@ -6,5 +6,7 @@
 !data-plane/
 !data-plane/**
 data-plane/**/.git
+# Python adapters belong to the model-server image, not the frontend build.
+data-plane/model-server/python/
 data-plane/target/
 data-plane/**/target/

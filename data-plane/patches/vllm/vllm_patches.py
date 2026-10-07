@@ -63,19 +63,28 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
 
 
 def _patch_content_present(directory: Path, patch: Path) -> bool:
-    """Recognize a completed patch after a later patch changed its context lines."""
+    """Recognize applied hunks whose trailing context changed in a later patch."""
     target = None
-    additions: dict[Path, list[str]] = {}
+    hunks: list[tuple[Path, list[str]]] = []
+    last_additions: list[int] = []
     for line in patch.read_text().splitlines():
         if line.startswith("+++ b/"):
             target = Path(line.removeprefix("+++ b/"))
-            additions.setdefault(target, [])
-        elif target is not None and line.startswith("+") and not line.startswith("+++"):
-            additions[target].append(line[1:])
+        elif line.startswith("@@ ") and target is not None:
+            hunks.append((target, []))
+            last_additions.append(0)
+        elif hunks and line.startswith((" ", "+")):
+            hunks[-1][1].append(line[1:])
+            if line.startswith("+"):
+                last_additions[-1] = len(hunks[-1][1])
     try:
-        return bool(additions) and all(
-            all(line in (directory / path).read_text().splitlines() for line in lines)
-            for path, lines in additions.items()
+        # Keep each insertion with its preceding context, not isolated lines that
+        # may already occur elsewhere. Later patches may replace trailing context.
+        return bool(hunks) and all(
+            end > 0
+            and "\n" + "\n".join(lines[:end]) + "\n"
+            in "\n" + (directory / path).read_text() + "\n"
+            for (path, lines), end in zip(hunks, last_additions, strict=True)
         )
     except OSError:
         return False

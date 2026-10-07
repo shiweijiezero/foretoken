@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-With Foretoken installed, [create an incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/) for the destination Slack channel. Store it in Alertmanager's namespace (`foretoken-platform` for CLI-managed monitoring):
+With Foretoken installed, [create an incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/) for the destination Slack channel. From the Foretoken repository root, run the following command with your webhook URL to store it in Alertmanager's namespace (`foretoken-platform` for CLI-managed monitoring):
 
 ```bash
 ALERTMANAGER_NAMESPACE=foretoken-platform
@@ -26,7 +26,7 @@ observability:
         name: foretoken-slack-webhook
 ```
 
-Apply using the platform's original installation mode. For a source installation, run this from the Foretoken repository root and retain its registry and engine-source options:
+Apply using the platform's original installation mode, retaining its registry and engine-source options:
 
 ```bash
 foretoken install --values deploy/platform-values.yaml

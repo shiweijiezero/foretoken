@@ -7,6 +7,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use foretoken_admission::AdmissionConfig;
 use foretoken_router::RouterPipelineConfig;
 
 const SERVING_SNAPSHOT_ENV: &str = "FORETOKEN_SERVING_SNAPSHOT";
@@ -14,6 +15,7 @@ const LISTEN_ADDRESS_ENV: &str = "FORETOKEN_LISTEN_ADDRESS";
 const REQUEST_TIMEOUT_SECONDS_ENV: &str = "FORETOKEN_REQUEST_TIMEOUT_SECONDS";
 const STREAM_IDLE_SECONDS_ENV: &str = "FORETOKEN_STREAM_IDLE_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
+const ADMISSION_ENV: &str = "FORETOKEN_ADMISSION";
 const ROUTER_PIPELINE_ENV: &str = "FORETOKEN_ROUTER_PIPELINE";
 pub(crate) struct RuntimeConfig {
     pub(crate) serving_snapshot: PathBuf,
@@ -21,6 +23,7 @@ pub(crate) struct RuntimeConfig {
     pub(crate) request_timeout: Duration,
     pub(crate) stream_idle: Duration,
     pub(crate) router_pipeline: RouterPipelineConfig,
+    pub(crate) admission: AdmissionConfig,
 }
 
 impl RuntimeConfig {
@@ -35,14 +38,15 @@ impl RuntimeConfig {
             request_timeout: required_positive_duration(REQUEST_TIMEOUT_SECONDS_ENV)?,
             stream_idle: required_positive_duration(STREAM_IDLE_SECONDS_ENV)?,
             router_pipeline: router_pipeline_from_env(|name| env::var(name))?,
+            admission: admission_from_env()?,
         })
     }
 }
 
 /// Resolves the router pipeline selected for this frontend process.
 ///
-/// Startup calls this through [`RuntimeConfig::from_env`]; it returns a validated configuration
-/// that is retained by the runtime builder for every snapshot generation.
+/// Startup decodes this configuration before RuntimeBuilder constructs and validates the rules.
+/// The resulting pipeline is retained across serving-snapshot generations.
 pub(crate) fn router_pipeline_from_env(
     get_env: impl Fn(&str) -> Result<String, env::VarError>,
 ) -> Result<RouterPipelineConfig, String> {
@@ -54,8 +58,19 @@ pub(crate) fn router_pipeline_from_env(
             return Err("router pipeline must be valid UTF-8".into());
         }
     };
-    pipeline.validate().map_err(|error| error.to_string())?;
     Ok(pipeline)
+}
+
+/// Decodes the process-local admission selection; construction validates its rule before serving.
+fn admission_from_env() -> Result<AdmissionConfig, String> {
+    match env::var(ADMISSION_ENV) {
+        Ok(value) => serde_json::from_str(&value)
+            .map_err(|error| format!("invalid admission configuration: {error}")),
+        Err(env::VarError::NotPresent) => Ok(AdmissionConfig::default()),
+        Err(env::VarError::NotUnicode(_)) => {
+            Err("admission configuration must be valid UTF-8".into())
+        }
+    }
 }
 
 fn required_env(name: &str) -> Result<String, String> {

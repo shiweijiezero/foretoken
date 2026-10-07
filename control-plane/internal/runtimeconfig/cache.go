@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Defines persistent model and source layouts shared by runtime workload projection.
+// Defines model storage paths and source selection shared by runtime workload projection.
 package runtimeconfig
 
 import (
 	"fmt"
 	"path"
 	"strings"
-
-	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
 const (
@@ -27,8 +25,8 @@ const (
 	SourceDirectoryEnv = "FORETOKEN_SOURCE_DIRECTORY"
 )
 
-// SourceRevision resolves service metadata without accepting source execution in release mode.
-// Absence selects the image runtime; a present annotation must identify one directory segment.
+// SourceRevision resolves new service source selections according to the platform source mode.
+// Absence requests no source override; a present annotation identifies one directory segment.
 func SourceRevision(annotations map[string]string, sourceMode bool) (string, error) {
 	revision, present := annotations[SourceRevisionAnnotation]
 	if !present {
@@ -37,37 +35,19 @@ func SourceRevision(annotations map[string]string, sourceMode bool) (string, err
 	if revision == "" {
 		return "", fmt.Errorf("source revision annotation must be nonempty")
 	}
-	return revision, validateSourceRevision(revision, sourceMode)
-}
-
-// ValidateSourceRuntime checks the persisted Pool or Group source contract before workload creation.
-// Source execution requires an enabled platform and a persistent cache binding.
-func ValidateSourceRuntime(revision string, sourceMode bool, cache *inferencev1alpha1.RuntimeCacheBinding) error {
-	if revision == "" {
-		return nil
-	}
-	if err := validateSourceRevision(revision, sourceMode); err != nil {
-		return err
-	}
-	if cache == nil || cache.ClaimName == "" || cache.MountPath == "" {
-		return fmt.Errorf("source execution requires a persistent RuntimeCache")
-	}
-	return nil
-}
-
-func validateSourceRevision(revision string, sourceMode bool) error {
 	if !sourceMode {
-		return fmt.Errorf("source revision requires a source-installed platform (--source-mode)")
+		return "", fmt.Errorf("new source selection requires a source-installed platform (--source-mode)")
 	}
+	return revision, ValidateSourceRevision(revision)
+}
+
+// ValidateSourceRevision checks directory identity in controller-owned Pool and Group contracts.
+// Execution of a persisted selection is independent of whether new source selections are enabled.
+func ValidateSourceRevision(revision string) error {
 	if revision == "." || revision == ".." || strings.ContainsAny(revision, "/\\\x00") {
 		return fmt.Errorf("source revision must be a single directory segment")
 	}
 	return nil
-}
-
-// SourceDirectory returns the immutable bundle location beneath a workload's resolved cache.
-func SourceDirectory(dataRoot, revision string) string {
-	return path.Join(dataRoot, "source", revision)
 }
 
 // ModelDirectory returns the stable model area of a workload's persistent data root.

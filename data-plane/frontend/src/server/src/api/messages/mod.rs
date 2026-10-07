@@ -8,16 +8,18 @@
 //! Foretoken's Generation interface; this module does not own model processes.
 
 mod convert;
-mod error;
+pub(super) mod error;
 mod output;
 mod types;
 
+use crate::AdmissionOrigin;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use foretoken_admission::AdmissionApi;
 use serde_json::json;
 
 use self::convert::{prepare_count_tokens_request, prepare_messages_request};
@@ -35,9 +37,10 @@ pub(super) fn router() -> Router<ApiState> {
 /// Lowers an Anthropic request and dispatches through the shared generation service.
 async fn messages(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicMessagesRequest>, JsonRejection>,
 ) -> Response {
-    let timing = RequestTiming::now();
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
         Err(error) => return json_error(error).into_response(),
@@ -49,7 +52,13 @@ async fn messages(
         };
     let stream = chat.intermediate;
     match state
-        .generate_chat(model, chat, include_reasoning, timing)
+        .generate_chat(
+            model,
+            chat,
+            include_reasoning,
+            timing,
+            AdmissionApi::Messages,
+        )
         .await
     {
         Ok(generated) if stream => output::streaming(generated, state.stream_idle),
@@ -61,8 +70,14 @@ async fn messages(
 /// Counts the actual rendered prompt without submitting an inference request.
 async fn count_tokens(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicCountTokensRequest>, JsonRejection>,
 ) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        api: Some(AdmissionApi::Messages),
+        received_at: timing.started_at,
+    };
     let Json(request) = match request {
         Ok(request) => request,
         Err(error) => return json_error(error).into_response(),
@@ -71,7 +86,11 @@ async fn count_tokens(
         Ok(request) => request,
         Err(error) => return error.into_response(),
     };
-    match state.generation.tokenize_chat(&model, chat, false).await {
+    match state
+        .generation
+        .tokenize_chat(&model, chat, false, origin)
+        .await
+    {
         Ok(tokens) => Json(json!({"input_tokens": tokens.token_ids.len()})).into_response(),
         Err(error) => AnthropicApiError::from(error).into_response(),
     }

@@ -3,7 +3,10 @@
 
 //! OpenAI and Anthropic HTTP adapters over Foretoken's shared generation pipeline.
 
+mod admission;
 mod api;
+
+pub use admission::AdmissionOrigin;
 mod http;
 mod runtime;
 mod video;

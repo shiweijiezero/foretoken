@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 rust/chat-request-processor.patch
+rust/qwen-reasoning-selection.patch
 rust/engine-core-version-compatibility.patch
 common/mooncake-context-parallel.patch
 common/multinode-pcp-world-size.patch
