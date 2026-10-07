@@ -19,7 +19,7 @@ We provide these playbooks to help developers and agents find references, conduc
 
 | Directory | Purpose |
 | --- | --- |
-| [templates/](templates/README.md) | Experiment directory layout and reference templates for records |
+| [templates/](templates/README.md) | Experiment layout, record templates, and technique note templates |
 | [guidance/](guidance/README.md) | Reference material and knowledge for inference-system optimization |
 | [tasks/](tasks/README.md) | Common optimization tasks with goals, exploration directions, and evaluation methods |
 
