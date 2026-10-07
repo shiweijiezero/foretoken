@@ -10,13 +10,38 @@ Store an experiment under `results/<goal>/<motivation>/`. Give each iteration a 
 
 ```text
 results/<goal>/<motivation>/
-├── notes/experiment.md
-└── iterations/<name>/
-    ├── notes/iteration.md
-    └── runs/<run>/
-        ├── generated/
-        └── artifacts/
+├── notes/
+│   └── experiment.md
+└── iterations/
+    ├── queue-aware-routing/
+    │   ├── notes/
+    │   │   └── iteration.md
+    │   └── runs/
+    │       ├── perf-000001/
+    │       │   ├── generated/
+    │       │   │   ├── context.json
+    │       │   │   ├── changes/
+    │       │   │   └── run.log
+    │       │   └── artifacts/
+    │       │       └── <result-directory>/
+    │       │           ├── config.json
+    │       │           ├── environment.json
+    │       │           ├── metrics.json
+    │       │           └── ...
+    │       ├── eval-000001/
+    │       │   ├── generated/
+    │       │   └── artifacts/
+    │       └── perf-000002/
+    │           ├── generated/
+    │           └── artifacts/
+    └── another-approach/
+        ├── notes/
+        │   └── iteration.md
+        └── runs/
 ```
+
+This layout is produced by `--output experiment`. `context.json` records the command, status, timing, and source information. When source capture is available, `changes/` retains modified files at their repository-relative paths. `run.log` is saved with `quiet` enabled. `artifacts/` preserves the benchmark tool's result directories and files.
+
 
 Update the experiment notes with overall findings and the iteration notes with the current hypothesis, design, changes, and interpretation. Refer to the [experiment](../templates/experiment-template.md) and [iteration](../templates/iteration-template.md) templates as needed.
 

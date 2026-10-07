@@ -10,13 +10,38 @@
 
 ```text
 results/<goal>/<motivation>/
-├── notes/experiment.md
-└── iterations/<name>/
-    ├── notes/iteration.md
-    └── runs/<run>/
-        ├── generated/
-        └── artifacts/
+├── notes/
+│   └── experiment.md
+└── iterations/
+    ├── queue-aware-routing/
+    │   ├── notes/
+    │   │   └── iteration.md
+    │   └── runs/
+    │       ├── perf-000001/
+    │       │   ├── generated/
+    │       │   │   ├── context.json
+    │       │   │   ├── changes/
+    │       │   │   └── run.log
+    │       │   └── artifacts/
+    │       │       └── <result-directory>/
+    │       │           ├── config.json
+    │       │           ├── environment.json
+    │       │           ├── metrics.json
+    │       │           └── ...
+    │       ├── eval-000001/
+    │       │   ├── generated/
+    │       │   └── artifacts/
+    │       └── perf-000002/
+    │           ├── generated/
+    │           └── artifacts/
+    └── another-approach/
+        ├── notes/
+        │   └── iteration.md
+        └── runs/
 ```
+
+上例为 `--output experiment` 的目录布局。`context.json` 记录命令、状态、耗时和源码信息；`changes/` 在可采集源码时保存改动文件，保持仓库相对路径。`run.log` 在启用 `quiet` 时保存。`artifacts/` 内保留评测工具的结果目录和文件。
+
 
 实验说明持续汇总整体结论，迭代说明记录本轮假设、设计、改动和结果解释，可分别参考[实验模板](../templates/experiment-template_zh.md)和[迭代模板](../templates/iteration-template_zh.md)。
 
