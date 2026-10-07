@@ -23,14 +23,10 @@
 | [guidance/](guidance/README_zh.md) | 整理参考资料，以及理解代码、测量和诊断的方法 |
 | [tasks/](tasks/README_zh.md) | 按具体优化任务组织目标、操作和结果分析方法 |
 
-目前可从通用实验模板开始；参考资料和具体任务手册将逐步补充。应用代码改动时使用[源码部署流程](../docs/custom-deployment_zh.md)，测量性能和模型质量时使用[评测工具](../benchmarks/README_zh.md)。
+## 使用步骤
 
-## 实验记录
-
-记录按实验、迭代和运行组织。例如，围绕降低首个输出的等待时间开展一个实验，分别尝试两种路由方案；每种方案是一轮迭代，可以包含多次性能测试和质量评测。
-
-- 实验说明：参考[实验模板](templates/experiment-template_zh.md)记录整体目标、比较方法和结论，随着研究推进持续更新。
-- 迭代说明：每轮参考[迭代模板](templates/iteration-template_zh.md)，解释改动、预期、结果和下一步。
-- 运行记录：每次执行分别保存命令、配置和测量结果，供对应迭代说明引用。
-
-记录保存在 `results/<优化目标>/<实验动机>/`，具体布局见[实验指导](guidance/experiments_zh.md)。说明文件用于解释选择和结果，运行证据随各次执行分别保留。
+1. 确定优化目标，参考[实验模板](templates/experiment-template_zh.md)记录问题、预期和比较方法。
+2. 查阅相关资料和代码，提出改进方案，按[源码部署流程](../docs/custom-deployment_zh.md)将改动应用到推理服务。
+3. 选择能验证本轮方案的[评测](../benchmarks/README_zh.md)，结合模型输出、指标和日志分析效果。
+4. 参考[迭代模板](templates/iteration-template_zh.md)记录改动、结果和结论，按[实验指导](guidance/experiments_zh.md)保留运行证据。
+5. 根据结果保留、调整或回退改动，继续下一轮尝试，并将可复用的发现补充到任务指导和参考资料中。

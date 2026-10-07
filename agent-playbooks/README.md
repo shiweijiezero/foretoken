@@ -23,14 +23,10 @@ We provide these playbooks to help developers and agents find references, conduc
 | [guidance/](guidance/README.md) | References and methods for understanding code, measuring behavior, and diagnosing problems |
 | [tasks/](tasks/README.md) | Goals, instructions, and result interpretation for specific optimization tasks |
 
-Start with the shared experiment templates. References and task-specific playbooks will be added over time. Use the [source deployment workflow](../docs/custom-deployment.md) to apply code changes and the [benchmark tools](../benchmarks/README.md) to measure performance and model quality.
+## Steps
 
-## Experiment records
-
-Organize records into experiments, iterations, and runs. For example, an experiment aimed at reducing time to first output might compare two routing approaches. Each approach is an iteration and can include several performance and quality evaluation runs.
-
-- Experiment notes: refer to the [experiment template](templates/experiment-template.md) for the overall goal, comparison method, and findings. Update it as the investigation progresses.
-- Iteration notes: refer to the [iteration template](templates/iteration-template.md) per approach to explain the change, expected outcome, results, and next step.
-- Run records: retain commands, configurations, and measurements separately for each execution, and link them from the iteration notes.
-
-Keep records under `results/<goal>/<motivation>/`; see [experiment guidance](guidance/experiments.md) for the layout. Notes explain choices and conclusions, while execution evidence stays with its individual run.
+1. Choose an optimization goal. Refer to the [experiment template](templates/experiment-template.md) to record the question, expected outcome, and comparison method.
+2. Review relevant references and code, propose a change, and apply it to the inference service through the [source deployment workflow](../docs/custom-deployment.md).
+3. Select [evaluations](../benchmarks/README.md) that test the current approach, then examine model outputs, metrics, and logs to assess its effects.
+4. Refer to the [iteration template](templates/iteration-template.md) to record changes, results, and conclusions. Retain execution evidence as described in the [experiment guidance](guidance/experiments.md).
+5. Keep, refine, or revert the change based on the results. Continue with the next iteration and add reusable findings to the task guidance and references.
