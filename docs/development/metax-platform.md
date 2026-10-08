@@ -37,10 +37,6 @@ The build automatically prepares the MetaX inference runtime. See the [source de
 
 To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 
-## Multi-node network selection
-
-Multi-node deployments can automatically measure and select RDMA NIC combinations for parallel communication at startup. Calibration may add several minutes; an explicit `MCCL_IB_HCA` setting in any member preserves the supplied configuration and skips calibration for the group.
-
 ## Uninstall
 
 Delete model deployments first, then run:

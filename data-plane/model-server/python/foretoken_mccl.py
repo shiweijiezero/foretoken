@@ -22,13 +22,15 @@ def _visible_ports() -> list[str]:
 
     configure_mccl_visible_hcas()
     excluded = set(os.environ.get("MCCL_IB_HCA", "").removeprefix("^=").split(","))
+    # Resolve each verbs device directly, without assuming a shared parent layout.
+    devices = {
+        (verbs / "ibdev").read_text().strip()
+        for verbs in Path("/sys/class/infiniband_verbs").glob("uverbs*")
+        if Path("/dev/infiniband", verbs.name).exists()
+    }
     ports = []
-    for device in sorted(Path("/sys/class/infiniband").glob("*")):
-        verbs = device / "device/infiniband_verbs"
-        if not any(
-            Path("/dev/infiniband", item.name).exists() for item in verbs.glob("*")
-        ):
-            continue
+    for device_name in sorted(devices):
+        device = Path("/sys/class/infiniband", device_name)
         for port in sorted((device / "ports").glob("*")):
             name = f"{device.name}:{port.name}"
             if (
