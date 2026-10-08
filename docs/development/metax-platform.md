@@ -35,6 +35,12 @@ The build prepares the MetaX inference runtime from public SDK packages and pinn
 
 To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 
+## Multi-node network selection
+
+The bundled MetaX runtime calibrates available RDMA port combinations before loading a multi-node model. All allocated GPUs participate together, comparing small-message latency and large-message throughput; the selected combination can use several NICs in parallel. Model-server logs show the measurements and selected ports. Calibration runs within the model's startup timeout and can add several minutes to startup.
+
+An explicit `MCCL_IB_HCA` in any member's container environment preserves the supplied configuration and skips group calibration. Single-node deployments and groups without multiple usable ports do not benchmark the network. Calibration uses representative all-reduce sizes, so model throughput should still be measured with the intended workload.
+
 ## Uninstall
 
 Delete model deployments first, then run:
