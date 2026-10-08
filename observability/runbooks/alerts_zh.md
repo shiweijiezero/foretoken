@@ -31,6 +31,7 @@ spec:
 | --- | --- | --- |
 | [ForetokenMetricsTargetDown](#foretokenmetricstargetdown) | 前端或模型服务 | 指标端点连续 1 分钟无法抓取。 |
 | [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | 前端服务 | 5 分钟窗口内，每秒至少 0.1 次 HTTP 响应开始时，5xx 比例连续 2 分钟超过 5%。 |
+| [ForetokenVideoGenerationFailureRatioHigh](#foretokenvideogenerationfailureratiohigh) | 模型服务 | 30 分钟内至少有 3 次成功或服务端错误结果，服务端错误比例超过 20%，并连续持续 5 分钟。 |
 | [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | 前端服务 | 准入容量拒绝比例超过配置阈值。 |
 | [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | 前端服务 | 准入超时比例超过配置阈值。 |
 | [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 排队后获准请求的等待 p95 超过配置时长。 |
@@ -73,6 +74,19 @@ spec:
 ### ForetokenAdmissionTelemetryMissing
 
 在准入副本表中定位指标不完整的 Pod，并核对运行版本。升级完成后仍未恢复时，检查监控配置。
+
+### ForetokenVideoGenerationFailureRatioHigh
+
+最近 30 分钟内某个有限视频任务的服务端失败比例超过 20%，期间至少观察到 3 次成功或服务端错误结果，并且该状态持续了 5 分钟。客户端错误和取消不计入比例及最少次数。
+
+1. 在 Video Generation 看板分区中筛选告警对应的命名空间、模型组和任务。
+2. 对比 `error` 与 `client_error`；只有服务端错误参与该告警。
+3. 检查失败时间段内的 model-server 日志，再对比去噪、解码、GPU 显存和设备健康信号。
+4. 重启服务或调整容量前，先确认近期模型、运行时和生成参数是否发生变化。
+
+最少请求数用于避免稀疏视频流量中的单次失败误报。该规则包含 API 服务器的响应编码，不检查成功编码视频的视觉质量，也不确认客户端是否收到响应。
+
+通知接入见 [Lark](../integrations/lark/README_zh.md)、[Slack](../integrations/slack/README_zh.md) 或 [钉钉](../integrations/dingtalk/README_zh.md) 集成。
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

@@ -14,6 +14,8 @@ WORKDIR /src/vllm-omni
 RUN git init && git remote add origin "${FORETOKEN_GITHUB_MIRROR%/}/vllm-project/vllm-omni.git" \
     && git fetch --depth=1 origin "${VLLM_OMNI_REVISION}" \
     && git checkout --detach FETCH_HEAD
+COPY data-plane/patches/vllm-omni/ /tmp/foretoken-omni-patches/
+RUN git apply /tmp/foretoken-omni-patches/vllm-omni-video-metrics.patch
 
 FROM ${BASE_IMAGE}
 ARG VLLM_OMNI_REVISION

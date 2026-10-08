@@ -526,10 +526,11 @@ spec:
                         items:
                           enum:
                           - ForetokenMetricsTargetDown
+                          - ForetokenVideoGenerationFailureRatioHigh
                           - ForetokenNVIDIAGPUTemperatureHigh
                           - ForetokenNVIDIAGPUPowerUsageHigh
                           type: string
-                        maxItems: 3
+                        maxItems: 4
                         type: array
                         x-kubernetes-list-type: set
                       thresholds:
