@@ -141,17 +141,18 @@ class McclNetworkCalibration:
     def __init__(self, options: dict):
         import torch
         import torch.distributed as dist
+        from vllm import envs
 
         self.index = options["member_index"]
         self.count = options["member_count"]
         self.leader = options["leader"]
         self.port = options["port"]
         self.deadline = time.monotonic() + options["startup_seconds"]
-        explicit = "MCCL_IB_HCA" in os.environ
+        skip = "MCCL_IB_HCA" in os.environ or envs.VLLM_DISABLE_PYNCCL
         member = {
-            "explicit": explicit,
-            "ports": [] if explicit else _visible_ports(),
-            "gpus": torch.cuda.device_count(),
+            "skip": skip,
+            "ports": [] if skip else _visible_ports(),
+            "gpus": 0 if skip else torch.cuda.device_count(),
         }
         self.store = dist.TCPStore(
             self.leader,
@@ -179,24 +180,38 @@ class McclNetworkCalibration:
         environment = dict(
             os.environ, MCCL_IB_HCA="=" + ",".join(selection[self.index])
         )
-        result = subprocess.run(
-            [sys.executable, __file__, "probe", json.dumps(options)],
-            env=environment,
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            sys.stderr.buffer.write(result.stdout + result.stderr)
-            sys.stderr.flush()
-        rows = json.loads(result.stdout) if result.returncode == 0 else None
+        rows = None
+        failure = None
+        status = {"ok": False}
+        try:
+            result = subprocess.run(
+                [sys.executable, __file__, "probe", json.dumps(options)],
+                env=environment,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode:
+                sys.stderr.buffer.write(result.stdout + result.stderr)
+                sys.stderr.flush()
+            else:
+                rows = json.loads(result.stdout)
+                status["ok"] = True
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            # Publish orchestration failures on the trial peers are already waiting for.
+            # Unlike a failed network candidate, these errors abort calibration everywhere.
+            failure = error
+            status["error"] = f"{type(error).__name__}: {error}"
         key = f"trial/{self.trials}"
-        self.store.set(
-            f"{key}/{self.index}", json.dumps({"ok": result.returncode == 0})
-        )
+        self.store.set(f"{key}/{self.index}", json.dumps(status))
         statuses = [
             json.loads(self.store.get(f"{key}/{index}")) for index in range(self.count)
         ]
         self.trials += 1
+        for index, status in enumerate(statuses):
+            if "error" in status:
+                raise RuntimeError(
+                    f"MCCL calibration member {index} failed: {status['error']}"
+                ) from failure
         if not all(status["ok"] for status in statuses):
             return None
         return rows
@@ -261,9 +276,9 @@ class McclNetworkCalibration:
         return winner
 
     def run(self) -> None:
-        """Keep explicit settings or install the measured selection, then close the rendezvous."""
+        """Honor member opt-outs or install the measured ports, then close the rendezvous."""
         try:
-            if any(member["explicit"] for member in self.members):
+            if any(member["skip"] for member in self.members):
                 return
             if any(
                 not member["ports"] or not member["gpus"] for member in self.members
