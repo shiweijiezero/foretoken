@@ -78,7 +78,6 @@ applies to video-specific output, encoding and reference-token signals. Complete
 response-building calls are not proof of client receipt or visual quality;
 frontend HTTP status panels describe the public serving boundary.
 
-The focused Foretoken Video Generation Overview uses the same row and queries.
 
 After a video request, confirm its task and outcome metrics in Prometheus:
 

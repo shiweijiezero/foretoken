@@ -73,7 +73,6 @@ enable-diffusion-pipeline-profiler: true
 输出量、编码和参考 token 信号。响应构建成功不代表客户端已收到响应，也不代表
 视频画面质量合格；公共服务边界的 HTTP 状态由前端面板展示。
 
-独立的 Foretoken 视频生成概览复用相同分区和查询。
 
 完成视频请求后，在 Prometheus 中确认其任务和结果指标：
 

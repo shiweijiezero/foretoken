@@ -28,10 +28,8 @@ GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GIT
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
-	python3 deploy/grafana/system_overview.py --view system --locale en > deploy/charts/foretoken/files/grafana/foretoken-system-overview.json
-	python3 deploy/grafana/system_overview.py --view system --locale zh > deploy/charts/foretoken/files/grafana/foretoken-system-overview-zh.json
-	python3 deploy/grafana/system_overview.py --view video --locale en > deploy/charts/foretoken/files/grafana/foretoken-video-overview.json
-	python3 deploy/grafana/system_overview.py --view video --locale zh > deploy/charts/foretoken/files/grafana/foretoken-video-overview-zh.json
+	python3 deploy/grafana/system_overview.py --locale en > deploy/charts/foretoken/files/grafana/foretoken-system-overview.json
+	python3 deploy/grafana/system_overview.py --locale zh > deploy/charts/foretoken/files/grafana/foretoken-system-overview-zh.json
 
 # Regenerates standalone Lark and DingTalk receivers from the shared alert text.
 alert-receivers:

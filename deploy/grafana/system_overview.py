@@ -313,7 +313,6 @@ ZH = {
     "Work rejection": "工作拒绝比例",
     "Work timeout": "工作超时比例",
     "Admitted wait p95": "获准等待 P95",
-    'Foretoken Video Generation Overview': 'Foretoken 视频生成概览',
     'Video Generation': '视频生成',
     'Frontend scrape targets': '前端监控端点数',
     'Model scrape targets': '模型监控端点数',
@@ -813,48 +812,9 @@ def localize_dashboard(value: object) -> object:
     return value
 
 
-def video_only_dashboard(payload: dict[str, Any]) -> dict[str, Any]:
-    """Keep the video row and its model-server variables for a focused dashboard."""
-    selected_panels: list[dict[str, Any]] = []
-    in_video_row = False
-    for panel in payload["panels"]:
-        if panel["type"] == "row":
-            if in_video_row:
-                break
-            in_video_row = panel["title"] == "Video Generation"
-        if in_video_row:
-            selected_panels.append(panel)
-
-    # The payload comes from build(), so its panel layout is owned by this module.
-    first_y = selected_panels[0]["gridPos"]["y"]
-    for panel in selected_panels:
-        panel["gridPos"]["y"] -= first_y
-
-    video_variables = {
-        "DS_PROMETHEUS",
-        "namespace",
-        "model_group",
-        "model_role",
-        "model_name",
-        "video_task",
-        "video_latency_window",
-    }
-    payload["templating"]["list"] = [
-        variable for variable in payload["templating"]["list"] if variable["name"] in video_variables
-    ]
-
-    payload["panels"] = selected_panels
-    payload["title"] = "Foretoken Video Generation Overview"
-    payload["uid"] = "foretoken-video-overview"
-    payload["tags"] = ["foretoken", "video", "inference", "operations"]
-    return payload
-
-
-def render(locale: str, view: str = "system") -> str:
-    """Render one localized system or video dashboard from shared definitions."""
+def render(locale: str) -> str:
+    """Render the localized system dashboard, including the video section."""
     payload = json.loads(JSONEncoder(sort_keys=True, indent=2).encode(build()))
-    if view == "video":
-        payload = video_only_dashboard(payload)
     if locale == "zh":
         payload = localize_dashboard(payload)
         payload["uid"] += "-zh"
@@ -2178,6 +2138,5 @@ def build() -> dashboard_models.Dashboard:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a localized Foretoken Grafana dashboard.")
     parser.add_argument("--locale", choices=("en", "zh"), default="en")
-    parser.add_argument("--view", choices=("system", "video"), default="system")
     args = parser.parse_args()
-    print(render(args.locale, args.view))
+    print(render(args.locale))

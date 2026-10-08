@@ -1,7 +1,7 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{/* Makes the localized Foretoken system and video dashboards discoverable by Grafana sidecars. */}}
+{{/* Makes the localized Foretoken system dashboard discoverable by Grafana sidecars. */}}
 
 {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 apiVersion: v1
@@ -17,8 +17,4 @@ data:
 {{ .Files.Get "files/grafana/foretoken-system-overview.json" | nindent 4 }}
   foretoken-system-overview-zh.json: |-
 {{ .Files.Get "files/grafana/foretoken-system-overview-zh.json" | nindent 4 }}
-  foretoken-video-overview.json: |-
-{{ .Files.Get "files/grafana/foretoken-video-overview.json" | nindent 4 }}
-  foretoken-video-overview-zh.json: |-
-{{ .Files.Get "files/grafana/foretoken-video-overview-zh.json" | nindent 4 }}
 {{- end }}
