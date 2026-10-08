@@ -11,7 +11,9 @@ Install the Foretoken platform on a MetaX GPU cluster. For model deployment and 
 
 ## Before you start
 
-The cluster needs Kubernetes 1.29 or later, MetaX drivers, a device plugin publishing `metax-tech.com/gpu`, and a container runtime configured to supply the host's driver libraries under `/opt/mxdriver` in GPU containers. The SDK image does not replace these driver libraries. By default, the MetaX adapter excludes RoCE ports with no usable GID (RDMA network address) in the container's network namespace; an explicit `MCCL_IB_HCA` setting takes precedence. Prepare a model directory visible to the target nodes or a StorageClass for the model cache; see [Model storage](../model-storage.md). The frontend also needs a reachable LoadBalancer address, or a Gateway when using Gateway mode.
+Use Kubernetes 1.29 or later with MetaX drivers, a GPU-enabled container runtime, and a device plugin exposing `metax-tech.com/gpu` resources.
+
+Provide a model directory accessible to the target nodes or a StorageClass; see [Model storage](../model-storage.md). The frontend needs a reachable LoadBalancer or Gateway endpoint.
 
 Install the [Foretoken CLI](../../cli/README.md#install-the-command-line-tool) and make sure `kubectl` points to the target cluster. The CLI needs Helm and cluster permissions to install the platform and its shared dependencies.
 
@@ -31,15 +33,13 @@ From the repository root, build and install the platform in the cluster:
 foretoken install -e .
 ```
 
-The build prepares the MetaX inference runtime from public SDK packages and pinned sources, including GLM-5.3 support. See the [source deployment guide](../custom-deployment.md#install-from-source) for importing images into the cluster or distributing them through a registry.
+The build automatically prepares the MetaX inference runtime. See the [source deployment guide](../custom-deployment.md#install-from-source) for image import and registry distribution.
 
 To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 
 ## Multi-node network selection
 
-The bundled MetaX runtime calibrates available RDMA port combinations before loading a multi-node model. All allocated GPUs participate together, comparing small-message latency and large-message throughput; the selected combination can use several NICs in parallel. Model-server logs show the measurements and selected ports. Calibration runs within the model's startup timeout and can add several minutes to startup.
-
-An explicit `MCCL_IB_HCA` in any member's container environment preserves the supplied configuration and skips group calibration. Single-node deployments and groups without multiple usable ports do not benchmark the network. Calibration uses representative all-reduce sizes, so model throughput should still be measured with the intended workload.
+Multi-node deployments can automatically measure and select RDMA NIC combinations for parallel communication at startup. Calibration may add several minutes; an explicit `MCCL_IB_HCA` setting in any member preserves the supplied configuration and skips calibration for the group.
 
 ## Uninstall
 
