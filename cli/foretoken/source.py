@@ -462,11 +462,22 @@ def record_install(
     ]
     if len(managed) != 1:
         raise DeploymentError("expected one source-installed Foretoken platform")
+    path = directory / "install.json"
+    previous = json.loads(path.read_text()) if path.is_file() else {}
+    applications = (build_state or {}).get("applications", {})
+    # Keep service-level source selections when installation adopts the same publication.
+    # Removing them would change immutable Group specs on the next unchanged deploy.
+    bundles = {
+        component: bundle
+        for component, bundle in previous.get("bundles", {}).items()
+        if previous.get("root") == str(root)
+        and bundle["revision"] == applications.get(component, {}).get("revision")
+    }
     with _local_candidates(directory):
         destination = directory / snapshot.name
         snapshot.rename(destination)
         _write_json(
-            directory / "install.json",
+            path,
             {
                 "root": str(root),
                 "engines": engines,
@@ -477,7 +488,7 @@ def record_install(
                 "base_image": base_image,
                 "runtime": _runtime_settings(managed[0]),
                 "command": settings,
-                "bundles": {},
+                "bundles": bundles,
             },
         )
         (directory / "build.json").unlink(missing_ok=True)
