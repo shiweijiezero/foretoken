@@ -76,6 +76,19 @@ def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
     axis.tick_params(labelsize=8, colors="#52514e", length=2)
 
 
+
+def _legend(fig: Any, axis: Any, columns: int) -> None:
+    """Keep complete series identities readable without covering measured curves."""
+    handles, labels = axis.get_legend_handles_labels()
+    labels = [textwrap.fill(label, width=38 if columns == 1 else 80) for label in labels]
+    if any("\n" in label for label in labels):
+        lines = sum(label.count("\n") + 1 for label in labels)
+        fig.set_size_inches(fig.get_figwidth(), fig.get_figheight() + lines * 0.12)
+        fig.legend(handles, labels, fontsize=8, frameon=False, loc="outside lower center")
+    else:
+        axis.legend(handles, labels, fontsize=8, frameon=False, loc="best")
+
+
 def _save(fig: Any, path: Path) -> dict[str, Path]:
     """Write three print-ready formats from the same figure and release its canvas."""
     from matplotlib import rc_context
@@ -219,7 +232,7 @@ def _charts(
                     ha="right",
                 )
             if len(series_list) > 1 or chart.kind == "pareto":
-                axis.legend(fontsize=8, frameon=False, loc="best")
+                _legend(fig, axis, columns)
             for extension, file in _save(fig, path).items():
                 exported[f"{base}.{extension}"] = file
             rows = []
@@ -401,7 +414,7 @@ def _pareto(
                 "Output throughput per GPU (tokens/s)",
             )
             if len({row["method"] for row in plotted}) > 1:
-                axis.legend(fontsize=8, frameon=False)
+                _legend(figure, axis, columns)
             for extension, file in _save(figure, path).items():
                 exported[f"{base}.{extension}"] = file
             file = _table(path, plotted)
