@@ -266,11 +266,10 @@ diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 +from vllm.v1.worker.spec_decode_timing import TimedAsyncOutput
  from vllm.v1.worker.startup_plan import (
      maybe_apply_startup_plan,
-@@ -1248,6 +1250,7 @@
-
+@@ -1249,1 +1251,1 @@
 -    def execute_dummy_batch(self) -> None:
 +    def execute_dummy_batch(self) -> SpecDecodeTimingResult | None:
-         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
+@@ -1251,3 +1253,4 @@
          self.model_runner._dummy_run(num_tokens, uniform_decode=True)
 +        return self.collect_spec_decode_timings()
 
