@@ -997,54 +997,23 @@ def prepare_source_images(
         for component in references:
             if reusable[component]:
                 references[component] = installed[component]
-        # Applications follow their actual compiler inputs, not installation settings.
-        # Keep the latest source bundle when an environment-only installation reuses it.
+        # The publisher compares actual exports, independently of download-source choices.
+        # Prefer the latest deployment bundle over the initial installation's application.
         application_revisions = {}
-        previous_versions = build.get("versions", {})
         publisher = next(builder for builder in builders if builder.node == origin.node)
-        for component, prefixes in (
-            ("control-plane", ("control-plane/",)),
-            ("frontend", ("data-plane/",)),
-            (
-                "model-server",
-                ("data-plane/", "engine/", "deploy/inference-engines/"),
-            ),
-        ):
+        for component in references:
             prior = previous.get("bundles", {}).get(
                 component, build.get("applications", {}).get(component, {})
             ).get("revision", "")
-            unchanged_inputs = {
-                name: version
-                for name, version in versions.items()
-                if name in {"LICENSE", ".dockerignore"} or name.startswith(prefixes)
-            } == {
-                name: version
-                for name, version in previous_versions.items()
-                if name in {"LICENSE", ".dockerignore"} or name.startswith(prefixes)
-            }
-            revision = (
-                prior
-                if prior
-                and reusable[component]
-                and arguments == build.get("arguments")
-                and unchanged_inputs
-                and (
-                    component != "model-server"
-                    or engine_native == build.get("engine_native")
-                )
-                else suffix
-            )
-            application_revisions[component] = revision
-            # Publishing is idempotent for completed revisions and restores a missing
-            # directory without changing the workload's selected application URL.
-            origin.publish(
+            application_revisions[component] = origin.publish(
                 publisher,
                 publisher.root + "/applications/" + component,
                 component,
-                revision,
+                suffix,
                 prior,
                 None,
                 timeout=command.timeout,
+                reuse_previous=True,
             )
         publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
         applications = {
