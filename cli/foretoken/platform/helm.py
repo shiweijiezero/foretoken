@@ -691,8 +691,8 @@ class Helm(HelmClient):
 
     def prepare_source_origin(
         self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
-    ) -> None:
-        """Prepare chart-owned file storage before source builds or controller startup."""
+    ) -> ApplicationFiles:
+        """Prepare chart-owned storage and return its ready source-build publisher location."""
         release = self.platform_release()
         args = self._upgrade_install_args(
             release, str(root / "deploy/charts/foretoken")
@@ -716,13 +716,15 @@ class Helm(HelmClient):
         with self._prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
             self._set_platform_image_sources(args, merged, True, input_text)
-            with self._prepare_application_origin(args, input_text, timeout):
-                pass
+            with self._prepare_application_origin(args, input_text, timeout) as origin:
+                # Source charts always render storage through development.enabled.
+                assert origin is not None
+                return origin
 
     @contextmanager
     def _prepare_application_origin(
         self, args: list[str], input_text: str | None, timeout: str
-    ) -> Iterator[None]:
+    ) -> Iterator[ApplicationFiles | None]:
         """Bootstrap native storage and hold release publication ownership through Helm selection."""
         release = self.platform_release()
         rendered = self._render_chart(args, input_text=input_text)
@@ -770,7 +772,7 @@ class Helm(HelmClient):
             if document["kind"] == "ConfigMap"
         )
         if not configuration.get("releaseURL"):
-            yield
+            yield origin
             return
 
         def retained() -> set[str] | None:
@@ -817,7 +819,7 @@ class Helm(HelmClient):
             timeout=timeout,
             credentials_secret=configuration["credentialsSecret"],
         ):
-            yield
+            yield origin
 
     def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
         """Find native file-origin resources owned by this release, including failed bootstraps."""

@@ -649,7 +649,7 @@ async fn spawn_engine_attempt(
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
     // Rust preprocessing already normalizes pixels. Newer engines otherwise normalize them twice.
-    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_30) {
+    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_31) {
         managed_engine
             .python_args
             .push("--no-mm-device-do-normalize".into());
@@ -788,9 +788,9 @@ async fn detect_engine_protocol(
         (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
         (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
         (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
-        (Some(0), Some(28..=30)) => Ok(EngineCoreProtocol::V0_28ToV0_30),
+        (Some(0), Some(28..=31)) => Ok(EngineCoreProtocol::V0_28ToV0_31),
         _ => Err(format!(
-            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.30"
+            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
         )
         .into()),
     }

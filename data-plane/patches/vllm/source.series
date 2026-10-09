@@ -4,6 +4,7 @@
 rust/chat-request-processor.patch
 rust/qwen-reasoning-selection.patch
 rust/engine-core-version-compatibility.patch
+rust/tracing-reload.patch
 common/mooncake-context-parallel.patch
 common/multinode-pcp-world-size.patch
 rust/http-latency-histogram-buckets.patch

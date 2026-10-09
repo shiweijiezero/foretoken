@@ -3,6 +3,8 @@
 
 default_series: compatibility/v1-default/series
 profiles:
+  - versions: ">=0.31.0.dev0,<0.32.0.dev0"
+    series: compatibility/v1-031/series
   - versions: ">=0.26.0.dev0,<0.27.0.dev0"
     series: compatibility/v1-legacy/series
   - versions: ">=0.30.0.dev0,<0.30.1.dev0"

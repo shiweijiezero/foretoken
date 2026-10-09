@@ -19,7 +19,7 @@ use foretoken_model_protocol::{
 use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
-const DEFAULT_VLLM_PYTHON: &str = "python";
+const DEFAULT_VLLM_PYTHON: &str = "python3";
 
 /// Python adapters bundled with the model-server image for its managed engine.
 pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";

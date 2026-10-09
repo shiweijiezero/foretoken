@@ -136,6 +136,10 @@ def _deploy(
             timeout,
             report=_report_progress,
             observe=startup.poll,
+            expected_revisions={
+                ref: revision for ref in deployment.service_refs()
+                if ref.kind in selection_kinds
+            },
         )
         if source is not None:
             source.verify(

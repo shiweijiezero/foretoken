@@ -412,6 +412,24 @@ def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_source_base_image(
+    kubectl: Kubectl,
+    root: Path,
+    requested_image: str | None,
+    saved_image: str | None = None,
+) -> str | None:
+    """Resolve a source build base from explicit intent or this checkout's successful installation."""
+    if requested_image is not None:
+        return None if requested_image == "auto" else requested_image or None
+    if saved_image is not None:
+        return saved_image
+    path = _state_directory(kubectl) / "install.json"
+    if not path.is_file():
+        return None
+    state = json.loads(path.read_text())
+    return state.get("base_image") if state.get("root") == str(root) else None
+
+
 def record_install(
     kubectl: Kubectl,
     command: InstallCommand,
@@ -693,6 +711,7 @@ def prepare_source_images(
     values: Sequence[dict[str, Any]],
     inference_engine_image: str | None = None,
     *,
+    origin: ApplicationFiles,
     installed_images: tuple[str, str, str] | None = None,
     build_metax_runtime: bool = False,
     runtime_backend: str = "nvidia",
@@ -776,9 +795,6 @@ def prepare_source_images(
             *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
         ]
     )
-    remove_application_jobs(kubectl, binding, command.timeout)
-    origin = ApplicationFiles(kubectl, namespace)
-    origin.prepare(command.timeout)
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
     )
@@ -788,9 +804,6 @@ def prepare_source_images(
         )
         node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
         nodes = [(origin.node, "", claim or "foretoken-application-build-" + node_uid)]
-    applications = {
-        component: origin.reference(component, suffix) for component in references
-    }
     # Keep a failed first installation's compiler cache addressable for retry and
     # uninstall, without replacing an existing successful installation binding.
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -882,9 +895,6 @@ def prepare_source_images(
                     image=image,
                     push=bool(registry),
                     arguments=component_arguments,
-                    reuse_image=installed.get(component, "")
-                    if image == references[component]
-                    else "",
                 )
                 final_dockerfile, final_target, final_arguments = (
                     dockerfile,
@@ -924,7 +934,6 @@ def prepare_source_images(
                         image=references[component],
                         push=bool(registry),
                         arguments=engine_arguments,
-                        reuse_image=installed.get(component, ""),
                     )
                     final_dockerfile, final_target, final_arguments = (
                         "deploy/inference-engines/source-build.Dockerfile",
@@ -947,21 +956,16 @@ def prepare_source_images(
                 reusable[component] = reusable[component] and node_digests[
                     component
                 ] == build.get("digests", {}).get(node, {}).get(component)
-                if reusable[component]:
-                    # Restore an unchanged reference even if its registry tag or local
-                    # image record was collected; never overwrite it with new content.
-                    if socket:
-                        builder.reuse_image_reference(
-                            references[component], installed[component]
-                        )
-                    else:
-                        builder.build(
-                            final_dockerfile,
-                            target=final_target,
-                            image=installed[component],
-                            push=True,
-                            arguments=final_arguments,
-                        )
+                if reusable[component] and not socket:
+                    # Restore an unchanged registry tag if it was collected, without
+                    # assigning different content to an installed reference.
+                    builder.build(
+                        final_dockerfile,
+                        target=final_target,
+                        image=installed[component],
+                        push=True,
+                        arguments=final_arguments,
+                    )
                 if node == origin.node:
                     payload = builder.root + "/applications/" + component
                     builder.build(
@@ -988,21 +992,73 @@ def prepare_source_images(
                                 payload,
                             ]
                         )
-                    origin.publish(
-                        builder,
-                        payload,
-                        component,
-                        suffix,
-                        "",
-                        None,
-                        timeout=command.timeout,
-                    )
-            if node == origin.node:
-                builder.run(["rm", "-rf", "--", builder.root + "/applications"])
             digests[node] = node_digests
+        built_references = dict(references)
         for component in references:
             if reusable[component]:
                 references[component] = installed[component]
+        # Applications follow their actual compiler inputs, not installation settings.
+        # Keep the latest source bundle when an environment-only installation reuses it.
+        application_revisions = {}
+        previous_versions = build.get("versions", {})
+        publisher = next(builder for builder in builders if builder.node == origin.node)
+        for component, prefixes in (
+            ("control-plane", ("control-plane/",)),
+            ("frontend", ("data-plane/",)),
+            (
+                "model-server",
+                ("data-plane/", "engine/", "deploy/inference-engines/"),
+            ),
+        ):
+            prior = previous.get("bundles", {}).get(
+                component, build.get("applications", {}).get(component, {})
+            ).get("revision", "")
+            unchanged_inputs = {
+                name: version
+                for name, version in versions.items()
+                if name in {"LICENSE", ".dockerignore"} or name.startswith(prefixes)
+            } == {
+                name: version
+                for name, version in previous_versions.items()
+                if name in {"LICENSE", ".dockerignore"} or name.startswith(prefixes)
+            }
+            revision = (
+                prior
+                if prior
+                and reusable[component]
+                and arguments == build.get("arguments")
+                and unchanged_inputs
+                and (
+                    component != "model-server"
+                    or engine_native == build.get("engine_native")
+                )
+                else suffix
+            )
+            application_revisions[component] = revision
+            # Publishing is idempotent for completed revisions and restores a missing
+            # directory without changing the workload's selected application URL.
+            origin.publish(
+                publisher,
+                publisher.root + "/applications/" + component,
+                component,
+                revision,
+                prior,
+                None,
+                timeout=command.timeout,
+            )
+        publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
+        applications = {
+            component: origin.reference(component, revision)
+            for component, revision in application_revisions.items()
+        }
+        # Build and publish everything before making node images collectible. Deliver
+        # the control plane last so installation can immediately start its consumers.
+        for component in ("model-server", "frontend", "control-plane"):
+            for builder in builders:
+                if builder.containerd_socket:
+                    builder.import_image(
+                        built_references[component], references[component]
+                    )
         for builder in builders:
             builder.discard_unselected_images(
                 set(references.values()) | set(installed.values())
@@ -1029,7 +1085,8 @@ def prepare_source_images(
                 "engine_caches": engine_caches,
                 "engine_native": engine_native,
                 "applications": {
-                    component: {"revision": suffix} for component in references
+                    component: {"revision": revision}
+                    for component, revision in application_revisions.items()
                 },
             },
             applications,

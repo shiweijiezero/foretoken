@@ -16,7 +16,7 @@ use crate::registry::PreparedRule;
 pub struct AdmissionDescriptor {
     /// Stable name selected by frontend configuration.
     pub name: &'static str,
-    /// Constructs the rule once before the frontend starts accepting requests.
+    /// Constructs an independent validated rule candidate before publication.
     pub factory: fn(serde_json::Value) -> Result<Arc<dyn AdmissionRule>, String>,
 }
 inventory::collect!(AdmissionDescriptor);

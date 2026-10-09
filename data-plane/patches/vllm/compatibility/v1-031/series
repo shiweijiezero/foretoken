@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 common/python-profiling.patch
-common/worker-profiling.patch
-compatibility/v1-legacy/ready-logprobs.patch
+compatibility/v1-031/python-profiling.patch
+common/ready-logprobs.patch
 common/spec-decode-timing-collector.patch
 common/spec-decode-timing-hooks.patch
 common/shm-nonblocking-read.patch
-compatibility/v1-legacy/spec-decode-timing.patch
+compatibility/v1-031/spec-decode-timing.patch

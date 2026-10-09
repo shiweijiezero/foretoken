@@ -30,9 +30,23 @@ import (
 
 // reconcileServingSnapshot publishes the versioned routing and scaling snapshot consumed by frontend Pods.
 func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService) (bool, error) {
+	requestTimeout, err := durationSeconds(frontend.Spec.Timeouts.Request)
+	if err != nil {
+		return false, fmt.Errorf("parse request timeout: %w", err)
+	}
+	streamIdle, err := durationSeconds(frontend.Spec.Timeouts.StreamIdle)
+	if err != nil {
+		return false, fmt.Errorf("parse stream idle timeout: %w", err)
+	}
+	settings := servingSettings{
+		RouterPipeline:        frontend.Spec.RouterPipeline,
+		RequestTimeoutSeconds: requestTimeout,
+		StreamIdleSeconds:     streamIdle,
+		LogLevel:              frontend.Spec.LogLevel,
+	}
 	name := frontendServingConfigMapName(frontend)
 	current := new(corev1.ConfigMap)
-	err := reconciler.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: name}, current)
+	err = reconciler.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: name}, current)
 	if err == nil && !metav1.IsControlledBy(current, frontend) {
 		return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", name)
 	}
@@ -79,12 +93,12 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		if previous.Version > version {
 			version = previous.Version
 		}
-		contentsChanged = !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope)
+		contentsChanged = !reflect.DeepEqual(previous.Settings, settings) || !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope)
 	}
 	if contentsChanged || version == 0 {
 		version++
 	}
-	payload, err := json.Marshal(servingSnapshot{Version: version, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes})
+	payload, err := json.Marshal(servingSnapshot{Version: version, Settings: settings, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes})
 	if err != nil {
 		return false, fmt.Errorf("encode routing snapshot: %w", err)
 	}
@@ -128,6 +142,9 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	if frontend.Status.ServingSnapshotVersion < version {
 		base := frontend.DeepCopy()
 		frontend.Status.ServingSnapshotVersion = version
+		// A previous rejection belongs to the previous publication, not its replacement.
+		setFrontendCondition(frontend, frontendConditionRoutingReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
+		setFrontendCondition(frontend, conditionReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
 		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFrom(base)); err != nil {
 			return false, fmt.Errorf("persist serving snapshot version: %w", err)
 		}
@@ -164,6 +181,19 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			continue
 		}
 		servicePools := ownedRoutingPools(service, pools.Items)
+		compiled, err := compiler.CompileModelService(service.Spec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compile ModelService %q catalog: %w", service.Name, err)
+		}
+		// Pool materialization can lag service intent, including migration from template limits.
+		// Keep the previous snapshot until live limits have reached their owning Pool.
+		for _, desired := range compiled {
+			for _, pool := range servicePools {
+				if pool.Spec.PoolName == desired.Name && !equalOptionalInt32(pool.Spec.MaxInputTokens, desired.MaxInputTokens) {
+					return nil, nil, fmt.Errorf("ModelService %q Pool %q request limits are not yet materialized", service.Name, desired.Name)
+				}
+			}
+		}
 		var identities []servingSnapshotGroup
 		var roles []inferencev1alpha1.ModelRole
 		topology := ""
@@ -184,10 +214,6 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			topology = selectedTopology
 		} else {
 			// The same compilers used by the service and runtime resolve cold models before Pools or Groups exist.
-			compiled, err := compiler.CompileModelService(service.Spec)
-			if err != nil {
-				return nil, nil, fmt.Errorf("compile ModelService %q catalog: %w", service.Name, err)
-			}
 			for _, pool := range compiled {
 				identity, err := configuredTemplateIdentity(pool.Template)
 				if err != nil {
@@ -226,6 +252,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			targetSets = make([][]servingSnapshotScalingTarget, 0)
 		}
 		models = append(models, servingSnapshotModel{
+			ServiceGeneration:     service.Generation,
 			ServiceUID:            string(service.UID),
 			Model:                 identity.Model,
 			Source:                identity.Source,
@@ -525,13 +552,14 @@ func ownedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferenc
 	return owned
 }
 
-func routingPoolName(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) string {
+// routingPool returns the owner of a Group selected from these Pools.
+func routingPool(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) *inferencev1alpha1.ModelPool {
 	for _, pool := range pools {
 		if string(pool.UID) == group.Spec.ModelPoolRef.UID {
-			return pool.Spec.PoolName
+			return pool
 		}
 	}
-	return ""
+	panic("selected routing Group has no owning Pool")
 }
 
 func serviceDeclaresEPD(service *inferencev1alpha1.ModelService) bool {
@@ -606,11 +634,11 @@ func projectServicePDComponents(service *inferencev1alpha1.ModelService, pools [
 	components := make([]servingSnapshotPDComponent, 0, len(prefills)+len(decodes))
 	pipelineScope := servingSnapshotPDPipelineScope{PipelineScopeID: pipelineScopeID}
 	for _, group := range prefills {
-		components = append(components, routingPDComponent(service, group, routingPoolName(pools, group), pipelineScopeID))
+		components = append(components, routingPDComponent(service, group, routingPool(pools, group), pipelineScopeID))
 		pipelineScope.PrefillRouteTargetIDs = append(pipelineScope.PrefillRouteTargetIDs, string(group.UID))
 	}
 	for _, group := range decodes {
-		components = append(components, routingPDComponent(service, group, routingPoolName(pools, group), pipelineScopeID))
+		components = append(components, routingPDComponent(service, group, routingPool(pools, group), pipelineScopeID))
 		pipelineScope.DecodeRouteTargetIDs = append(pipelineScope.DecodeRouteTargetIDs, string(group.UID))
 	}
 	slices.Sort(pipelineScope.PrefillRouteTargetIDs)
@@ -725,15 +753,15 @@ func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 		pipelineScopeID := fmt.Sprintf("epd:%s:%d", service.UID, index)
 		pipelineScope := servingSnapshotEPDPipelineScope{PipelineScopeID: pipelineScopeID}
 		for _, group := range scope.encoders {
-			components = append(components, routingEPDComponent(service, group, routingPoolName(pools, group)))
+			components = append(components, routingEPDComponent(service, group, routingPool(pools, group)))
 			pipelineScope.EncoderRouteTargetIDs = append(pipelineScope.EncoderRouteTargetIDs, string(group.UID))
 		}
 		for _, group := range scope.prefills {
-			components = append(components, routingEPDComponent(service, group, routingPoolName(pools, group)))
+			components = append(components, routingEPDComponent(service, group, routingPool(pools, group)))
 			pipelineScope.PrefillRouteTargetIDs = append(pipelineScope.PrefillRouteTargetIDs, string(group.UID))
 		}
 		for _, group := range scope.decodes {
-			components = append(components, routingEPDComponent(service, group, routingPoolName(pools, group)))
+			components = append(components, routingEPDComponent(service, group, routingPool(pools, group)))
 			pipelineScope.DecodeRouteTargetIDs = append(pipelineScope.DecodeRouteTargetIDs, string(group.UID))
 		}
 		slices.Sort(pipelineScope.EncoderRouteTargetIDs)
@@ -768,7 +796,7 @@ func routingParallelism(group *inferencev1alpha1.ModelGroup) servingSnapshotPara
 	}
 }
 
-func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, poolName string) servingSnapshotEPDComponent {
+func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) servingSnapshotEPDComponent {
 	features := group.Spec.Features
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
@@ -777,14 +805,14 @@ func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferen
 		RouteTargetID:     string(group.UID),
 		ServiceUID:        string(service.UID),
 		PoolUID:           group.Spec.ModelPoolRef.UID,
-		PoolName:          poolName,
+		PoolName:          pool.Spec.PoolName,
 		Role:              string(group.Spec.Role),
 		Model:             group.Spec.Artifacts.Model,
 		Source:            group.Spec.Artifacts.Source,
 		Revision:          group.Spec.Artifacts.ModelRevision,
 		Tokenizer:         group.Spec.Artifacts.Tokenizer,
 		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		MaxInputTokens:    copyOptionalInt32(group.Spec.MaxInputTokens),
+		MaxInputTokens:    copyOptionalInt32(pool.Spec.MaxInputTokens),
 		Capabilities:      routingCapabilities(features),
 		Endpoint:          modelGroupEndpoint(group, group.Spec.Runtime.Port),
 		KVScopeID:         kvScopeID(group),
@@ -866,7 +894,6 @@ func routingGroup(group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 		Revision:          group.Spec.Artifacts.ModelRevision,
 		Tokenizer:         group.Spec.Artifacts.Tokenizer,
 		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		MaxInputTokens:    copyOptionalInt32(group.Spec.MaxInputTokens),
 		Capabilities:      routingCapabilities(group.Spec.Features),
 		Endpoint:          modelGroupEndpoint(group, group.Spec.Runtime.Port),
 		KVScopeID:         kvScopeID(group),
@@ -876,6 +903,7 @@ func routingGroup(group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 }
 func routingGroupForService(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 	route := routingGroup(group)
+	route.MaxInputTokens = copyOptionalInt32(pool.Spec.MaxInputTokens)
 	if group.Spec.Runtime.Backend == "vllm-omni" {
 		route.Capabilities = []string{"video"}
 	}
@@ -929,7 +957,7 @@ func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig)
 	return completePDRuntime(left) && completePDRuntime(right) && left.ServiceUID == right.ServiceUID && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort && left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName
 }
 
-func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, poolName, pipelineScopeID string) servingSnapshotPDComponent {
+func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, pipelineScopeID string) servingSnapshotPDComponent {
 	pd := group.Spec.PDRuntime
 	features := group.Spec.Features
 	// No P/D runtime profile currently verifies multimodal support. Never publish
@@ -939,7 +967,7 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		RouteTargetID:     string(group.UID),
 		ServiceUID:        string(service.UID),
 		PoolUID:           group.Spec.ModelPoolRef.UID,
-		PoolName:          poolName,
+		PoolName:          pool.Spec.PoolName,
 		Role:              string(group.Spec.Role),
 		PipelineScopeID:   pipelineScopeID,
 		Model:             group.Spec.Artifacts.Model,
@@ -947,7 +975,7 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		Revision:          group.Spec.Artifacts.ModelRevision,
 		Tokenizer:         group.Spec.Artifacts.Tokenizer,
 		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		MaxInputTokens:    copyOptionalInt32(group.Spec.MaxInputTokens),
+		MaxInputTokens:    copyOptionalInt32(pool.Spec.MaxInputTokens),
 		ProfileName:       pd.ProfileName,
 		ProfileRevision:   pd.ProfileRevision,
 		Connector:         pd.Connector,
@@ -1021,7 +1049,7 @@ func matchingRoutingArtifacts(left, right servingSnapshotGroup) bool {
 	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision
 }
 func equalScalingModel(left, right servingSnapshotModel) bool {
-	return left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
+	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
 }
 
 func equalRoutingGroup(left, right servingSnapshotGroup) bool {

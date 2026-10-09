@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use foretoken_runtime_builder::RuntimeBuilder;
+use foretoken_runtime_builder::{RuntimeBuildError, RuntimeBuilder};
 use foretoken_server::RuntimeGeneration;
 
 /// Periodically refreshes backend readiness for the active generation.
@@ -23,8 +23,8 @@ pub(crate) async fn refresh_active_generation(generation: Arc<RuntimeGeneration>
 
 /// Watches controller snapshots and publishes each newly prepared runtime generation.
 ///
-/// `main` spawns this loop for process lifetime. Failed candidates stay retryable while the
-/// currently active generation continues serving, and accepted candidates replace it atomically.
+/// `main` retains this loop for process lifetime. Invalid rules wait for changed input;
+/// unavailable backends remain retryable while the active generation continues serving.
 pub(crate) async fn watch_serving_snapshot(
     generation: Arc<RuntimeGeneration>,
     path: PathBuf,
@@ -33,8 +33,7 @@ pub(crate) async fn watch_serving_snapshot(
 ) {
     let mut read_failure_reported = false;
 
-    // Advance the byte watermark only after publishing a candidate or recognizing it as stale.
-    // Failed candidates remain retryable while the active generation continues serving.
+    // Remember completed or rejected input; retry only preparation that can recover unchanged.
     loop {
         match std::fs::read(&path) {
             Ok(bytes) if last_processed_snapshot.as_ref() == Some(&bytes) => {
@@ -66,8 +65,13 @@ async fn process_serving_snapshot(
     let snapshot = match builder.parse(bytes) {
         Ok(snapshot) => snapshot,
         Err(error) => {
+            // A rejected field can still belong to an identifiable controller publication.
+            let version = serde_json::from_slice::<serde_json::Value>(bytes)
+                .ok()
+                .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64));
+            generation.record_configuration(version, Some(error.to_string()));
             tracing::error!(%error, "could not parse serving snapshot candidate");
-            return false;
+            return true;
         }
     };
     let candidate_version = snapshot.version;
@@ -81,6 +85,7 @@ async fn process_serving_snapshot(
         );
         return true;
     }
+    generation.record_configuration(Some(candidate_version), None);
     match builder.build(snapshot).await {
         Ok(prepared) => match std::fs::read(path) {
             Ok(current) if current == bytes => prepared.publish(generation),
@@ -97,8 +102,14 @@ async fn process_serving_snapshot(
             }
         },
         Err(error) => {
+            let rejected = matches!(
+                &error,
+                RuntimeBuildError::Router(_) | RuntimeBuildError::InvalidSnapshot(_)
+            );
+            generation
+                .record_configuration(Some(candidate_version), rejected.then(|| error.to_string()));
             tracing::warn!(%error, "could not prepare serving snapshot candidate");
-            false
+            rejected
         }
     }
 }

@@ -15,7 +15,7 @@ index d1c20ad58..89a6cd8c3 100644
      /// handshake. In bootstrapped mode it binds the provided frontend
      /// sockets and waits for the expected engine registration frames.
      pub async fn connect(config: EngineCoreClientConfig) -> Result<Self> {
-+        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28ToV0_30).await
++        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28ToV0_31).await
 +    }
 +
 +    /// Connect using an explicitly selected vLLM EngineCore wire layout.
@@ -147,7 +147,7 @@ index 9c539bf18..1365cf663 100644
                  engine_id: EngineId::from(b"engine-0"),
                  ready_response: default_ready_response(),
              }],
-+            EngineCoreProtocol::V0_28ToV0_30,
++            EngineCoreProtocol::V0_28ToV0_31,
          )
      }
  
@@ -305,7 +305,7 @@ index a9695bd1c..ecbfa879e 100644
      Frame: AsRef<[u8]>,
  {
 -    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
-+    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_30)
++    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_31)
 +}
  
 -    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
@@ -372,8 +372,8 @@ index 8118b770e..821bfc007 100644
 +    V0_21ToV0_25,
 +    /// vLLM 0.26 and 0.27 also add `ec_transfer_params` to outputs.
 +    V0_26ToV0_27,
-+    /// vLLM 0.28 through 0.30 include `session_id` in the request.
-+    V0_28ToV0_30,
++    /// vLLM 0.28 through 0.31 include `session_id`; 0.31 accepts omitted `kv_hints`.
++    V0_28ToV0_31,
 +}
 +
 +/// Encode legacy field layouts without copying request data or using intermediate dynamic values.
@@ -385,7 +385,7 @@ index 8118b770e..821bfc007 100644
 +
 +impl Serialize for VersionedRequest<'_> {
 +    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-+        if self.protocol == EngineCoreProtocol::V0_28ToV0_30 {
++        if self.protocol == EngineCoreProtocol::V0_28ToV0_31 {
 +            return self.request.serialize(serializer);
 +        }
 +        let request = self.request;
@@ -428,7 +428,7 @@ index 8118b770e..821bfc007 100644
 +        for (field, unsupported) in [
 +            (
 +                "session_id",
-+                protocol != EngineCoreProtocol::V0_28ToV0_30 && self.session_id.is_some(),
++                protocol != EngineCoreProtocol::V0_28ToV0_31 && self.session_id.is_some(),
 +            ),
 +            (
 +                "prompt_is_token_ids",
@@ -690,3 +690,76 @@ index ac65ae269..b04b80c16 100644
          ..default_ready_response()
      };
      let (mut app, _engine_task) = test_dev_mode_app_with_ready(ready, 4).await;
+diff --git a/rust/src/engine-core-client/src/protocol/mod.rs b/rust/src/engine-core-client/src/protocol/mod.rs
+--- a/rust/src/engine-core-client/src/protocol/mod.rs
++++ b/rust/src/engine-core-client/src/protocol/mod.rs
+@@ -31,2 +31,3 @@
+ pub mod sampling;
++mod serde_utils;
+ pub mod stats;
+diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engine-core-client/src/protocol/output.rs
+--- a/rust/src/engine-core-client/src/protocol/output.rs
++++ b/rust/src/engine-core-client/src/protocol/output.rs
+@@ -11,3 +11,5 @@
+ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
++use serde_with::serde_as;
+
++use super::serde_utils::AllowTrailingFields;
+ use super::utility::UtilityOutput;
+@@ -155,2 +157,3 @@
++#[serde_as]
+ #[derive(Debug, Clone, PartialEq, Serialize_tuple, Deserialize_tuple, DefaultFromSerde)]
+ struct WireEngineCoreOutputs {
+@@ -159,3 +162,5 @@
+     /// Outputs grouped for this client in the current engine tick.
++    // Match msgspec's append-only schema without weakening known field decoding.
++    #[serde_as(deserialize_as = "Vec<AllowTrailingFields>")]
+     #[serde(default)]
+     outputs: Vec<EngineCoreOutput>,
+diff --git a/rust/src/engine-core-client/src/protocol/serde_utils.rs b/rust/src/engine-core-client/src/protocol/serde_utils.rs
+new file mode 100644
+--- /dev/null
++++ b/rust/src/engine-core-client/src/protocol/serde_utils.rs
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++use std::fmt;
++use std::marker::PhantomData;
++
++use serde::de::{IgnoredAny, SeqAccess, Visitor, value::SeqAccessDeserializer};
++use serde::{Deserialize, Deserializer};
++use serde_with::DeserializeAs;
++
++/// Decode an array-like struct using its derived field types and defaults,
++/// skipping appended fields as Python's msgspec does. Opt in only for schemas
++/// whose extensions preserve the known field order and semantics.
++pub(super) struct AllowTrailingFields;
++
++impl<'de, T: Deserialize<'de>> DeserializeAs<'de, T> for AllowTrailingFields {
++    fn deserialize_as<D>(deserializer: D) -> Result<T, D::Error>
++    where
++        D: Deserializer<'de>,
++    {
++        struct ArrayVisitor<T>(PhantomData<T>);
++
++        impl<'de, T: Deserialize<'de>> Visitor<'de> for ArrayVisitor<T> {
++            type Value = T;
++
++            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++                formatter.write_str("an array-like struct")
++            }
++
++            fn visit_seq<A>(self, mut seq: A) -> Result<T, A::Error>
++            where
++                A: SeqAccess<'de>,
++            {
++                let value = T::deserialize(SeqAccessDeserializer::new(&mut seq))?;
++                while seq.next_element::<IgnoredAny>()?.is_some() {}
++                Ok(value)
++            }
++        }
++
++        deserializer.deserialize_seq(ArrayVisitor(PhantomData))
++    }
++}

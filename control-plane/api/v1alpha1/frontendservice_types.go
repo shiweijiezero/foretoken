@@ -18,6 +18,12 @@ type FrontendTimeouts struct {
 
 	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
+
+	// Drain bounds process shutdown independently of live request budgets.
+	// +optional
+	// +kubebuilder:default="10m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Drain Duration `json:"drain,omitempty"`
 }
 
 // RouterAlgorithm names one compiled routing algorithm.
@@ -79,6 +85,12 @@ type FrontendServiceSpec struct {
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
+	// LogLevel controls frontend diagnostics without replacing the process.
+	// +optional
+	// +kubebuilder:default=info
+	// +kubebuilder:validation:Enum=trace;debug;info;warn;error;off
+	LogLevel string `json:"logLevel,omitempty"`
+
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
@@ -121,6 +133,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
+
+	// AppliedServingSnapshotVersion is the last version confirmed by every observed workload replica.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	AppliedServingSnapshotVersion uint64 `json:"appliedServingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

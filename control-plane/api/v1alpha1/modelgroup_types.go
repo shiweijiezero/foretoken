@@ -284,11 +284,6 @@ type ModelGroupSpec struct {
 
 	Parallelism CompiledParallelism `json:"parallelism"`
 
-	// MaxInputTokens is the prompt admission limit advertised to routing clients.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
-
 	// Features is the immutable capabilities advertised to routing clients.
 	Features ModelFeatures `json:"features"`
 

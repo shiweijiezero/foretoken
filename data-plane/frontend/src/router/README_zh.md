@@ -9,7 +9,7 @@
 
 ## 选择路由策略
 
-优先选择等待请求较少的副本时，在 `FrontendService` 中设置评分算法：
+优先选择等待请求较少的副本时，在 `FrontendService` YAML 中设置评分算法。以快速开始示例为例，修改 `examples/quickstart/frontend.yaml`：
 
 ```yaml
 spec:
@@ -18,7 +18,15 @@ spec:
       algorithm: queue_depth
 ```
 
-重新部署前端配置后生效。不配置 `routerPipeline` 时，路由保留全部兼容且健康的目标（`allow_all`），通过 `kv_least_loaded` 评分，再由 `gamble_sampling` 选择。
+重新部署修改后的配置：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+`routerPipeline` 分为过滤（`filter`）、评分（`scorer`）和选择（`picker`）三个阶段，各自配置 `algorithm` 及该算法接受的 `parameters`。更新时不重启前端 Pod，新请求使用更新后的路由策略，已经开始路由的请求保留原策略。算法不存在或参数无效时，继续使用上一份可用配置。
+
+不配置 `routerPipeline` 时，路由保留全部兼容且健康的目标（`allow_all`），通过 `kv_least_loaded` 评分，再由 `gamble_sampling` 选择。
 
 根据工作负载选择评分算法：
 
@@ -47,6 +55,8 @@ spec:
       parameters:
         matchLengthWeight: 0.5
 ```
+
+调整 `session_affinity` 参数时保留已有会话绑定；调整 `no_hit_lru` 参数时保留选择历史，缩小 `lruSize` 只删除超额的最旧记录。切换评分算法则为新算法建立独立状态。
 
 KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好。支持的缓存及状态访问见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 

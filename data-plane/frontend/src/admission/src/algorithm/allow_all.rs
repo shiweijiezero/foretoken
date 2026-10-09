@@ -1,13 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Unrestricted admission without runtime accounting.
+//! Unrestricted admission that retains work-unit accounting across rule updates.
 
-use crate::{AdmissionContext, AdmissionError, AdmissionPermit, AdmissionRequest, AdmissionRule};
+use crate::{
+    AdmissionCapacity, AdmissionCapacityState, AdmissionContext, AdmissionError, AdmissionPermit,
+    AdmissionRequest, AdmissionRule,
+};
 
-/// Accepts requests without allocating capacity or queue state.
-#[derive(Default)]
-pub struct AllowAllAdmission;
+/// Accepts requests without finite limits, retaining their count for subsequent bounded rules.
+pub struct AllowAllAdmission {
+    capacity: AdmissionCapacityState,
+}
+
+impl Default for AllowAllAdmission {
+    fn default() -> Self {
+        Self {
+            capacity: AdmissionCapacityState::new(None, None),
+        }
+    }
+}
 
 impl AllowAllAdmission {
     /// Builds the parameter-free rule selected by the admission configuration.
@@ -16,7 +28,7 @@ impl AllowAllAdmission {
             .as_object()
             .is_some_and(|parameters| parameters.is_empty())
         {
-            Ok(Self)
+            Ok(Self::default())
         } else {
             Err("allow_all admission accepts no parameters".into())
         }
@@ -25,11 +37,27 @@ impl AllowAllAdmission {
 
 #[async_trait::async_trait]
 impl AdmissionRule for AllowAllAdmission {
+    fn capacity(&self) -> Option<AdmissionCapacity> {
+        self.capacity.capacity()
+    }
+
+    fn capacity_state(&self) -> Option<&AdmissionCapacityState> {
+        Some(&self.capacity)
+    }
+
+    fn requires_ready_runtime(&self) -> bool {
+        self.capacity.capacity().is_some()
+    }
+
     async fn admit(
         &self,
-        _request: &AdmissionRequest,
-        _context: &AdmissionContext<'_>,
+        request: &AdmissionRequest,
+        context: &AdmissionContext<'_>,
     ) -> Result<AdmissionPermit, AdmissionError> {
-        Ok(AdmissionPermit::default())
+        self.capacity.admit(request, context).await
+    }
+
+    fn close(&self) {
+        self.capacity.close();
     }
 }

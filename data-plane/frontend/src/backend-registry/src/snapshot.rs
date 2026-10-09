@@ -11,6 +11,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingSnapshot {
+    pub settings: ServingSettings,
     /// Effective rules for the configured public model catalog.
     pub admission: BTreeMap<String, foretoken_admission::AdmissionConfig>,
     pub version: u64,
@@ -25,6 +26,15 @@ pub struct ServingSnapshot {
     #[serde(default)]
     pub epd_pipeline_scopes: Vec<SnapshotEpdPipelineScope>,
 }
+/// Frontend rules published with discovery and applied at one generation boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServingSettings {
+    pub router_pipeline: foretoken_router::RouterPipelineConfig,
+    pub request_timeout_seconds: u64,
+    pub stream_idle_seconds: u64,
+    pub log_level: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotParallelism {
     pub tp: u32,
@@ -157,6 +167,17 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    /// Compares the backend inventory independently of frontend rules and publication version.
+    /// Runtime builders reuse clients and cached observations when this inventory is unchanged.
+    pub fn same_discovery(&self, other: &Self) -> bool {
+        self.models == other.models
+            && self.groups == other.groups
+            && self.pd_components == other.pd_components
+            && self.pd_pipeline_scopes == other.pd_pipeline_scopes
+            && self.epd_components == other.epd_components
+            && self.epd_pipeline_scopes == other.epd_pipeline_scopes
+    }
+
     /// Returns each model's deterministically ordered, controller-owned admission target sets.
     ///
     /// Registry projection consumes these sets to attribute request admission; malformed or conflicting ownership is rejected.
