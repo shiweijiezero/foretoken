@@ -3,7 +3,7 @@
 
 //! Shared request reservations transferred from frontend waiting to backend execution.
 
-use redis::aio::ConnectionManager;
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -82,6 +82,20 @@ impl RequestLedger {
         format!("{MODEL_KEY_PREFIX}{}:{scope}:{model}", scope.len())
     }
 
+    /// Shares the upstream reconnecting client without minute-long retry sleeps after store restarts.
+    /// The base delay is capped at one second; the client's jitter can add up to another second.
+    async fn connection(&self) -> Result<ConnectionManager, LedgerError> {
+        let connection = self
+            .connection
+            .get_or_try_init(|| {
+                self.client.get_connection_manager_with_config(
+                    ConnectionManagerConfig::new().set_max_delay(1_000),
+                )
+            })
+            .await?;
+        Ok(connection.clone())
+    }
+
     async fn transition(
         &self,
         scope: &str,
@@ -90,16 +104,13 @@ impl RequestLedger {
         request: &str,
         input: Value,
     ) -> Result<String, LedgerError> {
-        let connection = self
-            .connection
-            .get_or_try_init(|| self.client.get_connection_manager())
-            .await?;
+        let mut connection = self.connection().await?;
         Ok(TRANSITION
             .key(Self::key(scope, model))
             .arg(action)
             .arg(request)
             .arg(input.to_string())
-            .invoke_async(&mut connection.clone())
+            .invoke_async(&mut connection)
             .await?)
     }
 
@@ -144,11 +155,7 @@ impl RequestLedger {
     /// Registers a fresh engine process before it accepts traffic and retires its stopped predecessor.
     /// Pod identity is supplied by Kubernetes; store-issued epochs fence delayed recovery commands.
     pub async fn register_backend(&self, pod: &str) -> Result<u64, LedgerError> {
-        let connection = self
-            .connection
-            .get_or_try_init(|| self.client.get_connection_manager())
-            .await?;
-        let mut connection = connection.clone();
+        let mut connection = self.connection().await?;
         let epoch: u64 = redis::cmd("INCR")
             .arg(format!("foretoken:engine-epoch:{pod}"))
             .query_async(&mut connection)
