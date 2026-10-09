@@ -24,7 +24,7 @@ from benchmarks.results.console import (
 )
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import BenchmarkRun
-from benchmarks.runs.dispatch import measurement_runner
+from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.runs.video import run_video_benchmark
 from benchmarks.sweeps.http import ParameterSweepBenchmark
@@ -40,7 +40,7 @@ def run_benchmark(
     """Execute an SLO search or measurement on a prepared service."""
     if benchmark.slo.search:
         return SloAutoTuneBenchmark(benchmark, service).run()
-    return measurement_runner(benchmark, service).run()
+    return HttpBenchmark(benchmark, service).run()
 
 
 def _run_video(arguments: Sequence[str], *, command_name: str) -> None:

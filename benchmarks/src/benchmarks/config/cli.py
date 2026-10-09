@@ -227,7 +227,7 @@ def _add_benchmark_arguments(
         "--warmup-requests",
         type=int,
         default=_default(HttpLoadSchedule, "warmup_requests"),
-        help="Conversations to finish before each generated run; excluded from measured results",
+        help="Additional HTTP requests to finish before each measurement; formal inputs and request count stay unchanged",
     )
     parser.add_argument(
         "--request-rate",

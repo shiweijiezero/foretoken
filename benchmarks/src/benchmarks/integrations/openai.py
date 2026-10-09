@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import random
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Self
 
 import httpx
@@ -21,6 +23,86 @@ from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import compute_tpot
 
 
+@dataclass(frozen=True)
+class PreparedRequest:
+    """An OpenAI request with resolved generation fields and usage expectations."""
+
+    body: dict[str, Any]
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class RequestBuilder:
+    """Resolve request controls before scheduling, without owning transport or RNG state."""
+
+    def __init__(self, benchmark: BenchmarkConfig, service: ModelService) -> None:
+        self.generation = benchmark.generation
+        self.overrides = self.generation.request_overrides()
+        self.service = service
+
+    def model_for(self, metadata: Mapping[str, Any]) -> str:
+        """Resolve the advertised model used for request preparation and tokenization."""
+        model = metadata.get("model", self.overrides.get("model", self.service.model))
+        if not model:
+            raise ValueError("Dataset row must specify model when --model is omitted")
+        if (
+            self.service.model_service_refs or self.service.deployment is not None
+        ) and model not in self.service.models:
+            raise ValueError(
+                f"Dataset model {model!r} is not advertised by the deployment"
+            )
+        return model
+
+    def prepare(
+        self,
+        task: Task,
+        messages: list[dict[str, Any]],
+        rng: random.Random,
+        *,
+        reference_length: int | None = None,
+    ) -> PreparedRequest:
+        """Apply row controls, sampled lengths, and reference lengths in that order."""
+        generation = self.generation
+        metadata = task.metadata
+        target = metadata.get("output_length")
+        if target is None and generation.min_output_length is not None:
+            target = rng.randint(
+                generation.min_output_length, generation.max_output_length
+            )
+        if target is None:
+            target = reference_length
+        limit = generation.max_tokens
+        maximum = rng.randint(*limit) if isinstance(limit, list) else limit
+        model = self.model_for(metadata)
+        body = {
+            "max_tokens": maximum,
+            **self.overrides,
+            "model": model,
+            "stream": generation.stream,
+            **(
+                {"prompt": list(task.prompt_token_ids)}
+                if task.prompt_token_ids is not None
+                else {"messages": messages}
+            ),
+        }
+        if "priority" in metadata:
+            body["priority"] = metadata["priority"]
+        for key in ("tools", "tool_choice", "parallel_tool_calls"):
+            if key in metadata and key not in self.overrides:
+                body[key] = metadata[key]
+        if target is not None:
+            body.update(max_tokens=target, min_tokens=target, ignore_eos=True)
+        if generation.stream:
+            body["stream_options"] = {"include_usage": True}
+        return PreparedRequest(
+            body,
+            input_tokens=len(task.prompt_token_ids)
+            if task.prompt_token_ids is not None
+            else None,
+            output_tokens=target,
+        )
+
+
 class OpenAILoadClient:
     """Own one HTTP client and shared generation measurements for a workload point."""
 
@@ -31,8 +113,6 @@ class OpenAILoadClient:
         *,
         max_connections: int | None,
     ) -> None:
-        self._generation = benchmark.generation
-        self._request_overrides = benchmark.generation.request_overrides()
         limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
@@ -48,8 +128,6 @@ class OpenAILoadClient:
                 limits=limits,
             ),
         )
-        self._model = service.model
-        self._models = service.models if service.model_service_refs or service.deployment is not None else ()
         self._completions_url = service.api_root.rstrip("/") + "/completions"
         self._request_url = (
             service.api_root.rstrip("/") + "/chat/completions"
@@ -63,60 +141,13 @@ class OpenAILoadClient:
     async def __aexit__(self, *args: object) -> None:
         await self._client.close()
 
-    def model_for(self, metadata: Mapping[str, Any]) -> str:
-        """Resolve the request model for workload tokenization and HTTP dispatch."""
-        model = metadata.get("model", self._request_overrides.get("model", self._model))
-        if not model:
-            raise ValueError("Dataset row must specify model when --model is omitted")
-        if self._models and model not in self._models:
-            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
-        return model
-
-    async def send(self, task: Task) -> dict[str, Any]:
-        """Send one independent request for ``task`` and return its observation."""
-        return await self._send(task.messages(), task.metadata, prompt_token_ids=task.prompt_token_ids)
-
-    async def send_messages(
-        self,
-        messages: list[dict[str, Any]],
-        metadata: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Send a chat turn and return timing, usage, and generated text for the conversation driver."""
-        return await self._send(messages, metadata)
-
-    async def _send(
-        self,
-        messages: list[dict[str, Any]],
-        metadata: Mapping[str, Any] | None,
-        *,
-        prompt_token_ids: tuple[int, ...] | None = None,
-    ) -> dict[str, Any]:
-        """Measure either endpoint with the same timing, exact-length, and failure rules."""
-        completion = prompt_token_ids is not None
-        stream = self._generation.stream
-        metadata = metadata or {}
-        target_length = metadata.get("output_length")
-        if target_length is None:
-            target_length = self._generation.sample_output_length()
-        model = self.model_for(metadata)
-        request_fields: dict[str, Any] = {
-            "model": model,
-            **({"prompt": list(prompt_token_ids)} if completion else {"messages": messages}),
-            "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
-            "stream": stream,
-        }
-        request_fields.update(self._request_overrides, model=model)
-        if "priority" in metadata:
-            request_fields["priority"] = metadata["priority"]
-        if target_length is not None:
-            request_fields["max_tokens"] = target_length
-            request_fields.update(min_tokens=target_length, ignore_eos=True)
-        if stream:
-            request_fields["stream_options"] = {"include_usage": True}
-        for key in ("tools", "tool_choice", "parallel_tool_calls"):
-            if metadata and key in metadata and key not in self._request_overrides:
-                request_fields[key] = metadata[key]
-
+    async def send(self, request: PreparedRequest) -> dict[str, Any]:
+        """Send a prepared request and measure its timing, usage, and protocol failures."""
+        request_fields = request.body
+        completion = request.input_tokens is not None
+        stream = request_fields["stream"]
+        target_length = request.output_tokens
+        model = request_fields["model"]
         started_at = time.perf_counter()
         timing = ChatStreamTiming()
         input_tokens: int | None = None
@@ -133,7 +164,9 @@ class OpenAILoadClient:
                 body=request_fields,
                 cast_to=Completion if completion else ChatCompletion,
                 stream=stream,
-                stream_cls=AsyncStream[Completion] if completion else AsyncStream[ChatCompletionChunk],
+                stream_cls=AsyncStream[Completion]
+                if completion
+                else AsyncStream[ChatCompletionChunk],
             )
             status_code = httpx.codes.OK
             if stream:
@@ -149,7 +182,10 @@ class OpenAILoadClient:
                             if delta.content:
                                 generated_parts.append(delta.content)
                             if delta.tool_calls:
-                                tool_calls.extend(call.model_dump(exclude_none=True) for call in delta.tool_calls)
+                                tool_calls.extend(
+                                    call.model_dump(exclude_none=True)
+                                    for call in delta.tool_calls
+                                )
                     if chunk.usage is not None:
                         input_tokens = int(chunk.usage.prompt_tokens)
                         output_tokens = int(chunk.usage.completion_tokens)
@@ -165,7 +201,10 @@ class OpenAILoadClient:
                         if message.content:
                             generated_parts.append(message.content)
                         if message.tool_calls:
-                            tool_calls.extend(call.model_dump(exclude_none=True) for call in message.tool_calls)
+                            tool_calls.extend(
+                                call.model_dump(exclude_none=True)
+                                for call in message.tool_calls
+                            )
                 if response.usage is not None:
                     input_tokens = int(response.usage.prompt_tokens)
                     output_tokens = int(response.usage.completion_tokens)
@@ -183,11 +222,9 @@ class OpenAILoadClient:
                 f"Output length mismatch: requested {target_length} tokens, service reported {output_tokens}; "
                 "verify min_tokens and ignore_eos support"
             )
-        if success and completion and input_tokens != len(prompt_token_ids):
+        if success and completion and input_tokens != request.input_tokens:
             success = False
-            error_message = (
-                f"Input length mismatch: sent {len(prompt_token_ids)} token IDs, service reported {input_tokens}"
-            )
+            error_message = f"Input length mismatch: sent {request.input_tokens} token IDs, service reported {input_tokens}"
         completed_at = (
             timing.last_output_at
             if stream and success and timing.last_output_at is not None
@@ -196,7 +233,8 @@ class OpenAILoadClient:
         latency = completed_at - started_at
         ttft = (
             timing.first_output_at - started_at
-            if stream and timing.first_output_at is not None else None
+            if stream and timing.first_output_at is not None
+            else None
         )
         return {
             "success": success,

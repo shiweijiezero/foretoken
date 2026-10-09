@@ -108,6 +108,25 @@ class ModelService:
             raise ValueError("The deployment must select one model/tokenizer identity")
         return identities.pop()
 
+    def select_models(self, models: Iterable[str]) -> ModelService:
+        """Align result and observation scope with the models selected by prepared requests."""
+        selected = tuple(sorted(set(models)))
+        model = selected[0] if len(selected) == 1 else ""
+        if self.deployment is None:
+            return replace(self, model=model, models=selected)
+        unknown = set(selected) - set(self.deployment.models.values())
+        if unknown:
+            raise ValueError("Request models are not declared by the deployment: " + ", ".join(sorted(unknown)))
+        refs = tuple(
+            ResourceRef("ModelService", name, self.deployment.namespace)
+            for name, value in sorted(self.deployment.models.items())
+            if value in selected
+        )
+        gpu_count = self.gpu_count if model == self.model else (
+            _model_gpu_count(self.deployment, model, Kubectl()) if model else None
+        )
+        return replace(self, model=model, models=selected, model_service_refs=refs, gpu_count=gpu_count)
+
     @property
     def request_headers(self) -> dict[str, str]:
         """Return the routing headers every request must carry, without credentials."""

@@ -22,7 +22,7 @@ from benchmarks.config.benchmark import (
 from benchmarks.model_service import resolve_benchmark_service
 from benchmarks.results.console import format_benchmark_config, log_sweep_results
 from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
-from benchmarks.runs.dispatch import run_benchmark_point
+from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.sweeps.core import (
     _BENCHMARK_NAME,
@@ -196,13 +196,13 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 output_dir=output_dir,
             ).run()
         else:
-            result = run_benchmark_point(
+            result = HttpBenchmark(
                 point_config,
                 self.service,
                 label=label,
                 output_dir=output_dir,
                 wandb_group=wandb_group,
-            )
+            ).run()
         metrics = dict(result.metrics)
         metrics["gpu_count"] = (
             self.service.gpu_count

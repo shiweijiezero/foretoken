@@ -15,7 +15,6 @@ Results include aggregate metrics and per-request records.
 | TTFT | Request start to the first chunk with non-empty `choices` |
 | TPOT | `(E2EL − TTFT) / (output tokens − 1)`; zero for one output token; unavailable without output usage or streamed timing |
 | ITL | Intervals between chunks with non-empty `choices`; a chunk may contain multiple tokens |
-| Time to final-answer token (TTFAT) | Conversation start to the first chunk of its final answer |
 | Request throughput (req/s) | Successful requests divided by run duration |
 | Input token throughput (tokens/s) | Successful requests' input tokens divided by run duration |
 | Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
@@ -48,8 +47,8 @@ When `--slo-params` is enabled, each request with latency-based criteria receive
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 
-Conversation metrics are published only when the workload actually executes multiple turns. Each HTTP turn is a request. A failed turn stops that conversation; successful turns are not successful conversations. Multi-dataset runs keep conversation percentiles per dataset instead of averaging them.
+Conversation workloads report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation start throughput. A failed turn stops that conversation; successful turns are not successful conversations.
 
-Charts use seconds for TTFT, E2EL, and conversation timings, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds. Trace results also include replay delay when a request is sent after its scheduled arrival.
+Charts use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds. Trace results also include replay delay when a request is sent after its scheduled arrival.
 
 Retries are disabled by default. `--max-retries N` allows up to `N` additional attempts for transient failures; retry time is included in logical request latency.

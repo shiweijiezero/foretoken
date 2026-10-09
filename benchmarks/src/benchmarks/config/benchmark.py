@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import math
-import random
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -178,18 +177,6 @@ class ChatCompletionsGeneration:
             raise ValueError(
                 "stream must be set via --stream/--no-stream, not extra_body"
             )
-
-    def sample_output_length(self) -> int | None:
-        """Choose an exact output target, or None when no length range is configured."""
-        if self.min_output_length is None:
-            return None
-        return random.randint(self.min_output_length, self.max_output_length)
-
-    def sample_max_tokens(self) -> int:
-        """Return the fixed limit or sample from the configured inclusive range."""
-        if isinstance(self.max_tokens, list):
-            return random.randint(self.max_tokens[0], self.max_tokens[1])
-        return self.max_tokens
 
     def request_overrides(self) -> dict[str, Any]:
         """Return generation request fields, with ``extra_body`` applied last."""

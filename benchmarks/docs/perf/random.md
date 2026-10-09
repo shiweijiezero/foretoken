@@ -13,7 +13,8 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-Random workloads use the selected tokenizer to generate prompts with the requested lengths. `--prefix-length` adds a shared prefix, and `--apply-chat-template` is not supported. The tokenizer is inferred from the model service; use `--tokenizer-path` when the service model name is an alias or its tokenizer files are not available locally.
+Random workloads send token IDs directly to Completions, preserving the generated input length. `--prefix-length` adds a shared prefix to the sampled length. Use `--apply-chat-template` to send random text through Chat Completions instead; the generator accounts for the selected tokenizer's chat template when choosing the input length.
+The tokenizer is inferred from the model service; use `--tokenizer-path` when the service model name is an alias or its tokenizer files are not available locally.
 
 Both output bounds are inclusive and override `--max-tokens`. The service must support `min_tokens` and `ignore_eos` and report output usage. A request that misses its target counts as failed. Omit both bounds for ordinary generation that can end early.
 

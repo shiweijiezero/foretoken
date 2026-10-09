@@ -24,7 +24,7 @@ from benchmarks.results.output import (
     write_json,
 )
 from benchmarks.results.wandb import publish_slo_wandb
-from benchmarks.runs.dispatch import run_benchmark_point
+from benchmarks.runs.http import HttpBenchmark
 
 _SLO_ALIASES = {
     "latency.mean": "avg_latency",
@@ -134,13 +134,13 @@ class SloAutoTuneBenchmark:
         probe_benchmark = replace(
             probe_config, load=replace(probe_config.load, max_concurrency=value)
         )
-        return run_benchmark_point(
+        return HttpBenchmark(
             probe_benchmark,
             self.service,
             label=label,
             output_dir=probe_dir,
             wandb_group=wandb_group,
-        )
+        ).run()
 
     def _search_group(
         self,

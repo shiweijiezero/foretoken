@@ -527,8 +527,8 @@ class ResultOutputs:
             raise
         return self
 
-    def open(self, record: dict[str, Any]) -> None:
-        """Start publication and measurement observers after workload preparation or warmup."""
+    def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
+        """Open result sinks and configuration; callers may defer observation until after warmup."""
         directory = self.execution_dir
         outputs = self.benchmark.outputs
         sinks: list[ResultSink] = []
@@ -595,10 +595,16 @@ class ResultOutputs:
             self._environment = {
                 "client": client_environment(),
             }
-            if self.service is not None:
-                self._environment["before"] = serving_environment(
-                    self.service
-                )
+            write_json(self.execution_dir, "environment.json", self._environment)
+        self._sinks = sinks
+        if start_observers:
+            self.start_observers()
+
+    def start_observers(self) -> None:
+        """Capture serving state and start resource sampling immediately before measurement."""
+        outputs = self.benchmark.outputs
+        if self._environment is not None and self.service is not None:
+            self._environment["before"] = serving_environment(self.service)
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -633,7 +639,6 @@ class ResultOutputs:
             else:
                 self._prometheus_observer = prometheus_observer
                 self._resources.callback(self._close_prometheus_observer)
-        self._sinks = sinks
 
     def _close_sink(self, sink: ResultSink) -> None:
         """Close one sink with the exit status owned by this result lifecycle."""

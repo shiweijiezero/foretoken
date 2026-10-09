@@ -34,6 +34,10 @@ foretoken perf examples/quickstart \
   --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local,wandb
 ```
 
+## 预热
+
+使用 `--warmup-requests 2` 在正式测量前额外发送两个 HTTP 请求，完成后开始计时和性能剖析。预热结果单独保存，正式请求的内容和数量保持不变，服务端缓存保留预热后的状态。
+
 ## 输出示例
 
 以下为较低到达率的小规模运行：

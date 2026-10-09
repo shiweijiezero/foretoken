@@ -51,8 +51,6 @@ _CONCURRENT_CONVERSATIONS = "Conversation concurrency limit"
 _CONVERSATIONS = "Conversations attempted"
 _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
 _AVERAGE_TURNS_PER_CONVERSATION = "Mean turn requests per conversation"
-_CONVERSATION_LATENCY = "Conversation latency (s)"
-_FINAL_ANSWER_TTFT = "Time to final-answer token (TTFAT) (s)"
 
 _TRACE_MAX_BUCKETS = 10_000
 _TRACE_TIME = "Scheduled trace time (s)"
@@ -179,15 +177,6 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         message[_AVERAGE_TURNS_PER_CONVERSATION] = round(
             float(conversation["avg_turn_requests"]), 4
         )
-        for key, name in (
-            ("latency", _CONVERSATION_LATENCY),
-            ("time_to_final_answer_token", _FINAL_ANSWER_TTFT),
-        ):
-            if key not in conversation:
-                continue
-            for percentile, value in conversation[key].items():
-                if value is not None:
-                    message[f"{name}/{percentile}"] = round(float(value), 4)
     return message
 
 

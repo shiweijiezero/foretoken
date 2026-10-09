@@ -34,6 +34,10 @@ foretoken perf examples/quickstart \
   --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local,wandb
 ```
 
+## Warmup
+
+Use `--warmup-requests 2` to send two additional HTTP requests before timing and profiling begin. Warmup results are saved separately. The measured requests and their count remain unchanged, while service-side caches retain their warmed state.
+
 ## Example output
 
 A short run with a lower arrival rate:

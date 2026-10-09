@@ -238,7 +238,16 @@ class PrometheusObserver:
                 self._errors += 1
                 self._last_error = str(exc)
         rows = []
-        for sampled_at, sample in self._samples:
+        samples = self._samples
+        if time_origin is not None:
+            before = [item for item in samples if item[0] <= time_origin]
+            within = [
+                item for item in samples
+                if item[0] > time_origin
+                and (duration_seconds is None or item[0] <= time_origin + duration_seconds)
+            ]
+            samples = before[-1:] + within
+        for sampled_at, sample in samples:
             row = dict(sample)
             if time_origin is not None:
                 row["elapsed_time_s"] = max(0.0, sampled_at - time_origin)

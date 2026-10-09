@@ -14,7 +14,7 @@ foretoken perf examples/quickstart \
   --output local,wandb,plot
 ```
 
-Inputs reuse the trace's 512-token blocks. Server-side tokenization may change those boundaries; inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.
+Inputs reuse the trace's 512-token blocks and are sent as token IDs through Completions. Inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.
 
 Omit `--trace-synthetic-prefix-reuse` to generate random inputs from the recorded lengths without shared-block reconstruction. When a trace row has positive integer `output_length`, the request targets that exact output count, whether the payload comes from random generation, reconstructed prefixes, or a separate dataset. The recorded target and actual count appear in raw results. General trace-window and concurrency rules are described in [StudyChat replay](studychat.md).
 

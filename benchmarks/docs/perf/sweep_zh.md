@@ -12,7 +12,7 @@ foretoken perf examples/quickstart \
   --experiment-name concurrency --output local,wandb,plot
 ```
 
-该示例在 1、2、4 并发下测量性能，固定目标输出为 256 token。每个参数点重复三次，每次重复前预热 16 段对话。
+该示例在 1、2、4 并发下测量性能，固定目标输出为 256 token。每个参数点重复三次，每次重复前额外发送 16 个 HTTP 请求进行预热。
 
 ## 选择负载
 

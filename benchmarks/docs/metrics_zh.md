@@ -15,7 +15,6 @@
 | TTFT | 从发送请求到收到首个 `choices` 非空分片的时间 |
 | TPOT | `(E2EL − TTFT) / (输出 token 数 − 1)`；单 token 输出为零；缺少输出用量或流式计时时不可用 |
 | ITL | 相邻 `choices` 非空分片的到达间隔；一个分片可能包含多个 token |
-| Time to final-answer token (TTFAT) | 从整段对话开始到最终回答首个分片的时间 |
 | Request throughput (req/s) | 成功请求数除以运行时间 |
 | Input token throughput (tokens/s) | 成功请求的输入 token 总数除以运行时间 |
 | Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
@@ -48,8 +47,8 @@ Kustomize 性能评测会在与负载、Ready 副本和 SLO 窗口相同的经�
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 
-只有负载实际执行多轮对话时才发布会话指标。每个 HTTP 轮次是一条请求。某轮失败会终止当前对话，成功轮次数不等于成功对话数。多数据集保留各数据集的对话百分位，不直接平均。
+对话负载报告已开始和已完成的对话数、HTTP 轮次数、每段对话的平均轮次，以及对话启动吞吐量。某轮失败会终止当前对话，成功轮次数不等于成功对话数。
 
-图表中的 TTFT、E2EL 和会话耗时使用秒，TPOT 和 ITL 使用毫秒。原始 JSON 耗时仍以秒保存。轨迹结果还会记录计划到达与实际发送之间的 replay delay。
+图表中的 TTFT 和 E2EL使用秒，TPOT 和 ITL 使用毫秒。原始 JSON 耗时仍以秒保存。轨迹结果还会记录计划到达与实际发送之间的 replay delay。
 
 默认不重试。`--max-retries N` 允许对暂时性故障最多额外尝试 `N` 次，重试耗时计入该次逻辑请求延迟。

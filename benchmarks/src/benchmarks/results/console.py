@@ -364,19 +364,6 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 )
     if multi_turn:
         conversation = metrics["conversation"]
-        if conversation.get("per_dataset"):
-            lines.append(
-                "  Conversation distributions: see per-dataset child results"
-            )
-        else:
-            # Task execution reports conversation counts; native trace summaries
-            # can additionally provide conversation-level timing distributions.
-            for key, label in (
-                ("latency", "Conversation latency"),
-                ("time_to_final_answer_token", "Time to final-answer token (TTFAT)"),
-            ):
-                if key in conversation:
-                    lines.append(_percentile_row(label, conversation[key]))
         lines.append(
             "  Conversations/s attempted: "
             f"{_format_metric(conversation['attempted_conversations_per_second'])}"

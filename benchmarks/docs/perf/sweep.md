@@ -12,7 +12,7 @@ foretoken perf examples/quickstart \
   --experiment-name concurrency --output local,wandb,plot
 ```
 
-This measures concurrency 1, 2, and 4 with a fixed 256-token output target. Each point is repeated three times, with 16 warmup conversations before each repetition.
+This measures concurrency 1, 2, and 4 with a fixed 256-token output target. Each point is repeated three times, with 16 warmup HTTP requests before each repetition.
 
 ## Choose a workload
 

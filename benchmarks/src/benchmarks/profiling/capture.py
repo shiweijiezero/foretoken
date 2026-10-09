@@ -28,7 +28,6 @@ class BenchmarkProfile:
     def __init__(self, run: ProfileRun, output_dir: str) -> None:
         self.run = run
         self.output_dir = output_dir
-        self.error: DeploymentError | None = None
         self._ready: asyncio.Task[None] | None = None
         self._started = False
         self.capturing_observed_at: str | None = None
@@ -43,7 +42,14 @@ class BenchmarkProfile:
 
     async def _start(self) -> None:
         """Wait for all selected runtimes to record before releasing prepared HTTP requests."""
-        await asyncio.to_thread(self.run.start)
+        startup = asyncio.create_task(asyncio.to_thread(self.run.start))
+        try:
+            await asyncio.shield(startup)
+        except asyncio.CancelledError:
+            # Kubernetes creation continues in its worker thread. Resolve its
+            # final identity before the context cancels and releases resources.
+            await startup
+            raise
         deadline = time.monotonic() + self.run.wait_seconds
         while time.monotonic() < deadline:
             status = await asyncio.to_thread(self.run.observe)
@@ -59,26 +65,16 @@ class BenchmarkProfile:
             await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         raise DeploymentError("timed out waiting for the profile to start recording")
 
-    def start_sync(self) -> None:
-        """Start capture before a synchronous HTTP runner begins its scheduling clock."""
+    async def start(self) -> None:
+        """Prepare capture at the first scheduled dispatch, outside the measurement clock."""
         if not self._started:
-            asyncio.run(self._start())
+            if self._ready is None:
+                self._ready = asyncio.create_task(self._start())
+            await self._ready
 
     async def before_request(self) -> None:
-        """Release each request after a single shared startup, outside HTTP timing."""
-        if self._started:
-            if self.first_request_at is None:
-                self.first_request_at = datetime.now(UTC).isoformat()
-            return
-        if self._ready is None:
-            self._ready = asyncio.create_task(self._start())
-        try:
-            await self._ready
-        except DeploymentError as error:
-            self.error = error
-            # EvalScope converts ordinary per-request exceptions to HTTP failures.
-            # Cancellation stops the workload; its caller restores this control error.
-            raise asyncio.CancelledError from error
+        """Record the first actual dispatch after capture startup."""
+        await self.start()
         if self.first_request_at is None:
             self.first_request_at = datetime.now(UTC).isoformat()
 
