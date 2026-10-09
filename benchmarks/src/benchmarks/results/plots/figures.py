@@ -202,7 +202,7 @@ def _charts(
                         linewidth=1,
                         label="Min-cost / min-KL frontier",
                     )
-            if chart.metric.startswith("gpu_allocation_"):
+            if chart.kind == "step" and chart.metric.startswith("gpu_allocation_"):
                 axis.set_xlim(0, float(series_list[0].records[0]["duration_s"]))
                 axis.set_ylim(bottom=0)
             if chart.yscale == "symlog":
