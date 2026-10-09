@@ -513,7 +513,8 @@ async fn spawn_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.launch.shared_prefix_lookup()
+    if config.member.is_some()
+        || config.launch.shared_prefix_lookup()
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {

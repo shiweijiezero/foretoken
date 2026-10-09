@@ -4,7 +4,6 @@
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -394,13 +393,9 @@ impl LaunchPlanV1 {
         let Some(member) = member else {
             return command;
         };
-        let script_directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
-            .map(|directory| PathBuf::from(directory).join("python"))
-            .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
         let mut launcher = Command::new(command.get_program());
         launcher
-            .arg(script_directory.join("foretoken_mccl.py"))
-            .arg("launch")
+            .args(["-m", "foretoken_mccl", "launch"])
             .arg(
                 json!({
                     "member_index": member.index,

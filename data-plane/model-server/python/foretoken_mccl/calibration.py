@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Calibrate MetaX network ports before replacing the launcher with the engine."""
+"""Own member discovery, candidate selection and group-wide calibration results."""
 
-import importlib.util
 import json
 import math
 import os
-import signal
 import statistics
 import subprocess
 import sys
@@ -39,100 +37,6 @@ def _visible_ports() -> list[str]:
             ):
                 ports.append(name)
     return ports
-
-
-def _measure_worker(local_rank: int, options: dict, results) -> None:
-    """Measure the same collective on every allocated GPU and release its communicator."""
-    # Native libraries also write to fd 1; keep the probe's JSON result separate.
-    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    import torch
-    import torch.distributed as dist
-    from vllm.plugins import load_general_plugins
-
-    load_general_plugins()
-    from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
-
-    rank = options["rank_offset"] + local_rank
-    torch.cuda.set_device(local_rank)
-    timeout = timedelta(seconds=options["timeout"])
-    store = dist.TCPStore(
-        options["leader"],
-        options["port"] + 1,
-        options["world_size"],
-        rank == 0,
-        timeout=timeout,
-    )
-    dist.init_process_group(
-        "gloo", store=store, rank=rank, world_size=options["world_size"]
-    )
-    communicator = None
-    try:
-        communicator = PyNcclCommunicator(dist.group.WORLD, device=local_rank)
-        if communicator.disabled:
-            raise RuntimeError(
-                "MCCL communicator is unavailable for network calibration"
-            )
-        rows = []
-        # Small payloads expose latency; large payloads exercise concurrent NIC bandwidth.
-        for size in (4096, 65536, 1048576, 16777216):
-            source = torch.ones(size // 2, dtype=torch.bfloat16, device="cuda")
-            output = torch.empty_like(source)
-            for _ in range(5):
-                communicator.all_reduce(source, output)
-            torch.cuda.synchronize()
-            if not torch.all(output == options["world_size"]).item():
-                raise RuntimeError(
-                    "MCCL calibration all-reduce returned an incorrect result"
-                )
-            samples = []
-            for _ in range(5):
-                dist.barrier()
-                start = time.perf_counter()
-                for _ in range(20):
-                    communicator.all_reduce(source, output)
-                torch.cuda.synchronize()
-                duration = torch.tensor(
-                    [(time.perf_counter() - start) / 20], dtype=torch.float64
-                )
-                dist.all_reduce(duration, op=dist.ReduceOp.MAX)
-                samples.append(duration.item())
-            rows.append({"bytes": size, "seconds": statistics.median(samples)})
-        if local_rank == 0:
-            results.put(rows)
-    finally:
-        if communicator is not None:
-            communicator.destroy()
-        dist.destroy_process_group()
-
-
-def _probe(options: dict) -> None:
-    """Own one candidate's GPU workers until all complete or their startup share expires."""
-    import torch.multiprocessing as mp
-
-    def terminate(signum, frame):
-        raise SystemExit(128 + signum)
-
-    signal.signal(signal.SIGTERM, terminate)
-    deadline = time.monotonic() + options["timeout"]
-    results = mp.get_context("spawn").SimpleQueue()
-    workers = mp.spawn(
-        _measure_worker,
-        args=(options, results),
-        nprocs=options["gpu_count"],
-        join=False,
-    )
-    try:
-        while not workers.join(timeout=max(0, deadline - time.monotonic())):
-            if time.monotonic() >= deadline:
-                raise TimeoutError("MCCL network candidate exceeded its startup share")
-        print(json.dumps(results.get()), flush=True)
-    finally:
-        for worker in workers.processes:
-            if worker.is_alive():
-                worker.kill()
-        for worker in workers.processes:
-            worker.join()
-        results.close()
 
 
 class McclNetworkCalibration:
@@ -185,7 +89,7 @@ class McclNetworkCalibration:
         status = {"ok": False}
         try:
             result = subprocess.run(
-                [sys.executable, __file__, "probe", json.dumps(options)],
+                [sys.executable, "-m", "foretoken_mccl", "probe", json.dumps(options)],
                 env=environment,
                 capture_output=True,
                 check=False,
@@ -315,25 +219,3 @@ class McclNetworkCalibration:
             if self.index == 0:
                 self.store.wait([f"finished/{index}" for index in range(self.count)])
             self.store = None
-
-
-def main() -> None:
-    """Run a calibration probe or exec the original engine in its existing managed process group."""
-    mode = sys.argv[1]
-    options = json.loads(sys.argv[2])
-    if mode == "probe":
-        _probe(options)
-        return
-    if importlib.util.find_spec("vllm_metax") is not None:
-        from vllm.platforms import current_platform
-
-        if current_platform.device_name == "maca":
-            from vllm_metax.utils import mccl
-
-            if hasattr(mccl, "configure_mccl_visible_hcas"):
-                McclNetworkCalibration(options).run()
-    os.execv(sys.executable, [sys.executable, *sys.argv[3:]])
-
-
-if __name__ == "__main__":
-    main()
