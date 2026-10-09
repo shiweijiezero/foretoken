@@ -299,9 +299,18 @@ def _prometheus_charts(source: Path) -> list[Chart]:
     for name in dict.fromkeys(key[0] for key in grouped):
         def display_label(label: str, *, name: str = name) -> str:
             """Show service, group, role and rank without printing raw JSON in figure titles."""
-            if not name.startswith("spec_"):
-                return label
             values = json.loads(label)
+            if name.startswith(("cpu_", "memory_")):
+                same_pod = sum(
+                    1 for metric, other in grouped
+                    if metric == name and json.loads(other).get("pod") == values.get("pod")
+                )
+                return values["pod"] + ("\n" + values["id"].rsplit("/", 1)[-1] if same_pod > 1 else "")
+            if not name.startswith("spec_"):
+                identity = ("pod", "device_id") if values.get("pod") else (
+                    "model_name", "model_group", "model_role", "route_target_id", "data_parallel_rank",
+                )
+                return "\n".join(str(values[key]) for key in identity if values.get(key) is not None) or label
             group = values.get("model_group") or values.get("modelservice") or values.get("model_name")
             role = values.get("model_role") or values.get("inference_foretoken_io_model_role")
             return " / ".join(str(item) for item in (group, role, values.get("engine")) if item is not None)
@@ -319,7 +328,13 @@ def _prometheus_charts(source: Path) -> list[Chart]:
         )
         if series:
             unit = (
-                "GPU s/s"
+                "cores"
+                if name.endswith("_cores")
+                else "bytes"
+                if name.endswith("_bytes")
+                else "µs"
+                if name.endswith("_microseconds")
+                else "GPU s/s"
                 if name in {"spec_draft_gpu_seconds_per_second", "spec_target_forward_gpu_seconds_per_second"}
                 else "tokens/draft"
                 if name == "spec_accepted_tokens_per_draft"
@@ -336,6 +351,11 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 else "requests"
             )
             title = {
+                "cpu_usage_cores": "CPU usage · 1-minute rate",
+                "cpu_quota_cores": "CPU quota",
+                "cpu_quota_microseconds": "CPU quota per period",
+                "cpu_throttled_periods_ratio": "Throttled CPU periods · 1-minute rate",
+                "memory_working_set_bytes": "Container memory working set",
                 "spec_draft_gpu_seconds_per_second": "Draft GPU work",
                 "spec_target_forward_gpu_seconds_per_second": "Target forward GPU work",
                 "spec_draft_time_share_ratio": "Draft GPU-time share",
@@ -348,7 +368,7 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                     f"prometheus-{name}",
                     title,
                     "Elapsed time (s)",
-                    f"{title if name.startswith('spec_') else name.replace('_', ' ')} ({unit})",
+                    f"{title} ({unit})",
                     series,
                     metric=name,
                 )

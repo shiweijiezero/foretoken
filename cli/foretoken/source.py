@@ -34,6 +34,8 @@ from foretoken.network_sources import select_build_sources
 
 _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
+_SOURCE_METADATA = ".foretoken-sources.json"
+_SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})
 
 
 def _source_home() -> Path:
@@ -240,8 +242,10 @@ def _snapshot(
     engines: dict[str, str] | None = None,
     previous: Path | None = None,
     unchanged: set[str] | None = None,
+    *,
+    root: Path,
 ) -> None:
-    """Save exact input bytes, reusing already-compared snapshot files without copying them."""
+    """Save build inputs and their checkout provenance before compilation begins."""
     destination.mkdir(parents=True)
     for name, source in files.items():
         target = destination / name
@@ -274,6 +278,30 @@ def _snapshot(
         (destination / "engine").mkdir(exist_ok=True)
         _write_json(destination / "engine/manifest.json", manifest)
         _write_json(destination / "engine/deleted.json", deleted)
+    _write_json(destination / _SOURCE_METADATA, {
+        "foretoken": _checkout_source(root),
+        "engines": {name: _checkout_source(Path(checkout)) for name, checkout in (engines or {}).items()},
+    })
+
+
+def _checkout_source(root: Path) -> dict[str, Any] | None:
+    """Record a build checkout's Git state without retaining local paths or remote credentials."""
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
+    if result.returncode:
+        return None
+    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True)
+    return {"commit": result.stdout.strip(), "dirty": bool(changed)}
+
+
+def build_sources(snapshot: Path, component: str) -> dict[str, Any] | None:
+    """Read captured provenance for the component being published, including bound model engines."""
+    metadata = snapshot / _SOURCE_METADATA
+    if not metadata.is_file():
+        return None
+    sources = json.loads(metadata.read_text())
+    if component != "model-server":
+        sources.pop("engines", None)
+    return sources
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -296,7 +324,7 @@ def capture_build_inputs(
     """Own candidate image inputs until record_install moves them into committed state."""
     destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
     try:
-        _snapshot(_inputs(root, engines), destination, engines)
+        _snapshot(_inputs(root, engines), destination, engines, root=root)
         yield destination
     finally:
         if destination.exists():
@@ -348,7 +376,7 @@ def validate_build_inputs(
         for path in snapshot.rglob("*")
         if path.is_file()
         and str(path.relative_to(snapshot))
-        not in {"engine/manifest.json", "engine/deleted.json"}
+        not in _SNAPSHOT_METADATA
     }
     if previous != current.keys() or any(
         not filecmp.cmp(snapshot / name, path, shallow=False)
@@ -375,8 +403,8 @@ def snapshot_versions(
         name = str(path.relative_to(snapshot))
         old = previous / name if previous else None
         unchanged = (
-            name not in changed
-            if changed is not None
+            name in versions and name not in changed
+            if changed is not None and name not in _SNAPSHOT_METADATA
             else (
                 name in versions
                 and old is not None
@@ -996,6 +1024,7 @@ def prepare_source_images(
                         "",
                         None,
                         timeout=command.timeout,
+                        sources=build_sources(snapshot, component),
                     )
             if node == origin.node:
                 builder.run(["rm", "-rf", "--", builder.root + "/applications"])

@@ -84,6 +84,7 @@ def publish(
     previous: Path | None,
     *,
     release_owned: bool = False,
+    sources: dict | None = None,
 ) -> None:
     """Expose an immutable directory, sharing unchanged files with its previous version."""
     if (destination / "manifest.json").is_file():
@@ -136,7 +137,7 @@ def publish(
             )
         (staging / "manifest.json").write_text(
             json.dumps(
-                {"binding": binding, "releaseOwned": release_owned, "files": files}
+                {"binding": binding, "releaseOwned": release_owned, "files": files, "sources": sources}
             )
             + "\n"
         )
@@ -181,6 +182,7 @@ if __name__ == "__main__":
             destination,
             binding,
             Path(sys.argv[4]) if sys.argv[4] else None,
+            sources=json.loads(sys.argv[6]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:
