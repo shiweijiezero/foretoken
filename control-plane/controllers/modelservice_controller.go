@@ -17,6 +17,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,6 +51,9 @@ type ModelServiceReconciler struct {
 	MetricsProvider          ScalingMetricsProvider
 	CacheProfile             RuntimeCacheProfile
 	SourceMode               bool
+	RuntimeProfile           resolver.RuntimeProfile
+	ApplicationFiles         runtimeconfig.ApplicationFiles
+	ApplicationURL           string
 	HuggingFaceAccessProfile HuggingFaceAccessProfile
 	Alerts                   *ServiceAlerts
 
@@ -106,7 +110,11 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	sourceRevision, err := runtimeconfig.SourceRevision(service.Annotations, reconciler.SourceMode)
+	sourceAllowed, err := reconciler.sourceSelectionAllowed(ctx, service)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	sourceRevision, err := runtimeconfig.SourceRevision(service.Annotations, sourceAllowed)
 	var compiledPools []compiler.ModelPool
 	if err == nil {
 		compiledPools, err = compiler.CompileModelService(service.Spec)
@@ -158,13 +166,6 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		})
 		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
 	}
-	if err := runtimeconfig.ValidateSourceRuntime(sourceRevision, reconciler.SourceMode, runtimeCache); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
-			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
-			pools:    conditionState{metav1.ConditionFalse, "SourceRuntimeUnavailable", "No new ModelPools were materialized"},
-			ready:    conditionState{metav1.ConditionFalse, "SourceRuntimeUnavailable", err.Error()},
-		})
-	}
 	huggingFaceAccess := reconciler.HuggingFaceAccessProfile.Access()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
@@ -204,6 +205,47 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	return ctrl.Result{}, nil
 }
 
+// sourceSelectionAllowed admits new source intent only in source mode, while preserving
+// controller-owned selections after that mode is disabled.
+func (reconciler *ModelServiceReconciler) sourceSelectionAllowed(ctx context.Context, service *inferencev1alpha1.ModelService) (bool, error) {
+	if reconciler.SourceMode {
+		return true, nil
+	}
+	revision := service.Annotations[runtimeconfig.SourceRevisionAnnotation]
+	if revision == "" {
+		return false, nil
+	}
+	if len(service.Status.PoolApplications) > 0 {
+		for _, selected := range service.Status.PoolApplications {
+			if selected.SourceRevision != revision || selected.DeploymentRevision != service.Spec.DeploymentRevision {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return false, err
+	}
+	if len(pools) == 0 {
+		return false, nil
+	}
+	for _, pool := range pools {
+		if pool.Spec.Template.SourceRevision != revision {
+			return false, nil
+		}
+		selected := pool.Spec.Template.Application
+		if selected == nil {
+			if service.Spec.DeploymentRevision != "" {
+				return false, nil
+			}
+		} else if selected.DeploymentRevision != service.Spec.DeploymentRevision {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // reconcilePools converges compiled ModelPool contracts and retains service-selected serving pools.
 func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
 	owned, err := reconciler.ownedPools(ctx, service)
@@ -232,9 +274,31 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 			}
 		}
 	}
+	base := service.DeepCopy()
+	applications := make(map[string]inferencev1alpha1.ApplicationSelection, len(compiledPools))
 	for index := range compiledPools {
+		template := &compiledPools[index].Template
+		previous := byPoolName[compiledPools[index].Name]
+		selection, err := reconciler.selectPoolApplication(ctx, service, compiledPools[index].Name, compiledPools[index].DesiredGroups, previous, *template)
+		if err != nil {
+			return err
+		}
+		template.Application = selection
+		if selection != nil {
+			applications[compiledPools[index].Name] = *selection
+		}
 		if compiledPools[index].Template.ECProfile != "" {
 			compiledPools[index].Template.EncoderCacheGeneration = cacheGeneration
+		}
+	}
+
+	if len(applications) == 0 {
+		applications = nil
+	}
+	if !reflect.DeepEqual(service.Status.PoolApplications, applications) {
+		service.Status.PoolApplications = applications
+		if err := reconciler.Status().Patch(ctx, service, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("persist Pool application selections: %w", err)
 		}
 	}
 
@@ -289,6 +353,83 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		}
 	}
 	return nil
+}
+
+// selectPoolApplication retains execution choices independently of changing platform defaults.
+// Existing image-only Pools adopt their actual cohort, never a newly configured file publication.
+func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, poolName string, desiredGroups int32, previous *inferencev1alpha1.ModelPool, template inferencev1alpha1.NormalizedPoolTemplate) (*inferencev1alpha1.ApplicationSelection, error) {
+	deployment := service.Spec.DeploymentRevision
+	image := reconciler.RuntimeProfile.Image
+	imageProfile := template.Backend
+	if template.Backend == "vllm-omni" {
+		image = reconciler.RuntimeProfile.OmniImage
+	} else if template.Profiling != nil && template.Profiling.Engine == "nsight" {
+		image = reconciler.RuntimeProfile.NsightImage
+		imageProfile = "nsight"
+	}
+	matches := func(selected inferencev1alpha1.ApplicationSelection) bool {
+		return selected.DeploymentRevision == deployment && selected.SourceRevision == template.SourceRevision && selected.ImageProfile == imageProfile
+	}
+	if selected, exists := service.Status.PoolApplications[poolName]; exists && matches(selected) {
+		return selected.DeepCopy(), nil
+	}
+	if previous == nil && template.SourceRevision != "" && !reconciler.SourceMode {
+		for _, selected := range service.Status.PoolApplications {
+			if matches(selected) {
+				return selected.DeepCopy(), nil
+			}
+		}
+		pools, err := reconciler.ownedPools(ctx, service)
+		if err != nil {
+			return nil, err
+		}
+		for index := range pools {
+			if pools[index].Spec.Template.SourceRevision == template.SourceRevision && pools[index].Spec.Template.Backend == template.Backend {
+				previous = &pools[index]
+				break
+			}
+		}
+	}
+	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment}
+	if previous != nil && previous.Spec.Template.Backend == template.Backend && previous.Spec.Template.SourceRevision == template.SourceRevision {
+		previousProfile := previous.Spec.Template.Backend
+		if previous.Spec.Template.Profiling != nil && previous.Spec.Template.Profiling.Engine == "nsight" {
+			previousProfile = "nsight"
+		}
+		if selected := previous.Spec.Template.Application; selected != nil && selected.DeploymentRevision == deployment && previousProfile == imageProfile {
+			retained := selected.DeepCopy()
+			retained.SourceRevision, retained.ImageProfile = template.SourceRevision, imageProfile
+			return retained, nil
+		}
+		if previous.Spec.Template.Application == nil && deployment == "" && previousProfile == imageProfile {
+			groups, err := ownedModelGroups(ctx, reconciler.Client, previous)
+			if err != nil {
+				return nil, err
+			}
+			for _, group := range groups {
+				if len(groups) == 1 || group.Spec.Revision == previous.Status.PreparedRevision || group.Spec.Revision == serviceServingRevision(service, previous) {
+					selection.Image = group.Spec.Runtime.Image
+					selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
+					if selection.ApplicationURL == "" {
+						selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", group.Spec.Runtime.SourceRevision)
+					}
+					return selection, nil
+				}
+			}
+			// An idle legacy Pool with no execution history has nothing to recover.
+			// Keep it unselected until its first demand for capacity chooses the current pair.
+			if desiredGroups == 0 {
+				return nil, nil
+			}
+		}
+	}
+	if template.Backend == "vllm" {
+		selection.ApplicationURL = reconciler.ApplicationURL
+		if template.SourceRevision != "" {
+			selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", template.SourceRevision)
+		}
+	}
+	return selection, nil
 }
 
 // commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
@@ -352,7 +493,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 					}
 				}
 			}
-			if err := validateRoutingIdentities(routes, nil, nil); err != nil {
+			if err := validateRoutingIdentities(nil, routes, nil, nil); err != nil {
 				return false, err
 			}
 		}

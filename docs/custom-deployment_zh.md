@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-本机需要 Python 3.11+、Git、kubectl 和 Helm。集群需要允许运行 BuildKit Pod，并有默认 StorageClass 保存持久编译缓存。需要其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，并通过 `--values` 传入。
+本机需要 Python 3.11+、Git、kubectl 和 Helm。集群需要允许运行 BuildKit Pod 和发布 Job，并有默认 StorageClass 保存编译缓存与发布的应用文件。需要自定义存储类时，在 `deploy/platform-values.yaml` 中分别用 `development.build.storageClassName` 或 `applicationFiles.storageClassName` 覆盖，并通过 `--values` 传入。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在专用 Pod 中执行，镜像直接载入集群节点。联网时自动选择镜像源。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
 ## 部署与更新代码
 
@@ -39,11 +39,12 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，再执行同一条命令。命令沿用保存的安装设置，只发送新增、修改的文件和删除信息。专用构建 Pod 负责编译 Rust 改动、准备 Python 更新，编译缓存与产物留在集群。有可写的持久运行时存储时，这些更新无需重建运行时镜像；依赖、构建配置、控制面或启动引导代码变化时，自动走镜像构建流程。
+修改源码后，再执行同一条命令。代码更新沿用保存的安装设置和运行环境；运行环境依赖或镜像构建配置变化时，会更新平台安装。
 
 受影响的工作负载会重启，并可能重新加载模型权重。命令等待所选代码和服务路由生效后退出。源码和部署配置均未变化时，现有工作负载保持运行。请求与清理操作沿用快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
 
 CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
+
 ## 修改推理引擎
 
 修改 vLLM 时，关联与运行时 Python、PyTorch 和设备环境匹配的 Git 源码目录。假设源码位于 `../vllm`：
@@ -52,7 +53,7 @@ CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python �
 foretoken install -e . --engine-source ../vllm
 ```
 
-原安装使用了 `--registry` 或 `--values` 时，保留这些选项。之后修改引擎源码，继续使用上面的 `foretoken deploy`。Python 和 Triton 改动同步源码，Triton JIT 编译由推理引擎执行；NVIDIA CUDA/C++ 改动在构建 Pod 中复用缓存编译 vLLM 扩展。
+原安装使用了 `--registry` 或 `--values` 时，保留这些选项。修改 Python、Triton 或 NVIDIA CUDA/C++ 源码后，继续使用上面的 `foretoken deploy`，所需编译会自动完成。
 
 沐曦原生 kernel 由插件源码提供。将插件与匹配的 core 源码一起关联：
 
@@ -61,8 +62,6 @@ foretoken install -e . \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax
 ```
-
-构建 Pod 为沐曦编译插件扩展；该后端不使用 core 中的 CUDA kernel。安装时保留原镜像仓库和 values 选项。
 
 ### 更换运行环境
 
@@ -74,7 +73,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础，加入 model-server；安装完成后重新部署工作负载。
+重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；安装完成后重新部署工作负载。
 
 沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
 
@@ -117,4 +116,6 @@ runtime:
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-远程平台构建保留 `--registry "$REGISTRY"`，以及原有的其他安装选项。修改 Omni 代码后重新构建并分发该镜像；前面的 vLLM editable 源码更新针对标准 vLLM 后端。
+远程平台构建保留 `--registry "$REGISTRY"`，以及原有的其他安装选项。前面的 vLLM editable 源码更新针对标准 vLLM 后端。
+
+安装完成后，用 `foretoken deploy` 部署 Omni 服务的 Kustomize 目录。修改代码后，重新构建并分发 Omni 镜像，将 `runtime.vllmOmni.image` 改为新的 tag 或 digest 引用，再执行安装命令并重新部署同一 Kustomize 目录。

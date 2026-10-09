@@ -6,17 +6,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
-use futures::StreamExt;
+use foretoken_admission::observe_http;
 
 use crate::api::{self, ApiState};
-use crate::runtime::{Generation, GenerationError, before_deadline};
+use crate::runtime::{Generation, before_deadline};
 
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 
@@ -45,13 +44,12 @@ pub fn router(
             video_tasks,
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
-        .layer(middleware::from_fn_with_state(generation, protect_intake))
+        .layer(middleware::from_fn_with_state(generation, observe_request))
         .layer(middleware::from_fn(foretoken_metrics::track_http_metrics)))
 }
 
-// Intake bounds allocation before JSON extraction. The response body owns the ticket,
-// including when a slow client stops polling an otherwise completed generation.
-async fn protect_intake(
+// Capture the request budget before body extraction and share its origin with model admission.
+async fn observe_request(
     State(generation): State<Arc<dyn Generation>>,
     mut request: Request,
     next: Next,
@@ -69,36 +67,23 @@ async fn protect_intake(
                 | "/tokenize"
                 | "/detokenize"
         );
-    let Some(admission) = generation.admission().filter(|_| protected) else {
-        return next.run(request).await;
-    };
-    let permit = match admission.try_reserve_request() {
-        Ok(permit) => permit,
-        Err(error) => return api::generation_error(&path, GenerationError::from(error)),
-    };
-    if !permit.is_reserved() {
+    if !protected {
         return next.run(request).await;
     }
-    let timing = api::RequestTiming::now();
-    request.extensions_mut().insert(timing);
-    let response = if let Some(timeout) = generation.request_timeout() {
-        let deadline = tokio::time::Instant::from_std(timing.started_at + timeout);
-        match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
-            Ok(response) => response,
-            Err(error) => api::generation_error(&path, error),
+    observe_http(async move {
+        let timing = api::RequestTiming::now();
+        request.extensions_mut().insert(timing);
+        if let Some(timeout) = generation.request_timeout() {
+            let deadline = tokio::time::Instant::from_std(timing.started_at + timeout);
+            match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
+                Ok(response) => response,
+                Err(error) => api::generation_error(&path, error),
+            }
+        } else {
+            next.run(request).await
         }
-    } else {
-        next.run(request).await
-    };
-    let (parts, body) = response.into_parts();
-    let stream = async_stream::stream! {
-        let _permit = permit;
-        let mut stream = body.into_data_stream();
-        while let Some(frame) = stream.next().await {
-            yield frame;
-        }
-    };
-    Response::from_parts(parts, Body::from_stream(stream))
+    })
+    .await
 }
 
 async fn healthz() -> StatusCode {

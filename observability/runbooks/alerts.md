@@ -3,21 +3,85 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Foretoken alert reference
+# Service Alerts
 
-[简体中文](alerts_zh.md) | English
+English | [简体中文](alerts_zh.md)
 
-Select rules in the owning service's `spec.observability.alerts.rules`. An empty list disables alerts. Prometheus must discover the workload namespace and the selected `PrometheusRule`; metrics remain available when no alerts are selected.
+Enable alerts for a frontend or model service, then use the notification to locate the affected service or device.
 
-| Alert | Service | Trigger | Persistence | Required threshold or scope |
-| --- | --- | --- | --- | --- |
-| `ForetokenMetricsTargetDown` | `FrontendService` or `ModelService` | A discovered `/metrics` endpoint cannot be scraped | 1 minute | The selected service's metrics endpoint |
-| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | `FrontendService` | More than 5% of response starts are 5xx while traffic is at least 0.1 response/s | 2 minutes | The selected FrontendService |
-| `ForetokenNVIDIAGPUTemperatureHigh` | `ModelService` | An attributed NVIDIA GPU reaches the configured temperature threshold | 2 minutes | `nvidiaTemperatureCelsius` (default 85°C); ModelGroup scope |
-| `ForetokenNVIDIAGPUPowerUsageHigh` | `ModelService` | An attributed NVIDIA GPU reaches the configured power threshold | 5 minutes | Select the rule and set positive `nvidiaPowerWatts`; ModelGroup scope |
+## Enable alerts
 
-GPU temperature and power rules use recording series attributed to the selected ModelService's ModelGroups. The dashboard also provides GPU utilization and memory-occupancy metrics.
+Add the selected rules under the service's `spec`, for example:
 
-`ForetokenMetricsTargetDown` resolves when scraping resumes or the metrics endpoint leaves service discovery.
+```yaml
+spec:
+  observability:
+    alerts:
+      rules:
+        - ForetokenMetricsTargetDown
+```
 
-For delivery, configure a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver.
+Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, to disable it. The [observability example](../../examples/observability/README.md) provides a runnable deployment.
+
+Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver for notifications. If selected rules do not appear in Prometheus, check the service's `AlertsReady` condition.
+
+## Choose rules
+
+| Rule | Service | Trigger |
+| --- | --- | --- |
+| [ForetokenMetricsTargetDown](#foretokenmetricstargetdown) | Frontend or model | A metrics endpoint cannot be scraped for 1 minute. |
+| [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | Frontend | HTTP response-start 5xx exceeds 5% for 2 minutes, with at least 0.1 responses/s over a 5-minute window. |
+| [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | Frontend | Admission capacity rejections exceed the configured fraction. |
+| [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | Frontend | Admission timeouts exceed the configured fraction. |
+| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | Frontend | Queue-wait p95 for requests that queued and were admitted exceeds the configured duration. |
+| [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | Frontend | Scraping succeeds but required admission metrics are missing for 5 minutes. |
+| [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | Model | NVIDIA GPU temperature reaches the threshold for 2 minutes; default 85°C. |
+| [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | Model | NVIDIA GPU power reaches the configured threshold for 5 minutes. |
+
+Admission thresholds go under `spec.observability.alerts.thresholds.admission`. The three ratio/latency rules require explicit thresholds and positive minimum rates. Optional `scope` defaults to `service`, aggregating each model across the selected frontend's Pods; `pod` evaluates each model separately in each Pod. `window` defaults to `1m` and `for` to `5m`. Durations accept whole seconds, minutes, or hours. These settings control the aggregation, calculation window, and time the condition must persist before the alert fires.
+
+## Investigate an alert
+
+Open Foretoken System Overview in [Grafana](../README.md#view-dashboards) and select the notification's namespace and frontend or model.
+
+### ForetokenMetricsTargetDown
+
+Check the scrape error in Prometheus Targets, then inspect the affected Pod and network access to its metrics endpoint.
+
+### ForetokenFrontendHTTPResponseStart5xxRatioHigh
+
+Inspect frontend status-code trends and logs. Use the Admission section to identify capacity rejection or timeout responses, then check model availability and backend errors.
+
+### ForetokenAdmissionCapacityRejectionRatioHigh
+
+Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed HTTP admission calls for each model.
+
+Select the affected model and compare its traffic, occupancy, and configured limits across frontend Pods. Check backend load before adjusting that model's limits.
+
+### ForetokenAdmissionTimeoutRatioHigh
+
+Set `timeoutRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts `queue_timeout` and `deadline_exceeded` among each model's completed HTTP admission calls.
+
+Compare queue occupancy and waiting time with `queueTimeout` and the request timeout. The result breakdown separates queue expiry from the request budget expiring before admission.
+
+### ForetokenAdmissionAdmittedQueueP95High
+
+Set positive `admittedQueueP95Seconds` in seconds and `minQueuedAdmissionRate` in calls/s under the admission thresholds. This rule measures only requests that actually queued and were admitted, not immediate admissions or timed-out requests.
+
+Select the affected model and inspect its admitted-wait curve alongside queue occupancy and model capacity. Use timeout results to see whether requests are also leaving the queue without admission.
+
+### ForetokenAdmissionTelemetryMissing
+
+Inspect the Admission replica table for the affected model and Pod with incomplete reporting, and compare Pod runtime versions. Check monitoring configuration if the issue persists after an upgrade completes.
+
+### ForetokenNVIDIAGPUTemperatureHigh
+
+To change the default threshold, set `spec.observability.alerts.thresholds.nvidiaTemperatureCelsius` in °C.
+
+Check temperature, cooling, and workload on the device named in the notification.
+
+### ForetokenNVIDIAGPUPowerUsageHigh
+
+Set a positive `spec.observability.alerts.thresholds.nvidiaPowerWatts` threshold in watts; this rule has no default threshold.
+
+Compare the device's power draw and workload with its intended operating envelope and configured alert threshold.

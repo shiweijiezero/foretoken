@@ -3,24 +3,40 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Service observability
+# Enable Service Alerts
 
 English | [简体中文](README_zh.md)
 
-Deploy the [Quick Start](../quickstart/README.md) with alert settings kept in `observability.yaml`. It patches the FrontendService and ModelService independently; both rule lists are empty by default.
+Deploy the Quick Start model and frontend with service alerts. The example uses the same resources, namespace, and data directory as the [Quick Start](../quickstart/README.md).
 
-After installing the platform with `foretoken install`, add only the wanted rule names to the corresponding list and run:
+## Select and deploy alerts
+
+Install the platform following the repository [Quick Start](../../README.md#quick-start). In [`observability.yaml`](observability.yaml), replace `rules: []` in the frontend or model service with the rules you want. For a metrics-endpoint alert, use:
+
+```yaml
+spec:
+  observability:
+    alerts:
+      rules:
+        - ForetokenMetricsTargetDown
+```
+
+Both lists are empty by default. Select frontend and model rules independently; the [alert reference](../../observability/runbooks/alerts.md) lists their trigger conditions and required thresholds.
+
+From the repository root:
 
 ```bash
 foretoken deploy examples/observability --timeout 20m
 ```
 
-The deployment uses the Quick Start's model, resources, namespace, and data directory. Follow its request example, then open **Foretoken System Overview** in Grafana. Alert names and trigger conditions are listed in the [alert reference](../../observability/runbooks/alerts.md).
+Send a request using the [Quick Start request example](../quickstart/README.md). Open Foretoken System Overview in [Grafana](../../observability/README.md#view-dashboards), select `foretoken-demo`, and check the selected rules in Prometheus Alerts. Configure a [notification receiver](../../observability/README.md#alerts) to receive firing and resolved messages.
 
-To disable a rule, remove its name and deploy the directory again. To remove the deployment:
+## Disable alerts or remove the service
+
+Remove a rule from `observability.yaml` and redeploy the directory to disable it. To remove the model and frontend deployment:
 
 ```bash
 foretoken delete examples/observability
 ```
 
-Shared monitoring remains installed. See [Observability](../../observability/README.md) for monitoring access and notification setup.
+Shared monitoring remains installed.

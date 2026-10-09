@@ -3,6 +3,7 @@
 
 //! Static route targets and request matching.
 
+use crate::RouteTargetId;
 use std::collections::BTreeSet;
 
 mod model_route_table;
@@ -10,9 +11,7 @@ mod route;
 
 pub use model_route_table::ModelRouteTable;
 pub(crate) use model_route_table::supports_request;
-pub use route::{
-    RouteDecision, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
-};
+pub use route::RouteDecision;
 
 /// Supplies static routes and current route target state to the Router.
 pub trait RouteInventory: Send + Sync {

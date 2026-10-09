@@ -59,11 +59,13 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## Install the Kubernetes platform
 
-`foretoken install` installs the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+`foretoken install` installs or updates the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+
+Platform updates set the version used by new services. Existing model and frontend services keep their running versions until redeployed.
 
 ### Default installation
 
-The default uses release images and local access through a `LoadBalancer` Service:
+The default installs the published platform and provides local access through a `LoadBalancer` Service:
 
 ```bash
 foretoken install
@@ -100,7 +102,7 @@ Build and install from the repository root. The cluster needs a default StorageC
 foretoken install -e .
 ```
 
-This builds the platform in dedicated Pods and binds the checkout to the target cluster.
+This binds the checkout to the target cluster for subsequent source updates.
 
 After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 
@@ -146,7 +148,7 @@ Reapply the installation command after changing either setting. Set `enabled: fa
 
 ### Installation options
 
-Use `--values` only to override platform image, runtime, or hardware settings. Without an override, installation compares supported public sources for default platform images and OCI charts. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
+Use `--values` only to override platform image, runtime, or hardware settings. Without an override, each installation selects public sources for default platform images and Chart downloads. Chart downloads and image pulls during source builds can fall back to the original source when an automatically selected mirror fails. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
 
 Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
 
@@ -166,7 +168,9 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration, shows service status, and streams Pod and container logs with source prefixes while waiting. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+The command applies the configuration and deploys these services with the runtime version provided by the current platform, updating existing services as well.
+
+While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Inspect the same deployment without applying it:
 

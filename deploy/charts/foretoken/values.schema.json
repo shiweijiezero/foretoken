@@ -32,6 +32,24 @@
       },
       "additionalProperties": false
     },
+    "applicationFiles": {
+      "type": "object",
+      "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
+      "properties": {
+        "releaseURL": {"type": "string"},
+        "revision": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "description": "Application version used as one URL-safe directory name."
+        },
+        "credentialsSecret": {"type": "string"},
+        "serverImage": {"type": "string", "minLength": 1},
+        "clientImage": {"type": "string", "minLength": 1},
+        "storageClassName": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "profiling": {
       "type": "object",
       "additionalProperties": false,
@@ -120,6 +138,7 @@
         "autoscalingTelemetry"
       ],
       "properties": {
+        "applicationURL": {"type": "string"},
         "replicas": {
           "type": "integer",
           "minimum": 1
@@ -269,6 +288,7 @@
         "image": {
           "type": "string"
         },
+        "applicationURL": {"type": "string"},
         "port": {
           "type": "integer",
           "minimum": 1,
@@ -420,6 +440,12 @@
           "properties": {
             "image": {
               "type": "string"
+            },
+            "applicationURL": {"type": "string"},
+            "environmentImages": {
+              "type": "object",
+              "properties": {"nvidia": {"type": "string"}, "metax": {"type": "string"}},
+              "additionalProperties": false
             },
             "nsightImage": {
               "type": "string"

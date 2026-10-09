@@ -39,7 +39,7 @@ The rate controls when conversations start, while the SLO measures each HTTP tur
 
 Fixed-load measurement accepts one criteria object using `latency`, `ttft`, `tpot`, or `itl`. Timing thresholds use `s` or `ms`, such as `<=2s` or `<=100ms`; unitless values use seconds. Every condition must hold for a request to meet its SLO. Failed requests and requests missing a required metric count as not meeting it. `itl` checks each request's maximum observed chunk interval.
 
-Compare attainment, goodput (throughput of requests or tokens meeting the SLO), and latency across rates. Choose the highest tested conversation rate meeting your attainment target, such as 90% or 99%, then extend or refine the rate list to locate the boundary. With repeated runs, attainment is the mean of per-run fractions, not a fraction pooled across all requests. [One-second SLO windows](../../metrics.md#slo-results) show how attainment changes during a run. To vary thresholds as well as rates, use the [threshold sweep](sweep.md#compare-slo-thresholds-and-request-rates).
+Compare attainment, goodput (throughput of requests or tokens meeting the SLO), and latency across rates. Choose the highest tested conversation rate meeting your attainment target, such as 90% or 99%, then extend or refine the rate list to locate the boundary. With repeated runs, attainment is the mean of per-run fractions, not a fraction pooled across all requests. [One-second SLO windows](../metrics.md#slo-results) show how attainment changes during a run. To vary thresholds as well as rates, use the [threshold sweep](sweep.md#compare-slo-thresholds-and-request-rates).
 
 ## Set search criteria
 

@@ -5,7 +5,7 @@
 
 English | [简体中文](release_zh.md)
 
-Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
+Foretoken publishes a Python distribution, runtime environment images, an application `.tar.gz` asset, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
 
 ## Version stages
 
@@ -37,31 +37,11 @@ pip install --pre foretoken
 pip install foretoken==0.0.1a1
 ```
 
-Stable and post-release versions use the normal installation command:
-
-```bash
-pip install foretoken
-```
-
 A `.postN` release normally reuses the matching Stable platform artifacts because it only corrects the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior or platform artifacts must change, publish the next patch version, such as `0.0.2`, instead of placing those changes in `.postN`.
-
-Installing from the repository is independent of published versions:
-
-```bash
-pip install -e .
-```
 
 ## Tags and version ownership
 
-GitHub Releases use the Python version with a `v` prefix because the release workflow publishes that Python distribution:
-
-```text
-v0.0.1a1
-v0.0.1b1
-v0.0.1rc1
-v0.0.1
-v0.0.1.post1
-```
+GitHub Release tags use the Python version with a `v` prefix.
 
 Each artifact has one authoritative version source:
 
@@ -73,17 +53,7 @@ Published versions are immutable. Never rebuild and overwrite a version already 
 
 ## Release descriptions
 
-Use the [Release Description Template](release-template.md) when creating a GitHub Release. A release description is a user-facing summary of the published combination, not a copy of the commit log. Keep the following information when it affects installation or operation:
-
-- three to five highlights and grouped changes for users;
-- compatibility across Python, Kubernetes, NVIDIA, MetaX, APIs, and configuration;
-- breaking changes, deprecations, and the exact upgrade action;
-- every published package, OCI image variant, Helm Chart, and tagged example;
-- actionable known limitations, factual thanks, and a compare link to the full history.
-
-Remove sections that do not apply. Link related pull requests when they help readers trace a change, and do not claim support that was not confirmed for this release.
-
-The [Chinese template](release-template_zh.md) follows the same release contract and should be written naturally for Chinese readers.
+Use the [Release Description Template](release-template.md) when creating a GitHub Release.
 
 ## Build and push the release artifacts
 
@@ -97,7 +67,15 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-The release uses one shared version for the control-plane, frontend, model-server images, and Helm Chart. The MetaX model-server image adds the `-metax` suffix.
+The command builds the runtime images and saves `foretoken-applications-<version>-linux-amd64.tar.gz` and the matching Helm Chart in `/tmp/foretoken-release`. MetaX image tags use the `-metax` suffix.
+
+To export the application archive without rebuilding environments:
+
+```bash
+deploy/release-artifacts export --output-dir /tmp/foretoken-release
+```
+
+Upload the validated archive as a GitHub Release asset. The `push` command below publishes the environment images and Helm Chart, not the archive.
 
 After validating the artifacts, log in to the registry and push them:
 
@@ -112,8 +90,8 @@ Existing tags are not overwritten, so the same command can retry an incomplete p
 ## Release sequence
 
 1. Choose the release stage and update `pyproject.toml` and `Chart.yaml` using the mapping above.
-2. Build and verify the Python distribution, Helm Chart, and affected OCI images.
+2. Build and verify the Python distribution, application archive, Helm Chart, and affected OCI images.
 3. Push the matching OCI image and Helm Chart tags.
-4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with concise highlights and named acknowledgements of contributors and their support.
+4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with the application archive attached, concise highlights, and named acknowledgements of contributors and their support.
 5. Let the release workflow publish the Python distribution to PyPI.
-6. Verify the published package, images, Chart, and a clean installation path.
+6. Verify the published package, images, application archive, Chart, and a clean installation path.

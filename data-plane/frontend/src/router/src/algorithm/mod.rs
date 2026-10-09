@@ -7,25 +7,6 @@
 macro_rules! declare_router_algorithms {
     (
         descriptor = $descriptor:ident;
-        factory = $factory:ident;
-        $( $module:ident => $algorithm:ident = $name:literal ),+ $(,)?
-    ) => {
-        $(
-            mod $module;
-            pub use $module::$algorithm;
-
-            inventory::submit! {
-                $crate::$descriptor {
-                    name: $name,
-                    factory: |parameters| {
-                        Ok(std::sync::Arc::new($algorithm::$factory(parameters)?))
-                    },
-                }
-            }
-        )+
-    };
-    (
-        descriptor = $descriptor:ident;
         $( $module:ident => $algorithm:ident = $name:literal ),+ $(,)?
     ) => {
         $(
@@ -42,7 +23,6 @@ macro_rules! declare_router_algorithms {
     };
 }
 
-pub mod admission;
 pub mod filter;
 pub mod picker;
 pub mod scorer;

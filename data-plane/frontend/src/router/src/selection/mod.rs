@@ -11,10 +11,9 @@ mod session;
 
 pub use candidate::{CandidateIndex, RouteCandidate, RouteScore, ScoredCandidate};
 pub use config::{
-    AdmissionAlgorithm, AdmissionDescriptor, AdmissionStage, AlgorithmName, FilterAlgorithm,
-    FilterDescriptor, FilterStage, PickerAlgorithm, PickerDescriptor, PickerStage,
-    RouterPipelineConfig, RouterPipelineConfigError, ScorerAlgorithm, ScorerDescriptor,
-    ScorerStage,
+    AlgorithmName, FilterAlgorithm, FilterDescriptor, FilterStage, PickerAlgorithm,
+    PickerDescriptor, PickerStage, RouterPipelineConfig, RouterPipelineConfigError,
+    ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
