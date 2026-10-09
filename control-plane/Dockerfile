@@ -11,6 +11,8 @@ ARG RUNTIME_IMAGE=${DISTROLESS_IMAGE_REGISTRY}/distroless/static-debian13:nonroo
 FROM ${GO_BUILDER_IMAGE} AS builder
 ARG GOPROXY
 ARG GOSUMDB
+# Keep module caches writable so shared-storage builders can reclaim them.
+ENV GOFLAGS=-modcacherw
 WORKDIR /workspace/control-plane
 COPY control-plane/go.mod control-plane/go.sum ./
 RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \

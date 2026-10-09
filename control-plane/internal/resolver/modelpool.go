@@ -187,8 +187,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		}
 		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
 	}
+	rdmaRequired := effective.RequiresRDMA()
+	if rdmaRequired && profile.RDMA == nil {
+		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
+	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if modelExpress || template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if modelExpress || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
