@@ -586,6 +586,10 @@ spec:
                 description: ModelGroupRuntime defines the resolved inference-engine
                   runtime.
                 properties:
+                  applicationURL:
+                    description: ApplicationURL pins the controller-selected executable
+                      publication for this cohort.
+                    type: string
                   backend:
                     enum:
                     - vllm
@@ -638,8 +642,8 @@ spec:
                     - engine
                     type: object
                   sourceRevision:
-                    description: SourceRevision pins the source bundle in this Group's
-                      persistent runtime cache.
+                    description: SourceRevision selects the immutable source bundle
+                      at the platform application origin.
                     type: string
                   tritonCacheDirectory:
                     description: TritonCacheDirectory is the initial worker cache

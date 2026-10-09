@@ -56,6 +56,47 @@ spec:
           spec:
             description: ModelServiceSpec defines the desired state of a model service.
             properties:
+              admission:
+                description: |-
+                  Admission replaces the frontend's entire admission block for this model.
+                  Limits apply independently in each frontend replica; omission uses its defaults.
+                properties:
+                  algorithm:
+                    default: allow_all
+                    minLength: 1
+                    type: string
+                  parameters:
+                    description: AdmissionParameters sets per-model concurrency and
+                      queue limits in each frontend process.
+                    properties:
+                      maxConcurrentRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                      maxQueuedRequests:
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 0
+                        type: integer
+                      queueTimeout:
+                        description: QueueTimeout limits queueing within the remaining
+                          request budget.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    required:
+                    - maxConcurrentRequests
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: concurrency admission requires parameters
+                  rule: self.algorithm != 'concurrency' || has(self.parameters)
+                - message: allow_all admission accepts no parameters
+                  rule: self.algorithm != 'allow_all' || !has(self.parameters)
               autoscaling:
                 description: |-
                   Autoscaling is evaluated by the ModelService controller. Algorithms remain
@@ -134,6 +175,11 @@ spec:
                 enum:
                 - vllm
                 - vllm-omni
+                type: string
+              deploymentRevision:
+                description: |-
+                  DeploymentRevision requests current platform applications on an explicit deployment.
+                  It carries no executable, image or external URL supplied by model intent.
                 type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
@@ -928,6 +974,33 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              poolApplications:
+                additionalProperties:
+                  description: |-
+                    ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+                    Controllers persist it before creating consumers so recovery never reselects platform defaults.
+                  properties:
+                    applicationURL:
+                      type: string
+                    deploymentRevision:
+                      type: string
+                    image:
+                      type: string
+                    imageProfile:
+                      description: ImageProfile distinguishes serving, Omni and diagnostic
+                        environments during selection.
+                      type: string
+                    sourceRevision:
+                      description: SourceRevision retains the admitted source intent
+                        independently of source-mode defaults.
+                      type: string
+                  required:
+                  - image
+                  type: object
+                description: |-
+                  PoolApplications retains controller-selected execution settings when a Pool is recreated.
+                  The controller publishes selections before materializing their Pool and Group contracts.
+                type: object
               servingGeneration:
                 description: ServingGeneration is the ModelService generation whose
                   complete Pool revision set is admitted to routing.

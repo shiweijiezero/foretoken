@@ -4,6 +4,7 @@
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
 use std::collections::BTreeMap;
+use std::process::Command;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -377,6 +378,36 @@ impl LaunchPlanV1 {
             ]);
         }
         Ok(config)
+    }
+
+    /// Builds the startup command, including network calibration for distributed members.
+    ///
+    /// The launcher execs the original engine, so its probes share the managed process group.
+    pub fn engine_command(
+        &self,
+        engine: &ManagedEngineConfig,
+        member: Option<&crate::config::MemberContext>,
+        startup_remaining: Duration,
+    ) -> Command {
+        let command = engine.to_command();
+        let Some(member) = member else {
+            return command;
+        };
+        let mut launcher = Command::new(command.get_program());
+        launcher
+            .args(["-m", "foretoken_mccl", "launch"])
+            .arg(
+                json!({
+                    "member_index": member.index,
+                    "member_count": self.node_count,
+                    "leader": member.leader_address,
+                    "port": 29600,
+                    "startup_seconds": startup_remaining.as_secs_f64(),
+                })
+                .to_string(),
+            )
+            .args(command.get_args());
+        launcher
     }
 
     /// Renders the owned vLLM arguments consumed by the managed-engine child process.

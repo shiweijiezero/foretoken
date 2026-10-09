@@ -13,20 +13,32 @@ ARG GOPROXY
 ARG GOSUMDB
 WORKDIR /workspace/control-plane
 COPY control-plane/go.mod control-plane/go.sum ./
-RUN if [ -n "${GOPROXY}" ]; then go env -w GOPROXY="${GOPROXY}"; fi \
+RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \
+    if [ -n "${GOPROXY}" ]; then go env -w GOPROXY="${GOPROXY}"; fi \
     && if [ -n "${GOSUMDB}" ]; then go env -w GOSUMDB="${GOSUMDB}"; fi \
     && go mod download
 COPY control-plane/ ./
-# Build the long-running manager and the one-shot CRD bootstrapper from the same source tree.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd && \
+# Build all platform executables together, retaining dependency and compiler
+# caches when application sources invalidate this stage.
+RUN --mount=type=cache,id=foretoken-go-modules,target=/go/pkg/mod \
+    --mount=type=cache,id=foretoken-go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/video-worker ./cmd/video-worker
 
-FROM ${RUNTIME_IMAGE}
+FROM scratch AS source-export
+COPY --from=builder /out/ /bin/
+COPY control-plane/config/crd/bases/ /crds/
+COPY LICENSE /LICENSE
+
+FROM ${RUNTIME_IMAGE} AS environment
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
+USER 65532:65532
+
+FROM environment AS runtime
 COPY --from=builder /out/manager /manager
 COPY --from=builder /out/crd-apply /crd-apply
 COPY --from=builder /out/video-worker /video-worker

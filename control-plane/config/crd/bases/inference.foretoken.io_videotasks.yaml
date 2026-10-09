@@ -286,6 +286,10 @@ spec:
                   timeoutSeconds:
                     format: int64
                     type: integer
+                  workerApplicationURL:
+                    description: WorkerApplicationURL retains the published executable
+                      used by this task and its cleanup.
+                    type: string
                   workerImage:
                     type: string
                 required:

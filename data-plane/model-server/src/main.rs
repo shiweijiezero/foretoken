@@ -513,7 +513,8 @@ async fn spawn_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.launch.shared_prefix_lookup()
+    if config.member.is_some()
+        || config.launch.shared_prefix_lookup()
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
@@ -653,7 +654,11 @@ async fn spawn_engine_attempt(
             .python_args
             .push("--no-mm-device-do-normalize".into());
     }
-    let mut command = managed_engine.to_command();
+    let mut command = config.launch.engine_command(
+        &managed_engine,
+        config.member.as_ref(),
+        startup_deadline.saturating_duration_since(Instant::now()),
+    );
     command.envs(environment);
     let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);
     let engine = ManagedEngine::spawn(command, instrumentation)

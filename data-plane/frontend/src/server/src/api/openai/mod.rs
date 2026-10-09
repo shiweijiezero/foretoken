@@ -33,9 +33,7 @@ use self::output::{
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::runtime::{GenerationError, GenerationRequest};
 use crate::{AdmissionOrigin, admission};
-use foretoken_router::algorithm::admission::{
-    AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest,
-};
+use foretoken_admission::{AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest};
 
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 

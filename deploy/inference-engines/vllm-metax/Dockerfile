@@ -129,11 +129,15 @@ RUN apt-get update \
       libyaml-cpp-dev libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep command submission and graph execution independent of SDK defaults.
+ENV MACA_DIRECT_DISPATCH=1 \
+    MACA_GRAPH_LAUNCH_MODE=5
+
 # Let Mooncake use verbs for inter-node transfers instead of MACA accelerator transport.
 ENV MC_MACA_HOST_TRANSPORT=1 \
     VIRTUAL_ENV=/opt/foretoken-vllm/.venv \
     PATH=/opt/foretoken-vllm/.venv/bin:${PATH} \
-    LD_LIBRARY_PATH=${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
+    LD_LIBRARY_PATH=/opt/mxdriver/lib:${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
 COPY deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
 COPY deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/

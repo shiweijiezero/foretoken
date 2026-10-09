@@ -8,12 +8,13 @@
  from . import layers  # noqa: F401
 --- /dev/null
 +++ b/vllm_metax/registry/custom_ops/mhc.py
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,163 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 +"""MetaX mHC operators using compiled upstream reference arithmetic."""
 +
 +import torch
++import torch._inductor.config as inductor_config
 +from vllm.model_executor.kernels.mhc.torch import mhc_post_torch, mhc_pre_torch
 +from vllm.model_executor.layers.mhc import (
 +    MHCFusedPostPreOp,
@@ -28,6 +29,11 @@
 +    mhc_pre_torch,
 +    fullgraph=True,
 +    options={"triton.cudagraphs": False},
++)
++_small_pre_compiled = torch.compile(
++    mhc_pre_torch,
++    fullgraph=True,
++    options={"triton.cudagraphs": False, "max_autotune": True},
 +)
 +_post_compiled = torch.compile(
 +    mhc_post_torch,
@@ -50,7 +56,13 @@
 +    norm_eps: float,
 +) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 +    """Return the upstream pre-mix outputs and normalize its BF16 layer input."""
-+    post_mix, comb_mix, layer_input = _pre_compiled(
++    pre = _pre_compiled
++    # Bound dynamic rows so Inductor can prove its long-K split condition.
++    limit = fn.shape[1] // inductor_config.triton.decompose_k_threshold
++    if fn.shape[0] <= limit and 1 < residual.shape[0] <= limit:
++        torch._dynamo.mark_dynamic(residual, 0, min=2, max=limit)
++        pre = _small_pre_compiled
++    post_mix, comb_mix, layer_input = pre(
 +        residual,
 +        fn,
 +        hc_scale,

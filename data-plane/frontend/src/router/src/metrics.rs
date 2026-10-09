@@ -14,7 +14,6 @@ use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::{Family, MetricConstructor};
-use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 
@@ -74,18 +73,8 @@ struct LabelReferences {
     targets: HashMap<TargetLabels, usize>,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub(crate) struct AdmissionRejectionLabels {
-    pub(crate) reason: &'static str,
-}
-
 pub(crate) struct RouterMetrics {
     registry: Registry,
-    pub(crate) admission_active: Gauge,
-    pub(crate) admission_queued: Gauge,
-    pub(crate) admission_resident: Gauge,
-    pub(crate) admission_wait: Histogram,
-    pub(crate) admission_rejected: Family<AdmissionRejectionLabels, Counter>,
     stages: Family<StageLabels, Histogram, fn() -> Histogram>,
     selections: Family<OutcomeLabels, Counter>,
     duration: Family<OutcomeLabels, Histogram, fn() -> Histogram>,
@@ -108,36 +97,6 @@ impl RouterMetrics {
     // the same underlying metric handles.
     fn new() -> Self {
         let mut registry = Registry::default();
-        let admission_active = Gauge::default();
-        let admission_queued = Gauge::default();
-        let admission_resident = Gauge::default();
-        let admission_wait = Histogram::new(exponential_buckets(0.001, 2.0, 20));
-        let admission_rejected = Family::default();
-        registry.register(
-            "foretoken_admission_active",
-            "Admitted generation units",
-            admission_active.clone(),
-        );
-        registry.register(
-            "foretoken_admission_queued",
-            "Generation units waiting for admission",
-            admission_queued.clone(),
-        );
-        registry.register(
-            "foretoken_admission_resident",
-            "Resident protected HTTP requests",
-            admission_resident.clone(),
-        );
-        registry.register(
-            "foretoken_admission_wait_seconds",
-            "Admission wait including expired and canceled requests",
-            admission_wait.clone(),
-        );
-        registry.register(
-            "foretoken_admission_rejections",
-            "Requests rejected by local admission",
-            admission_rejected.clone(),
-        );
         let stages = Family::new_with_constructor(latency_histogram as fn() -> Histogram);
         let selections = Family::default();
         let duration = Family::new_with_constructor(latency_histogram as fn() -> Histogram);
@@ -170,11 +129,6 @@ impl RouterMetrics {
         );
         Self {
             registry,
-            admission_active,
-            admission_queued,
-            admission_resident,
-            admission_wait,
-            admission_rejected,
             stages,
             selections,
             duration,

@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Serve immutable application files without depending on the Foretoken controller.
+{{- if or .Values.development.enabled .Values.controller.applicationURL .Values.applicationFiles.releaseURL }}
+{{- $name := include "foretoken.applicationFilesName" . }}
+{{- $storageMount := "/srv/applications" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-application-files
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    foretoken.io/application-files: storage
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.applicationFiles.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.applicationFiles.storageSize }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-application-files
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    foretoken.io/application-files: configuration
+data:
+  releaseURL: {{ .Values.applicationFiles.releaseURL | quote }}
+  revision: {{ default .Chart.AppVersion .Values.applicationFiles.revision | quote }}
+  credentialsSecret: {{ .Values.applicationFiles.credentialsSecret | quote }}
+  storageMount: {{ $storageMount | quote }}
+  claim: {{ $name | quote }}
+  endpoint: {{ include "foretoken.applicationFilesOrigin" . | quote }}
+  clientImage: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) | quote }}
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr;
+    events { worker_connections 1024; }
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8080;
+        root {{ $storageMount }};
+        location = /healthz { return 200 'ok'; }
+        location ~ (^|/)\. { deny all; }
+        location / { try_files $uri =404; }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-application-files
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    foretoken.io/application-files: server
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: foretoken-application-files
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: foretoken-application-files
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: files
+          image: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.serverImage) | quote }}
+          args: [nginx, -c, /etc/application-files/nginx.conf, -g, "daemon off;"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: files
+              mountPath: {{ $storageMount }}
+              readOnly: true
+            - name: configuration
+              mountPath: /etc/application-files
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: files
+          persistentVolumeClaim:
+            claimName: {{ $name }}
+        - name: configuration
+          configMap:
+            name: {{ $name }}
+            items:
+              - key: nginx.conf
+                path: nginx.conf
+        - name: temporary
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-application-files
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    foretoken.io/application-files: endpoint
+spec:
+  selector:
+    app.kubernetes.io/name: foretoken-application-files
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

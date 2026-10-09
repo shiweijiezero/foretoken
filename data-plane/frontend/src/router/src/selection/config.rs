@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Configured admission rules and Filter, Scorer, and Picker selection.
+//! Configured Filter, Scorer, and Picker selection.
 
 use std::fmt;
 use std::str::FromStr;
@@ -10,16 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-use crate::{RouteAdmission, RouteFilter, RoutePicker, RouteScorer, RouterPipeline};
-
-/// An Admission implementation compiled into this binary.
-pub struct AdmissionDescriptor {
-    /// Stable configuration name.
-    pub name: &'static str,
-    /// Constructs a fully configured rule before exposing its runtime state.
-    pub factory: fn(serde_json::Value) -> Result<Arc<dyn RouteAdmission>, String>,
-}
-inventory::collect!(AdmissionDescriptor);
+use crate::{RouteFilter, RoutePicker, RouteScorer, RouterPipeline};
 
 /// A Filter implementation compiled into this binary.
 pub struct FilterDescriptor {
@@ -100,11 +91,6 @@ impl<'de> Deserialize<'de> for AlgorithmName {
     }
 }
 
-/// Configured admission selection before preprocessing and target selection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AdmissionAlgorithm(AlgorithmName);
-
 /// Configured Filter selection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -151,7 +137,6 @@ macro_rules! algorithm_name_wrapper {
     };
 }
 
-algorithm_name_wrapper!(AdmissionAlgorithm, "allow_all");
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
 algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
 algorithm_name_wrapper!(PickerAlgorithm, "gamble_sampling");
@@ -176,17 +161,14 @@ impl<A: Default> Default for AlgorithmStage<A> {
     }
 }
 
-pub type AdmissionStage = AlgorithmStage<AdmissionAlgorithm>;
 pub type FilterStage = AlgorithmStage<FilterAlgorithm>;
 pub type ScorerStage = AlgorithmStage<ScorerAlgorithm>;
 pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
 
 /// Configured algorithms selected for each Router pipeline stage.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouterPipelineConfig {
-    /// Optional process-local admission; omission retains unrestricted routing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub admission: Option<AdmissionStage>,
     /// Filter used before scoring.
     #[serde(default)]
     pub filter: FilterStage,
@@ -199,17 +181,9 @@ pub struct RouterPipelineConfig {
 }
 
 impl RouterPipelineConfig {
-    /// Builds the selected admission rule and target-selection algorithms compiled into this binary.
+    /// Builds the selected target-selection algorithms compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
-        let admission = self.admission.clone().unwrap_or_default();
-        let admission_descriptor = admission_descriptor(admission.algorithm.as_str())?;
-        let configured_admission =
-            (admission_descriptor.factory)(serde_json::Value::Object(admission.parameters))
-                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
-                    name: format!("admission.{}", admission.algorithm),
-                    message,
-                })?;
         let filter = filter_descriptor(self.filter.algorithm.as_str())?;
         let scorer = scorer_descriptor(self.scorer.algorithm.as_str())?;
         let picker = picker_descriptor(self.picker.algorithm.as_str())?;
@@ -246,21 +220,8 @@ impl RouterPipelineConfig {
         let mut pipeline =
             RouterPipeline::new(configured_filter, configured_scorer, configured_picker);
         pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
-        pipeline.admission = configured_admission;
         Ok(pipeline)
     }
-}
-
-fn admission_descriptor(
-    name: &str,
-) -> Result<&'static AdmissionDescriptor, RouterPipelineConfigError> {
-    inventory::iter::<AdmissionDescriptor>
-        .into_iter()
-        .find(|descriptor| descriptor.name == name)
-        .ok_or_else(|| RouterPipelineConfigError::UnknownAlgorithm {
-            category: "admission",
-            name: name.to_owned(),
-        })
 }
 
 fn filter_descriptor(name: &str) -> Result<&'static FilterDescriptor, RouterPipelineConfigError> {
@@ -294,12 +255,6 @@ fn picker_descriptor(name: &str) -> Result<&'static PickerDescriptor, RouterPipe
 }
 
 fn validate_descriptors() -> Result<(), RouterPipelineConfigError> {
-    validate_descriptor_names(
-        "admission",
-        inventory::iter::<AdmissionDescriptor>
-            .into_iter()
-            .map(|descriptor| descriptor.name),
-    )?;
     validate_descriptor_names(
         "filter",
         inventory::iter::<FilterDescriptor>

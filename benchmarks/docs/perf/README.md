@@ -31,4 +31,4 @@ Use the actual Chat Completions URL and model ID for other services. Gateway acc
 | Measure video generation | [Video workloads](video.md) |
 | Compare runs and inspect charts | [W&B output](wandb.md) |
 
-Metric definitions are in [Performance metrics](../../metrics.md). All options are listed by `foretoken perf --help`. To investigate an execution bottleneck, [capture a profile](../profile/README.md) alongside a workload.
+Metric definitions are in [Performance metrics](../metrics.md). All options are listed by `foretoken perf --help`. To investigate an execution bottleneck, [capture a profile](../profile/README.md) alongside a workload.

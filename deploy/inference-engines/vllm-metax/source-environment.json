@@ -21,6 +21,7 @@
   "patches": {
     "metax": [
       "patches/vllm-030/metax-compatibility.patch",
+      "patches/vllm-030/metax-mccl-visible-gids.patch",
       "patches/vllm-030/metax-mhc-compile.patch",
       "patches/vllm-030/glm-5.3/metax-glm53-typed-kv-layout.patch",
       "patches/vllm-030/glm-5.3/metax-glm53-mla-prefill-fallback.patch",

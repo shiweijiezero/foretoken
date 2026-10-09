@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [build-system]
-requires = ["setuptools>=77", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
 
 [project]
 name = "foretoken"
@@ -38,27 +38,8 @@ dev = [
 [project.scripts]
 foretoken = "foretoken.main:main"
 
-[tool.setuptools]
-packages = [
-    "foretoken",
-    "foretoken.accelerators",
-    "foretoken.platform",
-    "foretoken.profiling",
-    "benchmarks",
-    "benchmarks.config",
-    "benchmarks.datasets",
-    "benchmarks.runs",
-    "benchmarks.sweeps",
-    "benchmarks.integrations",
-    "benchmarks.integrations.evalscope",
-    "benchmarks.integrations.lm_eval",
-    "benchmarks.scoring",
-    "benchmarks.profiling",
-    "benchmarks.results",
-    "benchmarks.results.plots",
-]
-package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }
+[tool.hatch.build.targets.wheel]
+packages = ["cli/foretoken", "benchmarks/src/benchmarks"]
 
-[tool.setuptools.package-data]
-"foretoken.profiling" = ["viewer.html"]
-"foretoken.accelerators" = ["mx-exporter.yaml"]
+[tool.hatch.build.targets.sdist]
+include = ["/cli", "/benchmarks", "/pyproject.toml", "/LICENSE"]
