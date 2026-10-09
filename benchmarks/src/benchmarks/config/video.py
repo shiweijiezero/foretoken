@@ -169,6 +169,8 @@ class VideoBenchmarkConfig:
         if not math.isfinite(self.endpoint.timeout_s) or self.endpoint.timeout_s <= 0:
             raise ValueError("video --timeout must be finite and positive")
         self.outputs.validate()
+        if self.outputs.includes("raw"):
+            raise ValueError("raw output is available for text performance benchmarks")
         if self.outputs.includes("wandb") and not self.wandb.project.strip():
             raise ValueError("video --wandb-project must not be empty")
         sample_ids: set[str] = set()

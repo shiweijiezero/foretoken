@@ -139,7 +139,7 @@ def _add_benchmark_arguments(
         "--output",
         type=_output_destinations,
         default=_default(BenchmarkOutputConfig, "destinations"),
-        help="Comma-separated outputs: local, wandb, plot, experiment, and quiet",
+        help=("Comma-separated outputs: local, wandb, plot, experiment, quiet" if video else "Comma-separated outputs: local, wandb, plot, experiment, raw (request/response content), quiet"),
     )
     parser.add_argument(
         "--output-dir",

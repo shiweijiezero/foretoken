@@ -295,7 +295,7 @@ class BenchmarkOutputConfig:
     @property
     def saves_local(self) -> bool:
         """Keep plot and experiment inputs in the persistent result directory."""
-        return self.includes("local") or self.includes("plot") or self.includes("experiment")
+        return self.includes("local") or self.includes("plot") or self.includes("experiment") or self.includes("raw")
 
     def for_child_run(self) -> BenchmarkOutputConfig:
         """Retain child measurements while the enclosing sweep or search exports comparison plots."""
@@ -315,7 +315,7 @@ class BenchmarkOutputConfig:
             or not self.iteration.strip()
         ):
             raise ValueError("--iteration must be a directory name, not a path")
-        allowed = {"local", "wandb", "plot", "experiment", "quiet"}
+        allowed = {"local", "wandb", "plot", "experiment", "quiet", "raw"}
         unknown = set(self.destinations) - allowed
         if unknown:
             names = ", ".join(sorted(unknown))

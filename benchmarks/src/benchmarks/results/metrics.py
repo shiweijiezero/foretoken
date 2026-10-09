@@ -11,23 +11,27 @@ from typing import Any
 
 import numpy as np
 
+from benchmarks.results.itl import ITLSummary, combine_itl_summaries
+
 
 @dataclass(frozen=True)
 class RequestMeasurement:
     """Client-side observation of one model request, shared by every benchmark path.
 
-    ``started_at`` is seconds from the start of the run to the request send.
-    Streaming engines may provide TTFT, TPOT, and inter-token latency samples;
-    non-streamed or failed requests leave them empty. ``conversation_id`` and
+    ``started_at`` and optional ``scheduled_at`` are seconds from phase start;
+    ``send_delay`` is the lag behind the planned arrival when the workload has one.
+    Streaming engines may provide TTFT, TPOT, and inter-token latency summaries;
+    non-streamed requests leave streamed timing unavailable. Failed requests may
+    carry partial timing but are excluded from latency aggregates. ``conversation_id`` and
     ``turn`` identify the conversation and its request index when the path tracks
-    them; EvalScope records leave both unset.
+    them.
     """
 
     started_at: float
     ttft: float | None
     latency: float
     tpot: float | None
-    itl_samples: tuple[float, ...]
+    itl_summary: ITLSummary
     input_tokens: int | None
     output_tokens: int | None
     cached_input_tokens: int | None
@@ -41,6 +45,17 @@ class RequestMeasurement:
     priority: int | None = None
     request_class: str | None = None
     target_output_tokens: int | None = None
+    request_id: str | None = None
+    phase: str | None = None
+    source_id: str | None = None
+    finish_reason: str | None = None
+    response_id: str | None = None
+    response_model: str | None = None
+    content_characters: int | None = None
+    reasoning_characters: int | None = None
+    transport_completed: bool | None = None
+    scheduled_at: float | None = None
+    send_delay: float | None = None
 
 
 def request_activity_events(
@@ -165,7 +180,7 @@ def request_slo_results(
             "latency": item.latency,
             "ttft": item.ttft,
             "tpot": item.tpot,
-            "itl": max(item.itl_samples) if item.itl_samples else None,
+            "itl": item.itl_summary["max"],
         }
         met = item.succeeded
         for metric, rule in checks:
@@ -199,6 +214,7 @@ def summarize_measurement_groups(
     reported_concurrency: int,
     slo_criteria: dict[str, str] | None,
     include_single_dataset: bool = False,
+    itl_summaries: dict[str, dict[str, ITLSummary]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Summarize labeled requests on their shared experiment clock without per-group GPU assumptions."""
     result: dict[str, dict[str, Any]] = {}
@@ -227,6 +243,7 @@ def summarize_measurement_groups(
                 reported_concurrency=reported_concurrency, gpu_count=None,
                 include_normalized_throughput=False,
                 slo_criteria=slo_criteria,
+                itl_summary=(itl_summaries or {}).get(group_name, {}).get(name),
             )
     return result
 
@@ -242,23 +259,23 @@ def summarize_measurements(
     gpu_count: int | None,
     include_normalized_throughput: bool = True,
     slo_criteria: dict[str, str] | None = None,
+    itl_summary: ITLSummary | None = None,
 ) -> dict[str, Any]:
     """Aggregate request measurements and workload coordinates into the published metrics.
 
     Latency distributions use successful requests only; throughput divides
     successful request and token counts by ``total_time``. TTFT and TPOT are
     reported only for streamed runs. Inter-token latency is included when the
-    request engine records those samples.
+    request engine records intervals. The runner supplies merged ITL quantiles;
+    lightweight request records alone recover only count, mean, and maximum.
     """
     successful = [item for item in measurements if item.succeeded]
     latencies = [item.latency for item in successful]
     ttfts: list[float] = []
     tpots: list[float] = []
-    itls: list[float] = []
     if stream:
         ttfts = [item.ttft for item in successful if item.ttft is not None]
         tpots = [item.tpot for item in successful if item.tpot is not None]
-        itls = [value for item in successful for value in item.itl_samples]
 
     input_complete = all(item.input_tokens is not None for item in successful)
     output_complete = all(item.output_tokens is not None for item in successful)
@@ -312,6 +329,10 @@ def summarize_measurements(
             )
         )
     slo = request_slo_results(measurements, slo_criteria, total_time)
+    if not stream:
+        itl_summary = combine_itl_summaries(())
+    elif itl_summary is None:
+        itl_summary = combine_itl_summaries(item.itl_summary for item in successful)
     return {
         "request_num": request_num,
         "success_num": success_count,
@@ -321,7 +342,7 @@ def summarize_measurements(
         "latency": percentile_summary(latencies),
         "ttft": percentile_summary(ttfts),
         "tpot": percentile_summary(tpots),
-        "itl": percentile_summary(itls),
+        "itl": itl_summary,
         "throughput": throughput,
         "avg_input_tokens": (
             input_tokens / success_count

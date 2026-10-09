@@ -95,6 +95,8 @@ foretoken eval examples/quickstart \
   --resume results/previous-run --output local
 ```
 
+The result directory can be on shared storage. Foretoken keeps the active lm-eval response database on the execution node and archives completed work to the result directory on normal exit, Ctrl+C, or an evaluation error.
+
 The resumed invocation writes a new result directory, reuses completed work, and reports the combined scores. The source directory remains unchanged; if interrupted again, resume from the newest directory. Keep model weights, task configuration, generation settings, and sample selection unchanged.
 
 | Evaluation | Reused work |

@@ -61,9 +61,12 @@ foretoken eval examples/quickstart \
 | `wandb` | 打印结果并上传 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
 | `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
+| `raw` | 性能评测额外保存实际请求和响应内容，并保留本地结果 |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
+
+性能结果默认保存逐请求耗时、用量、停止原因及输出长度摘要。要查看完整输入输出，使用 `--output local,raw`；`responses.jsonl` 按请求保存实际输入、生成参数，以及返回的正文、reasoning 和工具调用，预热内容单独保存在 `warmup_responses.jsonl`。流式响应合并成一条记录，通过请求标识与性能摘要关联。`--output experiment,raw` 将这些文件保存在对应运行的产物目录。
 
 `quiet` 将准备和执行日志保存到 `run.log`，不打印进度，错误仍会显示。选择 W&B 时，该日志也作为附件上传。
 

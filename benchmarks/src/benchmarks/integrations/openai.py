@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 import time
 from collections.abc import Mapping
@@ -21,6 +22,7 @@ from benchmarks.datasets.conversations import Task
 from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import compute_tpot
+from benchmarks.results.responses import ResponseContent, ResponseWriter
 
 
 @dataclass(frozen=True)
@@ -112,7 +114,9 @@ class OpenAILoadClient:
         service: ModelService,
         *,
         max_connections: int | None,
+        response_writer: ResponseWriter | None = None,
     ) -> None:
+        self.response_writer = response_writer
         limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
@@ -141,7 +145,17 @@ class OpenAILoadClient:
     async def __aexit__(self, *args: object) -> None:
         await self._client.close()
 
-    async def send(self, request: PreparedRequest) -> dict[str, Any]:
+    async def send(
+        self,
+        request: PreparedRequest,
+        *,
+        request_id: str,
+        phase: str,
+        source_id: str,
+        conversation_id: str | None,
+        turn: int | None,
+        retain_history: bool = False,
+    ) -> dict[str, Any]:
         """Send a prepared request and measure its timing, usage, and protocol failures."""
         request_fields = request.body
         completion = request.input_tokens is not None
@@ -153,11 +167,16 @@ class OpenAILoadClient:
         input_tokens: int | None = None
         output_tokens: int | None = None
         cached_input_tokens: int | None = None
-        generated_parts: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
+        content = ResponseContent(
+            raw=self.response_writer is not None, history=retain_history
+        )
+        transport_completed = False
+        interrupted = False
+        error_body = None
         status_code: int | None = None
         error_message: str | None = None
         success = True
+        response = None
         try:
             response = await self._client.post(
                 self._completions_url if completion else self._request_url,
@@ -174,47 +193,51 @@ class OpenAILoadClient:
                     received_at = time.perf_counter()
                     payload = chunk.model_dump(exclude_none=True)
                     timing.observe(payload, received_at)
-                    if chunk.choices:
-                        if completion:
-                            generated_parts.append(chunk.choices[0].text)
-                        else:
-                            delta = chunk.choices[0].delta
-                            if delta.content:
-                                generated_parts.append(delta.content)
-                            if delta.tool_calls:
-                                tool_calls.extend(
-                                    call.model_dump(exclude_none=True)
-                                    for call in delta.tool_calls
-                                )
-                    if chunk.usage is not None:
-                        input_tokens = int(chunk.usage.prompt_tokens)
-                        output_tokens = int(chunk.usage.completion_tokens)
-                        details = chunk.usage.prompt_tokens_details
-                        if details is not None and details.cached_tokens is not None:
-                            cached_input_tokens = int(details.cached_tokens)
+                    content.observe(payload, streaming=True, completion=completion)
             else:
-                if response.choices:
-                    if completion:
-                        generated_parts.append(response.choices[0].text)
-                    else:
-                        message = response.choices[0].message
-                        if message.content:
-                            generated_parts.append(message.content)
-                        if message.tool_calls:
-                            tool_calls.extend(
-                                call.model_dump(exclude_none=True)
-                                for call in message.tool_calls
-                            )
-                if response.usage is not None:
-                    input_tokens = int(response.usage.prompt_tokens)
-                    output_tokens = int(response.usage.completion_tokens)
-                    details = response.usage.prompt_tokens_details
-                    if details is not None and details.cached_tokens is not None:
-                        cached_input_tokens = int(details.cached_tokens)
+                content.observe(
+                    response.model_dump(exclude_none=False),
+                    streaming=False,
+                    completion=completion,
+                )
+            transport_completed = True
         except (APIError, httpx.HTTPError) as exc:
             success = False
             status_code = getattr(exc, "status_code", None)
             error_message = str(exc)
+            error_body = exc.body if isinstance(exc, APIError) else None
+        except asyncio.CancelledError:
+            interrupted = True
+            error_message = "Request interrupted"
+            raise
+        finally:
+            transport_ended_at = time.perf_counter()
+            if stream and response is not None:
+                await response.close()
+            if self.response_writer is not None:
+                self.response_writer.write(
+                    phase,
+                    {
+                        "request_id": request_id,
+                        "phase": phase,
+                        "source_id": source_id,
+                        "conversation_id": conversation_id,
+                        "turn": turn,
+                        "request": request_fields,
+                        "response": content.record(),
+                        "transport_completed": transport_completed,
+                        "interrupted": interrupted,
+                        "status_code": status_code,
+                        "error": error_body or error_message,
+                    },
+                )
+        usage = content.usage
+        if usage is not None:
+            input_tokens = usage.get("prompt_tokens")
+            output_tokens = usage.get("completion_tokens")
+            cached_input_tokens = (usage.get("prompt_tokens_details") or {}).get(
+                "cached_tokens"
+            )
 
         if success and target_length is not None and output_tokens != target_length:
             success = False
@@ -228,7 +251,7 @@ class OpenAILoadClient:
         completed_at = (
             timing.last_output_at
             if stream and success and timing.last_output_at is not None
-            else time.perf_counter()
+            else transport_ended_at
         )
         latency = completed_at - started_at
         ttft = (
@@ -244,13 +267,22 @@ class OpenAILoadClient:
             "latency": latency,
             "ttft": ttft,
             "tpot": compute_tpot(latency, ttft, output_tokens),
-            "inter_token_latencies": timing.intervals if stream else [],
+            "itl": timing.itl,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "target_output_tokens": target_length,
             "model": model,
             "cached_input_tokens": cached_input_tokens,
-            "generated_text": "".join(generated_parts),
-            "tool_calls": tool_calls,
+            "generated_text": "".join(content.generated),
+            "tool_calls": content.tool_calls,
+            "request_id": request_id,
+            "phase": phase,
+            "source_id": source_id,
+            "finish_reason": content.finish_reason,
+            "response_id": content.response_id,
+            "response_model": content.response_model,
+            "content_characters": content.content_characters,
+            "reasoning_characters": content.reasoning_characters,
+            "transport_completed": transport_completed,
             "error": error_message,
         }
