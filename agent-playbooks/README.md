@@ -110,7 +110,7 @@ Find the run under `iterations/<name>/runs/`. The benchmark result directory pri
 | 1 | `generated/context.json` | Completed, failed, or interrupted status; exit code, command, and source capture status |
 | 2 | `config.json` and `environment.json` in the result directory | Whether workloads, generation settings, and client and serving environments are comparable |
 | 3 | `metrics.json` in the result directory | Performance metrics or quality scores, together with success counts, sample counts, and scoring methods |
-| 4 | Performance `raw_output.json`, or quality `native/` results | Per-request measurements and completion state, or evaluator sample answers and scores; use `--output raw` to retain complete performance request/response content |
+| 4 | Performance `raw_output.json`, or quality `native/` results | Per-request measurements and completion state, or evaluator sample answers and scores |
 | 5 | `generated/run.log` (with `quiet`), benchmark logs, or `evaluator.log` | Failure causes, preparation, and actual execution |
 
 For per-sample quality records, add `--log_samples` with lm-evaluation-harness. See [performance results](../benchmarks/docs/perf/wandb.md) for resource and serving metric charts; log in before selecting W&B output.

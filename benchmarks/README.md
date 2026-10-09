@@ -66,7 +66,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Performance results retain per-request timing, usage, stop reasons, and output-length summaries by default. Use `--output local,raw` to inspect complete inputs and outputs: `responses.jsonl` records the actual inputs, generation fields, and returned text, reasoning, and tool calls. Warmup content is written separately to `warmup_responses.jsonl`. Streaming responses are assembled into one record and linked to measurements by request ID. With `--output experiment,raw`, these files live in the run's artifact directory.
+Use `--output local,raw` to save request inputs and response content, including reasoning and tool calls, in `responses.jsonl`. Warmup responses are saved in `warmup_responses.jsonl`.
 
 `quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
 

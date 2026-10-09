@@ -25,7 +25,7 @@ Results include aggregate metrics and per-request records.
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 
-ITL records retain count, mean, maximum, and P50/P95/P99. Percentiles are estimates with 1% relative value error; run and group percentiles combine interval distributions rather than averaging request percentiles. Mean, count, and maximum use the observed intervals directly, and request-level ITL SLOs compare the maximum interval. Individual chunk intervals are not persisted.
+ITL percentiles have 1% relative value error. Request-level ITL SLOs compare the maximum interval.
 
 ## Curves
 

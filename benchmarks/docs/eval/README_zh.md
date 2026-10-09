@@ -95,8 +95,6 @@ foretoken eval examples/quickstart \
   --resume results/previous-run --output local
 ```
 
-结果目录可以位于共享存储。Foretoken 自动在执行节点本地维护 lm-eval 响应工作库，正常退出、按 Ctrl+C 或评测报错时，将已完成工作归档到结果目录。
-
 恢复会创建新的结果目录，复用已完成工作，并汇总完整评分；原目录保持不变。如果再次中断，从最新目录继续恢复。模型权重、任务配置、生成参数和样本范围应保持不变。
 
 | 评测类型 | 复用的工作 |
