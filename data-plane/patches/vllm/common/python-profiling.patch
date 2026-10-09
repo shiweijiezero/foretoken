@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Propagate Torch profiler failures and recreate completed state before capture.
+# Shared by the supported vLLM Python engines; native export and scheduling stay upstream.
+# Installed by model-server's Dockerfile, independently of the Rust source submodule.
+
+diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
+--- a/vllm/profiler/wrapper.py
++++ b/vllm/profiler/wrapper.py
+@@ -37,4 +37,5 @@
+         self._active_iteration_count = 0
+         self._active = False
++        self._error: Exception | None = None
+ 
+         # Track when the profiler is actually running
+@@ -58,4 +59,6 @@
+             self._running = True  # Only mark as running if start succeeds
+         except Exception as e:
++            self._error = e
++            self._active = False
+             logger.warning("Failed to start profiler: %s", e)
+ 
+@@ -64,8 +67,17 @@
+         try:
+             self._stop()
++            self._running = False
+             logger.info_once("Profiler stopped successfully.")
+         except Exception as e:
++            if self._error is None:
++                self._error = e
+             logger.warning("Failed to stop profiler: %s", e)
+-        self._running = False  # Always mark as not running, assume stop worked
++
++    def _raise_if_failed(self) -> None:
++        """Report retained native errors at the worker control boundary."""
++        if self._error is not None:
++            raise RuntimeError(
++                f"Profiling failed: {self._error}; restart the worker before another capture"
++            ) from self._error
+ 
+     def start(self) -> None:
+@@ -84,5 +96,5 @@
+         """Update the profiler state at each worker step,
+         to handle delayed starts and max iteration limits."""
+-        if not self._active:
++        if not self._active or self._error is not None:
+             return
+ 
+@@ -143,3 +155,4 @@
+         if self._running:
+-            self.stop()
++            self._call_stop()
++        self._active = False
+
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1189,2 +1189,8 @@
+ 
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            # Preserve failures and active captures; only completed Torch state is replaceable.
++            self.profiler._raise_if_failed()
++            if is_start and not self.profiler._active and not self.profiler._running:
++                self.profiler = None
++
+         if is_start:
+@@ -1232,2 +1238,5 @@
+
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
++
+     def execute_dummy_batch(self) -> None:

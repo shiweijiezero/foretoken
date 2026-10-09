@@ -1,0 +1,14 @@
+diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -92,2 +92,3 @@
+     kv_cache_size_tokens: int | None = None
++    max_logprobs: int | None = None
+     kv_cache_max_concurrency: float | None = None
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1618,2 +1618,3 @@
+             max_model_len=self.vllm_config.model_config.max_model_len,
++            max_logprobs=self.vllm_config.model_config.max_logprobs,
+             num_gpu_blocks=self.vllm_config.cache_config.num_gpu_blocks or 0,

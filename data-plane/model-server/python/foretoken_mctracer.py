@@ -6,10 +6,10 @@
 import ctypes
 import errno
 import os
-from pathlib import Path
 import pty
 import subprocess
 import tempfile
+from pathlib import Path
 
 from vllm.v1.worker.gpu_worker import Worker as GPUWorker
 

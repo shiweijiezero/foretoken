@@ -3,7 +3,9 @@
 
 # The Dockerfile builds one package from the repository-wide data-plane workspace.
 **
+!LICENSE
 !data-plane/
 !data-plane/**
+data-plane/**/.git
 data-plane/target/
 data-plane/**/target/

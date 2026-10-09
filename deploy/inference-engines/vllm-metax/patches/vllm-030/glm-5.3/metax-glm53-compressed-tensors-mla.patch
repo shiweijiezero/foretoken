@@ -1,0 +1,50 @@
+--- a/vllm/models/glm5next/common/model.py
++++ b/vllm/models/glm5next/common/model.py
+@@ -327,7 +327,14 @@
+                 kv_lora_rank=config.kv_lora_rank,
+                 max_position_embeddings=config.max_position_embeddings,
+                 cache_config=cache_config,
+-                quant_config=None,  # MLA projections are BF16 in checkpoint
++                # Compressed-tensors checkpoints declare the MLA projection schemes.
++                # Keep global FP8 checkpoints on the BF16 projection loading path.
++                quant_config=(
++                    quant_config
++                    if quant_config is not None
++                    and quant_config.get_name() == "compressed-tensors"
++                    else None
++                ),
+                 prefix=f"{prefix}.self_attn",
+                 topk_indices_buffer=topk_indices_buffer,
+                 skip_rope=config.mla_nope,
+@@ -1261,14 +1268,9 @@
+     loaded_params,
+     kv_a_pad_size: int,
+ ) -> bool:
+-    """Dequantize FP8 q_a_proj / kv_a_proj_with_mqa / o_proj to BF16 on load.
++    """Dequantize block-FP8 attention projections kept in BF16.
+
+-    The FP8 checkpoint stores these as block-FP8 (weight + weight_scale_inv),
+-    but the model holds them in BF16 (``fused_qkv_a_proj`` is always BF16 via
+-    DeepSeekV2FusedQkvAProjLinear; ``o_proj`` is excluded by
+-    modules_to_not_convert). When the model target is BF16 (no
+-    ``weight_scale_inv`` param) we dequantize; otherwise we return False so the
+-    normal stacked/direct path loads the FP8 tensor as-is.
++    Compressed-tensors projections own their weight and scale loaders.
+     """
+     matched = None
+     for suffix, info in _FP8_ATTN_PROJS.items():
+@@ -1288,9 +1290,11 @@
+     layer_prefix = name.rsplit(suffix, 1)[0]
+     target_w = f"{layer_prefix}.{target_base}.weight"
+     target_s = f"{layer_prefix}.{target_base}.weight_scale_inv"
+-    # If the model actually kept this projection in FP8, let the normal path
+-    # handle it (it has a weight_scale_inv param).
+-    if target_s in params_dict:
++    # Quantized model targets own both weights and scales.
++    if (
++        target_s in params_dict
++        or f"{layer_prefix}.{target_base}.weight_scale" in params_dict
++    ):
+         return False
+
+     entry = buf.setdefault(layer_prefix, {}).setdefault(key, {})

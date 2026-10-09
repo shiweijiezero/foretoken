@@ -57,6 +57,18 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
+// RuntimeCacheDirectoryOwner is the host identity discovered for a local directory mount.
+// Cache consumers use it so private runtime files remain manageable by the host owner.
+type RuntimeCacheDirectoryOwner struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967294
+	UID int64 `json:"uid"`
+
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967294
+	GID int64 `json:"gid"`
+}
+
 // RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
 type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
@@ -67,6 +79,10 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
+
+	// DirectoryOwner preserves a locally discovered directory identity across cache consumers.
+	// +optional
+	DirectoryOwner *RuntimeCacheDirectoryOwner `json:"directoryOwner,omitempty"`
 }
 
 // HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
@@ -80,6 +96,22 @@ type HuggingFaceAccess struct {
 	TokenSecretName string `json:"tokenSecretName,omitempty"`
 	// +optional
 	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
+}
+
+// ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+// Controllers persist it before creating consumers so recovery never reselects platform defaults.
+type ApplicationSelection struct {
+	Image string `json:"image"`
+	// ImageProfile distinguishes serving, Omni and diagnostic environments during selection.
+	// +optional
+	ImageProfile string `json:"imageProfile,omitempty"`
+	// SourceRevision retains the admitted source intent independently of source-mode defaults.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+	// +optional
+	ApplicationURL string `json:"applicationURL,omitempty"`
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -107,6 +139,14 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
+	// SourceRevision pins the CLI-published source bundle used by this Pool's Groups.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+
+	// Application is selected by the ModelService controller, not by user model intent.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
 	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
@@ -115,7 +155,7 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
@@ -127,6 +167,11 @@ type NormalizedPoolTemplate struct {
 	MemberCount int32 `json:"memberCount"`
 
 	Resources ModelResources `json:"resources"`
+
+	// NodeSelector is the normalized Kubernetes placement constraint for this Pool.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
 	// MaxInputTokens is the immutable prompt admission limit for this Pool.
 	// +optional

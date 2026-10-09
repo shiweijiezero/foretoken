@@ -1,0 +1,143 @@
+diff --git a/vllm/v1/spec_decode/timing.py b/vllm/v1/spec_decode/timing.py
+new file mode 100644
+--- /dev/null
++++ b/vllm/v1/spec_decode/timing.py
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++"""Completed speculative GPU stage samples shared by workers and engine stats."""
++
++from dataclasses import dataclass, field
++
++
++@dataclass
++class SpecDecodeTiming:
++    """GPU timeline durations for a complete speculative step on its output rank."""
++
++    target_forward_seconds: float
++    draft_seconds: float
++
++
++@dataclass
++class SpecDecodeTimingResult:
++    """Completed samples and whether the worker still owns unfinished events."""
++
++    samples: list[SpecDecodeTiming] = field(default_factory=list)
++    pending: bool = False
+diff --git a/vllm/v1/worker/spec_decode_timing.py b/vllm/v1/worker/spec_decode_timing.py
+new file mode 100644
+--- /dev/null
++++ b/vllm/v1/worker/spec_decode_timing.py
+@@ -0,0 +1,111 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++"""Collect speculative GPU stage durations without waiting for device work."""
++
++from collections import deque
++from dataclasses import dataclass, field
++from threading import Lock
++
++import torch
++
++from vllm.utils.gpu_sync_debug import with_gpu_sync_check
++from vllm.v1.core.sched.output import SchedulerOutput
++from vllm.v1.outputs import (
++    AsyncModelRunnerOutput,
++    ModelRunnerOutput,
++    SpecDecodeTimingResult,
++)
++from vllm.v1.spec_decode.timing import SpecDecodeTiming
++
++
++def is_speculative_decode_batch(scheduler_output: SchedulerOutput) -> bool:
++    """Select batches whose scheduled tokens all belong to speculative decode."""
++    draft_tokens = scheduler_output.scheduled_spec_decode_tokens
++    return bool(draft_tokens) and all(
++        req_id in draft_tokens
++        and len(draft_tokens[req_id]) > 0
++        and len(draft_tokens[req_id]) + 1 == num_tokens
++        for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
++    )
++
++
++class TimedAsyncOutput(AsyncModelRunnerOutput):
++    """Collect ready samples after the native copy without waiting for draft work."""
++
++    def __init__(
++        self, output: AsyncModelRunnerOutput, collector: "SpecDecodeTimingCollector"
++    ) -> None:
++        self.output = output
++        self.collector = collector
++
++    def get_output(self) -> ModelRunnerOutput:
++        output = self.output.get_output()
++        output.spec_decode_timing = self.collector.drain()
++        return output
++
++
++def _timing_event() -> torch.cuda.Event:
++    return torch.cuda.Event(enable_timing=True)
++
++
++@dataclass
++class SpecDecodeTimingEvents:
++    target_start: torch.cuda.Event = field(default_factory=_timing_event)
++    target_end: torch.cuda.Event = field(default_factory=_timing_event)
++    draft_start: torch.cuda.Event = field(default_factory=_timing_event)
++    draft_end: torch.cuda.Event = field(default_factory=_timing_event)
++
++
++class SpecDecodeTimingCollector:
++    """Own pending events and reuse them after the worker drains completed samples.
++
++    Model execution is the sole producer. Output completion and idle control
++    RPCs collect query-ready events; a concurrent drain yields without blocking.
++    Neither consumer waits for GPU work, and events are reused only after collection.
++    """
++
++    def __init__(self) -> None:
++        self._pending: deque[SpecDecodeTimingEvents] = deque()
++        self._available: list[SpecDecodeTimingEvents] = []
++        self._drain_lock = Lock()
++        self.enabled = False
++
++    def start_serving(self) -> None:
++        """Enable collection after kernel warmup has finished."""
++        self.enabled = True
++
++    def begin(self) -> SpecDecodeTimingEvents:
++        """Start target timing for a real speculative batch on the current stream."""
++        events = self._available.pop() if self._available else SpecDecodeTimingEvents()
++        events.target_start.record()
++        return events
++
++    def end_draft(self, events: SpecDecodeTimingEvents) -> None:
++        """Record proposal completion and retain its events for nonblocking collection."""
++        events.draft_end.record()
++        self._pending.append(events)
++
++    @with_gpu_sync_check
++    def drain(self) -> SpecDecodeTimingResult:
++        """Return every ready sample in stream order, leaving GPU work untouched."""
++        if not self._drain_lock.acquire(blocking=False):
++            return SpecDecodeTimingResult(pending=True)
++        try:
++            samples = []
++            while self._pending and self._pending[0].draft_end.query():
++                events = self._pending.popleft()
++                samples.append(
++                    SpecDecodeTiming(
++                        target_forward_seconds=events.target_start.elapsed_time(
++                            events.target_end
++                        )
++                        / 1000,
++                        draft_seconds=events.draft_start.elapsed_time(events.draft_end)
++                        / 1000,
++                    )
++                )
++                self._available.append(events)
++            return SpecDecodeTimingResult(samples, bool(self._pending))
++        finally:
++            self._drain_lock.release()

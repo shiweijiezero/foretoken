@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1314,2 +1314,4 @@
+                 self.profiler.stop()
++                if self.profiler is not None and self.profiler_config.profiler == "torch":
++                    self.profiler._raise_if_failed()
+             finally:

@@ -6,7 +6,7 @@
 //! 9de2bc119009c3e37e36ddbe240c5647d848f752. Foretoken retains execution ownership.
 
 mod convert;
-mod error;
+pub(super) mod error;
 mod streaming;
 mod tools;
 mod types;
@@ -19,7 +19,8 @@ use axum::extract::rejection::JsonRejection;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use foretoken_admission::AdmissionApi;
 use foretoken_chat::{ChatEvent, FinishReason};
 use futures::{Stream, StreamExt};
 use serde_json::json;
@@ -43,9 +44,10 @@ pub(super) fn router() -> Router<ApiState> {
 /// Lower a Responses request once, then expose the shared chat output as JSON or SSE.
 async fn create(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     body: Result<Json<ResponsesRequest>, JsonRejection>,
 ) -> Response {
-    let timing = RequestTiming::now();
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let body = match body {
         Ok(Json(body)) => body,
         Err(error) => {
@@ -65,7 +67,13 @@ async fn create(
         Err(error) => return error.into_response(),
     };
     let generated = match state
-        .generate_chat(meta.model.clone(), chat, meta.include_reasoning, timing)
+        .generate_chat(
+            meta.model.clone(),
+            chat,
+            meta.include_reasoning,
+            timing,
+            AdmissionApi::Responses,
+        )
         .await
     {
         Ok(generated) => generated,

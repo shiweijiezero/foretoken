@@ -15,9 +15,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 // EffectiveConfig contains typed vLLM values and approved backend arguments.
@@ -98,7 +98,6 @@ type LaunchLifecycle struct {
 const (
 	// FilesystemOffloadMountPath is the writable volume target shared by workload and launch plan.
 	FilesystemOffloadMountPath = "/var/lib/foretoken/kv-offload"
-	maxKubernetesInt32Seconds  = int64(1<<31 - 1)
 
 	kvNone              = "none"
 	kvPD                = "pd"
@@ -147,11 +146,11 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if group.NodeCount < 1 {
 		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan requires a positive node count")
 	}
-	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
+	startup, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Startup, "vLLM startup")
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	drain, err := parsePositiveDuration(group.Timeouts.Drain, "drain")
+	drain, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Drain, "vLLM drain")
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
@@ -249,18 +248,6 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 		Connector: ec.Connector, Role: string(ec.Role),
 		SharedStoragePath: path.Join(ec.SharedStoragePath, ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision)),
 	}, nil
-}
-
-func parsePositiveDuration(value inferencev1alpha1.Duration, name string) (int64, error) {
-	duration, err := time.ParseDuration(string(value))
-	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("vLLM %s timeout must be a positive duration", name)
-	}
-	seconds := int64(math.Ceil(duration.Seconds()))
-	if seconds > maxKubernetesInt32Seconds {
-		return 0, fmt.Errorf("vLLM %s timeout must not exceed %d seconds", name, maxKubernetesInt32Seconds)
-	}
-	return seconds, nil
 }
 
 // extractParallelism consumes native topology options into the runtime's worker layout.

@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Self
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
@@ -19,6 +19,7 @@ _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 # Labels identify Foretoken workloads; ownership is resolved by UID, never by name prefix.
 _WORKLOAD_LABELS = (
     "inference.foretoken.io/model-group",
+    "inference.foretoken.io/model-preparation-group",
     "inference.foretoken.io/frontend-service",
     "inference.foretoken.io/kv-group",
     "inference.foretoken.io/kvservice",
@@ -47,7 +48,7 @@ class StartupProgress:
         self._logs: dict[tuple[str, str, str], subprocess.Popen] = {}
         self._unavailable = ""
 
-    def __enter__(self) -> StartupProgress:
+    def __enter__(self) -> Self:
         """Scope all log readers to the calling deployment wait or status watch."""
         return self
 

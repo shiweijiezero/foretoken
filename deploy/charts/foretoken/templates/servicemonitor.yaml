@@ -75,6 +75,8 @@ spec:
       relabelings:
         - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_service]
           targetLabel: modelservice
+        - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_served_model]
+          targetLabel: served_model
         - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_pool]
           targetLabel: model_pool
         - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_instance]

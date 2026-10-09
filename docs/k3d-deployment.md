@@ -18,13 +18,56 @@ The host needs:
 - Docker configured to use the NVIDIA runtime; and
 - k3d, kubectl, and Helm.
 
-## 1. Enter the repository and select GPUs
+## 1. Prepare a Linux GPU host
+
+The following commands cover Ubuntu or Debian-based hosts. Install host dependencies once; do not run `foretoken` with `sudo`.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io curl ca-certificates gnupg
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+Install NVIDIA Container Toolkit and configure Docker:
+
+```bash
+distribution=$(. /etc/os-release; echo "$ID$VERSION_ID")
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" |
+  sed 's#^deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' |
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+```
+
+Install k3d, kubectl, and Helm using their official installers, then verify the host:
+
+```bash
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl -fsSL https://dl.k8s.io/release/stable.txt -o /tmp/kubectl-version
+curl -fsSLO "https://dl.k8s.io/release/$(cat /tmp/kubectl-version)/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl /tmp/kubectl-version
+
+nvidia-smi
+docker info
+k3d version
+kubectl version --client
+helm version --short
+```
+
+## 3. Enter the repository and select GPUs
 
 Get the repository and run the remaining commands from its root:
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
+pip install -e .
 ```
 
 List GPUs:
@@ -40,107 +83,22 @@ export GPU_INDICES=6,7
 export CLUSTER=foretoken-qwen-test
 ```
 
-## 2. Create a GPU-restricted k3d cluster
-
-The following Bash code finds the NVIDIA runtime, configuration, and dependent libraries, then prepares mount arguments for k3d:
+## 4. Create a GPU-restricted k3d cluster
 
 ```bash
-declare -a K3D_VOLUME_ARGS=()
-declare -A K3D_MOUNTED_PATHS=()
-
-add_k3d_mount() {
-  local path="$1"
-  [ -e "$path" ] || return 0
-  [ -z "${K3D_MOUNTED_PATHS[$path]+x}" ] || return 0
-  K3D_MOUNTED_PATHS["$path"]=1
-  K3D_VOLUME_ARGS+=(--volume "$path:$path@server:0")
-}
-
-for NAME in \
-  nvidia-container-runtime \
-  nvidia-container-runtime-hook \
-  nvidia-container-cli \
-  nvidia-ctk; do
-  TOOL_PATH="$(command -v "$NAME")"
-  add_k3d_mount "$TOOL_PATH"
-
-  while read -r PATH_KIND LIBRARY_PATH; do
-    if [ "$PATH_KIND" = directory ]; then
-      add_k3d_mount "$(realpath -m "$(dirname "$LIBRARY_PATH")")"
-    else
-      add_k3d_mount "$LIBRARY_PATH"
-    fi
-  done < <(
-    ldd "$TOOL_PATH" |
-      awk '
-        $2 == "=>" && $3 ~ /^\// { print "directory", $3 }
-        $1 ~ /^\// { print "file", $1 }
-      '
-  )
-done
-
-for CONFIG_DIR in \
-  /etc/nvidia-container-runtime \
-  /usr/local/etc/nvidia-container-runtime; do
-  add_k3d_mount "$CONFIG_DIR"
-done
-
-for LDCONFIG_PATH in \
-  "$(command -v ldconfig)" \
-  /sbin/ldconfig.real \
-  /usr/sbin/ldconfig.real; do
-  add_k3d_mount "$LDCONFIG_PATH"
-done
-
-# Share model downloads and runtime caches across examples.
-mkdir -p data
-add_k3d_mount "$(realpath data)"
-```
-
-The data directory must be writable by the workloads. See [Model storage](model-storage.md) for storage choices.
-
-Create a single-server cluster:
-
-```bash
-k3d cluster create "$CLUSTER" \
-  --config deploy/k3d/config.yaml \
-  --gpus "\"device=$GPU_INDICES\"" \
-  "${K3D_VOLUME_ARGS[@]}"
-```
-
-View the resulting nodes:
-
-```bash
+foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-## 3. Install the NVIDIA device plugin
+The command mounts the NVIDIA runtime and the repository `data/` directory, installs the NVIDIA device plugin, and selects the created kubeconfig context.
 
-```bash
-kubectl apply -f \
-  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
-```
-
-Configure the inner NVIDIA runtime with the same host GPU list that k3d uses:
-
-```bash
-kubectl set env daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system \
-  NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
-
-kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
-  --namespace kube-system \
-  --timeout=3m
-```
-
-## 4. Install and access Foretoken
+## 5. Install and access Foretoken
 
 ### 4.1 Choose a deployment method
 
-Build from this checkout to use the directory-backed example below. Prepare the tools listed in the [source deployment guide](custom-deployment.md), then run:
+Build and install the cluster platform from this checkout:
 
 ```bash
-pip install -e .
 foretoken install -e .
 ```
 
@@ -170,7 +128,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Enable Gateway mode and deploy the Quick Start. The command installs Envoy Gateway when needed:
+Enable Gateway mode and deploy the Quick Start:
 
 ```bash
 foretoken install -e . --frontend-mode gateway
@@ -205,7 +163,7 @@ printf '\n'
 Delete the cluster:
 
 ```bash
-k3d cluster delete "$CLUSTER"
+foretoken cluster delete k3d --name "$CLUSTER"
 ```
 
 Deleting the cluster stops its Pods and releases the GPUs. Keep `data`; restore its bind mount when creating another cluster to reuse the downloaded models.

@@ -15,12 +15,12 @@ You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm
 
 ## Install the command-line tool
 
-Install the published Foretoken command-line tool package with pip:
+Install the published command-line tool with pip:
 
 ```bash
 pip install foretoken
 
-# For source installation from the repository:
+# From a source checkout:
 # pip install -e .
 ```
 
@@ -32,15 +32,40 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-Run `foretoken --version` to check the installed command-line tool version.
+Run `foretoken --version` to check the installed CLI version.
+
+## Create a local cluster
+
+For a local GPU cluster on a Linux host with Docker, NVIDIA Container Toolkit, and k3d installed:
+
+```bash
+# Name the local cluster and use GPU index 0 from nvidia-smi.
+# To use two GPUs, pass --gpus 0,1.
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+```
+
+For a local kind development cluster, install Docker, kind, kubectl, and Helm:
+
+```bash
+foretoken cluster create kind --name foretoken-dev
+```
+
+Remove a cluster created by the CLI with:
+
+```bash
+foretoken cluster delete k3d --name foretoken-dev
+foretoken cluster delete kind --name foretoken-dev
+```
 
 ## Install the Kubernetes platform
 
-`foretoken install` installs the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+`foretoken install` installs or updates the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+
+Platform updates set the version used by new services. Existing model and frontend services keep their running versions until redeployed.
 
 ### Default installation
 
-The default uses release images and local access through a `LoadBalancer` Service:
+The default installs the published platform and provides local access through a `LoadBalancer` Service:
 
 ```bash
 foretoken install
@@ -48,7 +73,7 @@ foretoken install
 
 Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs LeaderWorkerSet and the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
 
-See [Observability](../observability/README.md) for dashboards and alerts.
+Log collection and persistence are enabled by default. See [Observability](../observability/README.md) for configuration, log queries, dashboards, and alerts.
 
 ### Gateway mode
 
@@ -71,24 +96,59 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Prepare the build tools listed in the [source deployment guide](../docs/custom-deployment.md), then build and install from the repository root:
+Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
 
 ```bash
 foretoken install -e .
 ```
 
-A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts need a registry reachable by their nodes. Sign in to the registry host with an account that can push the target repository before installation:
+This binds the checkout to the target cluster for subsequent source updates.
+
+After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
+
+A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
 ```bash
-docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
+
+### Model distribution
+
+To share public model downloads between nodes through Dragonfly, save this in `deploy/platform-values.yaml`:
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: true
+```
+
+For a published platform installation, apply the values with:
+
+```bash
+foretoken install --values deploy/platform-values.yaml
+```
+
+For a source installation, run `foretoken install -e . --values deploy/platform-values.yaml` from the repository root, retaining the original registry and engine-source options.
+
+Installation prepares Dragonfly or reuses an existing installation. Models that require authentication and custom model endpoints download directly from their provider. To select a particular Dragonfly Helm release, set `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`.
+
+On NVIDIA clusters with RDMA, ModelExpress can load weights from running replicas. Add this alongside `dragonfly` to enable it:
+
+```yaml
+modelDistribution:
+  modelexpress:
+    enabled: true
+```
+
+Automatic weight transfer uses remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged. Each GPU worker selects a nearby available RDMA interface; replicas without a compatible source load the prepared files.
+
+Reapply the installation command after changing either setting. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
 
 ### Installation options
 
-Use `--values` only to override platform image, runtime, or hardware settings. Without an override, installation compares supported public sources for default platform images and OCI charts. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
+Use `--values` only to override platform image, runtime, or hardware settings. Without an override, each installation selects public sources for default platform images and Chart downloads. Chart downloads and image pulls during source builds can fall back to the original source when an automatically selected mirror fails. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
 
 Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
 
@@ -108,7 +168,9 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration, shows service status, and streams Pod and container logs with source prefixes while waiting. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+The command applies the configuration and deploys these services with the runtime version provided by the current platform, updating existing services as well.
+
+While waiting, it shows service status and streams Pod and container logs with source prefixes. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Inspect the same deployment without applying it:
 
@@ -144,6 +206,10 @@ Use `foretoken perf` to measure response latency and request or token throughput
 ## Evaluate output quality and compare models
 
 Use `foretoken eval` to score model answers or, with `--video VIDEO_DIR`, existing videos. See [Quality evaluation](../benchmarks/docs/eval/README.md) for evaluators and results. For text models, add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
+
+## Export figures
+
+Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw a saved run or sweep without running inference. Export options and comparisons are in [parameter sweeps](../benchmarks/docs/perf/sweep.md).
 
 ## Find execution bottlenecks
 

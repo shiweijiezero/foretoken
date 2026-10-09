@@ -9,7 +9,7 @@ use std::process::{Command, ExitStatus, Stdio};
 
 const METADATA_SECTION: &str = "[workspace.metadata.foretoken]";
 const VLLM_SOURCE_KEY: &str = "vllm_source";
-const VLLM_PATCHES_KEY: &str = "vllm_patches";
+const VLLM_PATCH_SERIES_KEY: &str = "vllm_patch_series";
 
 #[derive(Debug)]
 struct WorkspaceMetadata {
@@ -70,10 +70,17 @@ fn workspace_metadata() -> Result<WorkspaceMetadata, String> {
         .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
     let values = metadata_values(&manifest)?;
     let vllm_source = data_plane_root.join(values.vllm_source);
-    let vllm_patches = values
-        .vllm_patches
-        .into_iter()
-        .map(|path| data_plane_root.join(path))
+    let series_path = data_plane_root.join(values.vllm_patch_series);
+    let patch_root = series_path
+        .parent()
+        .ok_or_else(|| "vLLM patch series has no parent directory".to_owned())?;
+    let series = fs::read_to_string(&series_path)
+        .map_err(|error| format!("read {}: {error}", series_path.display()))?;
+    let vllm_patches = series
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+        .map(|path| patch_root.join(path))
         .collect();
     Ok(WorkspaceMetadata {
         data_plane_root,
@@ -86,10 +93,9 @@ fn workspace_metadata() -> Result<WorkspaceMetadata, String> {
 fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
     let mut in_section = false;
     let mut vllm_source = None;
-    let mut vllm_patches = None;
-    let mut lines = manifest.lines().peekable();
+    let mut vllm_patch_series = None;
 
-    while let Some(line) = lines.next() {
+    for line in manifest.lines() {
         let line = line.split('#').next().unwrap_or_default().trim();
         if line.starts_with('[') {
             in_section = line == METADATA_SECTION;
@@ -102,28 +108,22 @@ fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
             vllm_source = Some(parse_string(value)?);
             continue;
         }
-        if let Some(value) = line.strip_prefix(&format!("{VLLM_PATCHES_KEY} =")) {
-            let mut array = value.trim().to_owned();
-            while !array.contains(']') {
-                let next = lines
-                    .next()
-                    .ok_or_else(|| format!("unterminated {VLLM_PATCHES_KEY} metadata"))?;
-                array.push_str(next.split('#').next().unwrap_or_default());
-            }
-            vllm_patches = Some(parse_string_array(&array)?);
+        if let Some(value) = line.strip_prefix(&format!("{VLLM_PATCH_SERIES_KEY} =")) {
+            vllm_patch_series = Some(parse_string(value)?);
         }
     }
 
     Ok(MetadataValues {
         vllm_source: vllm_source.ok_or_else(|| format!("missing {VLLM_SOURCE_KEY} metadata"))?,
-        vllm_patches: vllm_patches.ok_or_else(|| format!("missing {VLLM_PATCHES_KEY} metadata"))?,
+        vllm_patch_series: vllm_patch_series
+            .ok_or_else(|| format!("missing {VLLM_PATCH_SERIES_KEY} metadata"))?,
     })
 }
 
 #[derive(Debug)]
 struct MetadataValues {
     vllm_source: String,
-    vllm_patches: Vec<String>,
+    vllm_patch_series: String,
 }
 
 fn parse_string(value: &str) -> Result<String, String> {
@@ -133,20 +133,6 @@ fn parse_string(value: &str) -> Result<String, String> {
         .and_then(|value| value.strip_suffix('"'))
         .ok_or_else(|| format!("expected quoted metadata value, got {value:?}"))?;
     Ok(value.to_owned())
-}
-
-fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
-    let value = value.trim();
-    let value = value
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .ok_or_else(|| format!("expected metadata array, got {value:?}"))?;
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(parse_string)
-        .collect()
 }
 
 /// Initialize the pinned vLLM submodule and apply each repository-owned patch once.

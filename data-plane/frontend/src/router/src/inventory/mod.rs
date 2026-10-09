@@ -3,6 +3,7 @@
 
 //! Static route targets and request matching.
 
+use crate::RouteTargetId;
 use std::collections::BTreeSet;
 
 mod model_route_table;
@@ -10,9 +11,7 @@ mod route;
 
 pub use model_route_table::ModelRouteTable;
 pub(crate) use model_route_table::supports_request;
-pub use route::{
-    RouteDecision, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
-};
+pub use route::RouteDecision;
 
 /// Supplies static routes and current route target state to the Router.
 pub trait RouteInventory: Send + Sync {
@@ -20,6 +19,11 @@ pub trait RouteInventory: Send + Sync {
     fn model_routes(&self) -> &ModelRouteTable;
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
+
+    /// Resolves the HTTP endpoint of a selected aggregate route; selection stays with the Router.
+    fn http_endpoint(&self, _decision: &RouteDecision) -> Option<String> {
+        None
+    }
 
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {

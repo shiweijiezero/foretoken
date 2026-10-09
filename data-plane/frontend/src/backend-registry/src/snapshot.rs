@@ -11,6 +11,8 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingSnapshot {
+    /// Effective rules for the configured public model catalog.
+    pub admission: BTreeMap<String, foretoken_admission::AdmissionConfig>,
     pub version: u64,
     pub models: Vec<SnapshotModel>,
     pub groups: Vec<SnapshotGroup>,
@@ -165,7 +167,6 @@ impl ServingSnapshot {
         for model in &self.models {
             if model.service_uid.is_empty()
                 || model.model.is_empty()
-                || model.admission_target_sets.is_empty()
                 || model.admission_target_sets.iter().any(|targets| {
                     targets.targets().is_empty()
                         || targets.targets().iter().any(|target| {

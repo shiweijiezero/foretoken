@@ -5,7 +5,6 @@
 
 from pathlib import Path
 
-
 INTEGRATIONS = Path(__file__).resolve().parent
 
 

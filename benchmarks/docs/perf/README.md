@@ -16,7 +16,7 @@ export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-Use the actual Chat Completions URL and model ID for other services. Gateway access and HTTP parameter sweeps use the Kustomize directory; Foretoken discovers the Gateway routing headers from it.
+Use the actual Chat Completions URL and model ID for other services. Gateway access uses the Kustomize directory; Foretoken discovers the Gateway routing headers from it.
 
 ## Commands
 
@@ -31,4 +31,4 @@ Use the actual Chat Completions URL and model ID for other services. Gateway acc
 | Measure video generation | [Video workloads](video.md) |
 | Compare runs and inspect charts | [W&B output](wandb.md) |
 
-Metric definitions are in [Performance metrics](../../metrics.md). All options are listed by `foretoken perf --help`. To investigate an execution bottleneck, [capture a profile](../profile/README.md) alongside a workload.
+Metric definitions are in [Performance metrics](../metrics.md). All options are listed by `foretoken perf --help`. To investigate an execution bottleneck, [capture a profile](../profile/README.md) alongside a workload.

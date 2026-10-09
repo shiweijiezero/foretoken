@@ -13,6 +13,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -59,7 +60,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.EngineArgs, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +88,11 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if entry.EngineArgs != nil {
 			engineArgs = *entry.EngineArgs
 		}
-		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, engineArgs, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		nodeSelector := spec.NodeSelector
+		if entry.NodeSelector != nil {
+			nodeSelector = entry.NodeSelector
+		}
+		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -129,7 +134,7 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes < 1 {
 		return ModelPool{}, fmt.Errorf("nodes must be positive")
 	}
@@ -143,6 +148,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 	}
 
 	normalizedFeatures, err := normalizeModelFeatures(features)
+	if err != nil {
+		return ModelPool{}, err
+	}
+	normalizedNodeSelector, err := normalizeNodeSelector(nodeSelector)
 	if err != nil {
 		return ModelPool{}, err
 	}
@@ -168,6 +177,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			NodeCount:                             nodes,
 			MemberCount:                           nodes,
 			Resources:                             normalizedResources,
+			NodeSelector:                          normalizedNodeSelector,
 			MaxInputTokens:                        copyInt32(maxInputTokens),
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
 			Network:                               network,
@@ -179,6 +189,23 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
+}
+
+func normalizeNodeSelector(input map[string]string) (map[string]string, error) {
+	if len(input) == 0 {
+		return nil, nil
+	}
+	output := make(map[string]string, len(input))
+	for key, value := range input {
+		if errors := utilvalidation.IsQualifiedName(key); len(errors) > 0 {
+			return nil, fmt.Errorf("nodeSelector key %q is invalid: %s", key, errors[0])
+		}
+		if errors := utilvalidation.IsValidLabelValue(value); len(errors) > 0 {
+			return nil, fmt.Errorf("nodeSelector.%s value is invalid: %s", key, errors[0])
+		}
+		output[key] = value
+	}
+	return output, nil
 }
 
 func normalizeProfiling(input *inferencev1alpha1.ProfilingConfig) *inferencev1alpha1.ProfilingConfig {
@@ -322,7 +349,7 @@ func normalizeModelFeatures(input *inferencev1alpha1.ModelFeatures) (inferencev1
 	output := inferencev1alpha1.ModelFeatures{Tools: input.Tools, Reasoning: input.Reasoning}
 	structured := make(map[inferencev1alpha1.StructuredOutputFormat]struct{}, len(input.StructuredOutputs))
 	for _, format := range input.StructuredOutputs {
-		if format != inferencev1alpha1.StructuredOutputFormatJSONObject && format != inferencev1alpha1.StructuredOutputFormatJSONSchema {
+		if format != inferencev1alpha1.StructuredOutputFormatJSONObject && format != inferencev1alpha1.StructuredOutputFormatJSONSchema && format != inferencev1alpha1.StructuredOutputFormatStructuralTag {
 			return inferencev1alpha1.ModelFeatures{}, fmt.Errorf("unsupported structured output format %q", format)
 		}
 		structured[format] = struct{}{}

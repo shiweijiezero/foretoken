@@ -8,6 +8,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -84,21 +85,31 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
+	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontendServingConfigVersion)}
+	if profile.ApplicationURL != "" {
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
+	}
+	if profile.SourceRevision != "" {
+		annotations[runtimeconfig.SourceRevisionAnnotation] = profile.SourceRevision
+	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: frontend.Namespace + "/" + profile.RuntimeCache.ClaimName},
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
 			corev1.EnvVar{Name: runtimeconfig.TemporaryModelRootEnv, Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache")},
 		)
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}
 	volumes := []corev1.Volume{
+		{Name: "request-temporary", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "serving", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: servingConfigMap}}}},
 		cacheVolume,
 		{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}},
 	}
 	mounts := []corev1.VolumeMount{
+		{Name: "request-temporary", MountPath: "/tmp"},
 		{Name: "serving", MountPath: "/etc/foretoken/serving", ReadOnly: true},
 		{Name: "runtime-cache", MountPath: cacheMountPath},
 		{Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true},
@@ -108,6 +119,24 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		mounts = append(mounts, corev1.VolumeMount{Name: "runtime-cache-temporary", MountPath: "/tmp/foretoken-runtime-cache"})
 	}
 
+	serviceAccountName := ""
+	if storage := frontend.Spec.VideoTasks; storage != nil {
+		if storage.ClaimName == "" || storage.RetentionSeconds <= 0 || profile.WorkerImage == "" {
+			return nil, nil, nil, fmt.Errorf("videoTasks requires a claimName, positive retentionSeconds and platform worker image")
+		}
+		automountToken = true
+		serviceAccountName = frontend.Name
+		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_MOUNT", Value: videoTaskOutputMount},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_WORKER_IMAGE", Value: profile.WorkerImage},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_ENDPOINT", Value: fmt.Sprintf("http://%s.%s.svc:%d", frontend.Name, frontend.Namespace, profile.Port)},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_OUTPUT_CLAIM", Value: storage.ClaimName},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_FRONTEND_UID", Value: string(frontend.UID)},
+		)
+		volumes = append(volumes, corev1.Volume{Name: "video-task-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: storage.ClaimName}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount})
+	}
+
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels},
@@ -115,8 +144,9 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels), Annotations: annotations},
 				Spec: corev1.PodSpec{
+					ServiceAccountName:            serviceAccountName,
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
 					ImagePullSecrets:              slices.Clone(profile.ImagePullSecrets),
@@ -147,6 +177,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
+	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
+		securityContext := deployment.Spec.Template.Spec.SecurityContext
+		securityContext.RunAsUser = &cache.DirectoryOwner.UID
+		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
+	}
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

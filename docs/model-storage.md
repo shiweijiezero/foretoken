@@ -27,7 +27,7 @@ For local k3d, relative paths resolve from the Kustomize root. Both Quick Start 
 
 Existing deployments can keep their current path. Changing the directory of an already bound cache requires a new RuntimeCache name; move or copy existing files separately if needed.
 
-For a remote cluster, use an absolute path already available on the target node or on the same shared filesystem at every target node. A client-local `./data` directory is not uploaded automatically.
+For a remote cluster, the deploy command automatically converts a relative directory such as `../../data` into a dynamic PVC, so the Quick Start YAML does not need to change. Multi-node clusters keep `ReadWriteMany` for shared model and runtime data; a single-node cluster uses `ReadWriteOnce` automatically. To select a particular StorageClass, size, access mode, or maximum size, set those fields in `cache.yaml`; an absolute `directory` remains a host path that must already exist on the target node or shared filesystem.
 
 ## Use an existing model
 

@@ -117,6 +117,11 @@ type ModelPoolTemplate struct {
 
 	Resources ModelResources `json:"resources"`
 
+	// NodeSelector constrains this Pool's member Pods to matching Kubernetes nodes.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// EngineArgs replaces service-level native options for this Pool when supplied.
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
@@ -194,6 +199,11 @@ type ProfilingConfig struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only, complete P/D, or complete E/P/D without aggregate pools"
 // +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
 type ModelServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// It carries no executable, image or external URL supplied by model intent.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
@@ -209,7 +219,7 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Tokenizer string `json:"tokenizer,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
@@ -231,6 +241,12 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Nodes *int32 `json:"nodes,omitempty"`
 
+	// NodeSelector constrains the default Pool's member Pods to matching Kubernetes nodes.
+	// A Pool-level selector replaces this service-level selector when specified.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// +optional
 	Resources *ModelResources `json:"resources,omitempty"`
 
@@ -244,6 +260,11 @@ type ModelServiceSpec struct {
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
+
+	// Admission replaces the frontend's entire admission block for this model.
+	// Limits apply independently in each frontend replica; omission uses its defaults.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
 
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
@@ -371,6 +392,11 @@ type ServingPoolRevision struct {
 
 // ModelServiceStatus defines the observed state of a model service.
 type ModelServiceStatus struct {
+	// PoolApplications retains controller-selected execution settings when a Pool is recreated.
+	// The controller publishes selections before materializing their Pool and Group contracts.
+	// +optional
+	PoolApplications map[string]ApplicationSelection `json:"poolApplications,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

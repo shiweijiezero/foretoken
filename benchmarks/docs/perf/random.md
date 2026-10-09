@@ -6,14 +6,14 @@ After [setup](README.md#setup), generate random inputs and sample an output targ
 
 ```bash
 foretoken perf examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --min-output-length 64 --max-output-length 256 \
   --prefix-length 64 --random-seed 0 \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-The input range covers prompt content. `--apply-chat-template` accounts for the selected tokenizer's template overhead; the service may use a different template. `--prefix-length` adds a shared prefix. A local tokenizer directory can replace the model ID.
+Random workloads use the selected tokenizer to generate prompts with the requested lengths. `--prefix-length` adds a shared prefix, and `--apply-chat-template` is not supported. The tokenizer is inferred from the model service; use `--tokenizer-path` when the service model name is an alias or its tokenizer files are not available locally.
 
 Both output bounds are inclusive and override `--max-tokens`. The service must support `min_tokens` and `ignore_eos` and report output usage. A request that misses its target counts as failed. Omit both bounds for ordinary generation that can end early.
 

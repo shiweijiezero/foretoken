@@ -3,13 +3,16 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-<!-- For routine fixes, keep Summary and Validation. For design-oriented features,
-rename Summary to Goal and keep Design and Interface. Remove other sections that do not apply.
+<!-- Keep Summary, Purpose and Validation. Remove other sections that do not apply.
 Chinese template: PULL_REQUEST_TEMPLATE_zh.md -->
 
 ## Summary
 
 <!-- Describe the problem and change. For a new feature, start with the user goal and expected outcome. -->
+
+## Purpose
+
+<!-- State why this change is needed, who benefits, and the concrete outcome it should provide. Keep the motivation separate from the implementation summary. -->
 
 ## Design
 

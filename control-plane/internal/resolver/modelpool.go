@@ -6,13 +6,17 @@
 package resolver
 
 import (
+	"encoding/json"
 	"fmt"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 )
 
 // MooncakePDProfile contains opaque platform-owned Mooncake P/D profile identity and settings.
@@ -46,7 +50,9 @@ type ECProfile struct {
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
 	Image              string
+	OmniImage          string
 	NsightImage        string
+	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -90,25 +96,46 @@ type ModelGroupTemplate struct {
 	Network        string
 }
 
+type resolvedModelRuntime struct {
+	Image             string
+	Model             string
+	Source            inferencev1alpha1.ModelSource
+	Revision          string
+	Tokenizer         string
+	TokenizerRevision string
+	EngineArgs        inferencev1alpha1.EngineArguments
+	Parallelism       inferencev1alpha1.CompiledParallelism
+}
+
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
+	if err := runtimeconfig.ValidateSourceRevision(template.SourceRevision); err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	if template.SourceRevision != "" && template.Backend != "vllm" {
+		return ModelGroupTemplate{}, fmt.Errorf("source bundles support the vLLM model-server only")
+	}
+	if template.Backend == vllmomniconfig.Backend {
+		return resolveVLLMOmniPool(template, profile)
+	}
+	if template.Backend != "vllm" {
+		return ModelGroupTemplate{}, fmt.Errorf("inference backend %q is not supported", template.Backend)
+	}
 	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM Groups require one member per node")
 	}
-	if profile.Image == "" {
+	image := profile.Image
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
 	}
-	if profile.ModelServerPort < 1 || profile.ModelServerPort > 65535 {
-		return ModelGroupTemplate{}, fmt.Errorf("model-server port must be between 1 and 65535")
-	}
-	if profile.DeviceResourceName == "" {
-		return ModelGroupTemplate{}, fmt.Errorf("inference engine accelerator resource name is not configured")
-	}
-	if (profile.NodeSelectorKey == "") != (profile.NodeSelectorValue == "") {
-		return ModelGroupTemplate{}, fmt.Errorf("GPU node selector key and value must be configured together")
+	if err := validateRuntimeProfile(profile, 65535); err != nil {
+		return ModelGroupTemplate{}, err
 	}
 	effective, err := vllmconfig.Compile(template)
 	if err != nil {
@@ -132,12 +159,13 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
-	image := profile.Image
 	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
-		if profile.NsightImage == "" {
-			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+		if template.Application == nil {
+			if profile.NsightImage == "" {
+				return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+			}
+			image = profile.NsightImage
 		}
-		image = profile.NsightImage
 		if profile.DeviceResourceName != "nvidia.com/gpu" {
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
 		}
@@ -145,8 +173,22 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
+	// Fixed-weight cohorts share upstream ModelExpress sources. DP may reuse world ranks,
+	// while EPLB mutates expert placement after loading; both retain native file loading.
+	loader, explicitLoader := effective.EngineArgs["load-format"]
+	var loaderName string
+	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
+	modelExpress := ((profile.ModelExpress && !explicitLoader) || requestedModelExpress) && profile.RDMA != nil && profile.DeviceResourceName == "nvidia.com/gpu" &&
+		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
+		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
+	if modelExpress {
+		if effective.EngineArgs == nil {
+			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
+		}
+		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
+	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if modelExpress || template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -163,51 +205,116 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
 		}
 	}
-	resources := *template.Resources.DeepCopy()
-
-	nodeSelector := map[string]string(nil)
-	if profile.NodeSelectorKey != "" {
-		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
 	}
+	resolved := projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
+		Image: image, Model: effective.Model, Source: effective.Source,
+		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
+		TokenizerRevision: effective.TokenizerRevision,
+		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
+	})
+	// Only the vLLM runtime consumes the source-publication preparation contract.
+	resolved.Runtime.PreparationVersion = 1
+	resolved.Runtime.Profiling = template.Profiling.DeepCopy()
+	resolved.PDRuntime, resolved.RDMA, resolved.ECRuntime, resolved.KVRuntime = pdRuntime, rdma, ecRuntime, kvRuntime
+	return resolved, nil
+}
 
+func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
+	image := profile.OmniImage
+	if template.Application != nil {
+		image = template.Application.Image
+	}
+	if image == "" {
+		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni inference engine image is not configured")
+	}
+	if err := validateRuntimeProfile(profile, 65533); err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	effective, err := vllmomniconfig.Compile(template)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	if effective.Revision == "" {
+		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni modelRevision is required before ModelGroup creation")
+	}
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	return projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
+		Image: image, Model: effective.Model, Source: effective.Source,
+		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
+		TokenizerRevision: effective.TokenizerRevision,
+		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
+	}), nil
+}
+
+func mergeNodeSelectors(userSelector map[string]string, profile RuntimeProfile) (map[string]string, error) {
+	selector := make(map[string]string, len(userSelector)+1)
+	for key, value := range userSelector {
+		selector[key] = value
+	}
+	if profile.NodeSelectorKey == "" {
+		if len(selector) == 0 {
+			return nil, nil
+		}
+		return selector, nil
+	}
+	if value, exists := selector[profile.NodeSelectorKey]; exists && value != profile.NodeSelectorValue {
+		return nil, fmt.Errorf("nodeSelector %q=%q conflicts with platform accelerator selector %q=%q", profile.NodeSelectorKey, value, profile.NodeSelectorKey, profile.NodeSelectorValue)
+	}
+	selector[profile.NodeSelectorKey] = profile.NodeSelectorValue
+	return selector, nil
+}
+
+func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
+	if profile.ModelServerPort < 1 || profile.ModelServerPort > maxPort {
+		return fmt.Errorf("model-server port must be between 1 and %d", maxPort)
+	}
+	if profile.DeviceResourceName == "" {
+		return fmt.Errorf("inference engine accelerator resource name is not configured")
+	}
+	if (profile.NodeSelectorKey == "") != (profile.NodeSelectorValue == "") {
+		return fmt.Errorf("GPU node selector key and value must be configured together")
+	}
+	return nil
+}
+
+func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
+	applicationURL := ""
+	if template.Application != nil {
+		applicationURL = template.Application.ApplicationURL
+	}
 	return ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
-			Model:             effective.Model,
-			Source:            template.Source,
-			ModelRevision:     effective.Revision,
-			Tokenizer:         effective.Tokenizer,
-			TokenizerRevision: effective.TokenizerRevision,
-			Cache:             template.RuntimeCache.DeepCopy(),
-			HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
+			Model: runtime.Model, Source: runtime.Source, ModelRevision: runtime.Revision,
+			Tokenizer: runtime.Tokenizer, TokenizerRevision: runtime.TokenizerRevision,
+			Cache: template.RuntimeCache.DeepCopy(), HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			Backend:                               template.Backend,
-			Image:                                 image,
-			Port:                                  profile.ModelServerPort,
-			EngineArgs:                            effective.EngineArgs,
+			SourceRevision: template.SourceRevision,
+			ApplicationURL: applicationURL,
+			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
+			EngineArgs:                            runtime.EngineArgs,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
-		PDRuntime:      pdRuntime,
-		RDMA:           rdma,
-		ECRuntime:      ecRuntime,
-		KVRuntime:      kvRuntime,
-		Resources:      resources,
-		Timeouts:       template.Timeouts,
-		NodeCount:      template.NodeCount,
-		MemberCount:    template.MemberCount,
-		Parallelism:    effective.Parallelism,
-		MaxInputTokens: copyInt32(template.MaxInputTokens),
-		Features:       *template.Features.DeepCopy(),
+		Resources: *template.Resources.DeepCopy(), Timeouts: template.Timeouts,
+		NodeCount: template.NodeCount, MemberCount: template.MemberCount,
+		Parallelism: runtime.Parallelism, MaxInputTokens: copyInt32(template.MaxInputTokens),
+		Features: *template.Features.DeepCopy(),
 		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
 			DeviceResourceName: profile.DeviceResourceName,
 			RuntimeClassName:   profile.RuntimeClassName,
 			NodeSelector:       nodeSelector,
 		},
 		Network: template.Network,
-	}, nil
+	}
 }
 
 // resolveKVRuntime binds the selected cache mode to a validated ModelGroup runtime contract.

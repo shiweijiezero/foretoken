@@ -7,17 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-通过群自定义机器人接收 Foretoken 服务告警。
+通过群自定义机器人接收 Foretoken 服务告警。使用已安装的 [Foretoken 监控](../../README_zh.md)，或按下文接入已有监控栈。
 
 ## 接入机器人
-
-使用 CLI 管理的监控时，先按原安装方式更新平台：
-
-```bash
-foretoken install
-# 源码安装的平台，在仓库根目录执行：
-# foretoken install -e .
-```
 
 取得群机器人的消息接收地址（Webhook）后，在仓库根目录执行以下命令，并替换 URL 占位符。使用已有监控栈时，改为其 Alertmanager 所在命名空间：
 
@@ -40,7 +32,7 @@ kubectl apply --namespace "$ALERTMANAGER_NAMESPACE" \
 
 ## 使用已有监控栈
 
-Prometheus Operator 和 Alertmanager 需支持 `webhookConfigs.payload`。由监控管理员通过 `alertmanagerConfigSelector` 选中 `foretoken-lark` 并允许工作负载告警。接收器与 Alertmanager 同命名空间时，使用 `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`，见 [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy)。
+Prometheus Operator 和 Alertmanager 需支持 `webhookConfigs.payload`。如果 Alertmanager 通过 `alertmanagerConfigSelector` 按标签选择接收器，在接收器配置的 `metadata.labels` 中填写匹配的标签。接收器与 Alertmanager 同命名空间时，使用 `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`，见 [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy)。
 
 ## 移除集成
 

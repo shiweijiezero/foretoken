@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import shutil
 import subprocess
 from collections.abc import Iterable
 from typing import Any, NoReturn
@@ -16,21 +15,21 @@ from typing import Any, NoReturn
 from foretoken.manifest import DeploymentError
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
+from foretoken.tools import resolve_tool
 
 
 class HelmClient:
     """Execute Helm commands and read release-owned metadata."""
 
     def __init__(self, config: PlatformConfig) -> None:
-        if shutil.which("helm") is None:
-            raise DeploymentError("helm is required to install the Foretoken platform")
+        self._helm = resolve_tool("helm", "FORETOKEN_HELM")
         self._config = config
 
     def run(
         self, args: Iterable[str], *, input_text: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Execute Helm with optional stdin and preserve its diagnostic output on failure."""
-        command = ["helm", *args]
+        command = [self._helm, *args]
         completed = self._execute(command, input_text=input_text)
         if completed.returncode:
             self._raise_command_error(command, completed)
@@ -60,7 +59,7 @@ class HelmClient:
     def release_exists(self, release: ReleaseRef) -> bool:
         """Return whether a release with the fixed identity exists."""
         command = [
-            "helm",
+            self._helm,
             "get",
             "metadata",
             release.name,
@@ -123,26 +122,20 @@ class HelmClient:
                 raise DeploymentError("helm list returned an unexpected JSON value")
             for item in listed:
                 if item.get("name") and item.get("namespace"):
-                    release = ReleaseRef(
-                        str(item["name"]), str(item["namespace"])
-                    )
+                    release = ReleaseRef(str(item["name"]), str(item["namespace"]))
                     releases[(release.namespace, release.name)] = release
         return tuple(releases.values())
 
-    def has_release_label(
-        self, release: ReleaseRef, key: str, value: str
-    ) -> bool:
+    def has_release_label(self, release: ReleaseRef, key: str, value: str) -> bool:
         """Return whether Helm storage carries one exact release label."""
-        return bool(
-            self._list_releases(release, selector=f"{key}={value}")
-        )
+        return bool(self._list_releases(release, selector=f"{key}={value}"))
 
     def _release_values(self, release: ReleaseRef) -> dict[str, Any]:
         """Return the effective values stored for one Helm release."""
         return self._get_release_values(release, include_defaults=True)
 
     def release_user_values(self, release: ReleaseRef) -> dict[str, Any]:
-        """Return only values supplied to the installed Helm release."""
+        """Return supplied values for the installed release."""
         return self._get_release_values(release, include_defaults=False)
 
     def _get_release_values(
@@ -159,6 +152,8 @@ class HelmClient:
         if include_defaults:
             args.append("--all")
         values = _decode_json(self.run([*args, "--output", "json"]).stdout)
+        if values is None and not include_defaults:
+            return {}
         if not isinstance(values, dict):
             raise DeploymentError("helm get values returned an unexpected JSON value")
         return values
@@ -216,7 +211,6 @@ class HelmClient:
                 f"--timeout={timeout}",
             ]
         )
-
 
 
 def _decode_json(output: str) -> Any:

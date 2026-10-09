@@ -54,8 +54,14 @@ ENV MACA_PATH=${MACA_PATH} \
     MACA_HOME=${MACA_PATH} \
     LD_LIBRARY_PATH=${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
+# Mooncake's download mirror is a prefix before the complete GitHub URL.
+ARG FORETOKEN_GITHUB_MIRROR
 # vLLM consumes only the TransferEngine and Store requester Python modules.
-RUN uv venv /opt/mooncake-build --python /usr/bin/python3 \
+RUN mirror="${FORETOKEN_GITHUB_MIRROR%/}"; \
+    case "$mirror" in \
+      *https://github.com) export ASCEND_GITHUB_MIRROR_URLS="${mirror%https://github.com}" ;; \
+    esac; \
+    uv venv /opt/mooncake-build --python /usr/bin/python3 \
     && cmake -S /src/mooncake -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DUSE_MACA=ON -DMACA_ROOT="${MACA_PATH}" \
@@ -123,11 +129,15 @@ RUN apt-get update \
       libyaml-cpp-dev libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep command submission and graph execution independent of SDK defaults.
+ENV MACA_DIRECT_DISPATCH=1 \
+    MACA_GRAPH_LAUNCH_MODE=5
+
 # Let Mooncake use verbs for inter-node transfers instead of MACA accelerator transport.
 ENV MC_MACA_HOST_TRANSPORT=1 \
     VIRTUAL_ENV=/opt/foretoken-vllm/.venv \
     PATH=/opt/foretoken-vllm/.venv/bin:${PATH} \
-    LD_LIBRARY_PATH=${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
+    LD_LIBRARY_PATH=/opt/mxdriver/lib:${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
 COPY deploy/mooncake/NOTICE /usr/local/share/foretoken-mooncake/NOTICE
 COPY deploy/mooncake/patches/ /usr/local/share/foretoken-mooncake/patches/

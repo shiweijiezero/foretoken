@@ -15,22 +15,26 @@ PYTHON=${FORETOKEN_PYTHON:-python}
 
 usage() {
   cat <<'EOF'
-Build or push one version of the Foretoken release artifact set.
+Prepare one version of the Foretoken release artifacts.
 
 Usage:
-  deploy/release-artifacts build --registry REGISTRY [options]
-  deploy/release-artifacts push  --registry REGISTRY [options]
+  deploy/release-artifacts build  --registry REGISTRY [options]
+  deploy/release-artifacts export [options]
+  deploy/release-artifacts push   --registry REGISTRY [options]
 
 Modes:
-  build  Build the selected images and package the Helm chart locally.
-  push   Push selected local artifacts, skipping tags already in the registry.
+  build   Build dependency environments, export application files, and package the chart.
+  export  Export the ordinary application tar.gz without building environment images.
+  push    Push only environments and chart, skipping existing registry tags.
+
+Upload the application tar.gz separately as a normal GitHub Release asset.
 
 Options:
   --registry REGISTRY       Image prefix, for example ghcr.io/example/foretoken.
-  --components LIST         Comma-separated artifact names. Defaults to all:
+  --components LIST         Environment/chart selection for build or push. Defaults to all:
                             control-plane,frontend,model-server,
                             model-server-metax,chart
-  --output-dir DIRECTORY    Chart package directory (default: /tmp/foretoken-release).
+  --output-dir DIRECTORY    Archive/chart directory (default: /tmp/foretoken-release).
   --dry-run                 Print commands for supplementary parsing only.
   --plain-http              Allow a local HTTP registry for artifact publication.
   -h, --help                Show this help.
@@ -54,7 +58,7 @@ EOF
 MODE=$1
 shift
 case "$MODE" in
-  build | push) ;;
+  build | export | push) ;;
   -h | --help)
     usage
     exit 0
@@ -77,6 +81,10 @@ while (($# > 0)); do
       shift 2
       ;;
     --components)
+      [[ "$MODE" != export ]] || {
+        printf '%s\n' 'export produces one complete application archive; --components applies to build and push' >&2
+        exit 2
+      }
       [[ $# -ge 2 ]] || {
         printf '%s\n' '--components requires a value' >&2
         exit 2
@@ -112,12 +120,12 @@ while (($# > 0)); do
   esac
 done
 
-[[ -n "$REGISTRY" ]] || {
+[[ "$MODE" == export || -n "$REGISTRY" ]] || {
   printf '%s\n' '--registry is required' >&2
   exit 2
 }
 REGISTRY=${REGISTRY%/}
-[[ -n "$REGISTRY" ]] || {
+[[ "$MODE" == export || -n "$REGISTRY" ]] || {
   printf '%s\n' '--registry must not contain only slashes' >&2
   exit 2
 }
@@ -208,7 +216,7 @@ build_model_server() {
     "INFERENCE_ENGINE_IMAGE=$inference_engine_image"
   )
   [[ -z "$python_path" ]] || args+=("FORETOKEN_VLLM_PYTHON=$python_path")
-  args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION")
+  args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION" "IMAGE_TARGET=environment")
   run "${args[@]}"
 }
 
@@ -236,10 +244,12 @@ inspect_remote_image() {
   fi
 }
 
-CONTROL_PLANE_IMAGE="$REGISTRY/control-plane:$OCI_VERSION"
-FRONTEND_IMAGE="$REGISTRY/frontend:$OCI_VERSION"
-MODEL_SERVER_IMAGE="$REGISTRY/model-server:$OCI_VERSION"
-MODEL_SERVER_METAX_IMAGE="$REGISTRY/model-server:$OCI_VERSION-metax"
+CONTROL_PLANE_IMAGE="$REGISTRY/control-plane-environment:$OCI_VERSION"
+FRONTEND_IMAGE="$REGISTRY/frontend-environment:$OCI_VERSION"
+MODEL_SERVER_IMAGE="$REGISTRY/model-server-environment:$OCI_VERSION"
+MODEL_SERVER_METAX_IMAGE="$REGISTRY/model-server-environment:$OCI_VERSION-metax"
+APPLICATION_PACKAGE="$OUTPUT_DIR/foretoken-applications-$OCI_VERSION-linux-amd64.tar.gz"
+PAYLOAD_DIR="$OUTPUT_DIR/application-payload"
 CHART_PACKAGE="$OUTPUT_DIR/foretoken-$OCI_VERSION.tgz"
 OCI_REVISION=
 if [[ "$MODE" == build ]] && images_selected; then
@@ -249,65 +259,120 @@ fi
 printf 'Release: Python %s, OCI/Chart %s\n' "$PYTHON_VERSION" "$OCI_VERSION"
 printf 'Mode: %s\n' "$MODE"
 
-if [[ "$MODE" == build ]]; then
+if [[ "$MODE" == build || "$MODE" == export ]]; then
+  export DOCKER_DEFAULT_PLATFORM=linux/amd64
   images_selected && require_command make
-  selected chart && require_command helm
+  [[ "$MODE" != build ]] || { selected chart && require_command helm; }
 
-  if selected control-plane; then
-    run make -C "$ROOT" image-control-plane \
-      "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" \
-      "OCI_SOURCE=$SOURCE_URL" \
-      "OCI_REVISION=$OCI_REVISION"
-  fi
-  if selected frontend; then
-    run make -C "$ROOT" image-frontend \
-      "FRONTEND_IMAGE=$FRONTEND_IMAGE" \
-      "OCI_SOURCE=$SOURCE_URL" \
-      "OCI_REVISION=$OCI_REVISION"
-  fi
-  if selected model-server; then
-    if [[ "$DRY_RUN" == true ]]; then
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
-    else
-      [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
-        printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
-        exit 2
-      }
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "$INFERENCE_ENGINE_IMAGE" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
+  if [[ "$MODE" == build ]]; then
+    if selected control-plane; then
+      run make -C "$ROOT" image-control-plane \
+        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
+    fi
+    if selected frontend; then
+      run make -C "$ROOT" image-frontend \
+        "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
+    fi
+    if selected model-server; then
+      if [[ "$DRY_RUN" == true ]]; then
+        build_model_server \
+          "$MODEL_SERVER_IMAGE" \
+          "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
+          "${FORETOKEN_VLLM_PYTHON:-}"
+      else
+        [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
+          printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
+          exit 2
+        }
+        build_model_server \
+          "$MODEL_SERVER_IMAGE" \
+          "$INFERENCE_ENGINE_IMAGE" \
+          "${FORETOKEN_VLLM_PYTHON:-}"
+      fi
+    fi
+    if selected model-server-metax; then
+      if [[ "$DRY_RUN" == true ]]; then
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
+      else
+        [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
+          printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
+          exit 2
+        }
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "$METAX_INFERENCE_ENGINE_IMAGE" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
+      fi
     fi
   fi
-  if selected model-server-metax; then
-    if [[ "$DRY_RUN" == true ]]; then
-      (
-        unset FORETOKEN_VLLM_PYTHON
-        build_model_server \
-          "$MODEL_SERVER_METAX_IMAGE" \
-          "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
-          "${METAX_VLLM_PYTHON:-}"
-      )
-    else
-      [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
-        printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
-        exit 2
-      }
-      (
-        unset FORETOKEN_VLLM_PYTHON
-        build_model_server \
-          "$MODEL_SERVER_METAX_IMAGE" \
-          "$METAX_INFERENCE_ENGINE_IMAGE" \
-          "${METAX_VLLM_PYTHON:-}"
-      )
-    fi
-  fi
-  if selected chart; then
+  # A release archive contains all applications; partial environment builds skip it.
+  if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
     run mkdir -p "$OUTPUT_DIR"
-    run helm package "$ROOT/deploy/charts/foretoken" --destination "$OUTPUT_DIR"
+    if [[ "$DRY_RUN" != true ]]; then
+      PAYLOAD_DIR=$(mktemp -d "$OUTPUT_DIR/application.XXXXXX")
+      trap 'rm -rf "$PAYLOAD_DIR"' EXIT
+    fi
+    run make -C "$ROOT" image-control-plane "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/control-plane"
+    run make -C "$ROOT" image-frontend "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
+    run make -C "$ROOT" image-model-server "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server" \
+      "INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-${METAX_INFERENCE_ENGINE_IMAGE:-unused}}"
+    run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
+from pathlib import Path
+import sys
+import tarfile
+
+payload, output = map(Path, sys.argv[1:])
+with tarfile.open(output, "w:gz") as archive:
+    for component in ("control-plane", "frontend", "model-server"):
+        archive.add(payload / component, arcname=component)
+print(f"Application release asset: {output}")
+PY
+  fi
+  if [[ "$MODE" == build ]] && selected chart; then
+    run mkdir -p "$OUTPUT_DIR"
+    if [[ "$DRY_RUN" == true ]]; then
+      run helm package "$ROOT/deploy/charts/foretoken" --destination "$OUTPUT_DIR"
+    else
+      # Published chart defaults select the matching ordinary GitHub Release asset.
+      # The checkout remains usable with already-published image-only releases.
+      chart_root=$(mktemp -d "$OUTPUT_DIR/chart.XXXXXX")
+      cp -R "$ROOT/deploy/charts/foretoken" "$chart_root/foretoken"
+      "$PYTHON" - "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+path = Path(sys.argv[1])
+source, python_version, version, registry = sys.argv[2:]
+values = yaml.safe_load(path.read_text())
+values["applicationFiles"]["releaseURL"] = f"{source}/releases/download/v{python_version}/foretoken-applications-{version}-linux-amd64.tar.gz"
+values["image"]["repository"] = f"{registry}/control-plane-environment"
+values["frontend"]["image"] = f"{registry}/frontend-environment:{version}"
+values["runtime"]["vllm"]["image"] = "auto"
+values["runtime"]["vllm"]["environmentImages"] = {
+    "nvidia": f"{registry}/model-server-environment:{version}",
+    "metax": f"{registry}/model-server-environment:{version}-metax",
+}
+path.write_text(yaml.safe_dump(values, sort_keys=False))
+PY
+      helm package "$chart_root/foretoken" --destination "$OUTPUT_DIR"
+      rm -rf "$chart_root"
+    fi
   fi
 else
   images_selected && require_command docker

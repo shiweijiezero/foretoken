@@ -8,10 +8,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-admission = { path = "../admission" }
 arc-swap.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["multipart"] }
+bytes.workspace = true
 foretoken-chat = { path = "../chat" }
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-llm-facade = { path = "../llm-facade" }
@@ -21,9 +23,12 @@ foretoken-router = { path = "../router" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
 futures.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util.workspace = true
 uuid.workspace = true
 vllm-llm.workspace = true

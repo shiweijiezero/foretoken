@@ -1,0 +1,196 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Generate random-token and prefix-reuse request tasks with EvalScope's random dataset plugin."""
+
+from __future__ import annotations
+
+import random
+from collections.abc import Iterator
+from functools import lru_cache
+from itertools import islice
+from typing import Any
+
+from evalscope.perf.arguments import Arguments
+from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
+from evalscope.utils.model_utils import seed_everything
+
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.datasets.conversations import Task, Turn
+from benchmarks.datasets.huggingface import resolve_tokenizer_path
+from benchmarks.datasets.traces import MOONCAKE_BLOCK_TOKENS
+from benchmarks.model_service import ModelService
+
+
+def create_trace_random_dataset_plugin(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+    request_count: int,
+) -> Any:
+    """Create EvalScope's public random dataset plugin for one trace payload set."""
+    workload = benchmark.resolved_workload
+    seed_everything(workload.random_seed)
+    arguments = Arguments(
+        model=service.model,
+        url=service.chat_completions_url,
+        api="openai",
+        number=request_count,
+        parallel=1,
+        dataset="random",
+        tokenizer_path=resolve_tokenizer_path(workload.tokenizer),
+        dataset_offset=workload.row_offset,
+        min_prompt_length=workload.minimum_prompt_tokens,
+        max_prompt_length=workload.maximum_prompt_tokens,
+        prefix_length=workload.shared_prefix_tokens,
+        apply_chat_template=workload.apply_chat_template,
+        # Keep random prompts as token IDs so the benchmark sends them directly
+        # to /v1/completions without a decode/re-tokenize round trip.
+        tokenize_prompt=True,
+        visualizer=None,
+    )
+    return RandomDatasetPlugin(arguments)
+
+
+def _random_task(message: Any, index: int) -> Task:
+    """Convert one public EvalScope random message into a request task."""
+    if isinstance(message, list) and all(
+        isinstance(token_id, int) and not isinstance(token_id, bool) and token_id >= 0
+        for token_id in message
+    ):
+        if not message:
+            raise ValueError("EvalScope random dataset returned an empty token sequence")
+        return Task(
+            id=f"random:{index}",
+            turns=(),
+            prompt_token_ids=tuple(message),
+        )
+    if isinstance(message, str):
+        return Task(id=f"random:{index}", turns=(Turn(role="user", content=message),))
+    if isinstance(message, list) and all(
+        isinstance(item, dict) for item in message
+    ):
+        return Task(
+            id=f"random:{index}",
+            turns=tuple(
+                Turn(role=str(item["role"]), content=item["content"])
+                for item in message
+            ),
+        )
+    raise TypeError(
+        "EvalScope random dataset returned unsupported message type "
+        f"{type(message).__name__}"
+    )
+
+
+def iter_duration_random_requests(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+) -> Iterator[Task]:
+    """Yield deterministic random tasks on demand for a duration-bounded workload."""
+    workload = benchmark.resolved_workload
+    plugin = create_trace_random_dataset_plugin(benchmark, service, request_count=1)
+    generator = random.Random(workload.random_seed)
+    minimum, maximum = plugin._resolve_prompt_length_bounds()
+    token_count = len(plugin.allowed_tokens)
+    index = 0
+    while True:
+        input_length = generator.randrange(minimum, maximum)
+        offset = generator.randrange(token_count)
+        message = plugin.generate_token_ids_only(input_length, offset, index)
+        task = _random_task(message, index)
+        del message
+        yield task
+        del task
+        index += 1
+
+
+def generate_trace_random_requests(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+    *,
+    request_count: int,
+    input_lengths: list[int] | None = None,
+) -> list[Task]:
+    """Generate trace random payloads, preserving recorded per-request lengths when present."""
+    plugin = create_trace_random_dataset_plugin(
+        benchmark,
+        service,
+        request_count,
+    )
+    if input_lengths is None:
+        messages = list(islice(plugin.build_messages(), request_count))
+    else:
+        if request_count != len(input_lengths):
+            raise ValueError("request_count must match input_lengths")
+        if any(length < 0 for length in input_lengths):
+            raise ValueError("trace input lengths must be >= 0")
+        offset = benchmark.resolved_workload.row_offset
+        messages = [
+            plugin.generate_token_ids_only(length, offset, index)
+            for index, length in enumerate(input_lengths)
+        ]
+    if len(messages) != request_count:
+        raise ValueError(
+            f"EvalScope generated {len(messages)} random requests; need {request_count}"
+        )
+    return [_random_task(message, index) for index, message in enumerate(messages)]
+
+
+def generate_synthetic_prefix_reuse_requests(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+    *,
+    input_lengths: list[int],
+    hash_id_lists: list[list[int] | None],
+) -> list[Task]:
+    """Build reproducible 512-token prefix blocks from Mooncake hash IDs."""
+    workload = benchmark.resolved_workload
+    if len(input_lengths) != len(hash_id_lists):
+        raise ValueError("input_lengths must match hash_id_lists")
+
+    plugin = create_trace_random_dataset_plugin(
+        benchmark,
+        service,
+        len(input_lengths),
+    )
+    allowed_token_ids = [int(token_id) for token_id in plugin.allowed_tokens]
+
+    @lru_cache(maxsize=1024)
+    def block_for(hash_id: int) -> tuple[int, ...]:
+        generator = random.Random(workload.random_seed + hash_id)
+        return tuple(
+            generator.choice(allowed_token_ids)
+            for _ in range(MOONCAKE_BLOCK_TOKENS)
+        )
+
+    tasks: list[Task] = []
+    for index, (input_length, hash_ids) in enumerate(zip(input_lengths, hash_id_lists)):
+        if hash_ids is None:
+            raise ValueError(
+                "--trace-synthetic-prefix-reuse requires hash_ids on every "
+                "selected trace event"
+            )
+        expected_blocks = (
+            input_length + MOONCAKE_BLOCK_TOKENS - 1
+        ) // MOONCAKE_BLOCK_TOKENS
+        if len(hash_ids) != expected_blocks:
+            raise ValueError(
+                f"Mooncake hash_ids must cover every {MOONCAKE_BLOCK_TOKENS}-token input block; "
+                f"got {len(hash_ids)} hash_ids for input_length={input_length}"
+            )
+
+        prompt_token_ids = [
+            token_id
+            for hash_id in hash_ids
+            for token_id in block_for(hash_id)
+        ][:input_length]
+        if not prompt_token_ids:
+            raise ValueError("Synthetic prefix reuse produced an empty token payload")
+        tasks.append(
+            Task(
+                id=f"prefix-reuse:{index}",
+                turns=(),
+                prompt_token_ids=tuple(prompt_token_ids),
+            )
+        )
+    return tasks

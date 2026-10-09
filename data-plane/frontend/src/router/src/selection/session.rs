@@ -25,6 +25,9 @@ pub enum RoutingStage {
 /// mutate routing progress or treat it as client input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoutingProgress<'a> {
+    /// Serving-snapshot version retained by this session; zero denotes an unversioned inventory.
+    /// Shared algorithm state must not let older snapshots supersede newer observations.
+    pub snapshot_version: u64,
     /// Selection round currently being executed.
     pub current_stage: RoutingStage,
     /// Execution roles completed before this selection round.
@@ -55,7 +58,7 @@ pub trait RouteSession: Send {
 /// Creates isolated request-local routing state for tokenized generation requests.
 #[async_trait::async_trait]
 pub trait Router: Send + Sync {
-    /// Prepares required observations and starts isolated routing state for one generation request.
+    /// Binds a prepared request to fresh routing observations and retains its routing load.
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
 }
 

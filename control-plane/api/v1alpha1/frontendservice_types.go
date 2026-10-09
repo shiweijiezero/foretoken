@@ -55,8 +55,22 @@ type RouterPipeline struct {
 	Picker RouterStage `json:"picker"`
 }
 
+// VideoTaskStorage configures the dedicated PVC shared by the frontend and video workers.
+type VideoTaskStorage struct {
+	// +kubebuilder:validation:MinLength=1
+	ClaimName string `json:"claimName"`
+	// RetentionSeconds is the lifetime of a completed task and its stored files.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9223372036
+	RetentionSeconds int64 `json:"retentionSeconds"`
+}
+
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
@@ -69,6 +83,11 @@ type FrontendServiceSpec struct {
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
+	// Admission supplies defaults applied independently to each model in each frontend replica.
+	// A ModelService admission block replaces these defaults; omitted defaults are unrestricted.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
+
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
@@ -78,10 +97,22 @@ type FrontendServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
 	Hostname string `json:"hostname,omitempty"`
+
+	// VideoTasks enables asynchronous video task submission and result access.
+	// +optional
+	VideoTasks *VideoTaskStorage `json:"videoTasks,omitempty"`
 }
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// ServingConfigVersion is the configuration protocol of the selected frontend application.
+	// +optional
+	ServingConfigVersion uint32 `json:"servingConfigVersion,omitempty"`
+
+	// Application retains the selected frontend environment and files across workload recovery.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

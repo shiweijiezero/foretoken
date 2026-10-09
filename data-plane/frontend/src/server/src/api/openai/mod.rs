@@ -11,7 +11,7 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use foretoken_chat::{
     AssistantContentBlock, AssistantToolCall, ChatContent, ChatContentPart, ChatMessage,
     ChatOptions, ChatRequest, ChatTool, ChatToolChoice, GenerationPromptMode, ParserSelection,
@@ -22,7 +22,9 @@ use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod async_video;
 mod output;
+mod video;
 
 use self::output::{
     CompletionResponseOptions, chat_collected, chat_stream_with_options, text_collected_many,
@@ -30,6 +32,8 @@ use self::output::{
 };
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::runtime::{GenerationError, GenerationRequest};
+use crate::{AdmissionOrigin, admission};
+use foretoken_admission::{AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest};
 
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 
@@ -45,6 +49,8 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/generate", post(completions))
         .route("/v1/completions", post(completions))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/videos/sync", post(video::generate))
+        .merge(async_video::router())
 }
 
 fn model_card(id: String) -> Value {
@@ -100,8 +106,14 @@ fn resolve_model(state: &ApiState, requested: Option<String>) -> Result<String, 
 
 async fn tokenize(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<TokenizeRequest>, JsonRejection>,
 ) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        api: Some(AdmissionApi::OpenAi),
+        received_at: timing.started_at,
+    };
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -119,6 +131,7 @@ async fn tokenize(
                     Prompt::Text(request.prompt),
                     request.add_special_tokens,
                     request.return_token_strs,
+                    origin,
                 )
                 .await
         }
@@ -186,7 +199,7 @@ async fn tokenize(
             };
             state
                 .generation
-                .tokenize_chat(&model, chat, request.return_token_strs)
+                .tokenize_chat(&model, chat, request.return_token_strs, origin)
                 .await
         }
     };
@@ -204,8 +217,14 @@ async fn tokenize(
 
 async fn detokenize(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<DetokenizeRequest>, JsonRejection>,
 ) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        api: Some(AdmissionApi::OpenAi),
+        received_at: timing.started_at,
+    };
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -214,7 +233,11 @@ async fn detokenize(
         Ok(model) => model,
         Err(error) => return openai_error(error),
     };
-    match state.generation.detokenize(&model, &request.tokens).await {
+    match state
+        .generation
+        .detokenize(&model, &request.tokens, origin)
+        .await
+    {
         Ok(prompt) => Json(DetokenizeResponse { prompt }).into_response(),
         Err(error) => openai_error(error),
     }
@@ -657,6 +680,24 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
             "server_error",
             "unavailable",
         ),
+        GenerationError::Overloaded => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "generation service is overloaded",
+            "server_error",
+            "overloaded",
+        ),
+        GenerationError::QueueTimeout => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admission queue timeout exceeded",
+            "server_error",
+            "queue_timeout",
+        ),
+        GenerationError::AdmissionCapacityExceeded => (
+            StatusCode::BAD_REQUEST,
+            "request fan-out exceeds configured admission concurrency",
+            "invalid_request_error",
+            "concurrency_limit_exceeded",
+        ),
         GenerationError::DeadlineExceeded => (
             StatusCode::GATEWAY_TIMEOUT,
             "request deadline exceeded",
@@ -696,11 +737,12 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
 }
 async fn completions(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
-    // Handler entry, after JSON decoding, is the shared TTFT and completion-latency origin.
-    // All fan-out requests include the same frontend admission and preprocessing time.
-    let timing = RequestTiming::now();
+    // Protected requests inherit HTTP intake time; legacy callers retain handler entry.
+    // Every candidate shares the same admission, preprocessing, and completion budget.
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -726,14 +768,43 @@ async fn completions(
     if request.best_of.is_some() && !public_logprobs {
         sampling_params.logprobs = Some(0);
     }
-    let mut generated = Vec::with_capacity(prompts.len() * best_of as usize);
+    let units = prompts.len() * best_of as usize;
+    let request_id = server_request_id("cmpl");
+    let admission_request = AdmissionRequest {
+        model: request.model.clone(),
+        operation: AdmissionOperation::Completion,
+        api: Some(AdmissionApi::OpenAi),
+        request_id: Some(request_id.clone()),
+        inputs: prompts.iter().map(admission::prompt_input).collect(),
+        candidates_per_input: best_of,
+        output: AdmissionOutput {
+            requested_max_tokens: request.max_tokens,
+            execution_max_tokens: sampling_params.max_tokens,
+            expected_tokens: None,
+        },
+        requested_priority: request.priority,
+        stream,
+        received_at: timing.started_at,
+    };
+    let mut admission = match state.generation.admit(&admission_request).await {
+        Ok(permit) => permit,
+        Err(error) => return openai_error(error),
+    };
+    let mut generated = Vec::with_capacity(units);
     for prompt in prompts {
         for _ in 0..best_of {
             match state
                 .generation
                 .generate(GenerationRequest {
+                    admission: Some(admission.split_one()),
+                    api: Some(AdmissionApi::OpenAi),
+                    requested_max_tokens: request.max_tokens,
                     model: request.model.clone(),
-                    request_id: server_request_id("cmpl"),
+                    request_id: if generated.is_empty() {
+                        request_id.clone()
+                    } else {
+                        server_request_id("cmpl")
+                    },
                     prompt: prompt.clone(),
                     sampling_params: sampling_params.clone(),
                     decode_options: decode_options(request.stop.clone()),
@@ -772,9 +843,10 @@ async fn completions(
 
 async fn chat_completions(
     State(state): State<ApiState>,
+    timing: Option<Extension<RequestTiming>>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
 ) -> Response {
-    let timing = RequestTiming::now();
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -882,7 +954,13 @@ async fn chat_completions(
         return client_error();
     }
     let generated = match state
-        .generate_chat(request.model, chat, include_reasoning, timing)
+        .generate_chat(
+            request.model,
+            chat,
+            include_reasoning,
+            timing,
+            AdmissionApi::OpenAi,
+        )
         .await
     {
         Ok(generated) => generated,

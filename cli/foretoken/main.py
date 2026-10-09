@@ -5,25 +5,33 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+import uuid
 from collections.abc import Sequence
 from urllib.parse import urlsplit
 
+import yaml
+
 from foretoken.arguments import (
+    ClusterCommand,
     DeleteCommand,
     DeployCommand,
     EndpointCommand,
     EvaluationCommand,
     InstallCommand,
     PerformanceCommand,
+    PlotCommand,
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
     UninstallCommand,
     parse_arguments,
 )
+from foretoken.cluster import run as run_cluster
+from foretoken.editable import EditableDeployment
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -34,10 +42,12 @@ from foretoken.kubernetes import (
     timeout_seconds,
     wait_for_resources,
 )
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.manifest import DeploymentError, ResourceRef, parse_deployment
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
+from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
+from foretoken.source import source_operation
 from foretoken.storage import DirectoryVolumes
 
 
@@ -77,6 +87,7 @@ def _deploy(
     kustomize_path: str, timeout: str, profile: ProfileCommand | None = None
 ) -> None:
     """Apply and wait for serving readiness, then optionally capture external traffic."""
+    started = time.monotonic()
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
     timeout_seconds(timeout)
@@ -84,11 +95,40 @@ def _deploy(
     if profile is not None:
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
+    source = EditableDeployment.discover(kubectl)
+    if source is not None:
+        source.prepare(timeout)
+        deployment = source.apply(deployment, timeout)
+        print(
+            f"Source preparation completed in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
+    # A deployment explicitly selects current platform applications; reconciliation and
+    # capacity changes retain the controller's persisted selection.
+    schema = json.loads(
+        kubectl.get_raw("/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout)
+    )
+    selection_kinds = set()
+    for definition in schema["components"]["schemas"].values():
+        for identity in definition.get("x-kubernetes-group-version-kind", []):
+            if (
+                identity["kind"] in {"ModelService", "FrontendService"}
+                and "deploymentRevision"
+                in definition["properties"]["spec"]["properties"]
+            ):
+                selection_kinds.add(identity["kind"])
+    revision = uuid.uuid4().hex
+    for obj in deployment.objects:
+        if obj.get("kind") in selection_kinds:
+            obj["spec"]["deploymentRevision"] = revision
+    deployment = parse_deployment(
+        deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
+    )
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
-    started = time.monotonic()
+    rollout_started = time.monotonic()
     with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
         wait_for_resources(
             deployment.service_refs(),
@@ -97,6 +137,14 @@ def _deploy(
             report=_report_progress,
             observe=startup.poll,
         )
+        if source is not None:
+            source.verify(
+                deployment,
+                timeout,
+                observe=lambda: startup.poll(
+                    deployment.service_refs(), time.monotonic() - rollout_started
+                ),
+            )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -168,15 +216,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
-        if isinstance(command, InstallCommand):
+        if isinstance(command, ClusterCommand):
+            run_cluster(command)
+        elif isinstance(command, InstallCommand):
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"
             )
-            PlatformLifecycle(oci_registry).install(command)
+            with source_operation(
+                Kubectl(), command.timeout, installing=command.editable is not None
+            ):
+                PlatformLifecycle(oci_registry).install(command)
         elif isinstance(command, UninstallCommand):
-            PlatformLifecycle().uninstall(command)
+            with source_operation(Kubectl(), command.timeout):
+                PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):
-            _deploy(command.kustomize_path, command.timeout, command.profile)
+            with source_operation(Kubectl(), command.timeout):
+                _deploy(command.kustomize_path, command.timeout, command.profile)
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):
@@ -188,6 +243,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 command.host,
             )
         elif isinstance(command, PerformanceCommand):
+            # Load benchmark frameworks only for benchmark commands.
             from benchmarks.main import main as benchmark_main
 
             benchmark_main(command.arguments)
@@ -195,9 +251,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             from benchmarks.evaluation import main as evaluation_main
 
             evaluation_main(command.arguments)
-        elif isinstance(command, ProfileViewCommand):
-            from foretoken.profiling.viewer import view
+        elif isinstance(command, PlotCommand):
+            from benchmarks.plot import main as plot_main
 
+            plot_main(command.arguments)
+        elif isinstance(command, ProfileViewCommand):
             view(command)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc

@@ -5,114 +5,117 @@
 
 [English](custom-deployment.md) | [中文](custom-deployment_zh.md)
 
-本指南介绍如何从源码构建 Foretoken 镜像、配置 Kubernetes 平台使用这些镜像，以及修改源码后如何重新部署。模型服务仍通过 `foretoken deploy` 单独部署。
+从本地源码构建 Foretoken，并将源码改动部署到 Kubernetes 集群。
 
-准备好 Python 3.11+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。获取当前源码，并从仓库根目录执行命令：
+## 从源码安装
+
+本机需要 Python 3.11+、Git、kubectl 和 Helm。集群需要允许运行 BuildKit Pod 和发布 Job，并有默认 StorageClass 保存编译缓存与发布的应用文件。需要自定义存储类时，在 `deploy/platform-values.yaml` 中分别用 `development.build.storageClassName` 或 `applicationFiles.storageClassName` 覆盖，并通过 `--values` 传入。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-```
-
-## 1. 准备目标 Kubernetes 集群
-
-确认 `kubectl` 当前指向目标集群：
-
-```bash
 kubectl config current-context
-kubectl get nodes
 ```
 
-## 2. 从源码构建镜像并安装平台
-
-使用 pip 从源码根目录安装命令行工具：
+从当前源码安装 CLI：
 
 ```bash
 pip install -e .
 ```
 
-或使用 uv 创建并激活虚拟环境后安装：
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
-
-需要使用镜像站时，配置对应的 endpoint 或 proxy 地址。
-
-通过镜像仓库向集群分发构建产物。仓库需对所有目标节点可访问；将 `example` 替换为有推送权限的命名空间：
-
-```bash
-export REGISTRY=ghcr.io/example/foretoken
-docker login ghcr.io
-foretoken install -e . --registry "$REGISTRY"
-```
-
-使用私有镜像仓库时，在平台命名空间和每个工作负载命名空间中创建同名的镜像拉取 Secret，并将以下配置保存为 `platform-values.yaml`：
-
-```yaml
-imagePullSecrets:
-  - name: registry-auth
-workload:
-  imagePullSecrets:
-    - name: registry-auth
-```
-
-```bash
-foretoken install -e . \
-  --registry "$REGISTRY" \
-  --values platform-values.yaml
-```
-
-本机 kind 或 k3d 集群也可以省略 `--registry`，由命令直接导入镜像：
+本地 kind 或 k3d 集群无需镜像仓库，可直接构建并安装：
 
 ```bash
 foretoken install -e .
 ```
 
-## 3. 确认平台部署完成
+编译在集群中执行。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
-`foretoken install -e .` 会等待 Helm release 和控制平面滚动更新完成。命令成功退出后，检查已安装的 release 和控制器：
+## 部署与更新代码
 
-```bash
-helm status foretoken --namespace foretoken-platform
-kubectl get deployment foretoken-control-plane \
-  --namespace foretoken-platform
-```
-
-Deployment 应显示所有期望副本均已 Ready。模型工作负载只会在下一步部署后出现。
-
-## 4. 部署快速开始示例（可选）
-
-快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
+在支持 GPU 的集群上部署仓库维护的[快速开始示例](../README_zh.md#快速开始)：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该命令会发现渲染后的服务、输出状态变化，并在当前配置就绪后退出。
+修改源码后，再执行同一条命令。代码更新沿用保存的安装设置和运行环境；运行环境依赖或镜像构建配置变化时，会更新平台安装。
 
-## 5. 发送请求（可选）
+受影响的工作负载会重启，并可能重新加载模型权重。命令等待所选代码和服务路由生效后退出。源码和部署配置均未变化时，现有工作负载保持运行。请求与清理操作沿用快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
 
-完成[第 4 节：部署快速开始示例](#4-部署快速开始示例可选)后，解析默认 `local` 前端模式的 URL，并发送 OpenAI API 兼容格式的请求：
+CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
+
+## 修改推理引擎
+
+修改 vLLM 时，关联与运行时 Python、PyTorch 和设备环境匹配的 Git 源码目录。假设源码位于 `../vllm`：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-
-curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
-    "temperature": 0
-  }'
-printf '\n'
+foretoken install -e . --engine-source ../vllm
 ```
 
-## 6. 修改源码后重新部署
+原安装使用了 `--registry` 或 `--values` 时，保留这些选项。修改 Python、Triton 或 NVIDIA CUDA/C++ 源码后，继续使用上面的 `foretoken deploy`，所需编译会自动完成。
 
-修改代码后，重新执行安装时使用的同一条命令，保留 `--registry` 和 `--values` 等选项。
+沐曦原生 kernel 由插件源码提供。将插件与匹配的 core 源码一起关联：
 
-BuildKit 会复用编译缓存。命令只导入或推送发生变化的镜像，保持源码安装模式，并滚动更新使用本地同名镜像且内容发生变化的工作负载。需要排查底层镜像或 Helm 操作时，参阅维护者[源码镜像手工生命周期](development/source-image-lifecycle_zh.md)。
+```bash
+foretoken install -e . \
+  --engine-source ../vllm \
+  --engine-source vllm-metax=../vllm-metax
+```
+
+### 更换运行环境
+
+运行时镜像提供 Python、PyTorch 和设备库。需要更换时，在 `deploy/platform-values.yaml` 中指定兼容镜像，将示例地址替换为集群构建器能够使用的镜像：
+
+```yaml
+runtime:
+  vllm:
+    image: ghcr.io/example/custom-vllm:latest
+```
+
+重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；安装完成后重新部署工作负载。
+
+沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
+
+### vLLM-Omni 运行时
+
+vLLM-Omni 使用独立的模型服务镜像。在具备 Docker BuildKit、Make 和 rustup 管理的 Rust 工具链的机器上，从仓库根目录构建：
+
+```bash
+make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
+make image-model-server-omni \
+  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
+  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
+```
+
+使用 k3d 时，将 `CLUSTER` 设为已有集群的名称，再导入镜像：
+
+```bash
+CLUSTER=foretoken-qwen-test
+k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
+```
+
+远程集群沿用 [Kubernetes 部署指南](kubernetes-deployment_zh.md) 中的 `REGISTRY` 设置；仓库需要认证时，先完成登录，再推送模型服务镜像：
+
+```bash
+docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"
+docker push "$REGISTRY/omni-model-server:latest"
+```
+
+在 `deploy/platform-values.yaml` 中将 `runtime.vllmOmni.image` 设为节点可拉取的镜像。以下使用本地镜像名；通过仓库分发时，改为推送后的完整地址：
+
+```yaml
+runtime:
+  vllmOmni:
+    image: foretoken-omni-model-server:latest
+```
+
+应用运行时设置：
+
+```bash
+foretoken install -e . --values deploy/platform-values.yaml
+```
+
+远程平台构建保留 `--registry "$REGISTRY"`，以及原有的其他安装选项。前面的 vLLM editable 源码更新针对标准 vLLM 后端。
+
+安装完成后，用 `foretoken deploy` 部署 Omni 服务的 Kustomize 目录。修改代码后，重新构建并分发 Omni 镜像，将 `runtime.vllmOmni.image` 改为新的 tag 或 digest 引用，再执行安装命令并重新部署同一 Kustomize 目录。

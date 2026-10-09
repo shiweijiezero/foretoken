@@ -102,6 +102,24 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directoryOwner:
+                        description: DirectoryOwner preserves a locally discovered
+                          directory identity across cache consumers.
+                        properties:
+                          gid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 0
+                            type: integer
+                          uid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 1
+                            type: integer
+                        required:
+                        - gid
+                        - uid
+                        type: object
                       mountPath:
                         maxLength: 1024
                         minLength: 2
@@ -236,8 +254,9 @@ spec:
                       enum:
                       - jsonObject
                       - jsonSchema
+                      - structuralTag
                       type: string
-                    maxItems: 2
+                    maxItems: 3
                     type: array
                     x-kubernetes-list-type: set
                   tools:
@@ -567,9 +586,14 @@ spec:
                 description: ModelGroupRuntime defines the resolved inference-engine
                   runtime.
                 properties:
+                  applicationURL:
+                    description: ApplicationURL pins the controller-selected executable
+                      publication for this cohort.
+                    type: string
                   backend:
                     enum:
                     - vllm
+                    - vllm-omni
                     type: string
                   engineArgs:
                     additionalProperties:
@@ -596,6 +620,14 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  preparationVersion:
+                    description: |-
+                      PreparationVersion selects the source-publication contract for this immutable cohort.
+                      Omitted on cohorts created before source preparation was introduced.
+                    format: int32
+                    maximum: 1
+                    minimum: 0
+                    type: integer
                   profiling:
                     description: Profiling fixes the instrumentation prepared at runtime
                       startup.
@@ -609,6 +641,10 @@ spec:
                     required:
                     - engine
                     type: object
+                  sourceRevision:
+                    description: SourceRevision selects the immutable source bundle
+                      at the platform application origin.
+                    type: string
                   tritonCacheDirectory:
                     description: TritonCacheDirectory is the initial worker cache
                       path; Kubernetes expands its node reference.

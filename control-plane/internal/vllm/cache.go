@@ -7,6 +7,7 @@ package vllm
 
 import (
 	"path"
+	"strconv"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
@@ -25,15 +26,25 @@ func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
 }
 
 // RuntimeCacheEnv returns vLLM model and compilation cache environment for one ModelGroup.
-func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, tritonCacheDirectory string) []corev1.EnvVar {
+func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tritonCacheDirectory string) []corev1.EnvVar {
 	env := make([]corev1.EnvVar, 0, 6)
 	if cache != nil {
 		env = append(env,
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: namespace + "/" + cache.ClaimName},
 			corev1.EnvVar{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(cache.MountPath)},
 			corev1.EnvVar{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(cache.MountPath)},
 			corev1.EnvVar{Name: "VLLM_CACHE_ROOT", Value: path.Join(cache.MountPath, "vllm")},
 			corev1.EnvVar{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(cache.MountPath, "torch")},
 		)
+		if cache.DirectoryOwner != nil {
+			// A host directory identity may have no passwd entry in the engine image.
+			user := strconv.FormatInt(cache.DirectoryOwner.UID, 10)
+			env = append(env,
+				corev1.EnvVar{Name: "HOME", Value: cache.MountPath},
+				corev1.EnvVar{Name: "USER", Value: user},
+				corev1.EnvVar{Name: "LOGNAME", Value: user},
+			)
+		}
 	}
 	if tritonCacheDirectory != "" {
 		// Kubernetes expands references only to earlier environment entries.

@@ -3,8 +3,8 @@
 
 """Export the installed MetaX Torch CPU build inputs for torchaudio's CMake build."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import torch
 from torch.utils.cpp_extension import CppExtension

@@ -73,6 +73,9 @@ pub(crate) fn project_kv_runtime(
         );
     };
     for group in &snapshot.groups {
+        if group.capabilities.contains("video") {
+            continue;
+        }
         add_route(
             &group.route_target_id,
             &group.endpoint,

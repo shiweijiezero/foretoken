@@ -16,6 +16,7 @@ WORKDIR /workspace
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
+ARG VLLM_REVISION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential git libssl-dev perl pkg-config \
@@ -25,9 +26,12 @@ COPY data-plane/ ./data-plane/
 
 # Key the target cache by the builder image: artifacts built on different
 # Debian releases are not interchangeable even with the same Rust version.
-RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
+# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
+RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-bookworm,target=/workspace/data-plane/target,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       git config --global url."${FORETOKEN_GITHUB_MIRROR%/}/".insteadOf https://github.com/; \
     fi \
@@ -39,6 +43,27 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
+    && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
+      if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
+        git -C /var/cache/vllm init -q \
+        && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
+        && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
+      fi \
+      && mkdir -p data-plane/third_party/vllm \
+      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+    fi \
+    && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
+    && mkdir -p data-plane/target/vllm-rust \
+    && if git diff --no-index --quiet data-plane/target/vllm-rust data-plane/third_party/vllm/rust; then \
+      :; \
+    else \
+      result=$?; \
+      test "$result" -eq 1 \
+      && rm -rf data-plane/target/vllm-rust \
+      && cp -R data-plane/third_party/vllm/rust data-plane/target/vllm-rust; \
+    fi \
+    && rm -rf data-plane/third_party/vllm/rust \
+    && cp -a data-plane/target/vllm-rust data-plane/third_party/vllm/rust \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-frontend \
@@ -46,7 +71,13 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
       data-plane/target/release/foretoken-frontend \
       /out/foretoken-frontend
 
-FROM ${RUNTIME_IMAGE}
+FROM scratch AS source-export
+COPY --from=builder /out/foretoken-frontend /bin/foretoken-frontend
+COPY <<EOF /complete.json
+{"component":"frontend"}
+EOF
+
+FROM ${RUNTIME_IMAGE} AS environment
 
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
@@ -60,9 +91,9 @@ RUN apt-get update \
     && mkdir -p /var/cache/foretoken \
     && chown -R 65532:65532 /var/cache/foretoken
 
-COPY --from=builder /out/foretoken-frontend /usr/local/bin/foretoken-frontend
-
 ENV HF_HOME=/var/cache/foretoken/huggingface
-
 USER 65532:65532
+
+FROM environment AS runtime
+COPY --from=builder /out/foretoken-frontend /usr/local/bin/foretoken-frontend
 ENTRYPOINT ["foretoken-frontend"]

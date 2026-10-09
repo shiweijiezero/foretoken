@@ -6,15 +6,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
-use axum::middleware;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
+use foretoken_admission::observe_http;
 
 use crate::api::{self, ApiState};
-use crate::runtime::Generation;
+use crate::runtime::{Generation, before_deadline};
 
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 
@@ -23,10 +24,12 @@ pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     stream_idle: Duration,
-) -> Router {
-    Router::new()
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
+    Ok(Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/health", get(readyz))
         .route("/statusz", get(statusz))
         .route("/metrics", get(metrics))
         .route(
@@ -35,12 +38,52 @@ pub fn router(
         )
         .merge(api::router())
         .with_state(ApiState {
-            generation,
+            generation: generation.clone(),
             models,
             stream_idle,
+            video_tasks,
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
-        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
+        .layer(middleware::from_fn_with_state(generation, observe_request))
+        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics)))
+}
+
+// Capture the request budget before body extraction and share its origin with model admission.
+async fn observe_request(
+    State(generation): State<Arc<dyn Generation>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    let protected = request.method() == Method::POST
+        && matches!(
+            path.as_str(),
+            "/v1/generate"
+                | "/v1/completions"
+                | "/v1/chat/completions"
+                | "/v1/responses"
+                | "/v1/messages"
+                | "/v1/messages/count_tokens"
+                | "/tokenize"
+                | "/detokenize"
+        );
+    if !protected {
+        return next.run(request).await;
+    }
+    observe_http(async move {
+        let timing = api::RequestTiming::now();
+        request.extensions_mut().insert(timing);
+        if let Some(timeout) = generation.request_timeout() {
+            let deadline = tokio::time::Instant::from_std(timing.started_at + timeout);
+            match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
+                Ok(response) => response,
+                Err(error) => api::generation_error(&path, error),
+            }
+        } else {
+            next.run(request).await
+        }
+    })
+    .await
 }
 
 async fn healthz() -> StatusCode {

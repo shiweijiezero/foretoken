@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -91,6 +91,7 @@ class EngineCoreReadyResponse:
+     max_num_seqs: int
+     max_num_batched_tokens: int
+     instance_id: str
++    max_logprobs: int | None = None
+     supports_lora: bool
+     max_loras: int
+     mamba_block_size: int | None = None
+ diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1720,3 +1720,4 @@
+             world_size=self.vllm_config.parallel_config.world_size,
+             data_parallel_size=parallel_config.data_parallel_size,
++            max_logprobs=self.vllm_config.model_config.max_logprobs,
+             kv_cache_size_tokens=self.vllm_config.cache_config.kv_cache_size_tokens,

@@ -31,6 +31,8 @@ from foretoken.profiling.reader import (
     capture_token,
 )
 
+from foretoken.storage import DirectoryVolumes
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,6 +188,7 @@ class ProfileStorage:
         if claim.get("status", {}).get("phase") != "Bound":
             raise DeploymentError("capture storage is not bound")
         node = self._placement(namespace, claim)
+        uid, gid = DirectoryVolumes.read_directory_owner(claim) or (65532, 65532)
         name = f"foretoken-profile-view-{uuid4().hex[:16]}"
         reader = _Reader(name, claim["metadata"]["uid"], secrets.token_hex(32))
         labels = {
@@ -220,8 +223,8 @@ class ProfileStorage:
                 "terminationGracePeriodSeconds": 5,
                 "securityContext": {
                     "runAsNonRoot": True,
-                    "runAsUser": 65532,
-                    "runAsGroup": 65532,
+                    "runAsUser": uid,
+                    "runAsGroup": gid,
                     "seccompProfile": {"type": "RuntimeDefault"},
                 },
                 "containers": [

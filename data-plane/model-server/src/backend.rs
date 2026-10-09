@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
+use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBackend;
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
 
@@ -347,7 +348,13 @@ where
 
 #[async_trait]
 impl Backend for VllmBackend {
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
+    async fn generate(&self, mut request: GenerateInput) -> Result<TokenStream, BackendError> {
+        // HTTP decoding discards backend hints; headless EngineCore skips frontend
+        // validation and retains its first grammar backend. Use Xgrammar consistently
+        // so JSON and structural-tag requests work regardless of arrival order.
+        if let Some(outputs) = &mut request.sampling_params.structured_outputs {
+            outputs.backend = StructuredOutputBackend::Xgrammar;
+        }
         let started_at = Instant::now();
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;

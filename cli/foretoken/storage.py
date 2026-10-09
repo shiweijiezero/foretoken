@@ -21,9 +21,11 @@ from foretoken.manifest import (
     RuntimeCacheManifest,
 )
 
+REMOTE_RUNTIME_CACHE_SIZE = "10Gi"
+
 
 class DirectoryVolumes:
-    """Own static PV preparation and cleanup for CLI deployment operations.
+    """Own static and automatically provisioned RuntimeCache storage for deployments.
 
     The controller remains the single owner of PVC names, capacity and retention.
     The CLI supplies prepared filesystem locations and preserves their contents.
@@ -33,6 +35,7 @@ class DirectoryVolumes:
         "inference.foretoken.io/directory-volume-manager",
         "foretoken-deploy",
     )
+    directory_owner_annotation = "inference.foretoken.io/directory-owner"
 
     def __init__(self, kubectl: Kubectl) -> None:
         self.kubectl = kubectl
@@ -50,16 +53,53 @@ class DirectoryVolumes:
             raise DeploymentError("directory-backed storage requires a Kubernetes node")
         locations = []
         for cache in caches:
-            path, hostnames = _resolve_directory(cache, deployment.path, context, nodes)
-            locations.append((cache, path, hostnames))
-            for document in documents:
-                metadata = document.get("metadata") or {}
+            metadata_key = ("RuntimeCache", cache.namespace, cache.name)
+            matching = [
+                document
+                for document in documents
                 if (
                     document.get("kind"),
-                    metadata.get("namespace"),
-                    metadata.get("name"),
-                ) == ("RuntimeCache", cache.namespace, cache.name):
-                    document["spec"]["directory"] = path
+                    (document.get("metadata") or {}).get("namespace"),
+                    (document.get("metadata") or {}).get("name"),
+                ) == metadata_key
+            ]
+            if len(matching) != 1:
+                raise DeploymentError(
+                    f"could not find rendered RuntimeCache/{cache.name}"
+                )
+            spec = matching[0].setdefault("spec", {})
+            annotations = matching[0]["metadata"].setdefault("annotations", {})
+            annotations.pop(self.directory_owner_annotation, None)
+            path = Path(cache.directory)
+            if not context.startswith("k3d-") and (
+                not path.is_absolute() or ".." in path.parts
+            ):
+                spec.pop("directory", None)
+                spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
+                schedulable_nodes = tuple(
+                    node
+                    for node in nodes
+                    if not (node.get("spec") or {}).get("unschedulable")
+                )
+                if len(schedulable_nodes) == 1 and spec.get("accessMode") == "ReadWriteMany":
+                    spec["accessMode"] = "ReadWriteOnce"
+                    print(
+                        f"RuntimeCache/{cache.name}: using ReadWriteOnce on the single-node cluster",
+                        flush=True,
+                    )
+                print(
+                    f"RuntimeCache/{cache.name}: using a dynamic PVC on the remote cluster",
+                    flush=True,
+                )
+                continue
+            resolved, hostnames, directory_owner = _resolve_directory(
+                cache, deployment.path, context, nodes
+            )
+            if directory_owner is not None:
+                uid, gid = directory_owner
+                annotations[self.directory_owner_annotation] = f"{uid}:{gid}"
+            locations.append((cache, resolved, hostnames))
+            spec["directory"] = resolved
 
         # Let admission and the controller resolve the PVC contract before creating a PV.
         self.kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
@@ -197,6 +237,22 @@ class DirectoryVolumes:
                 ["delete", "pv", name, "--wait=true", f"--timeout={timeout}"]
             )
 
+    @classmethod
+    def read_directory_owner(cls, cache: dict[str, Any]) -> tuple[int, int] | None:
+        """Read the directory identity retained on a RuntimeCache or its PVC."""
+        value = cache.get("metadata", {}).get("annotations", {}).get(
+            cls.directory_owner_annotation
+        )
+        if value is None:
+            return None
+        try:
+            uid, gid = map(int, value.split(":"))
+            if not 0 < uid < 2**32 - 1 or not 0 <= gid < 2**32 - 1:
+                raise ValueError
+        except ValueError as exc:
+            raise DeploymentError(f"invalid RuntimeCache directory owner: {value}") from exc
+        return uid, gid
+
     def _owns_volume(self, volume: dict[str, Any]) -> bool:
         """Recognize this lifecycle's persistent marker before checking claim and path."""
         key, owner = self.owner_annotation
@@ -208,8 +264,8 @@ def _resolve_directory(
     root: Path,
     context: str,
     nodes: tuple[dict[str, Any], ...],
-) -> tuple[str, list[str]]:
-    """Resolve a declared path and the node hostname labels that expose its files."""
+) -> tuple[str, list[str], tuple[int, int] | None]:
+    """Resolve a node path and, for local binds, its non-root filesystem owner."""
     path = Path(cache.directory)
     if not context.startswith("k3d-"):
         if not path.is_absolute() or ".." in path.parts:
@@ -220,7 +276,7 @@ def _resolve_directory(
             raise DeploymentError(
                 "a shared directory across nodes requires ReadWriteMany"
             )
-        return str(path), [_hostname(nodes[0])] if len(nodes) == 1 else []
+        return str(path), [_hostname(nodes[0])] if len(nodes) == 1 else [], None
 
     directory = (path if path.is_absolute() else root / path).resolve()
     if not directory.is_dir():
@@ -285,7 +341,10 @@ def _resolve_directory(
         )
     if len(mappings) != 1:
         raise DeploymentError("k3d nodes must use the same directory mount destination")
-    return next(iter(mappings.items()))
+    destination, hostnames = next(iter(mappings.items()))
+    status = directory.stat()
+    owner = (status.st_uid, status.st_gid) if status.st_uid != 0 else None
+    return destination, hostnames, owner
 
 
 def _hostname(node: dict[str, Any]) -> str:

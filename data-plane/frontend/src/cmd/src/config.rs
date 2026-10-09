@@ -41,8 +41,8 @@ impl RuntimeConfig {
 
 /// Resolves the router pipeline selected for this frontend process.
 ///
-/// Startup calls this through [`RuntimeConfig::from_env`]; it returns a validated configuration
-/// that is retained by the runtime builder for every snapshot generation.
+/// Startup decodes this configuration before RuntimeBuilder constructs and validates the rules.
+/// The resulting pipeline is retained across serving-snapshot generations.
 pub(crate) fn router_pipeline_from_env(
     get_env: impl Fn(&str) -> Result<String, env::VarError>,
 ) -> Result<RouterPipelineConfig, String> {
@@ -54,7 +54,6 @@ pub(crate) fn router_pipeline_from_env(
             return Err("router pipeline must be valid UTF-8".into());
         }
     };
-    pipeline.validate().map_err(|error| error.to_string())?;
     Ok(pipeline)
 }
 
