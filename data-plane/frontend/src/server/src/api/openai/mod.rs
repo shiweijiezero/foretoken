@@ -695,7 +695,7 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
         ),
         GenerationError::AdmissionCapacityExceeded => (
             StatusCode::BAD_REQUEST,
-            "request fan-out exceeds configured admission concurrency",
+            "request fan-out exceeds configured admission capacity",
             "invalid_request_error",
             "concurrency_limit_exceeded",
         ),
