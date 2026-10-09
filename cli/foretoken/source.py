@@ -742,7 +742,11 @@ def prepare_source_images(
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
     registry_mirrors = build.get("registry_mirrors", {})
     if saved_arguments is None:
-        selected = select_build_sources(environment)
+        selected = select_build_sources(
+            environment,
+            previous_environment=build.get("arguments"),
+            previous_registry_mirrors=build.get("registry_mirrors"),
+        )
         registry_mirrors = selected.registry_mirrors
         environment.update(selected.environment)
         for selection in selected.messages:

@@ -594,17 +594,14 @@ class Helm(HelmClient):
                 ]
             )
 
-    def _set_platform_image_sources(
-        self,
-        args: list[str],
-        overrides: dict[str, Any],
-        source_mode: bool,
-        input_text: str | None,
-    ) -> None:
-        """Resolve native platform defaults without persisting them as user overrides."""
+    @staticmethod
+    def _platform_images(
+        documents: tuple[dict[str, Any], ...],
+    ) -> tuple[dict[str, str], str | None]:
+        """Read platform image references and the selected backend from rendered Helm resources."""
         images: dict[str, str] = {}
         runtime_backend = None
-        for document in self._render_chart(args, input_text=input_text):
+        for document in documents:
             if (
                 document["kind"] == "ConfigMap"
                 and document["metadata"]
@@ -653,6 +650,28 @@ class Helm(HelmClient):
                         ):
                             if argument.startswith(prefix):
                                 images[path] = argument.removeprefix(prefix)
+        return images, runtime_backend
+
+    def _set_platform_image_sources(
+        self,
+        args: list[str],
+        overrides: dict[str, Any],
+        source_mode: bool,
+        input_text: str | None,
+    ) -> None:
+        """Resolve platform defaults, retaining reachable installed sources without user overrides."""
+        images, runtime_backend = self._platform_images(
+            self._render_chart(args, input_text=input_text)
+        )
+        previous = {}
+        release = self.platform_release()
+        if self.release_exists(release):
+            manifest = self.run(
+                ["get", "manifest", release.name, "--namespace", release.namespace]
+            ).stdout
+            previous, _ = self._platform_images(
+                tuple(document for document in yaml.safe_load_all(manifest) if document is not None)
+            )
         updates = {}
         for path, reference in images.items():
             if source_mode and path in {
@@ -667,6 +686,7 @@ class Helm(HelmClient):
                 explicit = None
             if explicit is not None and explicit != "auto":
                 continue
+            prior = previous.get(path)
             if path == "runtime.vllm.image":
                 # Preserve the chart's auto/backend selection and its user-supplied alternatives.
                 if runtime_backend is None:
@@ -677,7 +697,9 @@ class Helm(HelmClient):
                         continue
                 except KeyError:
                     pass
-            selected = platform_image_reference(reference, self._config.image_registry)
+            selected = platform_image_reference(
+                reference, self._config.image_registry, previous=prior
+            )
             if selected == reference:
                 continue
             if path == "image.repository":
