@@ -37,7 +37,6 @@ func runtimeCacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtim
 		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
 		{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
 		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(runtimePort)))},
-		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 	}
 }
 

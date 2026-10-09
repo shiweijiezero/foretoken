@@ -275,6 +275,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	name := "prepare-" + string(group.UID)
 	env := []corev1.EnvVar{
 		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
 		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
 		{Name: preparationNamespaceEnv, Value: group.Namespace},
