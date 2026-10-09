@@ -217,18 +217,29 @@ impl BackendRegistry {
         Ok(selected)
     }
 
-    /// Reports whether one logical model currently has an executable backend path.
-    pub fn is_model_ready(&self, model: &str) -> bool {
-        self.healthy_models().iter().any(|healthy| healthy == model)
+    /// Reports whether a model has a healthy complete execution path in the allowed Pools.
+    /// Runtime readiness uses this before dispatch, including scale-from-zero waiting.
+    pub fn is_model_ready(&self, model: &str, allowed_pools: &[String]) -> bool {
+        self.healthy_models_in_pools(allowed_pools)
+            .iter()
+            .any(|healthy| healthy == model)
     }
 
     /// Lists models with a currently executable aggregate route or complete split pipeline.
     pub fn healthy_models(&self) -> Vec<String> {
+        self.healthy_models_in_pools(&[])
+    }
+
+    /// Resolves complete healthy execution paths within the allowed logical Pool range.
+    fn healthy_models_in_pools(&self, allowed_pools: &[String]) -> Vec<String> {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
+            if !allowed_pools.is_empty() && !allowed_pools.contains(&route.target.name) {
+                continue;
+            }
             if route.role == ModelServerRole::Aggregate
                 && self.is_route_target_healthy(&route.route_target_id)
             {

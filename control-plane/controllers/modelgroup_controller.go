@@ -453,6 +453,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: launchEnv, Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	}
+	env = append(env, runtimeconfig.AdmissionStoreEnv(group.Spec.Runtime.AdmissionStore)...)
+	if admission := group.Spec.Runtime.InstanceAdmission; admission != nil {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(admission.MaxConcurrentRequests), 10)})
 	}
 	if group.Spec.Runtime.Backend == "vllm" {
 		env = append(env,

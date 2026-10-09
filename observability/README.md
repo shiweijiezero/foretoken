@@ -24,11 +24,11 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
-| Why are requests waiting or being rejected? | Per-model admission results, queue wait, and occupancy and limits in each frontend replica. |
+| Why are requests waiting or being rejected? | Per-model dispatch results, waiting duration, and shared waiting and unfinished occupancy. |
 
 TTFT is first-token latency; E2EL is completion latency. TPOT is the average output-token interval per request; ITL measures individual intervals. Units are shown on each panel.
 
-In Admission, select a model and optionally a frontend Pod for replica details, then expand the results or resources rows. Limits and queues are independent per model in each replica; an all-model view does not represent a shared quota.
+In Admission, select a model and frontend service, then expand the results or resources rows. Waiting capacity and dispatch-reserved or accepted unfinished work are shared by that service's replicas for each model. Resource curves deduplicate replica observations rather than adding them; there is no model-wide concurrency limit. Select a frontend Pod to inspect its request results and ledger availability. A failed ledger read leaves occupancy unavailable, not zero.
 
 ## Query logs
 

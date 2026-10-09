@@ -165,6 +165,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .expect("routing load lock poisoned");
             let candidates = self.candidates(request, &reservations);
             metrics.candidates(&request.model, round, "available", candidates.len());
+            if !candidates
+                .iter()
+                .any(|candidate| eligible(candidate, &candidates))
+            {
+                return Err(error);
+            }
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
                 request,
@@ -232,12 +238,19 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .collect::<Vec<_>>();
             let selectable = scored
                 .iter()
-                .filter(|candidate| candidate.candidate.stage_eligible)
+                .filter(|candidate| {
+                    candidate.candidate.stage_eligible
+                        && (round != RoutingStage::Initial
+                            || !request.busy_targets.contains(&(
+                                candidate.candidate.route_target_id.clone(),
+                                candidate.candidate.data_parallel_rank,
+                            )))
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             metrics.candidates(&request.model, round, "selectable", selectable.len());
             if selectable.is_empty() {
-                return Err(error);
+                return Err(RouteError::Busy);
             }
             let stage_started = Instant::now();
             let picked = self.pipeline.picker.pick(
@@ -334,7 +347,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 }
                 ModelServerRole::Decode => false,
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: request.model.clone(),
             },
         )
@@ -358,7 +371,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
                     && Self::future_stages_available(candidate, candidates)
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: request.model.clone(),
             },
         )

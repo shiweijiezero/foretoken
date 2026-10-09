@@ -52,6 +52,7 @@ type RuntimeProfile struct {
 	Image              string
 	OmniImage          string
 	NsightImage        string
+	AdmissionStore     *inferencev1alpha1.AdmissionStoreConnection
 	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
@@ -288,8 +289,10 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
+	var admissionStore *inferencev1alpha1.AdmissionStoreConnection
 	if template.Application != nil {
 		applicationURL = template.Application.ApplicationURL
+		admissionStore = template.Application.AdmissionStore.DeepCopy()
 	}
 	return ModelGroupTemplate{
 		Role: template.Role,
@@ -303,6 +306,8 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			ApplicationURL: applicationURL,
 			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
+			AdmissionStore:                        admissionStore,
+			InstanceAdmission:                     template.InstanceAdmission.DeepCopy(),
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,

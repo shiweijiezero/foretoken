@@ -1,0 +1,257 @@
+diff --git a/rust/src/engine-core-client/src/client/imp.rs b/rust/src/engine-core-client/src/client/imp.rs
+--- a/rust/src/engine-core-client/src/client/imp.rs
++++ b/rust/src/engine-core-client/src/client/imp.rs
+@@ -123,7 +123,17 @@
+ 
+     /// Undo a request registration when `add_request()` fails.
+     pub fn rollback_request(&self, request_id: &str) {
+-        let _ = self.request_reg.lock().remove(request_id);
++        let mut registry = self.request_reg.lock();
++        registry.discard_completion(request_id);
++        let _ = registry.remove(request_id);
++    }
++
++    /// Subscribes before transport submission; consumer cancellation cannot complete this signal.
++    pub fn request_completion(&self, request_id: &str) -> Result<watch::Receiver<bool>> {
++        self.request_reg
++            .lock()
++            .completion(request_id)
++            .ok_or_else(|| self.closed_error())
+     }
+ 
+     /// Filter the given request IDs to the subset that are still tracked as
+diff --git a/rust/src/engine-core-client/src/client/state.rs b/rust/src/engine-core-client/src/client/state.rs
+--- a/rust/src/engine-core-client/src/client/state.rs
++++ b/rust/src/engine-core-client/src/client/state.rs
+@@ -4,7 +4,7 @@
+ use std::collections::{BTreeMap, BTreeSet, HashMap};
+ use std::sync::atomic::{AtomicU64, Ordering};
+ 
+-use tokio::sync::{mpsc, oneshot};
++use tokio::sync::{mpsc, oneshot, watch};
+ use tracing::trace;
+ 
+ use crate::EngineId;
+@@ -99,6 +99,7 @@
+ pub struct RequestRegistry {
+     closed: bool,
+     requests: HashMap<String, TrackedRequest>,
++    completions: HashMap<String, watch::Sender<bool>>,
+     active_lora_requests: usize,
+     routing_per_engine: BTreeMap<EngineId, EngineRoutingState>,
+ }
+@@ -108,6 +109,7 @@
+         Self {
+             closed: false,
+             requests: HashMap::default(),
++            completions: HashMap::default(),
+             active_lora_requests: 0,
+             routing_per_engine: engines
+                 .iter()
+@@ -128,7 +130,7 @@
+         lora_name: Option<String>,
+         data_parallel_rank: Option<u32>,
+     ) -> Result<(EngineId, OutputReceiver)> {
+-        if self.requests.contains_key(&request_id) {
++        if self.requests.contains_key(&request_id) || self.completions.contains_key(&request_id) {
+             return Err(Error::DuplicateRequestId { request_id });
+         }
+ 
+@@ -141,6 +143,7 @@
+         if lora.is_some() {
+             self.active_lora_requests += 1;
+         }
++        self.completions.insert(request_id.clone(), watch::channel(false).0);
+         self.requests.insert(
+             request_id,
+             TrackedRequest {
+@@ -203,6 +206,7 @@
+     pub fn sender_for_output(&mut self, output: &EngineCoreOutput) -> Option<OutputSender> {
+         self.apply_lora_events(output);
+         if output.finished() {
++            self.confirm_completion(&output.request_id);
+             self.remove(output.request_id.as_str()).map(|tracked| tracked.0)
+         } else {
+             self.requests
+@@ -269,7 +273,10 @@
+     ) -> Vec<OutputSender> {
+         request_ids
+             .into_iter()
+-            .filter_map(|request_id| self.remove(request_id.as_str()).map(|tracked| tracked.0))
++            .filter_map(|request_id| {
++                self.confirm_completion(request_id);
++                self.remove(request_id.as_str()).map(|tracked| tracked.0)
++            })
+             .collect()
+     }
+ 
+@@ -293,6 +300,7 @@
+         }
+ 
+         self.closed = true;
++        self.completions.clear();
+         self.active_lora_requests = 0;
+         std::mem::take(&mut self.requests)
+             .into_values()
+@@ -328,6 +336,22 @@
+         aborted
+     }
+ 
++    /// Subscribes to engine-origin completion independently of the output consumer.
++    pub fn completion(&self, request_id: &str) -> Option<watch::Receiver<bool>> {
++        self.completions.get(request_id).map(watch::Sender::subscribe)
++    }
++
++    /// Drops a completion observation when submission failed, without reporting engine termination.
++    pub fn discard_completion(&mut self, request_id: &str) {
++        self.completions.remove(request_id);
++    }
++
++    fn confirm_completion(&mut self, request_id: &str) {
++        if let Some(completion) = self.completions.remove(request_id) {
++            completion.send_replace(true);
++        }
++    }
++
+     /// Remove one request from the local registry. Returns the tracked entry if
+     /// it exists.
+     #[must_use]
+diff --git a/rust/src/engine-core-client/src/client/stream.rs b/rust/src/engine-core-client/src/client/stream.rs
+--- a/rust/src/engine-core-client/src/client/stream.rs
++++ b/rust/src/engine-core-client/src/client/stream.rs
+@@ -8,7 +8,7 @@
+ use futures::Stream;
+ use futures::stream::FusedStream;
+ use thiserror_ext::AsReport as _;
+-use tokio::sync::mpsc;
++use tokio::sync::{mpsc, watch};
+ use tracing::{debug, error, warn};
+ 
+ use crate::client::AbortRequest;
+@@ -37,6 +37,37 @@
+ 
+     fn deref(&self) -> &Self::Target {
+         &self.output
++    }
++}
++
++/// Engine-origin termination observation independent of local stream completion or abort.
++/// Confirmation ends request scheduling; it does not synchronize the GPU or release connector KV.
++#[derive(Clone, Debug)]
++pub struct RequestCompletion {
++    request_id: String,
++    receiver: watch::Receiver<bool>,
++}
++
++impl RequestCompletion {
++    pub(crate) fn new(request_id: String, receiver: watch::Receiver<bool>) -> Self {
++        Self {
++            request_id,
++            receiver,
++        }
++    }
++
++    /// Waits for a terminal engine output or finished-request notification.
++    /// Transport loss and local cancellation never become successful confirmation.
++    pub async fn wait(&self) -> Result<()> {
++        let mut receiver = self.receiver.clone();
++        loop {
++            if *receiver.borrow_and_update() {
++                return Ok(());
++            }
++            receiver.changed().await.map_err(|_| Error::RequestStreamClosed {
++                request_id: self.request_id.clone(),
++            })?;
++        }
+     }
+ }
+ 
+@@ -52,6 +83,7 @@
+     abort_tx: mpsc::UnboundedSender<AbortRequest>,
+     state: State,
+     rx: OutputReceiver,
++    completion: RequestCompletion,
+ }
+ 
+ impl EngineCoreOutputStream {
+@@ -60,6 +92,7 @@
+         engine_index: u32,
+         abort_tx: mpsc::UnboundedSender<AbortRequest>,
+         rx: OutputReceiver,
++        completion: RequestCompletion,
+     ) -> Self {
+         Self {
+             request_id,
+@@ -67,7 +100,13 @@
+             abort_tx,
+             state: State::Running,
+             rx,
+-        }
++            completion,
++        }
++    }
++
++    /// Returns the engine-origin completion handle, which may outlive this consumer stream.
++    pub fn completion(&self) -> RequestCompletion {
++        self.completion.clone()
+     }
+ 
+     /// Return the engine-core `request_id` bound to this stream.
+diff --git a/rust/src/engine-core-client/src/client.rs b/rust/src/engine-core-client/src/client.rs
+--- a/rust/src/engine-core-client/src/client.rs
++++ b/rust/src/engine-core-client/src/client.rs
+@@ -26,7 +26,7 @@
+ mod state;
+ mod stream;
+ 
+-pub use stream::{EngineCoreOutputStream, EngineCoreStreamOutput};
++pub use stream::{EngineCoreOutputStream, EngineCoreStreamOutput, RequestCompletion};
+ 
+ /// How the frontend acquires its request/response transport with Python
+ /// `EngineCoreProc`s.
+@@ -515,6 +515,10 @@
+         let data_parallel_rank = req.data_parallel_rank;
+         let (engine_id, rx) =
+             self.inner.register_request(request_id.clone(), lora_name, data_parallel_rank)?;
++        let completion = RequestCompletion::new(
++            request_id.clone(),
++            self.inner.request_completion(&request_id)?,
++        );
+ 
+         let result: Result<()> = async {
+             if let Some(coordinator) = self.coordinator.as_ref() {
+@@ -547,6 +551,7 @@
+             engine_id.engine_index().unwrap_or(0),
+             self.abort_tx.clone(),
+             rx,
++            completion,
+         ))
+     }
+ 
+diff --git a/rust/src/engine-core-client/src/lib.rs b/rust/src/engine-core-client/src/lib.rs
+--- a/rust/src/engine-core-client/src/lib.rs
++++ b/rust/src/engine-core-client/src/lib.rs
+@@ -12,6 +12,8 @@
+ pub mod test_utils;
+ mod transport;
+ 
++pub use client::RequestCompletion;
++
+ pub use client::{
+     AbortCause, CoordinatorMode, EngineCoreClient, EngineCoreClientConfig, EngineCoreOutputStream,
+     EngineCoreStreamOutput, TransportMode,
+diff --git a/rust/src/llm/src/output.rs b/rust/src/llm/src/output.rs
+--- a/rust/src/llm/src/output.rs
++++ b/rust/src/llm/src/output.rs
+@@ -239,6 +239,11 @@
+             request_metrics,
+             _request_guard: request_guard,
+         }
++    }
++
++    /// Observes engine termination independently of consumer cancellation and local abort output.
++    pub fn completion(&self) -> vllm_engine_core_client::RequestCompletion {
++        self.raw_stream.completion()
+     }
+ 
+     /// Return the internal engine request ID bound to this stream.

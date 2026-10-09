@@ -292,6 +292,9 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		if err != nil {
 			return err
 		}
+		if template.InstanceAdmission != nil && (selection == nil || selection.AdmissionStore == nil) {
+			return fmt.Errorf("ModelService %q instanceAdmission requires redeploying its model-server application", service.Name)
+		}
 		template.Application = selection
 		if selection != nil {
 			applications[compiledPools[index].Name] = *selection
@@ -400,7 +403,7 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 			}
 		}
 	}
-	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment}
+	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy()}
 	if previous != nil && previous.Spec.Template.Backend == template.Backend && previous.Spec.Template.SourceRevision == template.SourceRevision {
 		previousProfile := previous.Spec.Template.Backend
 		if previous.Spec.Template.Profiling != nil && previous.Spec.Template.Profiling.Engine == "nsight" {
@@ -420,6 +423,7 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 				if len(groups) == 1 || group.Spec.Revision == previous.Status.PreparedRevision || group.Spec.Revision == serviceServingRevision(service, previous) {
 					selection.Image = group.Spec.Runtime.Image
 					selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
+					selection.AdmissionStore = group.Spec.Runtime.AdmissionStore.DeepCopy()
 					if selection.ApplicationURL == "" {
 						selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", group.Spec.Runtime.SourceRevision)
 					}

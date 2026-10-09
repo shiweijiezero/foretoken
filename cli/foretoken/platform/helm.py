@@ -624,7 +624,7 @@ class Helm(HelmClient):
                 == "configuration"
             ):
                 images["applicationFiles.clientImage"] = document["data"]["clientImage"]
-            if document["kind"] not in {"Deployment", "DaemonSet"}:
+            if document["kind"] not in {"Deployment", "DaemonSet", "StatefulSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
                 if (
@@ -635,6 +635,14 @@ class Helm(HelmClient):
                     == "server"
                 ):
                     images["applicationFiles.serverImage"] = container["image"]
+                if (
+                    container["name"] == "valkey"
+                    and document["metadata"]
+                    .get("labels", {})
+                    .get("app.kubernetes.io/name")
+                    == "foretoken-admission-store"
+                ):
+                    images["admissionStore.image"] = container["image"]
                 if container["name"] == "rdma-device-plugin":
                     images["rdma.image"] = container["image"]
                 if container["name"] == "manager":

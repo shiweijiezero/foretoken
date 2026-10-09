@@ -580,6 +580,44 @@ spec:
                 description: ModelGroupRuntime defines the resolved inference-engine
                   runtime.
                 properties:
+                  admissionStore:
+                    description: AdmissionStore pins the shared ledger selected by
+                      the platform for this cohort.
+                    properties:
+                      url:
+                        description: URL is a credential-free Redis-compatible endpoint.
+                        pattern: ^rediss?://[^@]+$
+                        type: string
+                      urlSecretRef:
+                        description: URLSecretRef contains the full connection URL
+                          in a namespace-local Secret.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one admission store URL or Secret reference
+                        is required
+                      rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     description: ApplicationURL pins the controller-selected executable
                       publication for this cohort.
@@ -599,6 +637,20 @@ spec:
                     maxLength: 2048
                     minLength: 1
                     type: string
+                  instanceAdmission:
+                    description: InstanceAdmission pins the acceptance limit for this
+                      instance's runtime.
+                    properties:
+                      maxConcurrentRequests:
+                        description: MaxConcurrentRequests includes engine waiting,
+                          running, and unfinished submissions.
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                    required:
+                    - maxConcurrentRequests
+                    type: object
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
                       InternalGenerateRequestBodyLimitBytes is the group-local generate request

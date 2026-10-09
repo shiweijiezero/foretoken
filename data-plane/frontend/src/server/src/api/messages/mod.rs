@@ -19,7 +19,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use foretoken_admission::AdmissionApi;
 use serde_json::json;
 
 use self::convert::{prepare_count_tokens_request, prepare_messages_request};
@@ -52,13 +51,7 @@ async fn messages(
         };
     let stream = chat.intermediate;
     match state
-        .generate_chat(
-            model,
-            chat,
-            include_reasoning,
-            timing,
-            AdmissionApi::Messages,
-        )
+        .generate_chat(model, chat, include_reasoning, timing)
         .await
     {
         Ok(generated) if stream => output::streaming(generated, state.stream_idle),
@@ -75,7 +68,6 @@ async fn count_tokens(
 ) -> Response {
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let origin = AdmissionOrigin {
-        api: Some(AdmissionApi::Messages),
         received_at: timing.started_at,
     };
     let Json(request) = match request {

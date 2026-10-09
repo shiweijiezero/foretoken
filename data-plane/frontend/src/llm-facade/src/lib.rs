@@ -9,6 +9,7 @@ pub use facade::{
     consume_encoder, consume_prefill, encoder_stage_request, inject_ec_transfer_params,
     pd_stage_requests, reject_client_transfer_params,
 };
+use foretoken_request_ledger::ReservationRef;
 use foretoken_router::RouteDecision;
 use futures::Stream;
 pub use http::{HttpFacade, bootstrap_engine_id};
@@ -30,6 +31,8 @@ pub enum RouteStage {
 pub enum LlmFacadeError {
     #[error("request is invalid for the selected backend")]
     InvalidRequest,
+    #[error("backend explicitly rejected acceptance because it is busy")]
+    Busy,
     #[error("backend unavailable")]
     Unavailable,
     #[error("backend rejected request")]
@@ -45,9 +48,15 @@ pub enum LlmFacadeError {
 pub trait LlmFacade: Send + Sync {
     /// Starts one backend generation for the execution workflow.
     ///
-    /// Returns a live token stream owned by the caller until terminal output or drop; failures
-    /// before stream creation describe a request that never entered streaming.
-    async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError>;
+    /// Returns a live token stream owned by the caller until terminal output or drop.
+    /// The adapter converts optional role priority to native scheduling; absent rules preserve
+    /// client priority. Only `Busy` proves nonacceptance; other failures must not be replayed.
+    async fn generate(
+        &self,
+        request: GenerateRequest,
+        reservation: Option<ReservationRef>,
+        role_priority: Option<i32>,
+    ) -> Result<TokenStream, LlmFacadeError>;
 
     /// Requests cleanup of backend work whose consuming workflow has ended early.
     ///
@@ -90,6 +99,13 @@ impl MultiStageCleanup {
     /// it produces no handle because this guard retains ownership until completion.
     pub fn register(&mut self, facade: Arc<dyn LlmFacade>, request_id: String) {
         self.stages.push((facade, request_id));
+    }
+
+    /// Removes a stage after an explicit nonacceptance response, without sending an abort.
+    /// Submission owns this transition so a delayed abort cannot cancel a subsequent retry.
+    pub fn rejected(&mut self, request_id: &str) {
+        self.stages
+            .retain(|(_, registered)| registered != request_id);
     }
 
     /// Transfers cleanup ownership to the final backend stream returned to HTTP response handling.

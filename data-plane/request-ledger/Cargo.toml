@@ -2,17 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [package]
-name = "foretoken-admission"
+name = "foretoken-request-ledger"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-foretoken-request-ledger = { path = "../../../request-ledger" }
-humantime.workspace = true
-uuid.workspace = true
-tracing.workspace = true
-prometheus-client.workspace = true
+redis = { version = "0.32.7", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "connection-manager", "script"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

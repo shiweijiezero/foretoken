@@ -23,9 +23,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -75,6 +78,7 @@ type FrontendRuntimeProfile struct {
 	ImagePullSecrets  []corev1.LocalObjectReference
 	RuntimeCache      *inferencev1alpha1.RuntimeCacheBinding
 	HuggingFaceAccess *inferencev1alpha1.HuggingFaceAccess
+	AdmissionStore    *inferencev1alpha1.AdmissionStoreConnection
 	Gateway           *GatewayParent
 }
 
@@ -103,13 +107,78 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
+	workloadPod := func(object client.Object) bool {
+		return object.GetLabels()[frontendServiceLabel] != "" || object.GetLabels()[modelGroupLabel] != ""
+	}
 	return builder.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForPod), ctrlbuilder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(event event.CreateEvent) bool { return workloadPod(event.Object) },
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				before, after := event.ObjectOld.(*corev1.Pod), event.ObjectNew.(*corev1.Pod)
+				return workloadPod(before) || workloadPod(after) || before.Status.Phase != after.Status.Phase && (after.Status.Phase == corev1.PodSucceeded || after.Status.Phase == corev1.PodFailed)
+			},
+			DeleteFunc:  func(event.DeleteEvent) bool { return true },
+			GenericFunc: func(event event.GenericEvent) bool { return workloadPod(event.Object) },
+		})).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendForPod)).
 		Complete(reconciler)
+}
+
+// frontendsForPod wakes only affected frontends; unpublished Pods are never recognized by provenance.
+// Unlabelled terminal and delete events use the published UID lists instead of broadcasting ordinary Pod updates.
+func (reconciler *FrontendServiceReconciler) frontendsForPod(ctx context.Context, object client.Object) []reconcile.Request {
+	if name := object.GetLabels()[frontendServiceLabel]; name != "" {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: name}}}
+	}
+	if object.GetLabels()[modelGroupLabel] != "" {
+		return reconciler.frontendsInNamespace(ctx, object)
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	var configurations corev1.ConfigMapList
+	if err := reader.List(ctx, &configurations, client.InNamespace(object.GetNamespace()), client.HasLabels{frontendServiceLabel}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "read published instance membership for Pod termination")
+		return reconciler.frontendsInNamespace(ctx, object)
+	}
+	requests := make([]reconcile.Request, 0)
+	for index := range configurations.Items {
+		configuration := &configurations.Items[index]
+		owner := metav1.GetControllerOf(configuration)
+		if owner == nil || owner.APIVersion != inferencev1alpha1.GroupVersion.String() || owner.Kind != "FrontendService" {
+			continue
+		}
+		payload, exists := configuration.Data[servingSnapshotKey]
+		if !exists {
+			continue
+		}
+		snapshot, _, err := readServingPublication([]byte(payload))
+		if err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "read published instance membership", "configMap", configuration.Name)
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
+			continue
+		}
+		uid := string(object.GetUID())
+		if !slices.Contains(snapshot.FrontendInstances, uid) && !slices.Contains(snapshot.BackendInstances, uid) {
+			continue
+		}
+		frontend := new(inferencev1alpha1.FrontendService)
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}, frontend); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "read frontend for published instance membership")
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
+			continue
+		}
+		if configuration.Name == frontendServingConfigMapName(frontend) && routingControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
+		}
+	}
+	return requests
 }
 
 // frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
@@ -123,15 +192,6 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&frontends.Items[index])})
 	}
 	return requests
-}
-
-// frontendForPod wakes configuration acknowledgement when a frontend replica changes.
-func (reconciler *FrontendServiceReconciler) frontendForPod(_ context.Context, object client.Object) []reconcile.Request {
-	name := object.GetLabels()[frontendServiceLabel]
-	if name == "" {
-		return nil
-	}
-	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: name}}}
 }
 
 // servingCacheReady lets frontends share a cache only after a serving workload has bound it.
@@ -238,13 +298,34 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 }
 
 // Serving configuration protocol selected with the frontend application.
-const frontendServingConfigVersion uint32 = 2
+const frontendServingConfigVersion uint32 = 3
 const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
 func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (ctrl.Result, error) {
 	if !frontend.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
+	}
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
+	}
+	_, admissionErr := effectiveModelAdmission(frontend.Spec, inferencev1alpha1.ModelServiceSpec{})
+	if admissionErr == nil {
+		for _, service := range services.Items {
+			if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !service.DeletionTimestamp.IsZero() {
+				continue
+			}
+			if _, err := effectiveModelAdmission(frontend.Spec, service.Spec); err != nil {
+				admissionErr = fmt.Errorf("ModelService %q admission: %w", service.Name, err)
+				break
+			}
+		}
+	}
+	if admissionErr != nil {
+		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: admissionErr.Error()})
+		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
 	}
 	if err := reconciler.RuntimeProfile.validate(); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeProfileIncomplete", FailureMessage: err.Error()})
@@ -277,6 +358,18 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 				SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
 				DeploymentRevision: deploymentRevision,
 			}
+			for _, env := range current.Spec.Template.Spec.Containers[0].Env {
+				if env.Name != runtimeconfig.AdmissionStoreURLEnv {
+					continue
+				}
+				selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
+				if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+					selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
+				}
+				if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
+					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+				}
+			}
 			base := frontend.DeepCopy()
 			frontend.Status.Application = selection
 			frontend.Status.ServingConfigVersion = 0
@@ -295,7 +388,7 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision}
+		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
 		if sourceRevision != "" {
 			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
 		}
@@ -317,14 +410,11 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		}
 	}
 	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
-	var services inferencev1alpha1.ModelServiceList
-	if err := reconciler.List(ctx, &services, client.InNamespace(frontend.Namespace)); err != nil {
-		return ctrl.Result{}, fmt.Errorf("list ModelServices for frontend: %w", err)
-	}
+	profile.AdmissionStore = selection.AdmissionStore.DeepCopy()
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	_, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
+	_, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items, false)
 
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
 	if err != nil {
@@ -426,6 +516,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	configuration := reconciler.observeConfiguration(ctx, frontend, currentDeployment)
 	if projectionErr != nil {
 		configuration = metav1.Condition{Status: metav1.ConditionFalse, Reason: "ServingSnapshotProjectionFailed", Message: projectionErr.Error()}
+		var backendRequired *backendDeploymentRequiredError
+		if errors.As(projectionErr, &backendRequired) {
+			configuration.Reason = "BackendDeploymentRequired"
+		}
 	}
 	state := frontendState{
 		Configuration:  configuration,

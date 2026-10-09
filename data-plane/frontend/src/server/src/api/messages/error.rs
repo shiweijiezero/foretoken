@@ -54,6 +54,7 @@ impl From<GenerationError> for AnthropicApiError {
             }
             GenerationError::ModelNotFound => (StatusCode::NOT_FOUND, "not_found_error"),
             GenerationError::Unavailable
+            | GenerationError::BackendBusy
             | GenerationError::Overloaded
             | GenerationError::QueueTimeout => {
                 (StatusCode::SERVICE_UNAVAILABLE, "overloaded_error")

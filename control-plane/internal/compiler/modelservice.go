@@ -33,6 +33,9 @@ type ModelPool struct {
 
 // CompileModelService normalizes shorthand or advanced Pool intent without resolving platform access settings.
 func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, error) {
+	if err := spec.Admission.Validate(); err != nil {
+		return nil, err
+	}
 	source := spec.Source
 	if source == "" {
 		source = inferencev1alpha1.ModelSourceHF
@@ -53,6 +56,12 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	timeouts, err := normalizeTimeouts(spec.Timeouts)
 	if err != nil {
 		return nil, err
+	}
+	if spec.InstanceAdmission != nil && spec.Backend == "vllm-omni" {
+		return nil, fmt.Errorf("instanceAdmission is not supported by the vllm-omni video backend")
+	}
+	if spec.InstanceAdmission != nil && spec.InstanceAdmission.MaxConcurrentRequests == 0 {
+		return nil, fmt.Errorf("instanceAdmission.maxConcurrentRequests must be positive")
 	}
 	internalGenerateRequestBodyLimitBytes := valueOrDefaultInt64(spec.InternalGenerateRequestBodyLimitBytes, inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes)
 	if internalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || internalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
@@ -181,6 +190,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Resources:                             normalizedResources,
 			NodeSelector:                          normalizedNodeSelector,
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
+			InstanceAdmission:                     spec.InstanceAdmission.DeepCopy(),
 			Network:                               network,
 			ECProfile:                             ecProfile,
 			Timeouts:                              timeouts,

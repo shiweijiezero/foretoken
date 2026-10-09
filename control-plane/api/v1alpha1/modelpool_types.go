@@ -112,6 +112,9 @@ type ApplicationSelection struct {
 	ApplicationURL string `json:"applicationURL,omitempty"`
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+	// AdmissionStore retains the ledger connection selected with this executable application.
+	// +optional
+	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -172,6 +175,10 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// InstanceAdmission is the service-selected instance acceptance limit for this Pool.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
 
 	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
 	// request body limit.

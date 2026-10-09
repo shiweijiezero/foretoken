@@ -24,8 +24,9 @@ const ROUTING_STAGES: [RoutingStage; 3] = [
     RoutingStage::Prefill,
     RoutingStage::Decode,
 ];
-const OUTCOMES: [&str; 7] = [
+const OUTCOMES: [&str; 8] = [
     "selected",
+    "busy",
     "no_matching_target",
     "no_matching_decode",
     "invalid_filter",
@@ -278,7 +279,8 @@ impl RouterMetricsScope {
     ) {
         let outcome = match result {
             Ok(_) => "selected",
-            Err(RouteError::NoMatchingRouteTarget { .. }) => "no_matching_target",
+            Err(RouteError::Busy) => "busy",
+            Err(RouteError::NoCompatibleTarget { .. }) => "no_matching_target",
             Err(RouteError::NoMatchingDecode { .. }) => "no_matching_decode",
             Err(
                 RouteError::InvalidFilterIndex { .. } | RouteError::DuplicateFilterIndex { .. },

@@ -20,7 +20,6 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use foretoken_admission::AdmissionApi;
 use foretoken_chat::{ChatEvent, FinishReason};
 use futures::{Stream, StreamExt};
 use serde_json::json;
@@ -67,13 +66,7 @@ async fn create(
         Err(error) => return error.into_response(),
     };
     let generated = match state
-        .generate_chat(
-            meta.model.clone(),
-            chat,
-            meta.include_reasoning,
-            timing,
-            AdmissionApi::Responses,
-        )
+        .generate_chat(meta.model.clone(), chat, meta.include_reasoning, timing)
         .await
     {
         Ok(generated) => generated,

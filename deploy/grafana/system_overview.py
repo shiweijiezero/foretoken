@@ -52,8 +52,8 @@ ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
     "Reading this dashboard": "看板读法",
-    "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Model capacity is per replica, never a shared total. Adjust the time range to inspect trends.":
-        "选择模型查看推理指标，选择模型和前端查看准入；HTTP 流量覆盖整个前端。模型容量按副本独立计算，不合成共享总额。调整时间范围查看趋势。",
+    "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Waiting and unfinished occupancy are shared within each frontend service and model; replica observations are deduplicated. Adjust the time range to inspect trends.":
+        "选择模型查看推理指标，选择模型和前端查看准入；HTTP 流量覆盖整个前端。等待和未完成占用由同一前端服务的各副本共享，看板对重复观测去重。调整时间范围查看趋势。",
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
@@ -254,45 +254,41 @@ ZH = {
     "Admission resources": "准入资源",
     "Admission calls / s": "准入调用速率",
     "HTTP model-admission attempts per second; batches count once.": "各模型每秒发起的 HTTP 准入调用数，批次计一次。",
-    "Admitted calls / s": "获准调用速率",
-    "HTTP requests admitted for processing per second; batches count once.": "每秒获准处理的 HTTP 请求数，批次计一次。",
-    "Draining replicas": "正在排空的副本",
-    "Replicas finishing the old rule before a model rule replacement or removal.": "模型规则替换或移除前，仍在完成旧规则已接受工作的副本数。",
+    "Dispatched calls / s": "派发成功速率",
+    "HTTP requests reaching first backend acceptance per second; batches count once.": "每秒首次获后端接受的 HTTP 请求数，批次计一次。",
+    "Enqueued calls / s": "入队速率",
+    "HTTP requests acquiring waiting ownership per second; batches count once.": "每秒取得等待名额的 HTTP 请求数，批次计一次。",
     "Capacity rejection ratio": "容量拒绝比例",
     "Share of each model's completed HTTP admission calls rejected for capacity.": "各模型已结束的 HTTP 准入调用中，因容量不足被拒绝的占比。",
     "Admission timeout ratio": "准入超时比例",
     "Share of each model's completed HTTP admission calls that timed out.": "各模型已结束的 HTTP 准入调用中，超时调用的占比。",
-    "Admitted queue wait (p95)": "获准排队等待（P95）",
-    "Queue-wait p95 for HTTP requests that were admitted.": "排队后获准的 HTTP 请求等待 P95。",
+    "Dispatch wait (p95)": "派发等待（P95）",
+    "Waiting-ownership p95 through first backend acceptance, including preparation.": "从取得等待名额到首次后端接受的 P95，包括输入准备。",
     "No samples": "无样本",
-    "Unlimited": "无限流",
-    "Concurrency": "并发限流",
-    "No queue": "不排队",
     "Admission by replica": "各模型与副本准入状态",
-    "Compare each model's effective rule, drain state and results across frontend replicas.": "按模型对比各前端副本的生效规则、排空状态与准入结果。",
+    "Compare bounded admission, ledger availability and request results across frontend replicas.": "对比各前端副本的有界准入配置、共享账本可用性与请求结果。",
     "Admission calls and results / s": "准入到达与结果速率",
-    "Admission calls per second by model, origin and result; arrivals include pending calls.": "按模型、来源与结果展示准入调用速率；到达包含尚未结束的调用。",
-    "Admission capacity by replica": "各模型与副本准入容量",
-    "Effective limits and occupancy per model and replica; draining retains the old rule's limits.": "各模型与副本的生效上限和占用；排空期间保留旧规则上限。",
-    "Queue wait by result": "各结果的排队等待",
-    "Compare queue waits for admitted, timed-out and cancelled calls.": "对比获准、超时和取消调用的排队等待。",
-    "Queue exit samples / s": "排队退出样本速率",
-    "Completed queue-wait observations per second, grouped by model, origin and result.": "按模型、来源与结果展示每秒结束的排队等待样本数。",
-    "Active work units": "活跃工作单位",
-    "Queued work units": "排队工作单位",
-    "Admitted work units and the effective limit for each model and replica.": "各模型与副本已准入的工作单位及生效并发上限。",
-    "Waiting work units and the effective queue limit for each model and replica.": "各模型与副本等待中的工作单位及生效队列上限。",
+    "Results distinguish backend acceptance (dispatched) from CPU-only completion (prepared); arrivals include pending calls.": "结果区分后端接受（dispatched）与仅 CPU 工作完成（prepared）；到达包含尚未结束的调用。",
+    "Waiting duration by result": "各结果的排队等待",
+    "Compare waiting duration for dispatched, prepared, timed-out and cancelled calls.": "对比后端接受、CPU 工作完成、超时和取消调用的等待时间。",
+    "Waiting exit samples / s": "排队退出样本速率",
+    "Completed waiting-ownership observations per second, grouped by model, origin and result.": "按模型、来源与结果展示每秒结束的排队等待样本数。",
+    "Waiting work units": "等待工作单位",
+    "Reserved and accepted work units": "预留与已接受工作单位",
+    "Waiting limit": "等待上限",
+    "Bounded admission": "有界准入",
+    "Store available": "账本可用",
+    "Ledger observations by replica": "各副本的共享账本观测",
+    "Replicas observe the same shared occupancy. Missing counts indicate a failed ledger read, not zero usage.": "各副本观测同一份共享占用。缺失数值表示账本读取失败，不表示占用为零。",
+    "Shared dispatch reservations plus accepted unfinished generation units. There is no model-wide concurrency limit.": "共享派发预留及后端已接受但尚未完成的生成单位；不存在模型总并发上限。",
+    "Shared waiting occupancy includes preparation and unresolved submission. The limit is shared by the service's replicas.": "共享等待占用包括输入准备和接受结果未定的提交；服务各副本共同使用等待上限。",
     "Replica": "副本",
-    "Admission rule": "准入规则",
     "Scrape": "抓取",
     "Telemetry complete": "指标完整",
-    "Concurrency limit": "并发上限",
-    "Queue limit": "队列上限",
-    "Draining": "正在排空",
-    "Admitted wait p95": "获准等待 P95",
+    "Dispatch wait p95": "派发等待 P95",
     "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / arrivals": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / 到达",
-    "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}": "占用 / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
-    "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}": "上限 / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
+    "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}": "占用 / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
+    "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}": "上限 / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
 
 }
 
@@ -689,7 +685,7 @@ def render(locale: str) -> str:
 
 
 def admission_panels(board: dashboard.Dashboard) -> None:
-    """Show each model's admission results and each replica's effective resource limits."""
+    """Show request dispatch outcomes and deduplicated service/model ledger occupancy."""
     target_keys = "namespace,frontend_service,pod"
     pod_keys = target_keys + ",model_name"
     service_keys = "namespace,frontend_service,model_name"
@@ -708,7 +704,7 @@ def admission_panels(board: dashboard.Dashboard) -> None:
         labels = 'origin="http"'
         if result:
             labels += f',result=~"{result}"'
-        return f"sum by({keys}) ({metric('foretoken_admission_results_total', labels, rate=True)})"
+        return f"sum by({keys}) ({metric('foretoken_admission_dispatch_results_total', labels, rate=True)})"
 
     def ratio(keys: str, result: str) -> str:
         total = results(keys)
@@ -716,46 +712,43 @@ def admission_panels(board: dashboard.Dashboard) -> None:
         return f"(({matched}) or (0 * ({total}))) / (({total}) > 0)"
 
     def wait(quantile: float, keys: str, extra: str) -> str:
-        buckets = metric("foretoken_admission_queue_wait_seconds_bucket", extra, rate=True)
+        buckets = metric("foretoken_admission_wait_seconds_bucket", extra, rate=True)
         return f"histogram_quantile({quantile}, sum by({keys},le) ({buckets}))"
 
     up = f"max by({target_keys}) ({metric('up')})"
-    info = f"max by({pod_keys},algorithm) ({metric('foretoken_admission_info')})"
     catalog = f"max by({pod_keys}) ({metric('foretoken_admission_model_info')})"
-    # Published cold models remain rows even when their entire rule telemetry is missing.
-    anchor = f"max by({pod_keys}) (({catalog}) or ({info}))"
-    complete = info
-    for name, labels in (
-        ("attempts_total", 'origin="http"'),
-        ("results_total", 'origin="http",result="admitted"'),
-        ("draining", ""),
-    ):
-        complete = f"({complete}) and on({pod_keys}) ({metric('foretoken_admission_' + name, labels)})"
-    concurrency = metric("foretoken_admission_info", 'algorithm="concurrency"')
-    bounded = f"({complete}) and on({pod_keys}) ({concurrency})"
-    for name in ("active_work_units", "queued_work_units", "concurrency_limit_work_units", "queue_limit_work_units"):
+    anchor = catalog
+    enabled = metric("foretoken_admission_enabled")
+    available = metric("foretoken_admission_store_available")
+    # Event series need real traffic; cold models are covered by publication and ledger reporting.
+    complete = f"({enabled}) and on({pod_keys}) ({catalog})"
+    bounded = f"({complete}) and on({pod_keys}) (({enabled}) == 1)"
+    for name in ("shared_waiting_limit_work_units", "store_available"):
         bounded = f"({bounded}) and on({pod_keys}) ({metric('foretoken_admission_' + name)})"
-    covered = f"max by({pod_keys}) ((({complete}) unless on({pod_keys}) ({concurrency})) or ({bounded}))"
-    coverage = f"(({covered}) and on({target_keys}) (({up}) == 1)) or on({pod_keys}) (0 * ({anchor}))"
-    unknown_rule = f'label_replace(({anchor}), "algorithm", "unreported", "", "")'
-    identity = f"({info}) or on({pod_keys}) ({unknown_rule})"
+    observed = f"({bounded}) and on({pod_keys}) (({available}) == 1)"
+    for name in ("shared_waiting_work_units", "shared_active_work_units"):
+        observed = f"({observed}) and on({pod_keys}) ({metric('foretoken_admission_' + name)})"
+    covered = f"max by({pod_keys}) ((({complete}) and on({pod_keys}) (({enabled}) == 0)) or (({bounded}) and on({pod_keys}) (({available}) == 0)) or ({observed}))"
+    coverage = f"(({anchor}) and on({pod_keys}) ({covered}) and on({target_keys}) (({up}) == 1)) or on({pod_keys}) (0 * ({anchor}))"
+    identity = anchor
     live = f"({up}) == 1"
     attempts = metric("foretoken_admission_attempts_total", 'origin="http"', rate=True)
+    enqueued = metric("foretoken_admission_enqueued_total", 'origin="http"', rate=True)
 
     board.with_row(dashboard.Row("Admission"))
     for title, description, expr, unit in (
         ("Admission calls / s", "HTTP model-admission attempts per second; batches count once.",
          f"sum by({service_keys}) ({attempts})", "suffix: calls/s"),
-        ("Admitted calls / s", "HTTP requests admitted for processing per second; batches count once.",
-         results(service_keys, "admitted"), "suffix: calls/s"),
-        ("Draining replicas", "Replicas finishing the old rule before a model rule replacement or removal.",
-         f"sum by({service_keys}) ({metric('foretoken_admission_draining')})", "short"),
+        ("Dispatched calls / s", "HTTP requests reaching first backend acceptance per second; batches count once.",
+         results(service_keys, "dispatched"), "suffix: calls/s"),
+        ("Enqueued calls / s", "HTTP requests acquiring waiting ownership per second; batches count once.",
+         f"sum by({service_keys}) ({enqueued})", "suffix: calls/s"),
         ("Capacity rejection ratio", "Share of each model's completed HTTP admission calls rejected for capacity.",
          ratio(service_keys, "capacity_rejected"), "percentunit"),
         ("Admission timeout ratio", "Share of each model's completed HTTP admission calls that timed out.",
          ratio(service_keys, "queue_timeout|deadline_exceeded"), "percentunit"),
-        ("Admitted queue wait (p95)", "Queue-wait p95 for HTTP requests that were admitted.",
-         wait(0.95, service_keys, 'origin="http",result="admitted"'), "s"),
+        ("Dispatch wait (p95)", "Waiting-ownership p95 through first backend acceptance, including preparation.",
+         wait(0.95, service_keys, 'origin="http",result="dispatched"'), "s"),
     ):
         board.with_panel(headline(title, description, expr, unit=unit, legend=service_legend, no_value="No samples").span(8).height(5))
 
@@ -789,8 +782,8 @@ def admission_panels(board: dashboard.Dashboard) -> None:
             )
         names = {f"Value #{chr(ord('B') + index)}": name for index, (name, _, _) in enumerate(columns)}
         # Model-qualified joins prevent quota mixing; separate display columns keep names readable.
-        ordered = ["model_name", "pod", "algorithm", *names]
-        names.update({"model_name": "Model", "pod": "Replica", "algorithm": "Admission rule"})
+        ordered = ["model_name", "pod", *names]
+        names.update({"model_name": "Model", "pod": "Replica"})
         no_data = dashboard_models.SpecialValueMap(
             options=dashboard_models.DashboardSpecialValueMapOptions(
                 match=dashboard_models.SpecialValueMatch.NULL_AND_NAN,
@@ -808,42 +801,32 @@ def admission_panels(board: dashboard.Dashboard) -> None:
             }))
             .override_by_name("Model", [dashboard_models.DynamicConfigValue(id_val="custom.width", value=400)])
             .override_by_name("Replica", [dashboard_models.DynamicConfigValue(id_val="custom.width", value=240)])
-            .override_by_name("Admission rule", [dashboard_models.DynamicConfigValue(id_val="mappings", value=[{
-                "type": "value", "options": {
-                    "allow_all": {"text": "Unlimited"},
-                    "concurrency": {"text": "Concurrency"},
-                    "unreported": {"text": "No data"},
-                },
-            }])])
             .span(24).height(8)
         )
         for name, _, unit in columns:
             panel.override_by_name(name, [dashboard_models.DynamicConfigValue(id_val="unit", value=unit)])
-        if any(name == "Queue limit" for name, _, _ in columns):
-            panel.override_by_name("Queue limit", [dashboard_models.DynamicConfigValue(id_val="mappings", value=[
-                no_data, {"type": "value", "options": {"0": {"text": "No queue"}}},
-            ])])
         return panel
 
     board.with_panel(replica_table(
         "Admission by replica",
-        "Compare each model's effective rule, drain state and results across frontend replicas.",
+        "Compare bounded admission, ledger availability and request results across frontend replicas.",
         [
             ("Scrape", f"({anchor}) * on({target_keys}) group_left() ({up})", "short"),
             ("Telemetry complete", coverage, "short"),
-            ("Draining", metric("foretoken_admission_draining"), "short"),
+            ("Bounded admission", enabled, "short"),
+            ("Store available", available, "short"),
             ("Capacity rejection ratio", ratio(pod_keys, "capacity_rejected"), "percentunit"),
             ("Admission timeout ratio", ratio(pod_keys, "queue_timeout|deadline_exceeded"), "percentunit"),
-            ("Admitted wait p95", wait(0.95, pod_keys, 'origin="http",result="admitted"'), "s"),
+            ("Dispatch wait p95", wait(0.95, pod_keys, 'origin="http",result="dispatched"'), "s"),
         ],
     ))
 
     details = dashboard.Row("Admission results and wait")
     details.with_panel(series(
         "Admission calls and results / s",
-        "Admission calls per second by model, origin and result; arrivals include pending calls.",
+        "Results distinguish backend acceptance (dispatched) from CPU-only completion (prepared); arrivals include pending calls.",
         [
-            foretoken_query(f"sum by({service_keys},origin,result) ({metric('foretoken_admission_results_total', rate=True)})",
+            foretoken_query(f"sum by({service_keys},origin,result) ({metric('foretoken_admission_dispatch_results_total', rate=True)})",
                            service_legend + " / {{origin}} / {{result}}"),
             foretoken_query(f"sum by({service_keys},origin) ({metric('foretoken_admission_attempts_total', rate=True)})",
                            service_legend + " / {{origin}} / arrivals"),
@@ -853,53 +836,61 @@ def admission_panels(board: dashboard.Dashboard) -> None:
         dashboard_models.DynamicConfigValue(id_val="custom.fillOpacity", value=0),
     ]))
     details.with_panel(series(
-        "Queue exit samples / s",
-        "Completed queue-wait observations per second, grouped by model, origin and result.",
+        "Waiting exit samples / s",
+        "Completed waiting-ownership observations per second, grouped by model, origin and result.",
         [foretoken_query(
-            f"sum by({service_keys},origin,result) ({metric('foretoken_admission_queue_wait_seconds_count', rate=True)})",
+            f"sum by({service_keys},origin,result) ({metric('foretoken_admission_wait_seconds_count', rate=True)})",
             service_legend + " / {{origin}} / {{result}}",
         )], unit="suffix: samples/s", span=12,
     ))
     details.with_panel(series(
-        "Queue wait by result",
-        "Compare queue waits for admitted, timed-out and cancelled calls.",
+        "Waiting duration by result",
+        "Compare waiting duration for dispatched, prepared, timed-out and cancelled calls.",
         [foretoken_query(wait(quantile, service_keys + ",origin,result", extra),
                         service_legend + " / {{origin}} / {{result}} / " + label)
          for quantile, extra, label in (
-             (0.50, 'result="admitted"', "p50"),
-             (0.95, 'result="admitted"', "p95"),
-             (0.95, 'result!="admitted"', "p95"),
+             (0.50, 'result="dispatched"', "p50"),
+             (0.95, 'result="dispatched"', "p95"),
+             (0.95, 'result!="dispatched"', "p95"),
          )], unit="s", span=24,
     ))
     board.with_row(details)
 
     resources = dashboard.Row("Admission resources")
+    shared_keys = "namespace,frontend_service,frontend_service_uid,model_name"
+    shared_legend = service_legend + " / {{frontend_service_uid}}"
+
+    def shared(name: str) -> str:
+        # Each scrape reads the same ledger scope, not a replica-local contribution.
+        observed = f"({metric(name)}) and on({target_keys}) ({live})"
+        return f"max by({shared_keys}) ({observed})"
+
     resources.with_panel(replica_table(
-        "Admission capacity by replica",
-        "Effective limits and occupancy per model and replica; draining retains the old rule's limits.",
+        "Ledger observations by replica",
+        "Replicas observe the same shared occupancy. Missing counts indicate a failed ledger read, not zero usage.",
         [(name, f"({metric('foretoken_admission_' + suffix)}) and on({target_keys}) ({live})", "short")
          for name, suffix in (
-             ("Active work units", "active_work_units"),
-             ("Concurrency limit", "concurrency_limit_work_units"),
-             ("Queued work units", "queued_work_units"),
-             ("Queue limit", "queue_limit_work_units"),
+             ("Store available", "store_available"),
+             ("Reserved and accepted work units", "shared_active_work_units"),
+             ("Waiting work units", "shared_waiting_work_units"),
+             ("Waiting limit", "shared_waiting_limit_work_units"),
          )],
     ))
-    # Quotas belong to model/replica pairs: All never creates a summed capacity.
-    for title, description, occupancy, limit in (
-        ("Active work units", "Admitted work units and the effective limit for each model and replica.",
-         "active_work_units", "concurrency_limit_work_units"),
-        ("Queued work units", "Waiting work units and the effective queue limit for each model and replica.",
-         "queued_work_units", "queue_limit_work_units"),
-    ):
-        resources.with_panel(series(
-            title, description,
-            [foretoken_query(f"max by({pod_keys}) ({metric('foretoken_admission_' + suffix)}) and on({target_keys}) ({live})",
-                            label + " / " + replica_legend)
-             for label, suffix in (("Occupancy", occupancy), ("Limit", limit))],
-            unit="suffix: work units", span=12,
-        ))
+    resources.with_panel(series(
+        "Reserved and accepted work units",
+        "Shared dispatch reservations plus accepted unfinished generation units. There is no model-wide concurrency limit.",
+        [foretoken_query(shared("foretoken_admission_shared_active_work_units"), shared_legend)],
+        unit="suffix: work units", span=12,
+    ))
+    resources.with_panel(series(
+        "Waiting work units",
+        "Shared waiting occupancy includes preparation and unresolved submission. The limit is shared by the service's replicas.",
+        [foretoken_query(shared("foretoken_admission_" + suffix), label + " / " + shared_legend)
+         for label, suffix in (("Occupancy", "shared_waiting_work_units"), ("Limit", "shared_waiting_limit_work_units"))],
+        unit="suffix: work units", span=12,
+    ))
     board.with_row(resources)
+
 
 
 def build() -> dashboard_models.Dashboard:
@@ -948,7 +939,7 @@ def build() -> dashboard_models.Dashboard:
         .with_variable(
             variable(
                 "model_name", "Model",
-                'label_values({__name__=~"foretoken:model_instance_info|foretoken_admission_model_info|foretoken_admission_info",namespace=~"$namespace"}, model_name)',
+                'label_values({__name__=~"foretoken:model_instance_info|foretoken_admission_model_info",namespace=~"$namespace"}, model_name)',
             )
         )
         .with_variable(
@@ -991,7 +982,7 @@ def build() -> dashboard_models.Dashboard:
         .title("Reading this dashboard")
         .mode(text_models.TextMode.MARKDOWN)
         .content(
-            "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Model capacity is per replica, never a shared total. "
+            "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Waiting and unfinished occupancy are shared within each frontend service and model; replica observations are deduplicated. "
             "Adjust the time range to inspect trends."
         )
         .span(24)

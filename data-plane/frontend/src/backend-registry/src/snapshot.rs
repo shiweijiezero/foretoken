@@ -15,6 +15,10 @@ pub struct ServingSnapshot {
     /// Effective rules for the configured public model catalog.
     pub admission: BTreeMap<String, foretoken_admission::AdmissionConfig>,
     pub version: u64,
+    /// Live frontend Pod identities, published by the same controller as the model directory.
+    pub frontend_instances: Vec<String>,
+    /// Nonterminal model-server Pod identities, including draining execution groups.
+    pub backend_instances: Vec<String>,
     pub models: Vec<SnapshotModel>,
     pub groups: Vec<SnapshotGroup>,
     #[serde(default)]

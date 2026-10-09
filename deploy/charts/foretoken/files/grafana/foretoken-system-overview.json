@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Model capacity is per replica, never a shared total. Adjust the time range to inspect trends.",
+        "content": "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Waiting and unfinished occupancy are shared within each frontend service and model; replica observations are deduplicated. Adjust the time range to inspect trends.",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -4037,7 +4037,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "HTTP requests admitted for processing per second; batches count once.",
+      "description": "HTTP requests reaching first backend acceptance per second; batches count once.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4102,7 +4102,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
           "instant": true,
           "interval": "5s",
           "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
@@ -4110,7 +4110,7 @@
           "refId": "A"
         }
       ],
-      "title": "Admitted calls / s",
+      "title": "Dispatched calls / s",
       "transparent": false,
       "type": "stat"
     },
@@ -4119,7 +4119,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Replicas finishing the old rule before a model rule replacement or removal.",
+      "description": "HTTP requests acquiring waiting ownership per second; batches count once.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4148,7 +4148,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "suffix: calls/s"
         },
         "overrides": []
       },
@@ -4184,7 +4184,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(foretoken_admission_draining{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_enqueued_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
           "instant": true,
           "interval": "5s",
           "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
@@ -4192,7 +4192,7 @@
           "refId": "A"
         }
       ],
-      "title": "Draining replicas",
+      "title": "Enqueued calls / s",
       "transparent": false,
       "type": "stat"
     },
@@ -4266,7 +4266,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
+          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
           "instant": true,
           "interval": "5s",
           "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
@@ -4348,7 +4348,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
+          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
           "instant": true,
           "interval": "5s",
           "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
@@ -4365,7 +4365,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Queue-wait p95 for HTTP requests that were admitted.",
+      "description": "Waiting-ownership p95 through first backend acceptance, including preparation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4430,7 +4430,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,le) (label_replace(rate(foretoken_admission_queue_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
           "instant": true,
           "interval": "5s",
           "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
@@ -4438,7 +4438,7 @@
           "refId": "A"
         }
       ],
-      "title": "Admitted queue wait (p95)",
+      "title": "Dispatch wait (p95)",
       "transparent": false,
       "type": "stat"
     },
@@ -4529,7 +4529,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Compare each model's effective rule, drain state and results across frontend replicas.",
+      "description": "Compare bounded admission, ledger availability and request results across frontend replicas.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -4573,33 +4573,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Admission rule"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "options": {
-                      "allow_all": {
-                        "text": "Unlimited"
-                      },
-                      "concurrency": {
-                        "text": "Concurrency"
-                      },
-                      "unreported": {
-                        "text": "No data"
-                      }
-                    },
-                    "type": "value"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "Scrape"
             },
             "properties": [
@@ -4624,7 +4597,19 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Draining"
+              "options": "Bounded admission"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Store available"
             },
             "properties": [
               {
@@ -4660,7 +4645,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Admitted wait p95"
+              "options": "Dispatch wait p95"
             },
             "properties": [
               {
@@ -4695,7 +4680,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_join(((max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or on(namespace,frontend_service,pod,model_name) (label_replace((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))), \"algorithm\", \"unreported\", \"\", \"\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
+          "expr": "label_join((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4706,7 +4691,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join(((((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * on(namespace,frontend_service,pod) group_left() (max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join(((((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * on(namespace,frontend_service,pod) group_left() (max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4717,7 +4702,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join((((((max by(namespace,frontend_service,pod,model_name) ((((((max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_attempts_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"admitted\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_draining{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) unless on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",algorithm=\"concurrency\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (((((((((max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_attempts_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"admitted\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_draining{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",algorithm=\"concurrency\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_queued_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_concurrency_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_queue_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) or on(namespace,frontend_service,pod,model_name) (0 * (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join((((((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 0)) or ((((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 0)) or ((((((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) or on(namespace,frontend_service,pod,model_name) (0 * (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4728,7 +4713,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join((((label_replace(foretoken_admission_draining{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4739,7 +4724,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join((((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4750,7 +4735,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -4761,11 +4746,22 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(replica) (label_join((((histogram_quantile(0.95, sum by(namespace,frontend_service,pod,model_name,le) (label_replace(rate(foretoken_admission_queue_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
           "format": "table",
           "instant": true,
           "range": false,
           "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((histogram_quantile(0.95, sum by(namespace,frontend_service,pod,model_name,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "H"
         }
       ],
       "title": "Admission by replica",
@@ -4784,13 +4780,13 @@
               "names": [
                 "model_name",
                 "pod",
-                "algorithm",
                 "Value #B",
                 "Value #C",
                 "Value #D",
                 "Value #E",
                 "Value #F",
-                "Value #G"
+                "Value #G",
+                "Value #H"
               ]
             }
           }
@@ -4799,24 +4795,24 @@
           "id": "organize",
           "options": {
             "indexByName": {
-              "Value #B": 3,
-              "Value #C": 4,
-              "Value #D": 5,
-              "Value #E": 6,
-              "Value #F": 7,
-              "Value #G": 8,
-              "algorithm": 2,
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4,
+              "Value #E": 5,
+              "Value #F": 6,
+              "Value #G": 7,
+              "Value #H": 8,
               "model_name": 0,
               "pod": 1
             },
             "renameByName": {
               "Value #B": "Scrape",
               "Value #C": "Telemetry complete",
-              "Value #D": "Draining",
-              "Value #E": "Capacity rejection ratio",
-              "Value #F": "Admission timeout ratio",
-              "Value #G": "Admitted wait p95",
-              "algorithm": "Admission rule",
+              "Value #D": "Bounded admission",
+              "Value #E": "Store available",
+              "Value #F": "Capacity rejection ratio",
+              "Value #G": "Admission timeout ratio",
+              "Value #H": "Dispatch wait p95",
               "model_name": "Model",
               "pod": "Replica"
             }
@@ -4841,7 +4837,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Admission calls per second by model, origin and result; arrivals include pending calls.",
+          "description": "Results distinguish backend acceptance (dispatched) from CPU-only completion (prepared); arrivals include pending calls.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4907,7 +4903,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
               "instant": false,
               "interval": "5s",
               "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}}",
@@ -4936,7 +4932,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Completed queue-wait observations per second, grouped by model, origin and result.",
+          "description": "Completed waiting-ownership observations per second, grouped by model, origin and result.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4979,7 +4975,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_queue_wait_seconds_count{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_wait_seconds_count{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
               "instant": false,
               "interval": "5s",
               "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}}",
@@ -4987,7 +4983,7 @@
               "refId": "A"
             }
           ],
-          "title": "Queue exit samples / s",
+          "title": "Waiting exit samples / s",
           "transparent": false,
           "type": "timeseries"
         },
@@ -4996,7 +4992,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Compare queue waits for admitted, timed-out and cancelled calls.",
+          "description": "Compare waiting duration for dispatched, prepared, timed-out and cancelled calls.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5039,7 +5035,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "histogram_quantile(0.5, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_queue_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "expr": "histogram_quantile(0.5, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
               "instant": false,
               "interval": "5s",
               "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p50",
@@ -5051,7 +5047,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_queue_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
               "instant": false,
               "interval": "5s",
               "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p95",
@@ -5063,7 +5059,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_queue_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result!=\"admitted\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result!=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
               "instant": false,
               "interval": "5s",
               "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p95",
@@ -5071,7 +5067,7 @@
               "refId": "C"
             }
           ],
-          "title": "Queue wait by result",
+          "title": "Waiting duration by result",
           "transparent": false,
           "type": "timeseries"
         }
@@ -5094,7 +5090,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Effective limits and occupancy per model and replica; draining retains the old rule's limits.",
+          "description": "Replicas observe the same shared occupancy. Missing counts indicate a failed ledger read, not zero usage.",
           "fieldConfig": {
             "defaults": {
               "mappings": [
@@ -5138,34 +5134,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "Admission rule"
-                },
-                "properties": [
-                  {
-                    "id": "mappings",
-                    "value": [
-                      {
-                        "options": {
-                          "allow_all": {
-                            "text": "Unlimited"
-                          },
-                          "concurrency": {
-                            "text": "Concurrency"
-                          },
-                          "unreported": {
-                            "text": "No data"
-                          }
-                        },
-                        "type": "value"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Active work units"
+                  "options": "Store available"
                 },
                 "properties": [
                   {
@@ -5177,7 +5146,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "Concurrency limit"
+                  "options": "Reserved and accepted work units"
                 },
                 "properties": [
                   {
@@ -5189,7 +5158,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "Queued work units"
+                  "options": "Waiting work units"
                 },
                 "properties": [
                   {
@@ -5201,42 +5170,12 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "Queue limit"
+                  "options": "Waiting limit"
                 },
                 "properties": [
                   {
                     "id": "unit",
                     "value": "short"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Queue limit"
-                },
-                "properties": [
-                  {
-                    "id": "mappings",
-                    "value": [
-                      {
-                        "options": {
-                          "match": "null+nan",
-                          "result": {
-                            "text": "No data"
-                          }
-                        },
-                        "type": "special"
-                      },
-                      {
-                        "options": {
-                          "0": {
-                            "text": "No queue"
-                          }
-                        },
-                        "type": "value"
-                      }
-                    ]
                   }
                 ]
               }
@@ -5266,7 +5205,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "label_join(((max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or on(namespace,frontend_service,pod,model_name) (label_replace((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))), \"algorithm\", \"unreported\", \"\", \"\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
+              "expr": "label_join((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
               "format": "table",
               "instant": true,
               "range": false,
@@ -5277,7 +5216,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -5288,7 +5227,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_concurrency_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -5299,7 +5238,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_queued_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -5310,14 +5249,14 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_queue_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (max by(namespace,frontend_service,pod,model_name,algorithm) (label_replace(foretoken_admission_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
               "format": "table",
               "instant": true,
               "range": false,
               "refId": "E"
             }
           ],
-          "title": "Admission capacity by replica",
+          "title": "Ledger observations by replica",
           "transformations": [
             {
               "id": "joinByField",
@@ -5333,7 +5272,6 @@
                   "names": [
                     "model_name",
                     "pod",
-                    "algorithm",
                     "Value #B",
                     "Value #C",
                     "Value #D",
@@ -5346,20 +5284,18 @@
               "id": "organize",
               "options": {
                 "indexByName": {
-                  "Value #B": 3,
-                  "Value #C": 4,
-                  "Value #D": 5,
-                  "Value #E": 6,
-                  "algorithm": 2,
+                  "Value #B": 2,
+                  "Value #C": 3,
+                  "Value #D": 4,
+                  "Value #E": 5,
                   "model_name": 0,
                   "pod": 1
                 },
                 "renameByName": {
-                  "Value #B": "Active work units",
-                  "Value #C": "Concurrency limit",
-                  "Value #D": "Queued work units",
-                  "Value #E": "Queue limit",
-                  "algorithm": "Admission rule",
+                  "Value #B": "Store available",
+                  "Value #C": "Reserved and accepted work units",
+                  "Value #D": "Waiting work units",
+                  "Value #E": "Waiting limit",
                   "model_name": "Model",
                   "pod": "Replica"
                 }
@@ -5374,7 +5310,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Admitted work units and the effective limit for each model and replica.",
+          "description": "Shared dispatch reservations plus accepted unfinished generation units. There is no model-wide concurrency limit.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5417,27 +5353,15 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)",
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
               "range": true,
               "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_concurrency_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)",
-              "instant": false,
-              "interval": "5s",
-              "legendFormat": "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
-              "range": true,
-              "refId": "B"
             }
           ],
-          "title": "Active work units",
+          "title": "Reserved and accepted work units",
           "transparent": false,
           "type": "timeseries"
         },
@@ -5446,7 +5370,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Waiting work units and the effective queue limit for each model and replica.",
+          "description": "Shared waiting occupancy includes preparation and unresolved submission. The limit is shared by the service's replicas.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5489,10 +5413,10 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_queued_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)",
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
+              "legendFormat": "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
               "range": true,
               "refId": "A"
             },
@@ -5501,15 +5425,15 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_queue_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)",
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{pod}}",
+              "legendFormat": "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Queued work units",
+          "title": "Waiting work units",
           "transparent": false,
           "type": "timeseries"
         }
@@ -6117,7 +6041,7 @@
         "label": "Model",
         "multi": true,
         "name": "model_name",
-        "query": "label_values({__name__=~\"foretoken:model_instance_info|foretoken_admission_model_info|foretoken_admission_info\",namespace=~\"$namespace\"}, model_name)",
+        "query": "label_values({__name__=~\"foretoken:model_instance_info|foretoken_admission_model_info\",namespace=~\"$namespace\"}, model_name)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,

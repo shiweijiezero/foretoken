@@ -140,6 +140,10 @@ spec:
             - {{ printf "--log-storage-statefulset=%s" .Values.observability.logs.managedStatefulSet | quote }}
             - {{ printf "--log-storage-max-size=%s" .Values.observability.logs.maxSize | quote }}
             {{- end }}
+            {{- with .Values.admissionStore.externalURLSecret.name }}
+            - {{ printf "--admission-store-url-secret-name=%s" . | quote }}
+            - {{ printf "--admission-store-url-secret-key=%s" $.Values.admissionStore.externalURLSecret.key | quote }}
+            {{- end }}
             - --health-probe-bind-address=:8081
             - {{ printf "--video-worker-image=%s" (include "foretoken.image" .) | quote }}
             {{- range .Values.workload.imagePullSecrets }}
@@ -218,6 +222,10 @@ spec:
             {{- end }}
             {{- end }}
           env:
+            {{- if not .Values.admissionStore.externalURLSecret.name }}
+            - name: FORETOKEN_ADMISSION_STORE_URL
+              value: {{ include "foretoken.admissionStoreURL" . | quote }}
+            {{- end }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

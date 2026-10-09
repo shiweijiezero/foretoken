@@ -117,29 +117,56 @@ Cancellation and deletion continue after the HTTP `202` response. The configurat
 
 ## Configure admission rules
 
-Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). Set `FrontendService.spec.admission` to provide defaults for every model, for example:
+Admission bounds waiting work and caller concurrency for text generation. Add these fields under `spec` in the deployment's `frontend.yaml`:
 
 ```yaml
 spec:
   admission:
-    algorithm: concurrency
-    parameters:
-      maxConcurrentRequests: 64
+    maxWaitingRequests: 128
+    queueTimeout: 30s
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
 ```
 
-Limits apply independently per frontend replica, per model; there is no shared frontend-wide limit or queue. Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
+For each model, all replicas of the same FrontendService share the waiting limit and each caller's limits. Waiting includes model readiness and input preparation; concurrency includes dispatch reservations and accepted, unfinished generation. Batched prompts and `best_of` count every generated candidate. The numbers above are examples; choose limits for the workload.
 
-A model's `ModelService.spec.admission` replaces the entire frontend default, rather than merging parameters. For example, to leave one model unrestricted:
+Higher `priority` values dispatch first among eligible requests. At the same priority, each frontend rotates between callers and preserves their request order. A caller at its concurrency limit does not block other callers. Sustained high-priority traffic can exhaust a lower-priority request's waiting budget. To also prioritize the native vLLM queue, set `scheduling-policy: priority` in the model's `engineArgs`.
+
+The trusted gateway overwrites these headers with the authenticated caller's role and a stable identifier, such as a key identifier:
+
+```http
+x-role: role1
+x-caller-id: caller-a
+```
+
+The text APIs above share these headers. With role rules enabled, missing caller identity or an unmatched role is rejected; client scheduling preferences cannot override the role priority. Credentials, authorization, and RPM/token quotas belong to the gateway, and the frontend must be reachable only through its trusted ingress path. Tokenization and detokenization use waiting capacity without reserving generation concurrency. Video APIs retain their separate lifecycle.
+
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+
+To separately bound accepted work at each text model-server instance, including its engine queue, add this model setting:
 
 ```yaml
 spec:
-  admission:
-    algorithm: allow_all
+  instanceAdmission:
+    maxConcurrentRequests: 32
 ```
 
-Updating `concurrency` or switching between it and `allow_all` preserves running counts and queued requests without restarting frontend Pods. Lower limits do not cancel running work; existing waiters keep their original queue timeout. A queued batch that exceeds a reduced concurrency limit returns HTTP 503. Custom rules wait for accepted work to finish before replacement; new requests may receive HTTP 503 during that handover.
+Instance-limit changes take effect through a normal model-server deployment rollout.
 
-See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
+Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
+
+Apply changes using [Update serving settings](#update-serving-settings). Limit updates preserve reservations, waiting order, and existing waiting deadlines. Requests that entered without capacity tracking and have not yet dispatched return 503 when bounded limits are enabled. Before response headers, a full queue or expired admission wait returns 503; the original request deadline returns 504, and an oversized batch returns 400. Cancellation requests backend termination; concurrency is released only after execution ends.
+
+Platform installation prepares the persistent shared capacity store. See [Observability](../../observability/README.md) for queue and dispatch results, or [Admission lifecycle](../../docs/development/admission-rules.md) when extending request processing or backend integration.
 
 ## Update serving settings
 
@@ -159,7 +186,7 @@ Apply the Quick Start configuration:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The command waits for the configuration to take effect. [Routing algorithms and their parameters](src/router/README.md), admission rules, `timeouts.request`, `timeouts.streamIdle`, and `logLevel` update without restarting frontend Pods. Invalid algorithm names or parameters leave the previous working configuration active.
+The command waits for the configuration to take effect. [Routing algorithms and their parameters](src/router/README.md), admission rules, `timeouts.request`, `timeouts.streamIdle`, and `logLevel` update without restarting frontend Pods. Invalid configuration leaves the previous working settings active.
 
 `timeouts.request` limits the total request duration; `timeouts.streamIdle` limits how long a stream may produce no response chunks and must not exceed `request`. New requests use the updated budgets; existing requests and streams keep their original budgets. `logLevel` defaults to `info` and accepts `trace`, `debug`, `info`, `warn`, `error`, or `off`.
 

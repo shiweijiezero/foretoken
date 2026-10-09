@@ -117,29 +117,56 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 ## 配置准入规则
 
-准入规则控制文本生成和 tokenization 的并发与排队，默认不限流（`allow_all`）。通过 `FrontendService.spec.admission` 为各模型设置默认规则，例如：
+准入为文本生成设置等待容量和调用方并发上限。在部署的 `frontend.yaml` 已有 `spec` 下添加：
 
 ```yaml
 spec:
   admission:
-    algorithm: concurrency
-    parameters:
-      maxConcurrentRequests: 64
+    maxWaitingRequests: 128
+    queueTimeout: 30s
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
 ```
 
-限额在每个前端副本内按模型独立生效，各模型不共享前端总上限或队列。并发上限按实际负载选择，批量请求按输出候选数计数。需要排队时，在 `parameters` 下添加 `maxQueuedRequests`，并可用 `queueTimeout` 设置等待时限。
+同一 FrontendService 的所有副本按模型共享等待上限，每个调用方分别使用自己的等待和并发限额。等待包含模型就绪和输入准备，并发包含派发预留及后端已接收但尚未结束的生成。批量输入和 `best_of` 按全部生成候选计数。以上数值只是示例，应按实际负载选择。
 
-模型的 `ModelService.spec.admission` 整块替换前端默认规则，不合并参数。例如，让某个模型保持不限流：
+可派发请求中，`priority` 越大越先处理；同优先级在各前端内按调用方轮转，并保留各调用方的请求顺序。一个调用方并发已满时，其他调用方仍可推进。持续的高优先级流量可能耗尽低优先级请求的等待预算。如需同时启用 vLLM 引擎内的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
+
+可信网关根据已认证的调用方覆盖以下请求头，使用稳定标识区分调用方，例如认证密钥的标识：
+
+```http
+x-role: role1
+x-caller-id: caller-a
+```
+
+上面的文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝，客户端指定的调度偏好不能覆盖角色优先级。凭据、授权和 RPM/token 配额由网关管理，前端只应通过部署建立的可信入口访问。分词和 token ID 解码占用等待容量，不占用生成并发；视频接口仍使用独立生命周期。
+
+模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。模型角色规则中的 `roleRules[].allowedPools` 可引用 `spec.modelPools` 中的名称，限制该角色使用的 Pool；分离式部署必须为每个必需执行阶段保留一个 Pool。要让一个模型不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端默认省略这两项时也不限流。
+
+模型服务实例还能独立限制已接收工作，包括引擎内排队的请求。在模型配置中添加：
 
 ```yaml
 spec:
-  admission:
-    algorithm: allow_all
+  instanceAdmission:
+    maxConcurrentRequests: 32
 ```
 
-调整 `concurrency` 参数，或在它与 `allow_all` 之间切换时，会保留在途计数和已排队请求，不重启前端 Pod。降低限额不会取消正在执行的工作，已有等待沿用原来的排队时限；若已排队批次超过降低后的并发上限，则返回 HTTP 503。自定义规则仍需等旧工作结束后启用替代规则，交接期间新请求可能返回 HTTP 503。
+实例限额修改通过模型服务的常规部署和副本滚动更新生效。
 
-查看准入结果见[可观测性](../../observability/README_zh.md)，新增算法见[开发准入规则](../../docs/development/admission-rules_zh.md)。
+如仍使用 `admission.algorithm` 和 `admission.parameters`，改为上面的等待限额和角色规则，旧字段会被明确拒绝。升级时按常规 `foretoken deploy` 同时部署前端与模型服务；仅升级平台不会替换运行中的应用。
+
+按[修改服务配置](#修改服务配置)应用变更。调整限额会保留已有预留、等待顺序和原等待时限。启用容量限制时，尚未派发且未参与容量计数的请求返回 503。发送响应头前，队列已满或准入等待超时返回 503，请求总时限耗尽返回 504，批次超过容量返回 400。取消请求会通知后端终止，执行结束后才释放并发。
+
+平台安装会准备持久化的共享容量存储。查看等待和派发结果见[可观测性](../../observability/README_zh.md)；扩展请求处理或后端接入见[准入生命周期](../../docs/development/admission-rules_zh.md)。
 
 ## 修改服务配置
 
@@ -159,7 +186,7 @@ spec:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-命令等待配置生效后退出。[路由算法及其参数](src/router/README_zh.md)、准入规则、`timeouts.request`、`timeouts.streamIdle` 和 `logLevel` 均可在线更新，不重启前端 Pod。算法名称或参数无效时，继续使用上一份可用配置。
+命令等待配置生效后退出。[路由算法及其参数](src/router/README_zh.md)、准入规则、`timeouts.request`、`timeouts.streamIdle` 和 `logLevel` 均可在线更新，不重启前端 Pod。配置无效时，继续使用上一份可用设置。
 
 `timeouts.request` 限制请求总时长，`timeouts.streamIdle` 限制流式响应连续没有数据块的时长，不能大于 `request`。更新后的时限用于新请求，已有请求和流式响应保留原预算。`logLevel` 默认为 `info`，可选 `trace`、`debug`、`info`、`warn`、`error` 或 `off`。
 

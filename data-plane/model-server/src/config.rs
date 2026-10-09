@@ -17,6 +17,7 @@ pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,
     pub member: Option<MemberContext>,
+    pub max_accepted_requests: Option<u32>,
 }
 
 /// Pod-local identity supplied by Kubernetes and LeaderWorkerSet for distributed startup.
@@ -69,10 +70,22 @@ impl RuntimeConfig {
         } else {
             None
         };
+        let max_accepted_requests = match std::env::var("FORETOKEN_MAX_ACCEPTED_REQUESTS") {
+            Ok(value) => Some(
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|limit| *limit > 0)
+                    .ok_or("FORETOKEN_MAX_ACCEPTED_REQUESTS must be a positive integer")?,
+            ),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => return Err("FORETOKEN_MAX_ACCEPTED_REQUESTS must be valid Unicode".into()),
+        };
         Ok(Self {
             launch,
             listen_address,
             member,
+            max_accepted_requests,
         })
     }
 }

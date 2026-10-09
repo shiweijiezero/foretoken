@@ -30,7 +30,7 @@ impl ApiError {
         let (status, code) = match error {
             GenerationError::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request_error"),
             GenerationError::ModelNotFound => (StatusCode::NOT_FOUND, "model_not_found"),
-            GenerationError::Unavailable => {
+            GenerationError::Unavailable | GenerationError::BackendBusy => {
                 (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable")
             }
             GenerationError::Overloaded => (StatusCode::SERVICE_UNAVAILABLE, "overloaded"),

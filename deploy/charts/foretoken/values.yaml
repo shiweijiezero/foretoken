@@ -15,6 +15,17 @@ image:
 
 imagePullSecrets: []
 
+# Shared durable admission ledger; an external endpoint replaces the managed Valkey instance.
+admissionStore:
+  image: docker.io/valkey/valkey:8.1.10-alpine
+  storageClass: "" # Uses the cluster's default StorageClass.
+  storageSize: 1Gi
+  externalURL: "" # Credential-free redis:// or rediss:// URL.
+  # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
+  externalURLSecret:
+    name: ""
+    key: url
+
 # Allows source installations to select newly published application files.
 development:
   enabled: false
