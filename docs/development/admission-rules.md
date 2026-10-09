@@ -5,11 +5,11 @@
 
 English | [简体中文](admission-rules_zh.md)
 
-Admission rules control when requests enter preprocessing and execution. The framework supplies request facts and current observations through a shared interface.
+To add an admission rule, start from [allow_all](../../data-plane/frontend/src/admission/src/algorithm/allow_all.rs), or use [concurrency](../../data-plane/frontend/src/admission/src/algorithm/concurrency.rs) for an example with queuing and resource reservations. To configure an existing rule, see [Frontend admission](../../data-plane/frontend/README.md#configure-admission-rules).
 
-## Implement and register a rule
+## Make the decision
 
-Implement `RouteAdmission` with this entry point:
+Implement `AdmissionRule::admit`:
 
 ```rust
 async fn admit(
@@ -19,39 +19,22 @@ async fn admit(
 ) -> Result<AdmissionPermit, AdmissionError>;
 ```
 
-Return an `AdmissionPermit` to accept the request or an `AdmissionError` to reject it. A rule can wait inside this future; the framework enforces the request deadline and cancels the wait when the caller disconnects.
+Use `request` for input summaries and output budgets, and `context` for the deadline and current model observations. Field definitions are in [AdmissionRequest](../../data-plane/frontend/src/admission/src/request.rs) and [AdmissionContext](../../data-plane/frontend/src/admission/src/context.rs).
 
-Provide `from_parameters(Value) -> Result<Self, String>` and add the rule to the `declare_router_algorithms!` list in `algorithm/admission/mod.rs`. Construction and parameter validation run once at startup. New public parameters also require a FrontendService API update and CRD regeneration.
+Return a permit to accept the request or an error to reject it. The rule may wait; the framework handles deadline expiry and caller cancellation. While queued, hold `context.queue.begin_wait()`'s guard to record the wait.
 
-Use [allow_all](../../data-plane/frontend/src/router/src/algorithm/admission/allow_all.rs) as the simplest implementation, or [concurrency](../../data-plane/frontend/src/router/src/algorithm/admission/concurrency.rs) for weighted waiting and resource reservations.
+For resource-free admission, return `AdmissionPermit::default()`. Otherwise, return `AdmissionPermit::new(reservation)`: the reservation must already own the capacity, release it on drop, and transfer one candidate's share through `split_one()`.
 
-## Use the supplied inputs
+Update `context.metrics.active` and `context.metrics.queued` only for work units actually reserved or queued by the algorithm. Release the corresponding count with its reservation; splitting transfers already-counted units without incrementing them again. The framework records call results and queue timing separately.
 
-- **Request facts:** `AdmissionRequest` provides the model, operation, candidate count, input and media summaries, output budgets, client preferences, and processing start time.
-- **Service context:** `context.deadline` is the total request deadline; `context.service` contains resolved identity, service class, priority, and latency objectives. Identity and service-policy values are currently unpopulated.
-- **Runtime observations:** query current model availability, target health, load, and capacity statistics through `context.state`:
+## Register the rule
 
-```rust
-let state = context.state.model_state(
-    &request.model,
-    std::time::Duration::from_secs(30),
-);
-```
+Provide `from_parameters(Value) -> Result<Self, String>` to validate parameters and construct a model's rule. Add it to `declare_admission_algorithms!` in [algorithm/mod.rs](../../data-plane/frontend/src/admission/src/algorithm/mod.rs); external implementations can register an `AdmissionDescriptor` through `inventory`.
 
-Input token counts distinguish exact, estimated, and unknown values. Output limits and predicted output work are separate fields. Query runtime observations again after waiting to use current values.
+Expose new configuration through the shared FrontendService and ModelService admission API and regenerate the CRDs. Optional `capacity`, `requires_ready_runtime`, and `close` methods are documented on [AdmissionRule](../../data-plane/frontend/src/admission/src/lib.rs). `close` must wake algorithm-owned waiters without revoking accepted reservations.
 
-Field definitions and units are documented in [AdmissionRequest](../../data-plane/frontend/src/router/src/algorithm/admission/request.rs) and [AdmissionContext](../../data-plane/frontend/src/router/src/algorithm/admission/context.rs).
+## Configuration lifecycle
 
-## Return and release resources
+Each frontend replica maintains independent rule instances and queues for its models; routing changes retain unchanged rules. Factories validate and construct rules without publishing metrics or changing active requests. The framework activates metrics when the configuration takes effect.
 
-For unrestricted admission, return `AdmissionPermit::default()`. For reserved resources, implement `AdmissionReservation` and wrap it with `AdmissionPermit::new(...)`.
-
-`split_one()` transfers one reserved unit to a batch child; dropping a reservation releases its remaining resources. The framework carries execution permits through preprocessing and request completion. Keep waiting resources owned by the admission future so cancellation releases them.
-
-Additional hooks support rules with intake or readiness requirements:
-
-| Hook | Purpose |
-| --- | --- |
-| `try_reserve_request()` | Reserve a resident HTTP-request slot before body extraction; its permit follows the response body. |
-| `requires_ready_runtime()` | Require model preparation before generation admission. |
-| `close()` | Wake waiting requests during shutdown. |
+A changed model rule stops accepting new requests, cancels waiting attempts, and lets accepted work finish before activating its replacement. New requests receive HTTP 503 during this handover; other models continue independently.

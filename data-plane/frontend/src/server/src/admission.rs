@@ -5,12 +5,12 @@
 
 use std::time::Instant;
 
-use foretoken_chat::{
-    AssistantContentBlock, ChatContent, ChatContentPart, ChatMessage, ChatRequest,
-};
-use foretoken_router::algorithm::admission::{
+use foretoken_admission::{
     AdmissionApi, AdmissionInput, AdmissionInputKind, AdmissionMedia, AdmissionOperation,
     AdmissionOutput, AdmissionRequest, AdmissionTokenCount,
+};
+use foretoken_chat::{
+    AssistantContentBlock, ChatContent, ChatContentPart, ChatMessage, ChatRequest,
 };
 use foretoken_text::Prompt;
 

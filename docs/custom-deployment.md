@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and have a default StorageClass for persistent compiler caches. To choose a different storage class, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and publishing Jobs, with a default StorageClass for compiler caches and published application files. To override their storage classes, set `development.build.storageClassName` or `applicationFiles.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Online source selection is automatic. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+Builds run in the cluster. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ## Deploy and update code
 
@@ -39,11 +39,12 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. It uses the saved installation settings and sends only added or changed files and deletions. Dedicated build Pods compile Rust changes and prepare Python updates; compiler caches and outputs stay in the cluster. With writable persistent runtime storage, these updates do not rebuild runtime images. Dependency, build, control-plane, and startup bootstrap changes use the image build path automatically.
+After editing the checkout, run the same command again. It uses the saved installation settings and reuses the runtime environment for code updates. Changes to runtime dependencies or image build settings update the platform installation.
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
 Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
+
 ## Edit an inference engine
 
 To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:
@@ -52,7 +53,7 @@ To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and 
 foretoken install -e . --engine-source ../vllm
 ```
 
-Retain `--registry` and `--values` when using them. After editing the engine checkout, use `foretoken deploy` as above. Python and Triton changes synchronize source; Triton JIT compilation runs in the inference engine. NVIDIA CUDA/C++ changes compile the vLLM extensions in the build Pod using persistent caches.
+Retain `--registry` and `--values` when using them. After editing Python, Triton or NVIDIA CUDA/C++ source, use `foretoken deploy` as above; required compilation is automatic.
 
 For MetaX, native kernels belong to the plugin checkout. Bind it alongside the matching core checkout:
 
@@ -61,8 +62,6 @@ foretoken install -e . \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax
 ```
-
-The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not used by that backend. Retain the installation's registry and values options.
 
 ### Select a different runtime environment
 
@@ -74,7 +73,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base and adds the model-server. Then deploy the workload again.
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Then deploy the workload again.
 
 MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
 
@@ -117,4 +116,6 @@ Apply the runtime setting:
 foretoken install -e . --values deploy/platform-values.yaml
 ```
 
-Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. Rebuild and distribute the Omni image after changing its code; the editable vLLM source path above targets the standard vLLM backend.
+Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. The editable vLLM source path above targets the standard vLLM backend.
+
+After installation, run `foretoken deploy` with the Kustomize directory for your Omni service. For code updates, rebuild and distribute the Omni image, then set `runtime.vllmOmni.image` to a new tag or digest reference. Reapply the installation command and deploy the same Kustomize directory again.

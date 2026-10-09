@@ -14,7 +14,7 @@ pub const ACTIVE_DIRECTORY_ENV: &str = "FORETOKEN_ACTIVE_SOURCE_DIRECTORY";
 const ENGINE_DIRECTORY_ENV: &str = "FORETOKEN_ENGINE_DIRECTORY";
 const ACTIVE_ENGINE_DIRECTORY_ENV: &str = "FORETOKEN_ACTIVE_ENGINE_DIRECTORY";
 
-/// Starts the selected executable and engine payload, leaving ordinary release startup unchanged.
+/// Activates Python paths and engine settings for the executable selected by the workload.
 pub fn activate(binary: &str) -> io::Result<()> {
     let source = std::env::var_os(DIRECTORY_ENV).map(PathBuf::from);
     let engine = source
@@ -31,34 +31,21 @@ pub fn activate(binary: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    let mut executable = std::env::current_exe()?;
+    let executable = std::env::current_exe()?;
     let mut paths = Vec::new();
     if let Some(directory) = &source {
         #[derive(serde::Deserialize)]
         struct Bundle {
-            revision: String,
             component: String,
-            executable: Option<String>,
         }
         let bundle: Bundle =
             serde_json::from_reader(std::fs::File::open(directory.join("complete.json"))?)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if directory.file_name().and_then(|name| name.to_str()) != Some(bundle.revision.as_str())
-            || binary.strip_prefix("foretoken-") != Some(bundle.component.as_str())
-        {
+        if binary.strip_prefix("foretoken-") != Some(bundle.component.as_str()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "source bundle belongs to another runtime revision",
+                "source bundle belongs to another component",
             ));
-        }
-        if let Some(name) = bundle.executable {
-            if name != binary {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "source executable does not match the runtime",
-                ));
-            }
-            executable = directory.join("bin").join(name);
         }
         paths.push(directory.join("python"));
     }

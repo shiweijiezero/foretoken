@@ -5,7 +5,7 @@
 
 [English](release.md) | 简体中文
 
-Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
+Foretoken 发布 Python distribution、运行环境镜像、应用 `.tar.gz` 文件和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
 
 ## 版本阶段
 
@@ -37,31 +37,11 @@ pip install --pre foretoken
 pip install foretoken==0.0.1a1
 ```
 
-Stable 和 post-release 使用普通安装命令：
-
-```bash
-pip install foretoken
-```
-
 `.postN` 通常复用对应 Stable 版本的平台产物，因为它只修正已发布的 Python package 或 metadata，不承载常规代码变化。如果运行行为或平台产物需要变化，应发布下一 patch，例如 `0.0.2`，而不是把这些变化放进 `.postN`。
-
-从仓库安装源码与发布版本相互独立：
-
-```bash
-pip install -e .
-```
 
 ## Tag 与版本来源
 
-GitHub Release 使用带 `v` 前缀的 Python 版本，因为发布 workflow 会根据该 Release 上传对应的 Python distribution：
-
-```text
-v0.0.1a1
-v0.0.1b1
-v0.0.1rc1
-v0.0.1
-v0.0.1.post1
-```
+GitHub Release tag 使用带 `v` 前缀的 Python 版本。
 
 每类产物只有一个权威版本来源：
 
@@ -73,17 +53,7 @@ v0.0.1.post1
 
 ## Release 描述
 
-创建 GitHub Release 时使用[《Release 描述模板》](release-template_zh.md)。Release 描述面向使用者，说明本次实际发布的产物组合，不是提交记录的复制。凡是会影响安装或运行的内容，都应在适用时保留：
-
-- 三到五项主要亮点，以及按用户领域归类的变更；
-- Python、Kubernetes、NVIDIA、沐曦、API 和配置的兼容性；
-- 破坏性变更、弃用项和明确的升级动作；
-- 本次发布的 package、各 OCI 镜像变体、Helm Chart 和带版本 tag 的示例；
-- 会改变用户操作的已知限制、事实性致谢，以及指向完整历史的 compare 链接。
-
-删除不适用的章节。相关 PR 能帮助读者追溯变更时再添加链接；没有实际确认的支持范围不得写入 Release 描述。
-
-[英文模板](release-template.md)与本模板遵循同一发布契约，但应分别面向各自语言的读者自然编写。
+创建 GitHub Release 时使用[《Release 描述模板》](release-template_zh.md)。
 
 ## 构建与推送发布产物
 
@@ -97,7 +67,15 @@ export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-control-plane、frontend、model-server 镜像和 Helm Chart 使用同一个版本。沐曦 model-server 镜像带有 `-metax` 后缀。
+命令构建运行环境镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz` 和匹配的 Helm Chart 保存到 `/tmp/foretoken-release`。沐曦镜像 tag 使用 `-metax` 后缀。
+
+只导出应用文件、不重建运行环境时，执行：
+
+```bash
+deploy/release-artifacts export --output-dir /tmp/foretoken-release
+```
+
+将验证后的压缩包上传为 GitHub Release 附件。下面的 `push` 命令发布运行环境镜像和 Helm Chart，不上传压缩包。
 
 完成产物验证后，登录仓库并推送：
 
@@ -112,8 +90,8 @@ deploy/release-artifacts push --registry "$REGISTRY"
 ## 发布顺序
 
 1. 确定发布阶段，并按上表更新 `pyproject.toml` 和 `Chart.yaml`。
-2. 构建并验证 Python distribution、Helm Chart 和受影响的 OCI 镜像。
+2. 构建并验证 Python distribution、应用压缩包、Helm Chart 和受影响的 OCI 镜像。
 3. 推送对应的 OCI 镜像和 Helm Chart tag。
-4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release，简述重要改动，并具名感谢贡献者及其提供的支持。
+4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release 并附上应用压缩包，简述重要改动，并具名感谢贡献者及其提供的支持。
 5. 由发布 workflow 将 Python distribution 上传到 PyPI。
-6. 验证已发布的 package、镜像、Chart 和全新安装路径。
+6. 验证已发布的 package、镜像、应用压缩包、Chart 和全新安装路径。

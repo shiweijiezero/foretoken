@@ -65,9 +65,9 @@ func runtimeCacheInitContainers(image string, cache *inferencev1alpha1.RuntimeCa
 	}
 	command := []string{"sh", "-ec", `mkdir -p "$1"; chown 1000:1000 "$1"; chmod 2775 "$1"`, "prepare", cache.MountPath}
 	if owner := cache.DirectoryOwner; owner != nil {
-		// Older root runtimes left private compiler directories behind. Transfer only
-		// root-owned entries without following symlinks or changing shared hardlink inodes.
-		command = []string{"sh", "-ec", `find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; chmod u+rwx "$1"`, "prepare", cache.MountPath, strconv.FormatInt(owner.UID, 10), strconv.FormatInt(owner.GID, 10)}
+		// Restore the mount root to the recorded workload identity, then migrate root-owned
+		// contents without following symlinks or changing shared hardlink inodes.
+		command = []string{"sh", "-ec", `chown "$2:$3" "$1"; find "$1" -xdev -user 0 \( -type d -o -links 1 \) -exec chown -h "$2:$3" {} +; chmod u+rwx "$1"`, "prepare", cache.MountPath, strconv.FormatInt(owner.UID, 10), strconv.FormatInt(owner.GID, 10)}
 	}
 	root := int64(0)
 	return []corev1.Container{{

@@ -53,7 +53,7 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 			return false, fmt.Errorf("get superseded LeaderWorkerSet: %w", err)
 		}
 	}
-	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets)
+	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
 	if err != nil {
 		return false, err
 	}

@@ -115,6 +115,33 @@ The response contains a task `id`, `status_url`, and `content_url`. Use the same
 
 Cancellation and deletion continue after the HTTP `202` response. The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files are retained.
 
+## Configure admission rules
+
+Admission controls concurrency and queuing for text generation and tokenization. The default is unrestricted (`allow_all`). Set `FrontendService.spec.admission` to provide defaults for every model, for example:
+
+```yaml
+spec:
+  admission:
+    algorithm: concurrency
+    parameters:
+      maxConcurrentRequests: 64
+```
+
+Limits apply independently per frontend replica, per model; there is no shared frontend-wide limit or queue. Choose the limit for your workload; batches count each output candidate separately. To allow queuing, add `maxQueuedRequests` and optionally `queueTimeout` under `parameters`.
+
+A model's `ModelService.spec.admission` replaces the entire frontend default, rather than merging parameters. For example, to leave one model unrestricted:
+
+```yaml
+spec:
+  admission:
+    algorithm: allow_all
+```
+
+Redeploy the service configuration to apply changes. Admission updates and model additions or removals do not restart frontend Pods. New requests may receive HTTP 503 while that model's rule is being replaced.
+
+See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
+
+
 ## Operations
 
 Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.

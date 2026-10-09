@@ -71,7 +71,11 @@ impl BackendRegistry {
     ///
     /// Startup retains the registry for routing, readiness refresh, and facade resolution; the input snapshot is consumed.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
-        let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
+        let configured_models = snapshot
+            .models
+            .iter()
+            .map(|model| model.model.clone())
+            .collect();
         let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()

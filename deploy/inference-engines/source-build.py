@@ -159,9 +159,12 @@ def export_overlay(
     patched_files: set[str],
 ) -> None:
     """Assemble runtime files, retained native outputs and current source without image symlinks."""
+    if source is not None and not (source / package / "__init__.py").is_file():
+        # A namespace package would let Python select the image's old regular package.
+        raise RuntimeError(f"engine source must provide {package}/__init__.py")
     runtime = package_directory(package)
     # Ordinary Python modules come only from source. The image supplies native
-    # libraries, build metadata and externally generated/vendor packages.
+    # libraries and generated/vendor packages.
     for path in runtime.rglob("*"):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
@@ -203,7 +206,7 @@ def export_overlay(
             path.unlink()
 
 
-def runtime_constraints() -> dict[str, str]:
+def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
     """Retain the installed accelerator ABI packages while allowing ordinary dependency updates."""
     protected = {
         "torch",
@@ -213,11 +216,12 @@ def runtime_constraints() -> dict[str, str]:
         "triton",
         "mcoplib",
         "maca-python",
+        "vllm-metax",
     }
     constraints = {}
     for distribution in importlib.metadata.distributions():
         name = canonicalize_name(distribution.metadata["Name"])
-        if name in {"vllm", "vllm-metax"}:
+        if name in source_packages:
             continue
         local = distribution.version.partition("+")[2].lower()
         if (
@@ -246,23 +250,27 @@ def prepare_sdk_audio(plugin: Path, staging: Path) -> None:
     )
 
 
-def package_wheels(core: Path, plugin: Path | None, output: Path, metax: bool) -> None:
-    """Package existing engine outputs and upstream metadata for full-image dependency installation."""
-    constraints = runtime_constraints()
-    (output / "runtime-native-constraints.txt").write_text(
+def prepare_metadata(
+    core: Path, plugin: Path | None, output: Path, metax: bool
+) -> None:
+    """Export upstream distribution metadata and dependency inputs without packaging engine code."""
+    projects = [(core, "vllm")]
+    if plugin is not None:
+        projects.append((plugin, "vllm_metax"))
+    engine_names = {canonicalize_name(package) for _, package in projects}
+    constraints = runtime_constraints(engine_names)
+    dependencies = output / "dependencies"
+    dependencies.mkdir(parents=True, exist_ok=True)
+    (dependencies / "runtime-native-constraints.txt").write_text(
         "".join(
             f"{name}==={version}\n" for name, version in sorted(constraints.items())
         )
     )
-    wheels = output / "wheels"
-    if wheels.exists():
-        shutil.rmtree(wheels)
-    wheels.mkdir()
-    projects = [(core, "vllm")]
-    if plugin is not None:
-        projects.append((plugin, "vllm_metax"))
+    requirements = set()
     for source, package in projects:
-        with tempfile.TemporaryDirectory(prefix="foretoken-engine-wheel-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="foretoken-engine-metadata-"
+        ) as temporary:
             staging = Path(temporary)
             if package == "vllm_metax":
                 prepare_sdk_audio(source, staging)
@@ -316,40 +324,34 @@ def package_wheels(core: Path, plugin: Path | None, output: Path, metax: bool) -
                         f"{requirement.name} is supplied by the runtime image; "
                         "a different accelerator package source requires a matching base image"
                     )
-            root = staging / "wheel"
-            root.mkdir()
-            shutil.copytree(output / "engine" / package, root / package)
-            destination = root / dist_info.name
+                # The bound engines are delivered as files, not resolver candidates.
+                if canonicalize_name(requirement.name) not in engine_names and (
+                    requirement.marker is None
+                    or requirement.marker.evaluate({"extra": ""})
+                ):
+                    requirements.add(str(requirement))
+            destination = output / "engine" / dist_info.name
             shutil.copytree(dist_info, destination)
+            # Reused or rebuilt native outputs retain this interpreter and accelerator ABI.
             wheel_metadata = distribution.read_text("WHEEL")
             if wheel_metadata is None:
                 raise RuntimeError(
                     f"runtime {package} distribution has no WHEEL metadata"
                 )
-            # The wheel stays inside this image build and targets the same runtime ABI.
             (destination / "WHEEL").write_text(wheel_metadata)
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "wheel",
-                    "pack",
-                    str(root),
-                    "--dest-dir",
-                    str(wheels),
-                ],
-                check=True,
-            )
+    (dependencies / "requirements.txt").write_text(
+        "".join(f"{requirement}\n" for requirement in sorted(requirements))
+    )
 
 
 def main() -> None:
-    """Prepare source payloads or metadata-complete wheels for the image build's selected stage."""
+    """Prepare dependency inputs or complete source overlays for the selected build stage."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-native", action="store_true")
-    parser.add_argument("--package-wheels", action="store_true")
+    parser.add_argument("--dependencies-only", action="store_true")
     arguments = parser.parse_args()
     cache = arguments.cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)
@@ -371,13 +373,16 @@ def main() -> None:
     )
     if plugin is not None and not metax:
         raise RuntimeError("a vllm-metax checkout requires a MetaX runtime")
+    native = cache / "native-install"
     version = importlib.metadata.version("vllm")
     patched_files = prepare_patches(core, plugin, version, metax)
-    if arguments.package_wheels:
-        output = arguments.output.resolve()
-        if plugin is None and (output / "engine/vllm_metax").is_dir():
-            plugin = cache / "vllm-metax"
-        package_wheels(core, plugin, output, metax)
+    output = arguments.output.resolve()
+    engine = output / "engine"
+    if engine.exists():
+        shutil.rmtree(engine)
+    engine.mkdir(parents=True)
+    prepare_metadata(core, plugin, output, metax)
+    if arguments.dependencies_only:
         return
     if arguments.build_native:
         if metax and plugin is None:
@@ -394,20 +399,9 @@ def main() -> None:
             cache,
             importlib.metadata.version("vllm-metax") if metax else version,
         )
-    output = arguments.output.resolve()
-    engine = output / "engine"
-    if engine.exists():
-        shutil.rmtree(engine)
-    engine.mkdir(parents=True)
     export_overlay(
         core, engine, deleted_core, "vllm", cache, patched_files.get(core, set())
     )
-    native = cache / "native-install"
-    if metax and native.exists() and plugin is None:
-        plugin = cache / "vllm-metax"
-        known = json.loads((cache / "vllm-metax-files.json").read_text())
-        originals = cache / "vllm-metax-inputs"
-        deleted_plugin = {name for name in known if not (originals / name).is_file()}
     if plugin is not None:
         export_overlay(
             plugin,

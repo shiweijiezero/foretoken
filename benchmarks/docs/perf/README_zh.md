@@ -31,4 +31,4 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 | 测量视频生成性能 | [视频负载](video_zh.md) |
 | 比较运行和查看图表 | [W&B 输出](wandb_zh.md) |
 
-指标定义见[性能指标](../../metrics_zh.md)，全部参数见 `foretoken perf --help`。需要定位执行瓶颈时，在负载运行的同时[采集 profile](../profile/README_zh.md)。
+指标定义见[性能指标](../metrics_zh.md)，全部参数见 `foretoken perf --help`。需要定位执行瓶颈时，在负载运行的同时[采集 profile](../profile/README_zh.md)。

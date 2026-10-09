@@ -55,6 +55,17 @@ COPY deploy/inference-engines/vllm-metax/source-environment.json \
      /opt/foretoken-engine-build/metax/
 COPY deploy/inference-engines/vllm-metax/patches/ /opt/foretoken-engine-build/metax/patches/
 
+FROM toolchain AS engine-metadata
+ARG CACHE_ID
+COPY engine/ /input/engine/
+RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
+    bash -euc ' \
+      if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
+      export PYTHONPATH=/opt/foretoken-engine-build/python${PYTHONPATH:+:$PYTHONPATH}; \
+      "${FORETOKEN_VLLM_PYTHON:-python}" /opt/foretoken-engine-build/source-build.py \
+        --source-root /input/engine --cache /cache --output /out --dependencies-only \
+    '
+
 FROM toolchain AS engine-build
 ARG CACHE_ID
 ARG BUILD_NATIVE=false
@@ -74,28 +85,17 @@ RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
       "${FORETOKEN_VLLM_PYTHON:-python}" /opt/foretoken-engine-build/source-build.py "${arguments[@]}" \
     ' source-build "${BUILD_NATIVE}" "${BUILD_JOBS}" "${TARGET_CUDA_ARCH_LIST}"
 
-FROM scratch AS source-export
-COPY --from=engine-build /out/engine/ /engine/
-COPY --from=engine-build /out/engine-environment.json /engine-environment.json
+# Only resolver inputs cross this boundary; source and native outputs remain ordinary files.
+FROM scratch AS engine-dependencies
+COPY --from=engine-metadata /out/dependencies/ /dependencies/
 
-# Prepare new distribution metadata around the already-built native payload.
-FROM engine-build AS engine-wheel-build
-RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
-    bash -euc ' \
-      if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
-      export PYTHONPATH=/opt/foretoken-engine-build/python${PYTHONPATH:+:$PYTHONPATH}; \
-      "${FORETOKEN_VLLM_PYTHON:-python}" /opt/foretoken-engine-build/source-build.py \
-        --source-root /input/engine --cache /cache --output /out --package-wheels \
-    '
-
-FROM ${RUNTIME_IMAGE} AS runtime
+FROM ${RUNTIME_IMAGE} AS environment
 ARG UV_DEFAULT_INDEX
 ARG UV_EXTRA_INDEX_URL
 ARG RUNTIME_USER
 USER root
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    --mount=from=engine-wheel-build,source=/out/wheels,target=/tmp/foretoken-engine-wheels \
-    --mount=from=engine-wheel-build,source=/out/runtime-native-constraints.txt,target=/tmp/foretoken-native-constraints.txt \
+    --mount=from=engine-dependencies,source=/dependencies,target=/tmp/foretoken-engine-dependencies \
     bash -euc ' \
       if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
       python="${FORETOKEN_VLLM_PYTHON:-python}"; \
@@ -104,12 +104,38 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
         export UV_INDEX_STRATEGY=${UV_INDEX_STRATEGY:-unsafe-best-match}; \
       fi; \
       uv pip install --no-cache --python "$python" \
-        --constraint /tmp/foretoken-native-constraints.txt \
-        --reinstall-package vllm --reinstall-package vllm-metax \
-        /tmp/foretoken-engine-wheels/*.whl; \
-      uv pip check --python "$python" \
+        --constraint /tmp/foretoken-engine-dependencies/runtime-native-constraints.txt \
+        --requirement /tmp/foretoken-engine-dependencies/requirements.txt \
     '
-# Packages are installed by uv; only activation settings remain outside site-packages.
-COPY --from=engine-build /out/engine-environment.json /opt/foretoken/engine-source/engine-environment.json
-ENV FORETOKEN_ENGINE_DIRECTORY=/opt/foretoken/engine-source
 USER ${RUNTIME_USER}
+
+# Check the complete environment against source metadata without adding it to the image.
+FROM ${RUNTIME_IMAGE} AS engine-validation
+USER root
+COPY --from=engine-build /out/ /out/
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv bash <<'EOF'
+set -euo pipefail
+if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi
+python="${FORETOKEN_VLLM_PYTHON:-python}"
+"$python" - <<'PY'
+import importlib.metadata
+import shutil
+import sysconfig
+from pathlib import Path
+
+for metadata in Path("/out/engine").glob("*.dist-info"):
+    name = importlib.metadata.PathDistribution(metadata).metadata["Name"]
+    distribution = importlib.metadata.distribution(name)
+    installed_metadata = next(
+        path for path in distribution.files
+        if path.name == "METADATA" and path.parent.name.endswith(".dist-info")
+    )
+    shutil.rmtree(distribution.locate_file(installed_metadata).parent)
+    shutil.copytree(metadata, Path(sysconfig.get_path("purelib")) / metadata.name)
+PY
+uv pip check --python "$python"
+EOF
+
+FROM scratch AS source-export
+COPY --from=engine-validation /out/engine/ /engine/
+COPY --from=engine-validation /out/engine-environment.json /engine-environment.json

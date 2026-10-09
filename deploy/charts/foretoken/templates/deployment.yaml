@@ -5,6 +5,18 @@
 
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := and .Values.development .Values.development.enabled | default false }}
+{{- $application := .Values.controller.applicationURL }}
+{{- $frontendApplication := .Values.frontend.applicationURL }}
+{{- $modelApplication := .Values.runtime.vllm.applicationURL }}
+{{- if .Values.applicationFiles.releaseURL }}
+{{- $origin := include "foretoken.applicationFilesOrigin" . }}
+{{- $revision := default .Chart.AppVersion .Values.applicationFiles.revision }}
+{{- $application = default (printf "%s/control-plane/%s" $origin $revision) $application }}
+{{- $frontendApplication = default (printf "%s/frontend/%s" $origin $revision) $frontendApplication }}
+{{- $modelApplication = default (printf "%s/model-server/%s" $origin $revision) $modelApplication }}
+{{- end }}
+{{- $applicationMount := include "foretoken.applicationMount" . }}
+{{- $applicationClient := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,8 +35,14 @@ spec:
     metadata:
       annotations:
         inference.foretoken.io/chart-version: {{ .Chart.Version | quote }}
+        {{- with $application }}
+        inference.foretoken.io/application-url: {{ . | quote }}
+        {{- end }}
       labels:
         {{- include "foretoken.labels" . | nindent 8 }}
+        {{- if $application }}
+        foretoken.io/application-files: consumer
+        {{- end }}
     spec:
       serviceAccountName: {{ include "foretoken.fullname" . }}
       automountServiceAccountToken: true
@@ -40,11 +58,40 @@ spec:
           type: RuntimeDefault
       # Establish the APIs before controller-runtime starts discovery and caches.
       initContainers:
+        {{- if $application }}
+        - name: application-files
+          image: {{ $applicationClient | quote }}
+          command:
+            - python
+            - -c
+            - {{ .Files.Get "files/application-download.py" | quote }}
+            - {{ $application | quote }}
+            - {{ $applicationMount | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: application
+              mountPath: {{ $applicationMount }}
+        {{- end }}
         - name: crd-apply
           image: {{ include "foretoken.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
+            {{- if $application }}
+            - {{ printf "%s/current/bin/crd-apply" $applicationMount }}
+            - {{ printf "--crds-dir=%s/current/crds" $applicationMount }}
+            {{- else }}
             - /crd-apply
+            {{- end }}
+          {{- if $application }}
+          volumeMounts:
+            - name: application
+              mountPath: {{ $applicationMount }}
+              readOnly: true
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -56,8 +103,26 @@ spec:
           image: {{ include "foretoken.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /manager
+            - {{ ternary (printf "%s/current/bin/manager" $applicationMount) "/manager" (not (empty $application)) }}
+          {{- if $application }}
+          volumeMounts:
+            - name: application
+              mountPath: {{ $applicationMount }}
+              readOnly: true
+          {{- end }}
           args:
+            {{- if or $sourceMode $application $frontendApplication $modelApplication }}
+            - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
+            {{- end }}
+            {{- with $application }}
+            - {{ printf "--video-worker-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $frontendApplication }}
+            - {{ printf "--frontend-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $modelApplication }}
+            - {{ printf "--model-server-application-url=%s" . | quote }}
+            {{- end }}
             - --leader-elect=true
             - {{ printf "--source-mode=%t" $sourceMode | quote }}
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
@@ -175,8 +240,7 @@ spec:
             httpGet:
               path: /readyz
               port: healthz
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 2
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -187,4 +251,9 @@ spec:
             capabilities:
               drop:
                 - ALL
+      {{- if $application }}
+      volumes:
+        - name: application
+          emptyDir: {}
+      {{- end }}
       terminationGracePeriodSeconds: 10

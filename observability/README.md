@@ -13,7 +13,7 @@ Use Grafana to inspect serving performance, query persistent logs, and investiga
 
 Open Grafana through your cluster's monitoring entry point. The CLI-managed Grafana Service is `foretoken-prometheus-grafana` in `foretoken-platform`, on port 80. It defaults to `ClusterIP`; access from outside the cluster requires an entry point configured by the cluster administrator. Reused Grafana installations keep their existing access settings.
 
-Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model, then use the instance, execution-role, and engine-rank filters to inspect individual backends. Whole-model total curves remain a reference across all instances; detail curves follow those filters.
+Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model for inference and admission metrics, and a frontend for HTTP traffic. Instance, execution-role, and engine-rank filters narrow backend details; whole-model totals remain visible.
 
 The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
 
@@ -24,12 +24,11 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
+| Why are requests waiting or being rejected? | Per-model admission results, queue wait, and occupancy and limits in each frontend replica. |
 
-TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. Panel descriptions provide the detailed measurement definitions.
+TTFT is first-token latency; E2EL is completion latency. TPOT is the average output-token interval per request; ITL measures individual intervals. Units are shown on each panel.
 
-When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages.
-
-Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
+In Admission, select a model and optionally a frontend Pod for replica details, then expand the results or resources rows. Limits and queues are independent per model in each replica; an all-model view does not represent a shared quota.
 
 ## Query logs
 
@@ -45,22 +44,13 @@ Collection includes model servers and their inference engines, frontends, KV ser
 
 ## Alerts
 
-Choose rules in the owning `ModelService` or `FrontendService`. For example, enable scrape-failure alerts under `spec`:
+Select rules in a `ModelService` or `FrontendService` and redeploy its configuration. The [alert reference](runbooks/alerts.md) covers available rules, thresholds, and response actions; the [service observability example](../examples/observability/README.md) provides a runnable deployment.
 
-```yaml
-observability:
-  alerts:
-    rules:
-      - ForetokenMetricsTargetDown
-```
-
-Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, and redeploy to disable alerts while keeping metrics. The [service observability example](../examples/observability/README.md) provides a runnable configuration and deployment commands.
-
-Use the [alert reference](runbooks/alerts.md) to choose rules, thresholds, and the appropriate service type. For notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
+To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
 
 ## Platform settings
 
-For a source installation, run platform updates from the checkout root with `-e .`, retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
+Reapply the original `foretoken install` command to update dashboards and collection settings. Then run `foretoken deploy` with your deployment directory to update the serving applications. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
 
 ### Grafana login
 

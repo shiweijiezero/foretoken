@@ -41,11 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
-    let generation = Arc::new(RuntimeGeneration::new(
-        config.request_timeout,
-        builder.admission()?,
-    ));
+    let admission = Arc::new(foretoken_admission::AdmissionRegistry::default());
+    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential)?);
+    let generation = Arc::new(RuntimeGeneration::new(config.request_timeout, admission));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
     // live while readiness stays false until a valid routing snapshot is published.

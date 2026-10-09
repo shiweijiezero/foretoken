@@ -90,6 +90,27 @@ spec:
                   NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
+                  application:
+                    description: Application is selected by the ModelService controller,
+                      not by user model intent.
+                    properties:
+                      applicationURL:
+                        type: string
+                      deploymentRevision:
+                        type: string
+                      image:
+                        type: string
+                      imageProfile:
+                        description: ImageProfile distinguishes serving, Omni and
+                          diagnostic environments during selection.
+                        type: string
+                      sourceRevision:
+                        description: SourceRevision retains the admitted source intent
+                          independently of source-mode defaults.
+                        type: string
+                    required:
+                    - image
+                    type: object
                   backend:
                     enum:
                     - vllm

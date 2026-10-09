@@ -7,12 +7,6 @@ name: Data plane
 
 on:
   pull_request:
-    paths:
-      - data-plane/**
-      - Makefile
-      - .gitmodules
-      - rust-toolchain.toml
-      - .github/workflows/data-plane.yaml
   push:
     branches:
       - main
@@ -28,15 +22,36 @@ permissions:
 
 jobs:
   verify:
+    name: Data plane
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          submodules: true
+          fetch-depth: 2
+      # The repository verification target prepares its pinned submodule when needed.
+      - name: Select relevant changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          elif git diff --quiet HEAD^1 HEAD -- data-plane/ Makefile .gitmodules \
+            rust-toolchain.toml .github/workflows/data-plane.yaml; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'No data-plane changes; verification not needed.'
+          else
+            status=$?
+            test "$status" -eq 1 || exit "$status"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Install native build dependencies
+        if: steps.changes.outputs.run == 'true'
         run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev perl pkg-config
       - name: Install Rust lint components
+        if: steps.changes.outputs.run == 'true'
         run: rustup component add rustfmt clippy
       - name: Verify data plane
+        if: steps.changes.outputs.run == 'true'
         run: make verify-data-plane

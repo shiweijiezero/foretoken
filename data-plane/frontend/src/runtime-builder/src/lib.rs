@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use foretoken_admission::{AdmissionTargetState, PreparedAdmissions};
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ModelIdentity, ServingSnapshot,
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
-use foretoken_router::algorithm::admission::AdmissionTargetState;
 use foretoken_router::{
     PipelineRouter, RouteInventory, RouteTargetStatsReader, Router, RouterPipeline,
     RouterPipelineConfig, RouterPipelineConfigError,
@@ -43,7 +43,7 @@ struct CachedModelBundle {
 type ModelBundleCache = Mutex<BTreeMap<String, CachedModelBundle>>;
 
 pub struct RuntimeBuilder {
-    router_pipeline: Result<Arc<RouterPipeline>, RouterPipelineConfigError>,
+    router_pipeline: Arc<RouterPipeline>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
     model_bundles: ModelBundleCache,
@@ -53,24 +53,17 @@ impl RuntimeBuilder {
     /// Creates the snapshot builder retained by the frontend watcher for successive updates.
     ///
     /// The watcher reuses the returned builder to parse and prepare generations with this routing
-    /// pipeline and KV credential for its lifetime.
-    pub fn new(router_pipeline: RouterPipelineConfig, kv_credential: KvIndexCredential) -> Self {
-        Self {
-            router_pipeline: router_pipeline.build().map(Arc::new),
+    /// pipeline and KV credential for its lifetime. Invalid routing configuration fails at startup.
+    pub fn new(
+        router_pipeline: RouterPipelineConfig,
+        kv_credential: KvIndexCredential,
+    ) -> Result<Self, RouterPipelineConfigError> {
+        Ok(Self {
+            router_pipeline: Arc::new(router_pipeline.build()?),
             kv_credential,
             routing_load: Default::default(),
             model_bundles: Mutex::new(BTreeMap::new()),
-        }
-    }
-
-    /// Shares the process-wide Router admission owner with HTTP intake and generation.
-    pub fn admission(
-        &self,
-    ) -> Result<Arc<dyn foretoken_router::RouteAdmission>, RuntimeBuildError> {
-        self.router_pipeline
-            .as_ref()
-            .map(|pipeline| pipeline.admission.clone())
-            .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))
+        })
     }
 
     /// Decodes controller-provided bytes into a serving snapshot candidate for [`Self::build`].
@@ -95,6 +88,13 @@ impl RuntimeBuilder {
             || !snapshot.epd_components.is_empty();
         let identities = snapshot
             .model_identities()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        if identities.keys().ne(snapshot.admission.keys()) {
+            return Err(RuntimeBuildError::InvalidSnapshot(
+                "model catalog and admission rules differ".into(),
+            ));
+        }
+        let admission = PreparedAdmissions::new(&snapshot.admission)
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
         let admission_targets = snapshot
             .admission_target_sets()
@@ -167,16 +167,11 @@ impl RuntimeBuilder {
             }
         }
         let router: Arc<dyn Router> = Arc::new(
-            PipelineRouter::with_pipeline(
-                registry.clone(),
-                self.router_pipeline
-                    .as_ref()
-                    .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?
-                    .clone(),
-            )
-            .with_load_state(self.routing_load.clone())
-            .with_kv_prefix_indexer(kv_indexer)
-            .with_route_target_stats_reader(registry.clone()),
+            PipelineRouter::with_pipeline(registry.clone(), self.router_pipeline.clone())
+                .with_snapshot_version(version)
+                .with_load_state(self.routing_load.clone())
+                .with_kv_prefix_indexer(kv_indexer)
+                .with_route_target_stats_reader(registry.clone()),
         );
         let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
@@ -195,6 +190,7 @@ impl RuntimeBuilder {
             version,
             state: Arc::new(state),
             control,
+            admission,
         })
     }
 }
@@ -203,6 +199,7 @@ pub struct PreparedRuntime {
     version: u64,
     state: Arc<RuntimeState>,
     control: Arc<dyn RuntimeControl>,
+    admission: PreparedAdmissions,
 }
 
 impl PreparedRuntime {
@@ -211,7 +208,7 @@ impl PreparedRuntime {
     /// Snapshot watchers consume the candidate exactly once. Returns whether its version replaced
     /// the active state; stale candidates are dropped without affecting request handling.
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
-        generation.replace_state(self.version, self.state, self.control)
+        generation.replace_state(self.version, self.state, self.control, self.admission)
     }
 }
 
@@ -219,8 +216,6 @@ impl PreparedRuntime {
 pub enum RuntimeBuildError {
     #[error("could not parse serving snapshot: {0}")]
     Parse(#[from] serde_json::Error),
-    #[error("could not build configured Router pipeline: {0}")]
-    RouterPipeline(String),
     #[error("could not validate serving snapshot: {0}")]
     InvalidSnapshot(String),
     #[error("model-server backend is not ready")]
