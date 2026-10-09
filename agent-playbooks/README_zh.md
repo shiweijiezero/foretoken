@@ -110,7 +110,7 @@ results/<goal>/<motivation>/
 | 1 | `generated/context.json` | 完成、失败或中断状态，退出码、命令和源码采集情况 |
 | 2 | 结果目录中的 `config.json`、`environment.json` | 负载、生成参数、客户端与服务环境是否具有可比性 |
 | 3 | 结果目录中的 `metrics.json` | 性能指标或质量评分；同时检查成功数、样本数和评分方式 |
-| 4 | 性能结果的 `raw_output.json`，或质量结果的 `native/` | 原始响应、逐题回答及结束情况，验证汇总指标是否对应真实行为 |
+| 4 | 性能结果的 `raw_output.json`，或质量结果的 `native/` | 逐请求指标与结束状态，或评测框架的逐题回答和评分 |
 | 5 | `generated/run.log`（启用 `quiet` 时）、评测日志或 `evaluator.log` | 失败原因、准备阶段和实际执行过程 |
 
 质量评测需要逐题记录时添加 `--log_samples`（lm-evaluation-harness）。资源与服务指标的曲线入口见[性能结果](../benchmarks/docs/perf/wandb_zh.md)；选择 W&B 输出前先完成登录。

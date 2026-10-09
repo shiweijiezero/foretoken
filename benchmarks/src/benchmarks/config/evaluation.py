@@ -179,6 +179,8 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
             for service in config.services:
                 service.validate()
         config.outputs.validate()
+        if config.outputs.includes("raw"):
+            parser.error("raw output is available for foretoken perf; use evaluator sample logging for quality results")
     return config, options.help
 
 

@@ -34,6 +34,7 @@ from benchmarks.results.environment import client_environment, serving_environme
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
+from benchmarks.results.responses import ResponseWriter
 from benchmarks.results.wandb import publish_http_wandb
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,18 @@ def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dic
         "input_tokens": item.input_tokens,
         "output_tokens": item.output_tokens,
         "cached_input_tokens": item.cached_input_tokens,
-        "inter_token_latencies": list(item.itl_samples) if stream else [],
+        "itl_summary": item.itl_summary,
+        "request_id": item.request_id,
+        "scheduled_at": item.scheduled_at,
+        "send_delay": item.send_delay,
+        "phase": item.phase,
+        "source_id": item.source_id,
+        "finish_reason": item.finish_reason,
+        "response_id": item.response_id,
+        "response_model": item.response_model,
+        "content_characters": item.content_characters,
+        "reasoning_characters": item.reasoning_characters,
+        "transport_completed": item.transport_completed,
         "conversation_id": item.conversation_id,
         "turn": item.turn,
         "dataset": item.dataset,
@@ -168,6 +180,7 @@ class BenchmarkArtifactSink:
                     }
                     for index, item in enumerate(run.measurements)
                 ],
+                compact=True,
             )
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -293,6 +306,12 @@ class WandbSink:
                 for name in ("warmup_metrics", "warmup_raw_output"):
                     artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
                 self._run.log_artifact(artifact)
+            response_files = [run.artifacts[name] for name in ("responses", "warmup_responses") if name in run.artifacts]
+            if response_files:
+                artifact = wandb.Artifact(f"responses-{self._run.id}", type="benchmark-responses")
+                for path in response_files:
+                    artifact.add_file(str(path), name=path.name)
+                self._run.log_artifact(artifact)
             if "plots" in run.artifacts:
                 directory = run.artifacts["plots"]
                 artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
@@ -338,11 +357,14 @@ def result_directory_path(
     )
 
 
-def write_json(directory: str, filename: str, data: Any) -> Path:
+def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
     """Write one JSON artifact into a result directory and return its path."""
     path = Path(directory) / filename
     with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4, ensure_ascii=False)
+        if compact:
+            json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(data, file, indent=4, ensure_ascii=False)
     return path
 
 
@@ -466,6 +488,14 @@ class ResultOutputs:
         if self._execution_dir is None:
             raise RuntimeError("result outputs are not active")
         return self._execution_dir
+
+    def create_response_writer(self) -> ResponseWriter | None:
+        """Open optional content evidence under this run and close it with the result lifecycle."""
+        if not self.benchmark.outputs.includes("raw"):
+            return None
+        writer = ResponseWriter(self.execution_dir)
+        self._resources.callback(writer.close)
+        return writer
 
     def create_profile(self) -> Any | None:
         """Create the optional HTTP capture observer owned by this point's output directory."""
@@ -696,7 +726,7 @@ class ResultOutputs:
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
-        write_json(self.execution_dir, "warmup_raw_output.json", rows)
+        write_json(self.execution_dir, "warmup_raw_output.json", rows, compact=True)
         write_json(self.execution_dir, "warmup_metrics.json", metrics)
 
     def record_http_warmup(
@@ -707,6 +737,7 @@ class ResultOutputs:
         stream: bool,
         arrival_rate: float,
         concurrency: int,
+        itl_summary: dict[str, Any] | None = None,
     ) -> None:
         """Summarize and serialize HTTP warmup on its own clock, apart from measured results."""
         metrics = summarize_measurements(
@@ -714,6 +745,7 @@ class ResultOutputs:
             arrival_rate=arrival_rate, request_count=len(measurements),
             reported_concurrency=concurrency, gpu_count=None,
             include_normalized_throughput=False,
+            itl_summary=itl_summary,
         )
         self.record_warmup(
             [request_measurement_record(item, stream=stream) for item in measurements], metrics,
@@ -723,6 +755,10 @@ class ResultOutputs:
         """Stop observations, record the run status, and publish every open sink."""
         for name in ("warmup_raw_output", "warmup_metrics"):
             path = Path(self.execution_dir) / f"{name}.json"
+            if path.is_file():
+                run.artifacts[name] = path
+        for name in ("responses", "warmup_responses"):
+            path = Path(self.execution_dir) / f"{name}.jsonl"
             if path.is_file():
                 run.artifacts[name] = path
         if run.exit_code is not None:

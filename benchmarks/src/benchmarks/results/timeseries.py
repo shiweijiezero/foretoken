@@ -86,8 +86,10 @@ def cumulative_series(
                 if item.tpot is not None:
                     tpot_total += item.tpot
                     tpot_count += 1
-                itl_total += sum(item.itl_samples)
-                itl_count += len(item.itl_samples)
+                summary = item.itl_summary
+                if summary["count"]:
+                    itl_total += summary["mean"] * summary["count"]
+                    itl_count += summary["count"]
 
         elapsed = item.started_at + item.latency
         row: dict[str, Any] = {

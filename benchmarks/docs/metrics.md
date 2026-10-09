@@ -25,6 +25,8 @@ Results include aggregate metrics and per-request records.
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 
+ITL percentiles have 1% relative value error. Request-level ITL SLOs compare the maximum interval.
+
 ## Curves
 
 W&B plots input and output throughput separately for the model measured by each run. `Time` curves use one-second completion windows: a successful request contributes all its tokens when it finishes, divided by the window duration. `Cumulative` curves divide completed successful requests' token totals by elapsed time. Both measure this benchmark's traffic; Grafana model totals include all traffic reaching the model.

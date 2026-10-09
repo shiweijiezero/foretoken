@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from benchmarks.results.itl import ITLStatistics
+
 
 @dataclass
 class ChatStreamTiming:
@@ -19,7 +21,7 @@ class ChatStreamTiming:
 
     first_output_at: float | None = None
     last_output_at: float | None = None
-    intervals: list[float] = field(default_factory=list)
+    itl: ITLStatistics = field(default_factory=ITLStatistics)
 
     def observe(self, response: dict[str, Any], received_at: float) -> None:
         """Record one decoded streaming chunk when its choices list is non-empty."""
@@ -28,5 +30,5 @@ class ChatStreamTiming:
         if self.first_output_at is None:
             self.first_output_at = received_at
         if self.last_output_at is not None:
-            self.intervals.append(received_at - self.last_output_at)
+            self.itl.observe(received_at - self.last_output_at)
         self.last_output_at = received_at

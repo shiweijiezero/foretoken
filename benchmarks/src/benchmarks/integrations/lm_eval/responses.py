@@ -6,23 +6,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import sqlite3
+import tempfile
 from collections import defaultdict, deque
-from contextlib import closing
 from pathlib import Path
 from typing import Any, NamedTuple, Self
 
+logger = logging.getLogger(__name__)
+
 
 def restore_progress(source: Path, native: Path) -> None:
-    """Back up completed responses into the new run without writing to the previous database."""
+    """Stage a closed response archive for the new run, leaving the previous run unchanged."""
     database = source / LmEvalResponses.filename
     if not database.is_file():
         raise ValueError("The previous lm-eval run has no saved evaluation progress")
-    with (
-        closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src,
-        closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst,
-    ):
-        src.backup(dst)
+    shutil.copyfile(database, native.parent / LmEvalResponses.filename)
 
 
 class ResponseSlot(NamedTuple):
@@ -33,16 +33,24 @@ class ResponseSlot(NamedTuple):
 
 
 class LmEvalResponses:
-    """Own a run's completed responses and consume each saved generation once per invocation."""
+    """Own node-local response writes and archive completed work when the run exits."""
 
     filename = "lm_eval_responses.sqlite"
 
     def __init__(self, directory: Path) -> None:
-        self.connection = sqlite3.connect(directory / self.filename)
+        """Open an isolated working database, seeded from this run's restored archive if present."""
+        self.archive = directory / self.filename
+        # TMPDIR may point at shared storage; response transactions belong on the execution node.
+        self.local_directory = Path(tempfile.mkdtemp(prefix="foretoken-lm-eval-", dir="/tmp"))
+        self.database = self.local_directory / self.filename
         self.consumed: dict[int, int] = {}
         self.pending: dict[tuple[str, Any], deque[ResponseSlot]] = defaultdict(deque)
+        connection = None
         try:
-            self.connection.executescript("""
+            if self.archive.is_file():
+                shutil.copyfile(self.archive, self.database)
+            connection = sqlite3.connect(self.database)
+            connection.executescript("""
                 CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY, arguments TEXT NOT NULL UNIQUE);
                 CREATE TABLE IF NOT EXISTS responses (
                     request INTEGER NOT NULL, sample INTEGER NOT NULL, response TEXT NOT NULL,
@@ -53,14 +61,36 @@ class LmEvalResponses:
                 );
             """)
         except BaseException:
-            self.connection.close()
+            if connection is not None:
+                connection.close()
+            shutil.rmtree(self.local_directory)
             raise
+        self.connection = connection
 
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: object) -> None:
-        self.connection.close()
+    def __exit__(self, exc_type: object, error: BaseException | None, traceback: object) -> None:
+        """Close before publishing an archive; retain local progress if publication fails."""
+        try:
+            self.connection.close()
+            # Publish only a complete, closed SQLite file, never a database with active writers.
+            with tempfile.NamedTemporaryFile(
+                prefix=".lm-eval-responses-", suffix=".sqlite", dir=self.archive.parent, delete=False,
+            ) as staged:
+                staged_path = Path(staged.name)
+            try:
+                shutil.copyfile(self.database, staged_path)
+                staged_path.replace(self.archive)
+            finally:
+                staged_path.unlink(missing_ok=True)
+            shutil.rmtree(self.local_directory)
+        except (OSError, sqlite3.Error) as archive_error:
+            message = f"Could not finalize lm-eval progress; local database path: {self.database}"
+            logger.exception(message)
+            if error is None:
+                raise
+            error.add_note(f"{message}: {archive_error}")
 
     @staticmethod
     def _key(arguments: Any) -> str:
