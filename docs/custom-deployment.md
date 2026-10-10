@@ -39,7 +39,7 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. Foretoken prints a source plan before building: frontend and model-server changes publish only the affected application, while build-environment changes rebuild the source installation. Unchanged artifacts and compiler caches are reused. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
+After editing the checkout, run the same command again. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
 Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
 

@@ -39,7 +39,7 @@ foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，再执行同一条命令。Foretoken 会在构建前打印源码计划：前端或 model-server 改动只发布受影响的应用，运行环境改动才会重建源码安装；未变化的产物和编译缓存会复用。代码更新会重启受影响的工作负载，并可能重新加载模型权重。请求与清理操作见快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
+修改源码后，再执行同一条命令。代码更新会重启受影响的工作负载，并可能重新加载模型权重。请求与清理操作见快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
 
 CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
 
