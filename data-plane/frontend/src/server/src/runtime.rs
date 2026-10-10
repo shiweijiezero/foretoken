@@ -584,6 +584,19 @@ impl RuntimeGeneration {
         true
     }
 
+    /// Advances controller-observed Pod ownership without activating candidate serving settings.
+    /// Snapshot watchers call this before preparation, including candidates rejected by Router.
+    pub fn publish_admission_membership(
+        &self,
+        version: u64,
+        models: Vec<String>,
+        frontend_instances: &[String],
+        backend_instances: &[String],
+    ) {
+        self.admission
+            .publish_membership(version, models, frontend_instances, backend_instances);
+    }
+
     /// Stops accepting new requests while retaining the active generation for draining streams.
     ///
     /// Process shutdown calls this once before stopping HTTP; it wakes admission waiters, which

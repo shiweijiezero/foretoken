@@ -269,7 +269,11 @@ func (reconciler *FrontendServiceReconciler) placeFrontendCache(ctx context.Cont
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
 func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	frontend := new(inferencev1alpha1.FrontendService)
-	if err := reconciler.Get(ctx, request.NamespacedName, frontend); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.Get(ctx, request.NamespacedName, frontend); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	result, err := reconciler.reconcileFrontend(ctx, frontend)
