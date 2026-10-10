@@ -90,13 +90,19 @@ if action == 'recover_backend' then
     return 'ok'
 end
 
-if action == 'publish' then
+-- Membership is controller-observed ownership, not an activation of candidate settings.
+-- Separate revisions let recovery progress while a frontend rejects a routing configuration.
+if action == 'publish' or action == 'publish_membership' then
     local version = tonumber(redis.call('HGET', key, 'version') or '-1')
-    if input.version > version then
+    local membership_version = tonumber(redis.call('HGET', key, 'membership_version') or version)
+    if action == 'publish' and input.version > version then
+        redis.call('HSET', key, 'version', input.version, 'config', cjson.encode(input.config))
+    end
+    if input.version > membership_version then
         local frontends, backends = {}, {}
         for _, frontend in ipairs(input.frontends) do frontends[frontend] = true end
         for _, backend in ipairs(input.backends) do backends[backend] = true end
-        redis.call('HSET', key, 'version', input.version, 'config', cjson.encode(input.config),
+        redis.call('HSET', key, 'membership_version', input.version,
             'frontends', cjson.encode(frontends), 'backends', cjson.encode(backends))
         retire_frontends(function(request) return frontends[request.frontend] == true end)
         finish_backend_slots(function(slot) return not backends[slot.backend_pod] end)

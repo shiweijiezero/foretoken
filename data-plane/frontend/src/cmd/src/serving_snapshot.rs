@@ -85,6 +85,12 @@ async fn process_serving_snapshot(
         );
         return true;
     }
+    generation.publish_admission_membership(
+        candidate_version,
+        snapshot.admission.keys().cloned().collect(),
+        &snapshot.frontend_instances,
+        &snapshot.backend_instances,
+    );
     generation.record_configuration(Some(candidate_version), None);
     match builder.build(snapshot).await {
         Ok(prepared) => match std::fs::read(path) {

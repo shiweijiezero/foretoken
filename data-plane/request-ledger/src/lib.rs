@@ -154,6 +154,29 @@ impl RequestLedger {
         Ok(())
     }
 
+    /// Publishes authoritative Pod membership without changing the model's active admission rules.
+    /// Snapshot observation uses this even when candidate serving settings cannot be activated.
+    pub async fn publish_membership(
+        &self,
+        scope: &str,
+        model: &str,
+        version: u64,
+        frontend_instances: &[String],
+        backend_instances: &[String],
+    ) -> Result<(), LedgerError> {
+        Self::outcome(
+            self.transition(
+                scope,
+                model,
+                "publish_membership",
+                "",
+                json!({"version": version, "frontends": frontend_instances, "backends": backend_instances}),
+            )
+            .await?,
+        )?;
+        Ok(())
+    }
+
     /// Registers a fresh engine process before it accepts traffic and retires its stopped predecessor.
     /// Pod identity is supplied by Kubernetes; store-issued epochs fence delayed recovery commands.
     pub async fn register_backend(&self, pod: &str) -> Result<u64, LedgerError> {

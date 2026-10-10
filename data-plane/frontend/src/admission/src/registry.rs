@@ -52,6 +52,7 @@ impl PreparedAdmissions {
 struct RegistryState {
     current: BTreeMap<String, Arc<Admission>>,
     retired: BTreeMap<String, Weak<Admission>>,
+    membership_version: Option<u64>,
     closed: bool,
 }
 
@@ -117,6 +118,76 @@ impl AdmissionRegistry {
                 crate::telemetry::set_model_config(model, &self.scope, config);
             }
         }
+    }
+
+    /// Reconciles controller-observed owners independently of candidate settings preparation.
+    /// The snapshot watcher supplies model names; existing queues and draining models are retained.
+    /// Store retries do not block runtime activation or acknowledge the candidate configuration.
+    pub fn publish_membership(
+        self: &Arc<Self>,
+        version: u64,
+        models: Vec<String>,
+        frontend_instances: &[String],
+        backend_instances: &[String],
+    ) {
+        let Some(ledger) = self.ledger.clone() else {
+            return;
+        };
+        let mut state = self.state.lock().expect("admission registry lock poisoned");
+        if state.closed
+            || state
+                .membership_version
+                .is_some_and(|current| current >= version)
+        {
+            return;
+        }
+        state.membership_version = Some(version);
+        let models: BTreeSet<_> = models
+            .into_iter()
+            .chain(state.current.keys().cloned())
+            .chain(state.retired.keys().cloned())
+            .collect();
+        drop(state);
+        let members = AdmissionMembers {
+            frontends: frontend_instances.to_vec(),
+            backends: backend_instances.to_vec(),
+        };
+        let scope = self.scope.clone();
+        let owner = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                if !owner.upgrade().is_some_and(|owner| {
+                    let state = owner
+                        .state
+                        .lock()
+                        .expect("admission registry lock poisoned");
+                    !state.closed && state.membership_version == Some(version)
+                }) {
+                    return;
+                }
+                let mut applied = true;
+                for model in &models {
+                    if ledger
+                        .publish_membership(
+                            &scope,
+                            model,
+                            version,
+                            &members.frontends,
+                            &members.backends,
+                        )
+                        .await
+                        .is_err()
+                    {
+                        applied = false;
+                        break;
+                    }
+                }
+                if applied {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
     }
 
     /// Looks up a configured model without allocating state for arbitrary request names.
