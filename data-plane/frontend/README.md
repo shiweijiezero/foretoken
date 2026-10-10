@@ -137,9 +137,9 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-For each model, all replicas of the same FrontendService share the waiting limit and each caller's limits. Waiting includes model readiness and input preparation; concurrency includes dispatch reservations and accepted, unfinished generation. Batched prompts and `best_of` count every generated candidate. The numbers above are examples; choose limits for the workload.
+For each model, these limits are shared across all replicas of the FrontendService. Each caller has a separate allowance. `maxWaitingRequests` bounds waiting work, including input preparation; `maxConcurrentRequests` bounds dispatched work until it finishes; `queueTimeout` limits the time spent waiting and preparing input before backend acceptance. Batched prompts and `best_of` count each generated candidate.
 
-Higher `priority` values dispatch first among eligible requests. At the same priority, each frontend rotates between callers and preserves their request order. A caller at its concurrency limit does not block other callers. Sustained high-priority traffic can exhaust a lower-priority request's waiting budget. To also prioritize the native vLLM queue, set `scheduling-policy: priority` in the model's `engineArgs`.
+Higher `priority` values dispatch first. At equal priority, each frontend alternates between callers, keeping each caller's request order. To also prioritize the vLLM queue, set `scheduling-policy: priority` in the model's `engineArgs`.
 
 The trusted gateway overwrites these headers with the authenticated caller's role and a stable identifier, such as a key identifier:
 
@@ -148,7 +148,7 @@ x-role: role1
 x-caller-id: caller-a
 ```
 
-The text APIs above share these headers. With role rules enabled, missing caller identity or an unmatched role is rejected; client scheduling preferences cannot override the role priority. Credentials, authorization, and RPM/token quotas belong to the gateway, and the frontend must be reachable only through its trusted ingress path. Tokenization and detokenization use waiting capacity without reserving generation concurrency. Video APIs retain their separate lifecycle.
+All text APIs use these headers. With role rules enabled, requests without a caller identifier or matching role are rejected. Configure authentication, authorization, and RPM/token quotas at the gateway, and restrict frontend access to that trusted gateway. Tokenization and detokenization use waiting capacity only; these rules do not apply to video APIs.
 
 `ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
 
@@ -164,9 +164,9 @@ Instance-limit changes take effect through a normal model-server deployment roll
 
 Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
 
-Apply changes using [Update serving settings](#update-serving-settings). Limit updates preserve reservations, waiting order, and existing waiting deadlines. Requests that entered without capacity tracking and have not yet dispatched return 503 when bounded limits are enabled. Before response headers, a full queue or expired admission wait returns 503; the original request deadline returns 504, and an oversized batch returns 400. Cancellation requests backend termination; concurrency is released only after execution ends.
+Apply changes using [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting. Cancelled requests count toward concurrency until execution ends.
 
-Platform installation prepares the persistent shared capacity store. See [Observability](../../observability/README.md) for queue and dispatch results, or [Admission lifecycle](../../docs/development/admission-rules.md) when extending request processing or backend integration.
+See [Observability](../../observability/README.md) for queue and dispatch results. Maintainers extending request processing or backend integration can refer to [Admission lifecycle](../../docs/development/admission-rules.md).
 
 ## Update serving settings
 
@@ -186,13 +186,16 @@ Apply the Quick Start configuration:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The command waits for the configuration to take effect. [Routing algorithms and their parameters](src/router/README.md), admission rules, `timeouts.request`, `timeouts.streamIdle`, and `logLevel` update without restarting frontend Pods. Invalid configuration leaves the previous working settings active.
+The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.
 
-`timeouts.request` limits the total request duration; `timeouts.streamIdle` limits how long a stream may produce no response chunks and must not exceed `request`. New requests use the updated budgets; existing requests and streams keep their original budgets. `logLevel` defaults to `info` and accepts `trace`, `debug`, `info`, `warn`, `error`, or `off`.
+| Setting | Purpose |
+| --- | --- |
+| `timeouts.request` | Total request duration |
+| `timeouts.streamIdle` | Maximum gap between response chunks; must not exceed `request` |
+| `timeouts.drain` | Shutdown wait for accepted requests, default `10m`; changing it replaces frontend Pods |
+| `logLevel` | `trace`, `debug`, `info` (default), `warn`, `error`, or `off` |
 
-To change the prompt-length limit without restarting model servers, edit `ModelService.spec.maxInputTokens`, or `maxInputTokens` in the appropriate `spec.modelPools` entry when using multiple Pools, then redeploy the same directory. This does not change the engine's combined input/output context limit.
-
-`timeouts.drain` is a separate frontend shutdown budget, defaulting to `10m`. It lets accepted requests finish after the process stops accepting new work. Changing it updates frontend Pods; changing live request budgets does not.
+Timeout changes apply to new requests. To limit prompt length, set `ModelService.spec.maxInputTokens`, or the corresponding `spec.modelPools[].maxInputTokens`, and redeploy. This setting updates online and is separate from the engine's combined input/output context limit.
 
 ## Operations
 
