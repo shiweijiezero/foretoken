@@ -68,7 +68,7 @@ P/D and E/P/D Pools can select their own parallelism settings within the model a
 
 `modelPools[].engineArgs`, when supplied, replaces the service-level native options for that Pool. Service replica counts remain separate from engine data parallelism.
 
-With EP enabled, attention can use TP × DP while routed experts span the corresponding EP group. Sharing experts does not share attention KV caches between DP ranks. Enabling EP alone does not add an RDMA device request to a single-node model; an active all-to-all backend that requires RDMA still requests it.
+Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP requests RDMA devices only when its active communication backend requires them.
 
 ## Speculative decoding
 
