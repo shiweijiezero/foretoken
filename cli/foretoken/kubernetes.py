@@ -318,11 +318,12 @@ class Kubectl:
             args.extend(["--selector", label_selector])
         return _decode_resource_list(self.run(args).stdout)
 
-    def api_resource_names(self, group: str) -> tuple[str, ...]:
-        """Return resource names currently served for one Kubernetes API group."""
-        output = self.run(
-            ["api-resources", "--api-group", group, "-o", "name"]
-        ).stdout
+    def api_resource_names(self, group: str | None = None) -> tuple[str, ...]:
+        """Discover served resources, optionally selecting one API group; empty selects core."""
+        args = ["api-resources", "-o", "name"]
+        if group is not None:
+            args.extend(["--api-group", group])
+        output = self.run(args).stdout
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
     def current_context(self) -> str:
@@ -426,7 +427,7 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
     """Find services and remaining serving workloads before their platform is removed."""
-    supported = set(kubectl.api_resource_names(""))
+    supported = set(kubectl.api_resource_names())
     kinds = tuple(
         name
         for name in (
