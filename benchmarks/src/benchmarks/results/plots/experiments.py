@@ -35,7 +35,7 @@ class _RecordedRun:
     """One planned measurement, including attempts that produced no metrics."""
 
     directory: Path
-    configuration: Path
+    configuration: Path | None
     conditions: dict[str, Any]
     method: str
     metrics: dict[str, Any] | None
@@ -48,6 +48,10 @@ def _conditions(config: dict[str, Any]) -> dict[str, Any]:
     conditions = {key: value for key, value in config.items() if key not in {
         "service", "services", "service_choices", "output", "wandb", "sweep", "resolved", "url",
     }}
+    if "endpoint" in conditions:
+        endpoint = conditions.pop("endpoint")
+        conditions.pop("name", None)
+        conditions["timeout_s"] = endpoint["timeout_s"]
     for section in ("load", "generation", "dataset"):
         fields = conditions.pop(section, {})
         if isinstance(fields, dict):
@@ -83,6 +87,20 @@ def _recorded_runs(directory: Path, context: dict[str, Any]) -> Iterator[_Record
     """Follow the saved sweep/evaluation plan rather than rediscovering nested native reports."""
     configuration = directory / "config.json"
     if not configuration.is_file():
+        search_path = directory / "slo_results.json"
+        if search_path.is_file():
+            # Search summaries have no top-level configuration. Probe records
+            # carry the fixed workload; concurrency and criteria belong to the search.
+            probe = next(iter(sorted(directory.glob("group-*/max-concurrency-*/run-*/config.json"))), None)
+            conditions = _conditions(json.loads(probe.read_text())) if probe is not None else {}
+            for field in ("max_concurrency", "slo_params", "slo_search"):
+                conditions.pop(field, None)
+            search = json.loads(search_path.read_text())
+            conditions.update(
+                mode="slo_search", concurrency_limit_unit=search["concurrency_limit_unit"],
+                slo_params=[group["criteria"] for group in search["groups"]],
+            )
+            yield _RecordedRun(directory, probe, conditions, "default", None, context.get("exit_code"), True)
         return
     config = json.loads(configuration.read_text())
     if config.get("mode") in {"parameter_sweep", "video_parameter_sweep"}:
@@ -145,7 +163,7 @@ def read_experiment(
     runs: list[dict[str, Any]] = []
     points: list[dict[str, Any]] = []
     native: dict[tuple[Any, ...], Chart] = {}
-    combinations: dict[str, str] = {}
+    combinations: dict[tuple[str, Path | None], str] = {}
     repetition_counts: dict[tuple[str, str], dict[str, int]] = {}
     available_methods: set[str] = set()
     method_filters: dict[Path, tuple[str, ...]] = {}
@@ -185,12 +203,16 @@ def read_experiment(
                     if comparison is not None and methods:
                         method_filters[saved.directory] = tuple(chosen)
                     label = f"{iteration.name} / {saved.method}"
-                    fixed = json.dumps(saved.conditions, sort_keys=True)
+                    # A summary without its probe configuration is readable, but
+                    # its unknown workload cannot be equated with another run.
+                    fixed = (json.dumps(saved.conditions, sort_keys=True),
+                             saved.directory if saved.configuration is None else None)
                     combination = combinations.setdefault(fixed, f"workload-{len(combinations) + 1}")
                     runs.append({**identity, "method": saved.method, "methods": chosen,
                                  "result": str(saved.directory), "measured": saved.metrics is not None or bool(charts),
                                  "started": saved.started, "measurement_exit_code": saved.exit_code,
-                                 "config": str(saved.configuration), "conditions": saved.conditions,
+                                 "config": str(saved.configuration) if saved.configuration is not None else None,
+                                 "conditions": saved.conditions,
                                  "environment": str(saved.directory / "environment.json")
                                  if (saved.directory / "environment.json").is_file() else None,
                                  **{key: measured.get(key) for key in ("request_num", "success_num", "failed_num")}})
