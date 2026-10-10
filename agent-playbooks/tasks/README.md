@@ -16,19 +16,21 @@ Continue working within the task scope and resource budget. Judge completion by 
 ## Examples
 
 ```text
+Execution entry: current Foretoken working directory and Kubernetes context
 Models: Qwen3.5-35B-A3B
 Precision: unrestricted
 Deployment layout: unrestricted
 Per-service configuration: agent-selected GPU count, parallelism, CPU cores and memory
 Available resources: 2*8 C500 GPUs with 64 available CPU cores and 512 GiB memory per node, allocatable across parallel experiments
 Evaluation workloads: agent-selected, covering input/output lengths, concurrency levels and natural conversations
-Optimization objectives: improve throughput and reduce latency; compare performance and answer quality for each workload
+Optimization objectives: improve throughput and reduce latency; report performance and answer-quality trade-offs for each workload
 Allowed changes: unrestricted
-Work and completion conditions: optimize autonomously for 12 hours
-Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach and code changes
+Work and completion conditions: optimize autonomously for 12 hours from the start of task execution
+Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
 ```
 
 ```text
+Execution entry: current Foretoken working directory and Kubernetes context
 Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: colocated serving
@@ -38,10 +40,11 @@ Evaluation workloads: 8,192 input tokens, 512 output tokens, concurrency 1
 Optimization objectives: reduce mean time per output token (TPOT) to 5 ms or less
 Allowed changes: unrestricted
 Work and completion conditions: finish when the target is reached
-Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach and code changes
+Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
 ```
 
 ```text
+Execution entry: current Foretoken working directory and Kubernetes context
 Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: compare colocated serving with prefill/decode disaggregation
@@ -50,6 +53,6 @@ Available resources: 2*8 C500 GPUs with 64 available CPU cores and 512 GiB memor
 Evaluation workloads: combinations of 1,024/8,192 input tokens, 128/512 output tokens and concurrency 1/8
 Optimization objectives: reduce p95 time to first token to 1 second or less for every workload group
 Allowed changes: unrestricted
-Work and completion conditions: reach the target within 12 hours; summarize when the target is reached or the time budget expires
-Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach and code changes
+Work and completion conditions: reach the target within 12 hours from the start of task execution; summarize when the target is reached or the time budget expires
+Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
 ```
