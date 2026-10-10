@@ -13,8 +13,8 @@ Continue working within the task scope and resource budget. Judge completion by 
 - Treat code changes, service startup, and individual test runs as progress rather than task completion. Support conclusions with performance and quality measurements under actual workloads.
 - Keep experiment records current. At completion, state which objectives were met, which changes were retained, and where results are stored. If the budget is exhausted or progress requires outside intervention, identify the concrete blocker and what is needed to resume.
 
-For example: optimize inference autonomously for 12 hours, iterating throughout, then summarize the results and clean up temporary resources.
+For example: two servers with eight C500 GPUs each are available. Start with Qwen3.5-35B-A3B in BF16 on one two-GPU tensor-parallel replica (TP2). Optimize autonomously for 12 hours using 8,192 input tokens, 512 output tokens, and concurrency 1; explore parallelism configurations and speculative decoding, then summarize throughput and latency changes.
 
-Reduce TPOT to 20 ms or less for the agreed model, precision, and workload; finish after confirming the result in a repeat run.
+Deploy Qwen3.5-35B-A3B in BF16 with TP2 on two C500 GPUs in one server. With 8,192 input tokens, 512 output tokens, and concurrency 1, reduce mean time per output token (TPOT) to 5 ms or less.
 
-Reach that target within 12 hours; wrap up when the target is confirmed or the time budget expires, whichever comes first.
+Use two servers with eight C500 GPUs each to run Qwen3.5-35B-A3B in BF16, comparing colocated serving with prefill/decode disaggregation. Allow 12 hours to reduce p95 time to first token to 1 second or less with 8,192 input tokens, 512 output tokens, and concurrency 16; summarize the results when the target is reached or the time budget expires.
