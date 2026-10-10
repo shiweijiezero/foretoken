@@ -137,9 +137,9 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-同一 FrontendService 的所有副本按模型共享等待上限，每个调用方分别使用自己的等待和并发限额。等待包含模型就绪和输入准备，并发包含派发预留及后端已接收但尚未结束的生成。批量输入和 `best_of` 按全部生成候选计数。以上数值只是示例，应按实际负载选择。
+同一 FrontendService 的所有副本按模型共享这些限额，每个调用方分别计数。`maxWaitingRequests` 限制等待数量，包括正在准备输入的请求；`maxConcurrentRequests` 限制已派发但尚未结束的工作数量；`queueTimeout` 限制后端接收前的等待与输入准备时长。批量输入和 `best_of` 按每个生成候选计数。
 
-可派发请求中，`priority` 越大越先处理；同优先级在各前端内按调用方轮转，并保留各调用方的请求顺序。一个调用方并发已满时，其他调用方仍可推进。持续的高优先级流量可能耗尽低优先级请求的等待预算。如需同时启用 vLLM 引擎内的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
+`priority` 越大越先派发。同优先级时，各前端在调用方之间轮流派发，保持每个调用方的请求顺序。如需同时启用 vLLM 队列中的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
 
 可信网关根据已认证的调用方覆盖以下请求头，使用稳定标识区分调用方，例如认证密钥的标识：
 
@@ -148,7 +148,7 @@ x-role: role1
 x-caller-id: caller-a
 ```
 
-上面的文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝，客户端指定的调度偏好不能覆盖角色优先级。凭据、授权和 RPM/token 配额由网关管理，前端只应通过部署建立的可信入口访问。分词和 token ID 解码占用等待容量，不占用生成并发；视频接口仍使用独立生命周期。
+所有文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝。请在网关配置身份认证、授权和 RPM/token 配额，并将前端访问限制为该可信网关。文本与 token ID 转换只占等待容量；这些规则不适用于视频接口。
 
 模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。模型角色规则中的 `roleRules[].allowedPools` 可引用 `spec.modelPools` 中的名称，限制该角色使用的 Pool；分离式部署必须为每个必需执行阶段保留一个 Pool。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端默认省略这两项时也不限流。
 
@@ -164,9 +164,9 @@ spec:
 
 如仍使用 `admission.algorithm` 和 `admission.parameters`，改为上面的等待限额和角色规则，旧字段会被明确拒绝。升级时按常规 `foretoken deploy` 同时部署前端与模型服务；仅升级平台不会替换运行中的应用。
 
-按[修改服务配置](#修改服务配置)应用变更。调整限额会保留已有预留、等待顺序和原等待时限。启用容量限制时，尚未派发且未参与容量计数的请求返回 503。发送响应头前，队列已满或准入等待超时返回 503，请求总时限耗尽返回 504，批次超过容量返回 400。取消请求会通知后端终止，执行结束后才释放并发。
+按[修改服务配置](#修改服务配置)应用变更。响应开始前，队列已满或等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。取消的请求在执行结束前仍计入并发。
 
-平台安装会准备持久化的共享容量存储。查看等待和派发结果见[可观测性](../../observability/README_zh.md)；扩展请求处理或后端接入见[准入生命周期](../../docs/development/admission-rules_zh.md)。
+查看等待和派发结果见[可观测性](../../observability/README_zh.md)。维护者扩展请求处理或后端接入时，可参考[准入生命周期](../../docs/development/admission-rules_zh.md)。
 
 ## 修改服务配置
 
@@ -186,13 +186,16 @@ spec:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-命令等待配置生效后退出。[路由算法及其参数](src/router/README_zh.md)、准入规则、`timeouts.request`、`timeouts.streamIdle` 和 `logLevel` 均可在线更新，不重启前端 Pod。配置无效时，继续使用上一份可用设置。
+命令等待配置生效后退出。[路由策略](src/router/README_zh.md)、准入规则、日志级别和请求时限支持在线更新；配置无效时保留原设置。
 
-`timeouts.request` 限制请求总时长，`timeouts.streamIdle` 限制流式响应连续没有数据块的时长，不能大于 `request`。更新后的时限用于新请求，已有请求和流式响应保留原预算。`logLevel` 默认为 `info`，可选 `trace`、`debug`、`info`、`warn`、`error` 或 `off`。
+| 设置 | 用途 |
+| --- | --- |
+| `timeouts.request` | 请求总时长 |
+| `timeouts.streamIdle` | 响应数据块之间的最大间隔，不超过 `request` |
+| `timeouts.drain` | 退出时等待已接收请求完成的时长，默认 `10m`；修改它会替换前端 Pod |
+| `logLevel` | 可选 `trace`、`debug`、`info`（默认）、`warn`、`error`、`off` |
 
-输入长度上限也可在线调整：修改 `ModelService.spec.maxInputTokens`；使用多个 Pool 时，在对应的 `spec.modelPools` 条目中设置 `maxInputTokens`，然后重新部署同一目录。这不会重启模型服务，也不会改变引擎的输入与输出合计上下文上限。
-
-`timeouts.drain` 单独控制前端进程退出时等待已接收请求完成的时长，默认 `10m`。修改它会更新前端 Pod；修改在线请求时限不会。
+请求时限的修改用于新请求。限制输入长度时，设置 `ModelService.spec.maxInputTokens`，或对应的 `spec.modelPools[].maxInputTokens`，再重新部署。该设置支持在线更新，与引擎的输入输出合计上下文上限分别配置。
 
 ## 运维
 

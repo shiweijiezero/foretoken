@@ -56,7 +56,7 @@ spec:
 
 在准入阈值下填写 0 至 1 的 `capacityRejectionRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。拒绝比例按模型分别计算，以该模型已结束的 HTTP 准入调用为分母。
 
-选择受影响的模型，对照各前端 Pod 的派发结果、共享等待占用与调用方限额。服务各副本共同使用等待名额，不能按 Pod 重复累加。调整限额前，同时查看后端负载。
+选择受影响的模型，对照各前端 Pod 的派发结果、共享等待占用与调用方限额。调整限额前，同时查看后端负载。
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
@@ -72,7 +72,7 @@ spec:
 
 ### ForetokenAdmissionTelemetryMissing
 
-在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本和监控配置。请求事件序列仅在发生流量后出现，空闲模型不要求这些序列。账本读取失败时单独显示不可用，此时占用数值缺失不会触发这条指标完整性告警。
+在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本和监控配置。
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

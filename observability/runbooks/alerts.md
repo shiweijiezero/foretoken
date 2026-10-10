@@ -56,7 +56,7 @@ Inspect frontend status-code trends and logs. Use the Admission section to ident
 
 Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed HTTP admission calls for each model.
 
-Select the affected model and compare dispatch results across frontend Pods with shared waiting occupancy and caller limits. Waiting capacity is shared across the service's replicas; it must not be added once per Pod. Check backend load before adjusting limits.
+Select the affected model and compare dispatch results across frontend Pods with shared waiting occupancy and caller limits. Check backend load before adjusting limits.
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
@@ -72,7 +72,7 @@ Select the affected model and inspect its waiting curve alongside shared waiting
 
 ### ForetokenAdmissionTelemetryMissing
 
-Inspect the Admission replica table for the affected model and Pod, then compare Pod runtime versions and monitoring configuration. Request-event series appear only after traffic and are not required for an idle model. A failed ledger read is reported separately as unavailable; missing occupancy then does not trigger this telemetry-coverage alert.
+Inspect the Admission replica table for the affected model and Pod, then compare Pod runtime versions and monitoring configuration.
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

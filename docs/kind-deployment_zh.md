@@ -32,7 +32,6 @@ foretoken install -e .
 ## 3. 删除集群
 
 ```bash
-foretoken delete examples/quickstart
 foretoken uninstall
 foretoken cluster delete kind --name foretoken-dev
 ```
