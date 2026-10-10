@@ -106,8 +106,8 @@ class Helm(HelmClient):
         return values, versions
 
     @staticmethod
-    def _set_chart_defaults(chart: Path, updates: dict[str, str]) -> None:
-        """Keep automatic image choices in chart defaults rather than stored user values."""
+    def _set_chart_defaults(chart: Path, updates: dict[str, Any]) -> None:
+        """Keep automatic settings in chart defaults rather than stored user values."""
         if not updates:
             return
         path = chart / "values.yaml"
@@ -1332,6 +1332,21 @@ class Helm(HelmClient):
             self._config.prometheus.source, self._config.prometheus.version
         ) as chart:
             args[3] = str(chart)
+            # Retain CPU quota and throttled-time counters in the upstream defaults.
+            # Explicit administrator relabelings still override this list through Helm.
+            defaults = yaml.safe_load((chart / "values.yaml").read_text())
+            rules = defaults["kubelet"]["serviceMonitor"]["cAdvisorMetricRelabelings"]
+            for rule in rules:
+                if rule.get("sourceLabels") != ["__name__"] or rule.get("action") != "drop":
+                    continue
+                expression = rule.get("regex", "")
+                if expression == "container_spec.*":
+                    rule["regex"] = "container_spec_(cpu_shares|memory_.*)"
+                elif expression.startswith("container_cpu_("):
+                    rule["regex"] = expression.replace("cfs_throttled_seconds_total|", "")
+            self._set_chart_defaults(
+                chart, {"kubelet.serviceMonitor.cAdvisorMetricRelabelings": rules}
+            )
             self._set_chart_image_sources(
                 chart,
                 (

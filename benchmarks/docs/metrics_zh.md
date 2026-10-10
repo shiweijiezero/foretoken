@@ -37,6 +37,14 @@ W&B 分别展示每次运行所测模型的输入和输出吞吐量。`Time` 曲
 
 Kustomize 性能评测会在与负载、Ready 副本和 SLO 窗口相同的经过时间轴上采样已分配 GPU 数量。`gpu_allocation.json` 保留边界样本、未知时间段和读取失败时刻。`metrics.json` 按设备资源名分别记录 `gpu_seconds` 与 `gpu_hours`，并记录观测覆盖率。覆盖不完整时，完整窗口总量保持不可用；`observed_gpu_seconds` 只是部分观测面积，不是总量。不同 NVIDIA、MetaX 或其他设备类型不会平均或合并。明确观测到的零分配是有效数据。
 
+集群提供加速器指标时，`prometheus_observations.json` 还记录采样到的物理设备身份，包括厂商、设备 ID、节点和 Pod。`environment.json` 保留运行期间 Pod、容器、镜像与运行配置的变化。
+
+## CPU 与内存观测
+
+Kubernetes 服务具备 Prometheus 时，`metrics.json.resources` 和 W&B 展示测量窗口内的平均 CPU 使用核数、发生限流的 CPU 调度周期比例及累计限流秒数。这些值由容器计数器增量估算，包含运行中被替换的 Pod；抓取数据缺失或不足时保持不可用。
+
+资源曲线展示过去一分钟的 CPU 使用率和限流周期比例，以及内核 CPU 配额和容器工作集内存。CPU 配额以核数展示；原始每周期配额的单位是微秒；内存单位为字节。查询和采样结果保存在 `prometheus_observations.json`。
+
 ## 猜测解码观测
 
 使用 Kustomize 模型服务且集群提供 Prometheus 时，性能评测会报告已接受草稿 token 占提出草稿 token 的比例、每次草稿迭代接受的 token 数、每个计时步骤的草稿与目标模型 forward 平均 GPU 耗时，以及草稿和目标模型 forward 各自在两段合计 GPU 耗时中的占比。目标模型 forward 包含 batch 验证计算，不含采样和拒绝处理；阶段耗时不是请求延迟，也不能直接当作加速比。模型服务计数器统计到达该服务的全部流量，包括本次评测之外的请求。

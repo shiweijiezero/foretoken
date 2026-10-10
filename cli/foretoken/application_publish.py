@@ -85,8 +85,9 @@ def publish(
     *,
     release_owned: bool = False,
     reuse_previous: bool = False,
+    sources: dict | None = None,
 ) -> Path:
-    """Publish immutable files and return their directory, optionally retaining an identical source revision."""
+    """Publish immutable files and provenance, optionally reusing an identical source revision."""
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -148,7 +149,7 @@ def publish(
             return previous
         (staging / "manifest.json").write_text(
             json.dumps(
-                {"binding": binding, "releaseOwned": release_owned, "files": files}
+                {"binding": binding, "releaseOwned": release_owned, "files": files, "sources": sources}
             )
             + "\n"
         )
@@ -195,6 +196,7 @@ if __name__ == "__main__":
             binding,
             Path(sys.argv[4]) if sys.argv[4] else None,
             reuse_previous=json.loads(sys.argv[6]),
+            sources=json.loads(sys.argv[7]),
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:

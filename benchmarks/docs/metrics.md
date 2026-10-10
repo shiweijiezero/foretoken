@@ -37,6 +37,14 @@ Time curves also show request throughput, in-flight requests, failure rate and l
 
 Kustomize performance runs sample allocated GPU counts on the same elapsed-time axis as load, Ready replicas, and SLO windows. `gpu_allocation.json` preserves boundary samples, unknown intervals, and failed-read times. `metrics.json` reports `gpu_seconds` and `gpu_hours` separately for each device resource name, plus observation coverage. Full-window totals remain unavailable when coverage is incomplete; `observed_gpu_seconds` is a partial diagnostic area and is not a total. GPU resource names are never averaged or combined across NVIDIA, MetaX, or other device types. An explicitly observed zero allocation is a valid measurement.
 
+With accelerator metrics available, `prometheus_observations.json` also records sampled physical device identities, including vendor, device ID, node and Pod. `environment.json` retains changes to Pod/container identities, images and runtime selections during the run.
+
+## CPU and memory observations
+
+For Kubernetes services with Prometheus, `metrics.json.resources` and W&B report mean CPU usage in cores, the fraction of CPU scheduling periods that were throttled, and cumulative throttled seconds over the measured window. These are estimates from container counter increases, including Pods replaced during the run; missing or insufficient scrape data remains unavailable.
+
+Resource curves show CPU usage and throttled-period ratios as trailing one-minute rates, plus kernel CPU quota and container memory working set. CPU quota is shown in cores; the raw quota per scheduling period is in microseconds. Memory is in bytes. The saved queries and samples are in `prometheus_observations.json`.
+
 ## Speculative decoding observations
 
 For a Kustomize model service with Prometheus, performance runs report accepted draft tokens divided by proposed draft tokens, accepted tokens per draft iteration, mean draft and target-forward GPU time per timed speculative step, and each stage's share of their combined measured GPU time. The target-forward stage includes batch verification forward but excludes sampling and rejection; neither stage time is request latency or a speedup estimate. The model-server counters cover all traffic to the selected service, including requests outside this benchmark.
