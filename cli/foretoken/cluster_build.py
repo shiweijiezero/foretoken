@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 from contextlib import AbstractContextManager
 from decimal import Decimal
@@ -682,11 +683,13 @@ chmod 600 "$1/buildkit.toml"
 
     def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
         """Apply a path-level delta; an interrupted upload is replaced completely on retry."""
+        started = time.monotonic()
         marker = self.root + "/inputs.json"
         previous = self.read_json(marker)
         changed = [name for name in files if previous.get(name) != versions[name]]
         removed = sorted(previous.keys() - versions.keys())
         if not changed and not removed:
+            print("Source transfer: reused unchanged workspace", flush=True)
             return
         # The receipt is installed last. Without it a retry starts from an empty managed
         # workspace, rather than accepting files left by a partially received archive.
@@ -742,6 +745,10 @@ rm -rf "$incoming"
             )
         if result.returncode:
             raise DeploymentError("source delta upload failed")
+        print(
+            f"Source transfer completed in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
 
     def _containerd(self) -> list[str]:
         """Address the local development node's image store through its own client."""
@@ -931,8 +938,16 @@ rm -rf "$incoming"
             output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
+        started = time.monotonic()
         self.run([*args, "--output", output])
         result = self.read_json(metadata)
+        target_name = target or "default"
+        output_name = destination or image or "files"
+        print(
+            f"Build completed: {dockerfile} target={target_name} output={output_name} "
+            f"in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
         if self.containerd_socket and not destination:
             self._image_builds[image] = (args, result["containerimage.digest"])
         return result

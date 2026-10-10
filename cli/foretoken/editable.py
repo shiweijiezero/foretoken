@@ -460,6 +460,7 @@ class EditableDeployment:
                     origin.endpoint + "/control-plane/"
                 ):
                     previous = active_control.rsplit("/", 1)[-1]
+                published_at = time.monotonic()
                 origin.publish(
                     builder,
                     payload,
@@ -468,6 +469,11 @@ class EditableDeployment:
                     previous,
                     references,
                     timeout=timeout,
+                )
+                print(
+                    f"Application publication completed: {component} in "
+                    f"{time.monotonic() - published_at:.1f}s",
+                    flush=True,
                 )
                 builder.run(["rm", "-rf", "--", staging])
         if "control-plane" in pending:
