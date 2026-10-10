@@ -178,7 +178,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 foretoken status examples/multi-model-quickstart
 ```
 
-查看命名空间中的全部 Foretoken 服务。添加 `--watch` 可持续查看状态变化及 Pod/容器日志，按 Ctrl+C 结束：
+状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
 
 ```bash
 foretoken status -n foretoken-multi-model-demo
