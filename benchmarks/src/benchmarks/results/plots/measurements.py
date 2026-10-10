@@ -350,11 +350,11 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 if name.endswith("_rate")
                 else "requests"
             )
-            title = {
-                "cpu_usage_cores": "CPU usage · 1-minute rate",
+            label = {
+                "cpu_usage_cores": "CPU usage",
                 "cpu_quota_cores": "CPU quota",
                 "cpu_quota_microseconds": "CPU quota per period",
-                "cpu_throttled_periods_ratio": "Throttled CPU periods · 1-minute rate",
+                "cpu_throttled_periods_ratio": "Throttled CPU periods",
                 "memory_working_set_bytes": "Container memory working set",
                 "spec_draft_gpu_seconds_per_second": "Draft GPU work",
                 "spec_target_forward_gpu_seconds_per_second": "Target forward GPU work",
@@ -363,12 +363,13 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 "spec_acceptance_ratio": "Draft acceptance",
                 "spec_accepted_tokens_per_draft": "Accepted tokens per draft",
             }.get(name, f"Prometheus · {name.replace('_', ' ')}")
+            title = f"{label} · 1-minute rate" if name in {"cpu_usage_cores", "cpu_throttled_periods_ratio"} else label
             charts.append(
                 Chart(
                     f"prometheus-{name}",
                     title,
                     "Elapsed time (s)",
-                    f"{title} ({unit})",
+                    f"{label} ({unit})",
                     series,
                     metric=name,
                 )

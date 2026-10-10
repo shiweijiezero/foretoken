@@ -289,7 +289,7 @@ def _checkout_source(root: Path) -> dict[str, Any] | None:
     result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
     if result.returncode:
         return None
-    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True)
+    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
     return {"commit": result.stdout.strip(), "dirty": bool(changed)}
 
 

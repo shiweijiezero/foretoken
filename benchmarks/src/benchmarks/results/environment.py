@@ -36,7 +36,7 @@ def client_environment() -> dict[str, Any]:
     source = None
     if (root / ".git").exists():
         commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-        changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True)
+        changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
         source = {"commit": commit, "dirty": bool(changed)}
     return {
         "python": platform.python_version(),
