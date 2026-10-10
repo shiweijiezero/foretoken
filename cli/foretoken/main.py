@@ -97,10 +97,16 @@ def _deploy(
         capture = ProfileRun(profile, deployment=deployment)
     source = EditableDeployment.discover(kubectl)
     if source is not None:
+        prepared_at = time.monotonic()
         source.prepare(timeout)
+        print(
+            f"Source preparation completed in {time.monotonic() - prepared_at:.1f}s",
+            flush=True,
+        )
+        published_at = time.monotonic()
         deployment = source.apply(deployment, timeout)
         print(
-            f"Source preparation completed in {time.monotonic() - started:.1f}s",
+            f"Source application publication completed in {time.monotonic() - published_at:.1f}s",
             flush=True,
         )
     # A deployment explicitly selects current platform applications; reconciliation and
