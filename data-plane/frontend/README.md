@@ -137,10 +137,35 @@ spec:
     algorithm: allow_all
 ```
 
-Redeploy the service configuration to apply changes. Admission updates and model additions or removals do not restart frontend Pods. New requests may receive HTTP 503 while that model's rule is being replaced.
+Updating `concurrency` or switching between it and `allow_all` preserves running counts and queued requests without restarting frontend Pods. Lower limits do not cancel running work; existing waiters keep their original queue timeout. A queued batch that exceeds a reduced concurrency limit returns HTTP 503. Custom rules wait for accepted work to finish before replacement; new requests may receive HTTP 503 during that handover.
 
 See [Observability](../../observability/README.md) to inspect admission results, or [Implementing admission rules](../../docs/development/admission-rules.md) to add an algorithm.
 
+## Update serving settings
+
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/frontend.yaml`:
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+Apply the Quick Start configuration:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+The command waits for the configuration to take effect. [Routing algorithms and their parameters](src/router/README.md), admission rules, `timeouts.request`, `timeouts.streamIdle`, and `logLevel` update without restarting frontend Pods. Invalid algorithm names or parameters leave the previous working configuration active.
+
+`timeouts.request` limits the total request duration; `timeouts.streamIdle` limits how long a stream may produce no response chunks and must not exceed `request`. New requests use the updated budgets; existing requests and streams keep their original budgets. `logLevel` defaults to `info` and accepts `trace`, `debug`, `info`, `warn`, `error`, or `off`.
+
+To change the prompt-length limit without restarting model servers, edit `ModelService.spec.maxInputTokens`, or `maxInputTokens` in the appropriate `spec.modelPools` entry when using multiple Pools, then redeploy the same directory. This does not change the engine's combined input/output context limit.
+
+`timeouts.drain` is a separate frontend shutdown budget, defaulting to `10m`. It lets accepted requests finish after the process stops accepting new work. Changing it updates frontend Pods; changing live request budgets does not.
 
 ## Operations
 

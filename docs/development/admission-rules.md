@@ -35,6 +35,8 @@ Expose new configuration through the shared FrontendService and ModelService adm
 
 ## Configuration lifecycle
 
-Each frontend replica maintains independent rule instances and queues for its models; routing changes retain unchanged rules. Factories validate and construct rules without publishing metrics or changing active requests. The framework activates metrics when the configuration takes effect.
+Validate new configuration before activation. Rule construction must leave live state untouched; invalid configuration keeps the existing rules in effect.
 
-A changed model rule stops accepting new requests, cancels waiting attempts, and lets accepted work finish before activating its replacement. New requests receive HTTP 503 during this handover; other models continue independently.
+Built-in rule updates preserve in-flight counts and queued requests, including their original deadlines. Lower limits do not cancel running requests; a queued batch exceeding the new concurrency limit receives HTTP 503.
+
+Replacing a custom rule cancels its waiters and waits for accepted work to finish before activating the replacement. New requests for that model receive HTTP 503 during the handover. Configuration status confirms the update only after the new rule is active.

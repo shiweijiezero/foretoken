@@ -594,17 +594,14 @@ class Helm(HelmClient):
                 ]
             )
 
-    def _set_platform_image_sources(
-        self,
-        args: list[str],
-        overrides: dict[str, Any],
-        source_mode: bool,
-        input_text: str | None,
-    ) -> None:
-        """Resolve native platform defaults without persisting them as user overrides."""
+    @staticmethod
+    def _platform_images(
+        documents: tuple[dict[str, Any], ...],
+    ) -> tuple[dict[str, str], str | None]:
+        """Read platform image references and the selected backend from rendered Helm resources."""
         images: dict[str, str] = {}
         runtime_backend = None
-        for document in self._render_chart(args, input_text=input_text):
+        for document in documents:
             if (
                 document["kind"] == "ConfigMap"
                 and document["metadata"]
@@ -653,6 +650,28 @@ class Helm(HelmClient):
                         ):
                             if argument.startswith(prefix):
                                 images[path] = argument.removeprefix(prefix)
+        return images, runtime_backend
+
+    def _set_platform_image_sources(
+        self,
+        args: list[str],
+        overrides: dict[str, Any],
+        source_mode: bool,
+        input_text: str | None,
+    ) -> None:
+        """Resolve platform defaults, retaining reachable installed sources without user overrides."""
+        images, runtime_backend = self._platform_images(
+            self._render_chart(args, input_text=input_text)
+        )
+        previous = {}
+        release = self.platform_release()
+        if self.release_exists(release):
+            manifest = self.run(
+                ["get", "manifest", release.name, "--namespace", release.namespace]
+            ).stdout
+            previous, _ = self._platform_images(
+                tuple(document for document in yaml.safe_load_all(manifest) if document is not None)
+            )
         updates = {}
         for path, reference in images.items():
             if source_mode and path in {
@@ -667,6 +686,7 @@ class Helm(HelmClient):
                 explicit = None
             if explicit is not None and explicit != "auto":
                 continue
+            prior = previous.get(path)
             if path == "runtime.vllm.image":
                 # Preserve the chart's auto/backend selection and its user-supplied alternatives.
                 if runtime_backend is None:
@@ -677,7 +697,9 @@ class Helm(HelmClient):
                         continue
                 except KeyError:
                     pass
-            selected = platform_image_reference(reference, self._config.image_registry)
+            selected = platform_image_reference(
+                reference, self._config.image_registry, previous=prior
+            )
             if selected == reference:
                 continue
             if path == "image.repository":
@@ -691,8 +713,8 @@ class Helm(HelmClient):
 
     def prepare_source_origin(
         self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
-    ) -> None:
-        """Prepare chart-owned file storage before source builds or controller startup."""
+    ) -> ApplicationFiles:
+        """Prepare chart-owned storage and return its ready source-build publisher location."""
         release = self.platform_release()
         args = self._upgrade_install_args(
             release, str(root / "deploy/charts/foretoken")
@@ -716,13 +738,15 @@ class Helm(HelmClient):
         with self._prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
             self._set_platform_image_sources(args, merged, True, input_text)
-            with self._prepare_application_origin(args, input_text, timeout):
-                pass
+            with self._prepare_application_origin(args, input_text, timeout) as origin:
+                # Source charts always render storage through development.enabled.
+                assert origin is not None
+                return origin
 
     @contextmanager
     def _prepare_application_origin(
         self, args: list[str], input_text: str | None, timeout: str
-    ) -> Iterator[None]:
+    ) -> Iterator[ApplicationFiles | None]:
         """Bootstrap native storage and hold release publication ownership through Helm selection."""
         release = self.platform_release()
         rendered = self._render_chart(args, input_text=input_text)
@@ -770,7 +794,7 @@ class Helm(HelmClient):
             if document["kind"] == "ConfigMap"
         )
         if not configuration.get("releaseURL"):
-            yield
+            yield origin
             return
 
         def retained() -> set[str] | None:
@@ -817,7 +841,7 @@ class Helm(HelmClient):
             timeout=timeout,
             credentials_secret=configuration["credentialsSecret"],
         ):
-            yield
+            yield origin
 
     def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
         """Find native file-origin resources owned by this release, including failed bootstraps."""

@@ -18,7 +18,7 @@ use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     foretoken_artifacts::source::activate("foretoken-frontend")?;
-    foretoken_tracing::init_tracing("ForetokenFrontend");
+    let logging = Arc::new(foretoken_tracing::LogControl::new("ForetokenFrontend")?);
 
     // Establish the long-lived generation owner before starting background refreshes.
     // Snapshot updates publish atomically, so an invalid update cannot replace active routing.
@@ -42,8 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let admission = Arc::new(foretoken_admission::AdmissionRegistry::default());
-    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential)?);
-    let generation = Arc::new(RuntimeGeneration::new(config.request_timeout, admission));
+    let builder = Arc::new(RuntimeBuilder::new(kv_credential, logging));
+    let generation = Arc::new(RuntimeGeneration::new(admission));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
     // live while readiness stays false until a valid routing snapshot is published.
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
-    let app = router(generation.clone(), models, config.stream_idle)?;
+    let app = router(generation.clone(), models)?;
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let server_shutdown = shutdown.clone();
     let mut server = Box::pin(
@@ -77,12 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Reject new requests before stopping the HTTP server, then allow accepted streams
-    // to finish within the same request budget used by the serving runtime.
+    // to finish within the process drain budget, independently of live request settings.
     generation.close_admission();
     shutdown.notify_waiters();
-    match tokio::time::timeout(config.request_timeout, server.as_mut()).await {
+    match tokio::time::timeout(config.drain, server.as_mut()).await {
         Ok(result) => result?,
-        Err(_) => tracing::warn!("frontend requests did not drain before the request timeout"),
+        Err(_) => tracing::warn!("frontend requests did not drain before the shutdown deadline"),
     }
     Ok(())
 }

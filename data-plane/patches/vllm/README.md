@@ -21,4 +21,6 @@ Edit the corresponding upstream source and regenerate unified diffs. Keep shared
 
 The model-server image runs `apply.py` to select a series, apply missing patches, and compile the changed Python files. Rust source preparation reads `source.series` without selecting a Python package version. Run source preparation or image construction again to check that an already-patched tree is accepted.
 
+Image and source builds share the dependency helpers in `vllm_patches.py`. The vLLM 0.31 repair removes conflicting OpenTelemetry leftovers only when no installed package consumes or shares their files. Dependency checks use uv 0.12.22's native static metadata to honor the engine image's NCCL override while preserving PyTorch's other requirements and installed metadata.
+
 Patches for another library belong in a separate directory alongside `vllm/`.

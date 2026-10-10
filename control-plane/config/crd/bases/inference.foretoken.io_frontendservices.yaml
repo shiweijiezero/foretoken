@@ -108,6 +108,18 @@ spec:
                 maxLength: 253
                 pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$
                 type: string
+              logLevel:
+                default: info
+                description: LogLevel controls frontend diagnostics without replacing
+                  the process.
+                enum:
+                - trace
+                - debug
+                - info
+                - warn
+                - error
+                - "off"
+                type: string
               observability:
                 description: Observability selects frontend-scoped alerts, including
                   shared HTTP failures.
@@ -351,6 +363,18 @@ spec:
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:
+                  drain:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
+                    default: 10m
+                    description: Drain bounds process shutdown independently of live
+                      request budgets.
+                    minLength: 2
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                   request:
                     allOf:
                     - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
@@ -425,6 +449,12 @@ spec:
                 required:
                 - image
                 type: object
+              appliedServingSnapshotVersion:
+                description: AppliedServingSnapshotVersion is the last version confirmed
+                  by every observed workload replica.
+                format: int64
+                minimum: 0
+                type: integer
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

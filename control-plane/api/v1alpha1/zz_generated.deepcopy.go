@@ -1565,11 +1565,6 @@ func (in *ModelGroupSpec) DeepCopyInto(out *ModelGroupSpec) {
 	in.Resources.DeepCopyInto(&out.Resources)
 	out.Timeouts = in.Timeouts
 	in.Parallelism.DeepCopyInto(&out.Parallelism)
-	if in.MaxInputTokens != nil {
-		in, out := &in.MaxInputTokens, &out.MaxInputTokens
-		*out = new(int32)
-		**out = **in
-	}
 	in.Features.DeepCopyInto(&out.Features)
 	in.Accelerator.DeepCopyInto(&out.Accelerator)
 }
@@ -1693,6 +1688,11 @@ func (in *ModelPoolList) DeepCopyObject() runtime.Object {
 func (in *ModelPoolSpec) DeepCopyInto(out *ModelPoolSpec) {
 	*out = *in
 	out.ModelServiceRef = in.ModelServiceRef
+	if in.MaxInputTokens != nil {
+		in, out := &in.MaxInputTokens, &out.MaxInputTokens
+		*out = new(int32)
+		**out = **in
+	}
 	in.Template.DeepCopyInto(&out.Template)
 }
 
@@ -2150,11 +2150,6 @@ func (in *NormalizedPoolTemplate) DeepCopyInto(out *NormalizedPoolTemplate) {
 		for key, val := range *in {
 			(*out)[key] = val
 		}
-	}
-	if in.MaxInputTokens != nil {
-		in, out := &in.MaxInputTokens, &out.MaxInputTokens
-		*out = new(int32)
-		**out = **in
 	}
 	out.Timeouts = in.Timeouts
 	if in.KVCache != nil {

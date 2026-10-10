@@ -4,7 +4,6 @@
 //! Composes client APIs, operator endpoints, and frontend-wide HTTP middleware.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{Method, StatusCode};
@@ -23,7 +22,6 @@ const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-    stream_idle: Duration,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
     Ok(Router::new()
@@ -40,7 +38,6 @@ pub fn router(
         .with_state(ApiState {
             generation: generation.clone(),
             models,
-            stream_idle,
             video_tasks,
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
@@ -66,6 +63,7 @@ async fn observe_request(
                 | "/v1/messages/count_tokens"
                 | "/tokenize"
                 | "/detokenize"
+                | "/v1/videos/sync"
         );
     if !protected {
         return next.run(request).await;
@@ -73,14 +71,15 @@ async fn observe_request(
     observe_http(async move {
         let timing = api::RequestTiming::now();
         request.extensions_mut().insert(timing);
-        if let Some(timeout) = generation.request_timeout() {
-            let deadline = tokio::time::Instant::from_std(timing.started_at + timeout);
-            match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
-                Ok(response) => response,
-                Err(error) => api::generation_error(&path, error),
-            }
-        } else {
-            next.run(request).await
+        let snapshot = match generation.request_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => return api::generation_error(&path, error),
+        };
+        let deadline = tokio::time::Instant::from_std(timing.started_at + snapshot.request_timeout);
+        request.extensions_mut().insert(snapshot);
+        match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
+            Ok(response) => response,
+            Err(error) => api::generation_error(&path, error),
         }
     })
     .await

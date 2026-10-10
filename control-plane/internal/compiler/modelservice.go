@@ -25,9 +25,10 @@ const (
 
 // ModelPool is one normalized Pool produced from ModelService intent.
 type ModelPool struct {
-	Name          string
-	DesiredGroups int32
-	Template      inferencev1alpha1.NormalizedPoolTemplate
+	Name           string
+	DesiredGroups  int32
+	MaxInputTokens *int32
+	Template       inferencev1alpha1.NormalizedPoolTemplate
 }
 
 // CompileModelService normalizes shorthand or advanced Pool intent without resolving platform access settings.
@@ -164,8 +165,9 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 		engineArgs = nil
 	}
 	return ModelPool{
-		Name:          name,
-		DesiredGroups: replicas,
+		Name:           name,
+		DesiredGroups:  replicas,
+		MaxInputTokens: copyInt32(maxInputTokens),
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
 			Source:                                source,
@@ -178,7 +180,6 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			MemberCount:                           nodes,
 			Resources:                             normalizedResources,
 			NodeSelector:                          normalizedNodeSelector,
-			MaxInputTokens:                        copyInt32(maxInputTokens),
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
 			Network:                               network,
 			ECProfile:                             ecProfile,

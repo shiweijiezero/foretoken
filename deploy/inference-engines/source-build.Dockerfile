@@ -4,7 +4,7 @@
 
 ARG RUNTIME_IMAGE
 ARG UV_IMAGE_REGISTRY=ghcr.io
-ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
+ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 FROM ${UV_IMAGE} AS uv
 
 FROM ${RUNTIME_IMAGE} AS runtime-user
@@ -23,7 +23,7 @@ USER root
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential ccache cmake git ninja-build patch \
-    && cuda=$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'import torch; print("" if getattr(torch.version, "maca", None) else torch.version.cuda or "")') \
+    && cuda=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c 'import torch; print("" if getattr(torch.version, "maca", None) else torch.version.cuda or "")') \
     && if [ -n "$cuda" ] && ! command -v nvcc >/dev/null 2>&1 && ! test -x "${CUDA_HOME:-/usr/local/cuda}/bin/nvcc"; then \
       version=$(printf %s "$cuda" | tr . -); \
       set -- "cuda-nvcc-$version"; \
@@ -42,7 +42,7 @@ RUN apt-get update \
     fi \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /usr/local/bin/uv
-RUN python="${FORETOKEN_VLLM_PYTHON:-python}" \
+RUN python="${FORETOKEN_VLLM_PYTHON:-python3}" \
     && uv pip install --python "$python" --target /opt/foretoken-engine-build/python \
       'cmake>=3.26.1' ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81' \
       'setuptools-scm>=8' 'setuptools-rust>=1.9' wheel jinja2 build
@@ -62,7 +62,7 @@ RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
     bash -euc ' \
       if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
       export PYTHONPATH=/opt/foretoken-engine-build/python${PYTHONPATH:+:$PYTHONPATH}; \
-      "${FORETOKEN_VLLM_PYTHON:-python}" /opt/foretoken-engine-build/source-build.py \
+      "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-build.py \
         --source-root /input/engine --cache /cache --output /out --dependencies-only \
     '
 
@@ -82,7 +82,7 @@ RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
       if test -n "$3"; then export TORCH_CUDA_ARCH_LIST="$3"; fi; \
       arguments=(--source-root /input/engine --cache /cache --output /out); \
       if test "$1" = true; then arguments+=(--build-native); fi; \
-      "${FORETOKEN_VLLM_PYTHON:-python}" /opt/foretoken-engine-build/source-build.py "${arguments[@]}" \
+      "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-build.py "${arguments[@]}" \
     ' source-build "${BUILD_NATIVE}" "${BUILD_JOBS}" "${TARGET_CUDA_ARCH_LIST}"
 
 # Only resolver inputs cross this boundary; source and native outputs remain ordinary files.
@@ -96,9 +96,12 @@ ARG RUNTIME_USER
 USER root
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=from=engine-dependencies,source=/dependencies,target=/tmp/foretoken-engine-dependencies \
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
     bash -euc ' \
       if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
-      python="${FORETOKEN_VLLM_PYTHON:-python}"; \
+      python="${FORETOKEN_VLLM_PYTHON:-python3}"; \
+      PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
+        "from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()"; \
       if "$python" -c "import torch; raise SystemExit(not bool(getattr(torch.version, \"maca\", None)))"; then \
         export UV_EXTRA_INDEX_URL=${UV_EXTRA_INDEX_URL:-https://repos.metax-tech.com/r/maca-pypi/simple}; \
         export UV_INDEX_STRATEGY=${UV_INDEX_STRATEGY:-unsafe-best-match}; \
@@ -113,10 +116,11 @@ USER ${RUNTIME_USER}
 FROM ${RUNTIME_IMAGE} AS engine-validation
 USER root
 COPY --from=engine-build /out/ /out/
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv bash <<'EOF'
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches bash <<'EOF'
 set -euo pipefail
 if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi
-python="${FORETOKEN_VLLM_PYTHON:-python}"
+python="${FORETOKEN_VLLM_PYTHON:-python3}"
 "$python" - <<'PY'
 import importlib.metadata
 import shutil
@@ -133,7 +137,8 @@ for metadata in Path("/out/engine").glob("*.dist-info"):
     shutil.rmtree(distribution.locate_file(installed_metadata).parent)
     shutil.copytree(metadata, Path(sysconfig.get_path("purelib")) / metadata.name)
 PY
-uv pip check --python "$python"
+PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
+  'from vllm_patches import check_installed_dependencies; check_installed_dependencies()'
 EOF
 
 FROM scratch AS source-export

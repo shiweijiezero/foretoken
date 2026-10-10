@@ -57,6 +57,7 @@ from foretoken.source import (
     prepare_source_images,
     record_install,
     remove_build_caches,
+    resolve_source_base_image,
 )
 
 
@@ -311,14 +312,22 @@ class PlatformLifecycle:
             else stored_runtime.image
         )
         if command.editable is not None:
-            if source_base_image is not None:
-                source_runtime_image = source_base_image
-            elif current_runtime.image not in {None, "auto"}:
-                source_runtime_image = current_runtime.image or None
-            elif runtime_selection is not None and runtime_selection.backend == "metax":
+            source_runtime_image = resolve_source_base_image(
+                kubectl,
+                Path(command.editable).expanduser().resolve(),
+                current_runtime.image,
+                source_base_image,
+            )
+            if (
+                source_runtime_image is None
+                and runtime_selection is not None
+                and runtime_selection.backend == "metax"
+            ):
                 build_metax_runtime = True
             elif (
-                runtime_selection is not None and runtime_selection.backend == "custom"
+                source_runtime_image is None
+                and runtime_selection is not None
+                and runtime_selection.backend == "custom"
             ):
                 raise DeploymentError(
                     "runtime.vllm.image must be set in --values for source builds on "
@@ -497,34 +506,6 @@ class PlatformLifecycle:
             )
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
-        if command.editable is not None:
-            helm.prepare_source_origin(
-                Path(command.editable).expanduser().resolve(),
-                (*stored_values, *values),
-                command.timeout,
-            )
-        source_images = (
-            artifacts.enter_context(
-                prepare_source_images(
-                    command,
-                    platform.namespace,
-                    (*stored_values, *values),
-                    source_runtime_image,
-                    installed_images=(
-                        helm.platform_image_references(platform)
-                        if platform_exists
-                        else None
-                    ),
-                    build_metax_runtime=build_metax_runtime,
-                    runtime_backend=runtime_selection.backend
-                    if runtime_selection
-                    else "nvidia",
-                    saved_arguments=source_build_arguments,
-                )
-            )
-            if command.editable is not None
-            else None
-        )
         load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
         self._leader_worker.apply(leader_worker_plan, command.timeout)
@@ -602,6 +583,34 @@ class PlatformLifecycle:
         log_endpoint, log_storage_statefulset = self._logs.install(
             log_config, command.timeout
         )
+        # Complete dependency installation before delivering source images to nodes;
+        # the platform workload must be their next consumer, not another long build.
+        source_images = None
+        if command.editable is not None:
+            origin = helm.prepare_source_origin(
+                Path(command.editable).expanduser().resolve(),
+                (*stored_values, *values),
+                command.timeout,
+            )
+            source_images = artifacts.enter_context(
+                prepare_source_images(
+                    command,
+                    platform.namespace,
+                    (*stored_values, *values),
+                    source_runtime_image,
+                    origin=origin,
+                    installed_images=(
+                        helm.platform_image_references(platform)
+                        if platform_exists
+                        else None
+                    ),
+                    build_metax_runtime=build_metax_runtime,
+                    runtime_backend=runtime_selection.backend
+                    if runtime_selection
+                    else "nvidia",
+                    saved_arguments=source_build_arguments,
+                )
+            )
         helm.install_platform(
             release=platform,
             source_images=source_images,

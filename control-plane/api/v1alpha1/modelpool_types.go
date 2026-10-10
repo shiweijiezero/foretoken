@@ -173,11 +173,6 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// MaxInputTokens is the immutable prompt admission limit for this Pool.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
-
 	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
 	// request body limit.
 	// +kubebuilder:validation:Minimum=1048576
@@ -229,6 +224,11 @@ type ModelPoolSpec struct {
 	// DesiredGroups is the number of complete ModelGroups requested for this Pool.
 	// +kubebuilder:validation:Minimum=0
 	DesiredGroups int32 `json:"desiredGroups"`
+
+	// MaxInputTokens is the live prompt limit published to routing clients.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
 
 	Template NormalizedPoolTemplate `json:"template"`
 }

@@ -13,7 +13,7 @@ mod output;
 mod types;
 
 use crate::AdmissionOrigin;
-use axum::extract::State;
+use crate::runtime::RequestSnapshot;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -36,7 +36,7 @@ pub(super) fn router() -> Router<ApiState> {
 
 /// Lowers an Anthropic request and dispatches through the shared generation service.
 async fn messages(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicMessagesRequest>, JsonRejection>,
 ) -> Response {
@@ -69,7 +69,7 @@ async fn messages(
 
 /// Counts the actual rendered prompt without submitting an inference request.
 async fn count_tokens(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<AnthropicCountTokensRequest>, JsonRejection>,
 ) -> Response {

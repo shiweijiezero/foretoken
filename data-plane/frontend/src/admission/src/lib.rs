@@ -4,6 +4,7 @@
 //! Request admission and resource ownership before preprocessing and execution.
 
 pub mod algorithm;
+mod capacity;
 mod config;
 mod context;
 mod permit;
@@ -13,6 +14,7 @@ mod telemetry;
 
 use thiserror::Error;
 
+pub use capacity::AdmissionCapacityState;
 pub use config::{AdmissionConfig, AdmissionConfigError, AdmissionDescriptor};
 pub use context::{
     AdmissionContext, AdmissionIdentity, AdmissionModelState, AdmissionModelStatus,
@@ -35,6 +37,13 @@ pub use telemetry::{
 pub trait AdmissionRule: Send + Sync {
     /// Advertises the rule's finite resource limits for process-local observability.
     fn capacity(&self) -> Option<AdmissionCapacity> {
+        None
+    }
+
+    /// Exposes the built-in work-unit owner for in-place registry updates.
+    /// When both rules supply an owner, publication copies the candidate settings into the active
+    /// owner and retains the active rule. Other rules keep their close-and-drain lifecycle.
+    fn capacity_state(&self) -> Option<&AdmissionCapacityState> {
         None
     }
 

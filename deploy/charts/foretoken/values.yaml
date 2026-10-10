@@ -38,6 +38,7 @@ applicationFiles:
 controller:
   applicationURL: ""
   replicas: 1
+  # Changes apply to subsequent collections without restarting the controller.
   autoscalingTelemetry:
     collectionTimeout: 3s
     requestTimeout: 1s

@@ -21,4 +21,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 模型镜像通过 `apply.py` 选择清单、应用缺失补丁并编译改动的 Python 文件。Rust 源码准备直接读取 `source.series`，不按 Python 包版本选择。再次执行源码准备或镜像构建，检查已应用补丁的源码能否复用。
 
+镜像和源码构建共用 `vllm_patches.py` 中的依赖适配。vLLM 0.31 的修复只移除存在版本冲突、没有其他包依赖且不共享文件的 OpenTelemetry 残留。依赖检查使用 uv 0.12.22 原生的静态元数据配置，遵循引擎镜像声明的 NCCL override，同时保留 PyTorch 的其他依赖要求，不修改已安装的元数据。
+
 其他库的补丁放在与 `vllm/` 同级的独立目录中。

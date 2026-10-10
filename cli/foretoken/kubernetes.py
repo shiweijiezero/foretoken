@@ -438,7 +438,7 @@ def timeout_seconds(value: str) -> float:
 
 
 def resource_progress(
-    resource: ResourceRef, value: dict[str, Any]
+    resource: ResourceRef, value: dict[str, Any], *, expected_revision: str | None = None
 ) -> ResourceProgress:
     """Interpret current serving and explicitly selected alert readiness without accepting stale generations."""
     metadata = value.get("metadata") or {}
@@ -446,6 +446,12 @@ def resource_progress(
     if metadata.get("deletionTimestamp"):
         return ResourceProgress(
             resource, "Terminating", "Deleting", "Resource is being deleted", False
+        )
+
+    if expected_revision is not None and (value.get("spec") or {}).get("deploymentRevision") != expected_revision:
+        return ResourceProgress(
+            resource, "Failed", "DeploymentSuperseded",
+            "A newer deployment replaced this operation's target", False,
         )
 
     generation = int(metadata.get("generation") or 0)
@@ -517,7 +523,7 @@ def resource_progress(
                 "Waiting for the selected service alerts", False,
             )
         return ResourceProgress(resource, "Ready", reason, message, True)
-    if condition_status == "False" and reason == "InvalidIntent":
+    if condition_status == "False" and reason in {"InvalidIntent", "ConfigurationRejected"}:
         return ResourceProgress(resource, "Failed", reason, message, False)
     return ResourceProgress(resource, "Progressing", reason, message, False)
 
@@ -542,7 +548,8 @@ def namespace_progress(
 
 
 def read_progress(
-    resources: Iterable[ResourceRef], kubectl: Kubectl
+    resources: Iterable[ResourceRef], kubectl: Kubectl,
+    *, expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Read named service readiness with one Kubernetes request."""
     selected = tuple(resources)
@@ -554,7 +561,10 @@ def read_progress(
     }
     try:
         return tuple(
-            resource_progress(resource, by_identity[(resource.kind, resource.name)])
+            resource_progress(
+                resource, by_identity[(resource.kind, resource.name)],
+                expected_revision=(expected_revisions or {}).get(resource),
+            )
             for resource in selected
         )
     except KeyError as exc:
@@ -568,6 +578,7 @@ def wait_for_resources(
     *,
     report: Callable[[float, ResourceProgress], None] | None = None,
     observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
+    expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Wait until every service reports Ready for its current generation."""
     timeout_value = timeout_seconds(timeout)
@@ -577,7 +588,7 @@ def wait_for_resources(
     latest: tuple[ResourceProgress, ...] = ()
 
     while True:
-        latest = read_progress(resources, kubectl)
+        latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
         elapsed = time.monotonic() - started
         if report is not None:
             for progress in latest:
