@@ -43,6 +43,8 @@ Limit updates preserve outstanding work, queue order, and original request deadl
 
 Enabling limits rejects previously untracked requests that have not dispatched, without retroactively counting existing unrestricted execution. Removing a model rejects new and waiting requests while accepted work drains.
 
+Instance acceptance limits are separate from the engine's scheduling limits. A live update changes only new acceptance: existing work and the instance's accepting or draining state remain unchanged. A lower limit takes effect as occupancy falls, and configuration status is confirmed after the requested instances report the new value.
+
 ## Observations
 
 Record one admission result at first backend acceptance, CPU-only preparation completion, or terminal failure. Busy retries are not failures. Shared occupancy must be deduplicated across frontend replicas; metrics observe capacity but never grant or release it. See [Observability](../../observability/README.md).

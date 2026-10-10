@@ -638,8 +638,8 @@ spec:
                     minLength: 1
                     type: string
                   instanceAdmission:
-                    description: InstanceAdmission pins the acceptance limit for this
-                      instance's runtime.
+                    description: InstanceAdmission retains the immutable startup limit
+                      for protocol-zero applications.
                     properties:
                       maxConcurrentRequests:
                         description: MaxConcurrentRequests includes engine waiting,
@@ -651,6 +651,13 @@ spec:
                     required:
                     - maxConcurrentRequests
                     type: object
+                  instanceAdmissionProtocol:
+                    description: |-
+                      InstanceAdmissionProtocol pins the configuration interface of the selected executable.
+                      Zero retains startup-only limits; one selects live file configuration.
+                    format: int32
+                    maximum: 1
+                    type: integer
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
                       InternalGenerateRequestBodyLimitBytes is the group-local generate request

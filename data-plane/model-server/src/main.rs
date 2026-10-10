@@ -14,6 +14,7 @@ use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, Runti
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
+use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::launch::LaunchPlanV1;
 use foretoken_model_server::managed_engine::ManagedEngine;
@@ -97,6 +98,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await;
     }
+    // Validate initial limits before allocating an engine or accepting requests. The supervisor
+    // polls the same watcher after startup so updates retain this execution-accounting owner.
+    let health = Arc::new(RuntimeHealth::new());
+    health.set_startup_admission_limit(config.startup_admission_limit);
+    let instance_admission = config
+        .instance_admission_path
+        .clone()
+        .map(|path| InstanceAdmissionWatcher::load(path, health.clone()))
+        .transpose()?;
+
     // Bind before recovering process ownership: another live ingress in this Pod must not have
     // its reservations retired by a second process that will later fail to acquire the port.
     let listener = TcpListener::bind(config.listen_address).await?;
@@ -174,8 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(failure) => return Err(failure.into_error().into()),
     };
-    let health = Arc::new(RuntimeHealth::new());
-    health.set_limit(config.max_accepted_requests);
     health.set_process_alive(true);
 
     let mut client_health = client.subscribe_health();
@@ -294,6 +303,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Profiling(String),
     }
     let stop = tokio::select! {
+        // Refresh projected limits after slow engine preparation before polling HTTP intake.
+        biased;
+        never = async move {
+            match instance_admission {
+                Some(watcher) => watcher.run().await,
+                None => std::future::pending::<std::convert::Infallible>().await,
+            }
+        } => match never {},
         () = shutdown_signal() => Stop::Signal,
         () = health.execution_failed() => Stop::ClientUnhealthy("request termination could not be confirmed".into()),
         changed = client_health.changed() => {
