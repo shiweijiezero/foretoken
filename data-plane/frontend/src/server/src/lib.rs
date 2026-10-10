@@ -17,6 +17,6 @@ pub use video::VideoRequest;
 pub use http::router;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
-    ModelRuntime, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl, RuntimeDiagnostics,
-    RuntimeGeneration, RuntimeState, Tokenization,
+    ModelRuntime, RequestSnapshot, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl,
+    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization,
 };

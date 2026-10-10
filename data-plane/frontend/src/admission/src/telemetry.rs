@@ -220,40 +220,53 @@ impl AdmissionMetricsScope {
         let model = ModelLabels {
             model_name: model.into(),
         };
+        metrics.draining.get_or_create(&model).set(0);
+        // Unrestricted work uses the same counters so a later bounded rule sees every live unit.
+        let handle = AdmissionMetricsHandle {
+            active: metrics.active.get_or_create(&model).clone(),
+            queued: metrics.queued.get_or_create(&model).clone(),
+        };
+        let mut scope = Self {
+            model,
+            algorithm,
+            bounded: false,
+            handle,
+        };
+        scope.update(algorithm, capacity);
+        scope
+    }
+
+    /// Publishes changed algorithm metadata and limits without retiring live resource counters.
+    pub(crate) fn update(&mut self, algorithm: &'static str, capacity: Option<AdmissionCapacity>) {
+        let metrics = &METRICS;
+        if algorithm != self.algorithm {
+            metrics.info.remove(&AlgorithmLabels {
+                model_name: self.model.model_name.clone(),
+                algorithm: self.algorithm,
+            });
+            self.algorithm = algorithm;
+        }
         metrics
             .info
             .get_or_create(&AlgorithmLabels {
-                model_name: model.model_name.clone(),
+                model_name: self.model.model_name.clone(),
                 algorithm,
             })
             .set(1);
-        metrics.draining.get_or_create(&model).set(0);
-        // The registry owns exactly one effective rule per model, including during a drain.
-        let handle = if let Some(capacity) = capacity {
+        if let Some(capacity) = capacity {
             metrics
                 .concurrency_limit
-                .get_or_create(&model)
+                .get_or_create(&self.model)
                 .set(i64::from(capacity.concurrent_work_units));
             metrics
                 .queue_limit
-                .get_or_create(&model)
+                .get_or_create(&self.model)
                 .set(i64::from(capacity.queued_work_units));
-            AdmissionMetricsHandle {
-                active: metrics.active.get_or_create(&model).clone(),
-                queued: metrics.queued.get_or_create(&model).clone(),
-            }
-        } else {
-            AdmissionMetricsHandle {
-                active: Gauge::default(),
-                queued: Gauge::default(),
-            }
-        };
-        Self {
-            model,
-            algorithm,
-            bounded: capacity.is_some(),
-            handle,
+        } else if self.bounded {
+            metrics.concurrency_limit.remove(&self.model);
+            metrics.queue_limit.remove(&self.model);
         }
+        self.bounded = capacity.is_some();
     }
 
     /// Supplies resource gauges that reservations retain until their work ends.
@@ -282,9 +295,9 @@ impl Drop for AdmissionMetricsScope {
         if self.bounded {
             metrics.concurrency_limit.remove(&self.model);
             metrics.queue_limit.remove(&self.model);
-            metrics.active.remove(&self.model);
-            metrics.queued.remove(&self.model);
         }
+        metrics.active.remove(&self.model);
+        metrics.queued.remove(&self.model);
     }
 }
 

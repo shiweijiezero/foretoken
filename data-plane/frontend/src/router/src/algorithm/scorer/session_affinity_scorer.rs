@@ -25,17 +25,40 @@ struct Binding {
 // A frontend pipeline serves multiple models; each stage keeps model-scoped session bindings.
 type Bindings = [BTreeMap<(String, String), Binding>; 3];
 
-/// Prefers the session's bound target and rank; a pipeline owns bindings across request lifetimes.
-#[derive(Default)]
-pub struct SessionAffinityScorer {
-    bindings: Arc<Mutex<Bindings>>,
-    // Dropping or replacing the scorer disconnects the sweeper; the worker retains only a Weak.
-    eviction_stop: Option<mpsc::Sender<()>>,
+#[derive(Clone, Copy)]
+struct EvictionSettings {
+    ttl: Duration,
+    interval: Duration,
 }
 
-impl RouteScorer for SessionAffinityScorer {
-    /// Applies idle eviction parameters and starts cleanup for this pipeline's lifetime.
-    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+impl Default for EvictionSettings {
+    fn default() -> Self {
+        Self {
+            ttl: Duration::from_secs(300),
+            interval: Duration::from_secs(10),
+        }
+    }
+}
+
+#[derive(Default)]
+struct AffinityState {
+    bindings: Bindings,
+    eviction: EvictionSettings,
+    activated_version: Option<u64>,
+}
+
+/// Prefers the session's bound target and rank; published pipelines share bindings and one sweeper.
+#[derive(Default)]
+pub struct SessionAffinityScorer {
+    state: Arc<Mutex<AffinityState>>,
+    eviction: EvictionSettings,
+    // All configurations sharing the bindings keep this single worker alive.
+    eviction_wake: Option<mpsc::Sender<()>>,
+}
+
+impl SessionAffinityScorer {
+    /// Parses eviction settings for both initial construction and immutable replacements.
+    fn eviction_settings(parameters: serde_json::Value) -> Result<EvictionSettings, String> {
         #[derive(Default, Deserialize)]
         #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
         struct Parameters {
@@ -44,12 +67,25 @@ impl RouteScorer for SessionAffinityScorer {
         }
         let config: Parameters =
             serde_json::from_value(parameters).map_err(|error| error.to_string())?;
+        let defaults = EvictionSettings::default();
         let mut durations = [Duration::ZERO; 2];
         for (duration, (name, value, default)) in durations.iter_mut().zip([
-            ("evictionTtlSeconds", config.eviction_ttl_seconds, 300.0),
-            ("evictionSweepSeconds", config.eviction_sweep_seconds, 10.0),
+            (
+                "evictionTtlSeconds",
+                config.eviction_ttl_seconds,
+                defaults.ttl,
+            ),
+            (
+                "evictionSweepSeconds",
+                config.eviction_sweep_seconds,
+                defaults.interval,
+            ),
         ]) {
-            let value = if value == 0.0 { default } else { value };
+            let value = if value == 0.0 {
+                default.as_secs_f64()
+            } else {
+                value
+            };
             *duration = Duration::try_from_secs_f64(value)
                 .map_err(|_| format!("{name} must be a positive finite duration"))?;
             if duration.is_zero() {
@@ -57,30 +93,83 @@ impl RouteScorer for SessionAffinityScorer {
             }
         }
         let [ttl, interval] = durations;
-        let bindings: Arc<Mutex<Bindings>> = Arc::default();
-        let weak = Arc::downgrade(&bindings);
-        let (stop, receiver) = mpsc::channel();
+        Ok(EvictionSettings { ttl, interval })
+    }
+}
+
+impl RouteScorer for SessionAffinityScorer {
+    /// Applies idle eviction parameters and starts the sole worker for a fresh binding history.
+    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+        let eviction = Self::eviction_settings(parameters)?;
+        let state = Arc::new(Mutex::new(AffinityState {
+            eviction,
+            ..AffinityState::default()
+        }));
+        let weak = Arc::downgrade(&state);
+        let (wake, receiver) = mpsc::channel();
         std::thread::Builder::new()
             .name("session-affinity-eviction".into())
             .spawn(move || {
-                while matches!(
-                    receiver.recv_timeout(interval),
-                    Err(mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    let Some(bindings) = weak.upgrade() else {
+                loop {
+                    let interval = {
+                        let Some(state) = weak.upgrade() else {
+                            break;
+                        };
+                        let state = state.lock().expect("session binding lock poisoned");
+                        state.eviction.interval
+                    };
+                    match receiver.recv_timeout(interval) {
+                        Ok(()) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    }
+                    let Some(state) = weak.upgrade() else {
                         break;
                     };
-                    let mut bindings = bindings.lock().expect("session binding lock poisoned");
+                    let mut state = state.lock().expect("session binding lock poisoned");
+                    // Read the published TTL while holding the binding lock, never a retired TTL.
+                    let ttl = state.eviction.ttl;
                     let now = Instant::now();
-                    for profile in bindings.iter_mut() {
+                    for profile in state.bindings.iter_mut() {
                         profile.retain(|_, binding| now.duration_since(binding.last_seen) <= ttl);
                     }
                 }
             })
             .map_err(|error| error.to_string())?;
-        self.eviction_stop = Some(stop);
-        self.bindings = bindings;
+        self.eviction_wake = Some(wake);
+        self.state = state;
+        self.eviction = eviction;
         Ok(())
+    }
+
+    fn reconfigure(
+        &self,
+        parameters: serde_json::Value,
+    ) -> Option<Result<Arc<dyn RouteScorer>, String>> {
+        Some(Self::eviction_settings(parameters).map(|eviction| {
+            Arc::new(Self {
+                state: self.state.clone(),
+                eviction,
+                eviction_wake: self.eviction_wake.clone(),
+            }) as Arc<dyn RouteScorer>
+        }))
+    }
+
+    fn activate(&self, snapshot_version: u64) {
+        let mut state = self.state.lock().expect("session binding lock poisoned");
+        if state
+            .activated_version
+            .is_some_and(|version| version >= snapshot_version)
+        {
+            return;
+        }
+        state.activated_version = Some(snapshot_version);
+        let interval_changed = state.eviction.interval != self.eviction.interval;
+        state.eviction = self.eviction;
+        // Ordinary snapshot publication must not postpone cleanup by resetting its timer.
+        if interval_changed && let Some(wake) = &self.eviction_wake {
+            wake.send(()).expect("session eviction worker stopped");
+        }
     }
 
     /// Returns affinity preferences without refreshing or committing a session binding.
@@ -127,7 +216,11 @@ impl RouteScorer for SessionAffinityScorer {
             RoutingStage::Decode => 2,
         };
         let session_key = (request.model.clone(), session_id.to_owned());
-        let bound = self.bindings.lock().expect("session binding lock poisoned")[profile]
+        let bound = self
+            .state
+            .lock()
+            .expect("session binding lock poisoned")
+            .bindings[profile]
             .get(&session_key)
             .map(|binding| binding.target.clone());
         let target = bound.as_ref().and_then(|(id, rank)| {
@@ -142,11 +235,11 @@ impl RouteScorer for SessionAffinityScorer {
         }
         let present = bound.map(|_| target.is_some());
         let snapshot_version = routing_progress.snapshot_version;
-        let bindings = self.bindings.clone();
+        let state = self.state.clone();
         ScoringOutcome {
             scores,
             on_selected: Some(Box::new(move |candidate| {
-                let mut bindings = bindings.lock().expect("session binding lock poisoned");
+                let mut state = state.lock().expect("session binding lock poisoned");
                 let fresh = Binding {
                     target: (
                         candidate.route_target_id.clone(),
@@ -155,7 +248,7 @@ impl RouteScorer for SessionAffinityScorer {
                     last_seen: Instant::now(),
                     snapshot_version,
                 };
-                match bindings[profile].entry(session_key) {
+                match state.bindings[profile].entry(session_key) {
                     Entry::Vacant(entry) => {
                         entry.insert(fresh);
                     }

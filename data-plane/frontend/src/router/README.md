@@ -9,7 +9,7 @@ Route requests to healthy replicas that support the model, input length, and req
 
 ## Select a routing strategy
 
-To prefer replicas with fewer waiting requests, set the scorer in a `FrontendService`:
+To prefer replicas with fewer waiting requests, set the scorer in your `FrontendService` YAML. For the Quick Start, edit `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
@@ -18,7 +18,13 @@ spec:
       algorithm: queue_depth
 ```
 
-Redeploy the frontend configuration to apply the change. With no `routerPipeline` settings, routing considers every compatible healthy target (`allow_all`), ranks them with `kv_least_loaded`, and selects one with `gamble_sampling`.
+Apply the edited configuration:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+The default strategy combines cache reuse and load balancing with `kv_least_loaded` and selects a target with `gamble_sampling`.
 
 Choose a scorer for the workload:
 

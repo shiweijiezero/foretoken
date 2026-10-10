@@ -205,9 +205,10 @@ class ApplicationFiles:
         references: set[str] | None,
         *,
         timeout: str,
+        reuse_previous: bool = False,
         sources: dict[str, Any] | None = None,
-    ) -> None:
-        """Publish a compiler export and captured provenance under the source binding lock."""
+    ) -> str:
+        """Publish a compiler export with provenance and return the selected immutable revision."""
         command = [
             "python",
             "-c",
@@ -217,10 +218,15 @@ class ApplicationFiles:
             builder.binding,
             f"{self.mount}/{component}/{previous}" if previous else "",
             json.dumps(self._retained_versions(references)),
+            json.dumps(reuse_previous),
             json.dumps(sources),
         ]
         with self._publisher(command, builder.binding, timeout, builder=builder) as job:
             self._wait(job, timeout)
+            result = self.kubectl.run(
+                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
+            )
+            return json.loads(result.stdout)["revision"]
 
     @contextmanager
     def import_release(

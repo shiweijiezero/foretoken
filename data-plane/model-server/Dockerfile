@@ -5,7 +5,7 @@
 # Build from the repository root so Cargo uses the data-plane workspace and
 # its engine adapters. The inference engine image must provide the Python
 # entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
-# an image-specific executable; model-server otherwise uses `python`. The
+# an image-specific executable; model-server otherwise uses `python3`. The
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
 ARG BASE_IMAGE_REGISTRY=docker.io
@@ -14,7 +14,7 @@ ARG INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr.io
 ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-bullseye
 ARG INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE_REGISTRY}/shiweijiezero/foretoken/model-server
 ARG FORETOKEN_VLLM_PYTHON
-ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
+ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 
 FROM ${UV_IMAGE} AS uv
 
@@ -130,15 +130,18 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
-    "${FORETOKEN_VLLM_PYTHON:-python}" /tmp/vllm-patches/apply.py
+    "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()' \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 tzdata \
@@ -147,7 +150,8 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
-    && uv pip check --python "$python_path" \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import check_installed_dependencies; check_installed_dependencies()' \
     && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 

@@ -9,7 +9,7 @@ mod responses;
 mod stream;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::Router;
 use foretoken_admission::AdmissionApi;
@@ -17,7 +17,9 @@ use foretoken_chat::{ChatRequest, ParserSelection};
 use foretoken_text::Prompt;
 use uuid::Uuid;
 
-use crate::runtime::{GeneratedChat, Generation, GenerationError, GenerationRequest};
+use crate::runtime::{
+    GeneratedChat, Generation, GenerationError, GenerationRequest, RequestSnapshot,
+};
 use crate::video_task::VideoTaskClient;
 
 /// Immutable frontend services shared by inference and diagnostic handlers.
@@ -25,11 +27,10 @@ use crate::video_task::VideoTaskClient;
 pub(crate) struct ApiState {
     pub generation: Arc<dyn Generation>,
     pub models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-    pub stream_idle: Duration,
     pub video_tasks: Option<Arc<VideoTaskClient>>,
 }
 
-impl ApiState {
+impl RequestSnapshot {
     /// Dispatches a lowered chat request with the original HTTP timing and parser intent.
     /// The caller owns the returned stream; the generation service owns routing and cancellation.
     async fn generate_chat(

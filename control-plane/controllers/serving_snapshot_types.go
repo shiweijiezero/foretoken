@@ -9,7 +9,16 @@ import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v
 
 const servingSnapshotKey = "serving.json"
 
+// servingSettings groups process-local rules that share the snapshot publication boundary.
+type servingSettings struct {
+	RouterPipeline        inferencev1alpha1.RouterPipeline `json:"router_pipeline"`
+	RequestTimeoutSeconds int64                            `json:"request_timeout_seconds"`
+	StreamIdleSeconds     int64                            `json:"stream_idle_seconds"`
+	LogLevel              string                           `json:"log_level"`
+}
+
 type servingSnapshot struct {
+	Settings          servingSettings                              `json:"settings"`
 	Version           uint64                                       `json:"version"`
 	Models            []servingSnapshotModel                       `json:"models"`
 	Admission         map[string]inferencev1alpha1.AdmissionConfig `json:"admission"`
@@ -21,6 +30,7 @@ type servingSnapshot struct {
 }
 
 type servingSnapshotModel struct {
+	ServiceGeneration     int64                                   `json:"service_generation"`
 	ServiceUID            string                                  `json:"service_uid"`
 	Model                 string                                  `json:"model"`
 	Source                inferencev1alpha1.ModelSource           `json:"source"`

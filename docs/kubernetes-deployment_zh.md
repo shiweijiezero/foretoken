@@ -78,7 +78,7 @@ workload:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，继续执行同一条命令。源码改动在 BuildKit Pod 中编译并发布到工作负载；普通 Python、Triton、Rust、CUDA 和 C/C++ 改动会复用运行时镜像。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署与更新代码)。
+修改源码后，继续执行同一条命令。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署与更新代码)。
 
 ## 4. 删除 Foretoken
 

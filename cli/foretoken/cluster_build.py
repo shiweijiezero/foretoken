@@ -230,6 +230,7 @@ class ClusterBuilder(AbstractContextManager):
         self.workspace = f"{self.root}/workspace"
         self._created = False
         self._generated_layouts: dict[str, dict[str, str]] = {}
+        self._image_builds: dict[str, tuple[list[str], str]] = {}
         self._used_images: set[str] = set()
         self._built_images: set[str] = set()
 
@@ -582,6 +583,8 @@ chmod 600 "$1/buildkit.toml"
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Retain successful builders and clean transient or failed build state."""
+        if self._image_builds:
+            self.run(["rm", "-rf", "--", self.root + "/transfers"])
         if exc_type is not None and self._created:
             self.kubectl.run(
                 [
@@ -622,8 +625,6 @@ chmod 600 "$1/buildkit.toml"
             )
             if stale:
                 self.run(["rm", "-rf", "--", *stale])
-        if exc_type is None and self._generated_layouts:
-            self.run(["rm", "-rf", "--", self.root + "/transfers"])
 
     def command(self, args: list[str], *, container: str = "builder") -> list[str]:
         """Address the build Pod for both streamed input and ordinary commands."""
@@ -804,7 +805,7 @@ rm -rf "$incoming"
             self.run(["rm", "-rf", "--", previous["path"]])
 
     def _local_image(self, image: str) -> dict[str, str] | None:
-        """Expose an already-loaded local image as a BuildKit OCI context without a registry."""
+        """Expose built OCI outputs or existing node images as registry-free BuildKit contexts."""
         if not self.containerd_socket:
             return None
         name = image
@@ -815,8 +816,8 @@ rm -rf "$incoming"
             name = "docker.io/" + ("library/" if "/" not in name else "") + name
         if ":" not in name.rsplit("/", 1)[-1] and "@" not in name:
             name += ":latest"
-        if name in self._generated_layouts:
-            return self._generated_layouts[name]
+        if name in self._image_builds:
+            return self._export_image(name)
         images = self._node_images()
         if name not in images:
             return None
@@ -864,9 +865,8 @@ rm -rf "$incoming"
         image: str = "",
         push: bool = False,
         arguments: dict[str, str] | None = None,
-        reuse_image: str = "",
     ) -> dict[str, Any]:
-        """Build cluster-local outputs, reusing identical installed images before OCI transfer."""
+        """Build files or registry images, deferring local OCI export until an output is consumed."""
         metadata = self.root + "/result.json"
         args = [
             "buildctl",
@@ -924,71 +924,75 @@ rm -rf "$incoming"
                 ]
                 value = alias
             args += ["--opt", f"build-arg:{key}={value}"]
-        # Resolve the actual image through BuildKit without copying its layers to an
-        # OCI layout. Only a matching image still present on this node can skip import.
-        if self.containerd_socket and reuse_image and not destination:
-            self.run(
-                [
-                    *args,
-                    "--output",
-                    f"type=image,name={image},oci-mediatypes=true,store=false,push=false",
-                ]
-            )
-            result = self.read_json(metadata)
-            if self._node_image_matches(reuse_image, result["containerimage.digest"]):
-                self.reuse_image_reference(reuse_image, image)
-                self._built_images.add(image)
-                print(f"Reusing unchanged node image {reuse_image}", flush=True)
-                return result
-        layout = ""
         if destination:
             # BuildKit mirrors each owned export directory so retries cannot revive removed files.
-            args += ["--output", "type=local,mode=delete,dest=" + destination]
+            output = "type=local,mode=delete,dest=" + destination
         elif self.containerd_socket:
-            layout = self.root + "/transfers/" + uuid.uuid4().hex
-            args += ["--output", f"type=oci,name={image},dest={layout},tar=false"]
+            output = f"type=image,name={image},oci-mediatypes=true,store=false,push=false"
         else:
-            args += ["--output", f"type=image,name={image},push={str(push).lower()}"]
-        self.run(args)
+            output = f"type=image,name={image},push={str(push).lower()}"
+        self.run([*args, "--output", output])
         result = self.read_json(metadata)
-        if layout:
-            import_command = [*self._containerd(), "images", "import"]
-            # ctr 1.x imports synchronously by default. On ctr 2.x select that same
-            # path instead of the transfer service's temporary image references.
-            help_text = self.run(
-                [*import_command, "--help"], capture=True, container="images"
-            )
-            if "--local" in help_text:
-                import_command.append("--local")
-            self.run(
-                [
-                    "bash",
-                    "-ec",
-                    'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
-                    "import",
-                    layout,
-                    *import_command,
-                    "--index-name",
-                    image,
-                    "-",
-                ],
-                container="images",
-            )
-            digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
-            self._generated_layouts[image] = {
-                "path": layout,
-                "digest": digest,
-                "nodeDigest": self._node_images()[image],
-            }
-            self._built_images.add(image)
+        if self.containerd_socket and not destination:
+            self._image_builds[image] = (args, result["containerimage.digest"])
         return result
 
-    def reuse_image_reference(self, image: str, reference: str) -> None:
-        """Restore an unchanged local installation reference without exporting its layers again."""
+    def _export_image(self, image: str) -> dict[str, str]:
+        """Materialize a previewed image only when a local build or node needs its layers."""
+        if image in self._generated_layouts:
+            return self._generated_layouts[image]
+        args, digest = self._image_builds[image]
+        layout = self.root + "/transfers/" + uuid.uuid4().hex
         self.run(
-            [*self._containerd(), "images", "tag", "--force", image, reference],
+            [
+                *args,
+                "--output",
+                f"type=oci,name={image},oci-mediatypes=true,dest={layout},tar=false",
+            ]
+        )
+        exported = self.read_json(self.root + "/result.json")["containerimage.digest"]
+        descriptor = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
+        if exported != digest or descriptor != digest:
+            self.run(["rm", "-rf", "--", layout])
+            raise DeploymentError(
+                f"source image {image} changed between build and OCI export; rerun the source operation"
+            )
+        result = {"path": layout, "digest": digest}
+        self._generated_layouts[image] = result
+        return result
+
+    def import_image(self, image: str, reference: str) -> None:
+        """Deliver a selected OCI output after source builds, reusing an identical node image."""
+        _, digest = self._image_builds[image]
+        if self._node_image_matches(reference, digest):
+            print(f"Reusing unchanged node image {reference}", flush=True)
+            return
+        layout = self._export_image(image)
+        import_command = [*self._containerd(), "images", "import"]
+        # ctr 1.x imports synchronously by default. On ctr 2.x select that same
+        # path instead of the transfer service's temporary image references.
+        help_text = self.run(
+            [*import_command, "--help"], capture=True, container="images"
+        )
+        if "--local" in help_text:
+            import_command.append("--local")
+        self.run(
+            [
+                "bash",
+                "-ec",
+                'set -o pipefail; layout=$1; shift; tar -C "$layout" -cf - . | "$@"',
+                "import",
+                layout["path"],
+                *import_command,
+                "--index-name",
+                reference,
+                "-",
+            ],
             container="images",
         )
+        # OCI names retain the candidate reference as well as the selected index name.
+        # Retire only references created by this operation after every node is delivered.
+        self._built_images.update((image, reference))
 
     def discard_unselected_images(self, retained: set[str]) -> None:
         """Remove only this build's unselected local references after every node has been compared."""

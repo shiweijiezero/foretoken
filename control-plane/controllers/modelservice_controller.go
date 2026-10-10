@@ -48,6 +48,7 @@ type ScalingMetricsProvider interface {
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
+	APIReader                client.Reader
 	MetricsProvider          ScalingMetricsProvider
 	CacheProfile             RuntimeCacheProfile
 	SourceMode               bool
@@ -70,12 +71,14 @@ func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *co
 
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForGroup)).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
-		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
+		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
 	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
@@ -189,6 +192,12 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	ready, readyReason, readyMessage, err := reconciler.serviceReadiness(ctx, service, compiledPools)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if ready && service.Status.ServingGeneration == service.Generation {
+		ready, readyReason, readyMessage, err = reconciler.frontendConfigurationApplied(ctx, service)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	pools := conditionState{metav1.ConditionTrue, "Applied", "All ModelPools were materialized"}
 	if err := reconciler.updateStatus(ctx, service, modelServiceState{
@@ -326,6 +335,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 			ModelServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
 			PoolName:        compiled.Name,
 			DesiredGroups:   compiled.DesiredGroups,
+			MaxInputTokens:  copyOptionalInt32(compiled.MaxInputTokens),
 			Template:        compiled.Template,
 		}
 		if err := controllerutil.SetControllerReference(service, pool, reconciler.Scheme()); err != nil {
@@ -455,7 +465,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 			continue
 		}
 		pool := byName[compiled.Name]
-		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
+		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
 			return false, nil
 		}
 		selected = append(selected, inferencev1alpha1.ServingPoolRevision{PoolName: pool.Spec.PoolName, PoolUID: string(pool.UID), Revision: pool.Status.PreparedRevision})

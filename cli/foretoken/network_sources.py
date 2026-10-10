@@ -228,8 +228,13 @@ def _select_mirror(
     official: float | None,
     mirrors: tuple[_SourceMirror, ...],
     measurements: tuple[float | None, ...],
+    *,
+    preferred: str | None = None,
 ) -> tuple[_SourceMirror, float] | None:
-    """Return the fastest usable mirror when it materially beats the official source."""
+    """Retain an available prior source, otherwise select a materially faster mirror."""
+    # An empty prior selection denotes the official source; None is a first selection.
+    if preferred == "" and official is not None:
+        return None
     available = tuple(
         (mirror, elapsed)
         for mirror, elapsed in zip(mirrors, measurements, strict=True)
@@ -237,6 +242,9 @@ def _select_mirror(
     )
     if not available:
         return None
+    for mirror, elapsed in available:
+        if mirror.value == preferred:
+            return mirror, elapsed
     mirror, elapsed = min(available, key=lambda item: item[1])
     if official is not None and not (
         elapsed <= official * _MIRROR_FASTER_RATIO
@@ -264,8 +272,10 @@ def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirr
     return tuple(candidates)
 
 
-def platform_image_reference(reference: str, registry: str | None = None) -> str:
-    """Resolve a platform-owned image default, preserving its tag or digest.
+def platform_image_reference(
+    reference: str, registry: str | None = None, *, previous: str | None = None
+) -> str:
+    """Resolve a platform image default, retaining an available prior source for the same image.
 
     An explicit registry replaces the original host. Automatic public proxies
     use their upstream-specific repository paths. Callers omit user-selected images.
@@ -275,16 +285,16 @@ def platform_image_reference(reference: str, registry: str | None = None) -> str
         qualified = separator and ("." in first or ":" in first or first == "localhost")
         repository = path if qualified else reference
         return f"{registry}/{repository}"
-    return select_platform_oci_reference(reference)
+    return select_platform_oci_reference(reference, previous)
 
 
 @cache
-def select_platform_oci_reference(reference: str) -> str:
+def select_platform_oci_reference(reference: str, previous: str | None = None) -> str:
     """Select an anonymous source for a CLI-owned public image or OCI chart default.
 
     Callers retain explicit user overrides. Preserve the original registry path,
     tag or digest when selecting the public proxy, and reuse the decision within
-    this CLI invocation.
+    this CLI invocation. A matching prior reference remains selected while reachable.
     """
     scheme = "oci://" if reference.startswith("oci://") else ""
     value = reference.removeprefix(scheme) if scheme else reference
@@ -302,13 +312,18 @@ def select_platform_oci_reference(reference: str) -> str:
         repository, revision = path, "latest"
     official_host = "registry-1.docker.io" if host == "docker.io" else host
     mirrors = _oci_mirrors(host, repository, revision)
+    preferred = "" if previous == reference else next(
+        (mirror.value for mirror in mirrors if previous == f"{scheme}{mirror.value}/{path}"),
+        None,
+    )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
             _measure_oci_manifest, official_host, repository, revision
         )
         futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
-            official.result(), mirrors, tuple(future.result() for future in futures)
+            official.result(), mirrors, tuple(future.result() for future in futures),
+            preferred=preferred,
         )
     return f"{scheme}{selected[0].value}/{path}" if selected else reference
 
@@ -335,8 +350,13 @@ def select_github_download(url: str, mirror: str | None = None) -> str:
     return selected[0].value if selected else url
 
 
-def select_build_sources(environment: Mapping[str, str]) -> BuildSourceSelection:
-    """Select unconfigured build sources without turning OCI mirrors into fixed origins."""
+def select_build_sources(
+    environment: Mapping[str, str],
+    *,
+    previous_environment: Mapping[str, str] | None = None,
+    previous_registry_mirrors: Mapping[str, list[str]] | None = None,
+) -> BuildSourceSelection:
+    """Select unconfigured build sources, retaining reachable choices from the previous build."""
     probes: list[_SourceProbe] = []
     if not environment.get("FORETOKEN_OCI_REGISTRY"):
         probes.extend(
@@ -462,8 +482,14 @@ def select_build_sources(environment: Mapping[str, str]) -> BuildSourceSelection
     registry_mirrors: dict[str, list[str]] = {}
     messages: list[str] = []
     for probe, official, mirror_measurements in results:
+        preferred = None
+        if probe.registry is not None and previous_registry_mirrors is not None:
+            prior = previous_registry_mirrors.get(probe.registry, [])
+            preferred = prior[0] if prior else ""
+        elif probe.registry is None and previous_environment is not None:
+            preferred = previous_environment.get(probe.environment_name, "")
         selected_mirror = _select_mirror(
-            official, probe.mirrors, mirror_measurements
+            official, probe.mirrors, mirror_measurements, preferred=preferred
         )
         if selected_mirror is None:
             continue

@@ -2,5 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 common/python-profiling.patch
+common/worker-profiling.patch
 common/ready-logprobs.patch
 common/offloading-event-identity.patch

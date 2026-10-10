@@ -31,7 +31,7 @@ use self::output::{
     text_stream_many,
 };
 use super::{ApiState, RequestTiming, server_request_id};
-use crate::runtime::{GenerationError, GenerationRequest};
+use crate::runtime::{GenerationError, GenerationRequest, RequestSnapshot};
 use crate::{AdmissionOrigin, admission};
 use foretoken_admission::{AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest};
 
@@ -89,23 +89,26 @@ async fn retrieve_model(
     }
 }
 
-fn resolve_model(state: &ApiState, requested: Option<String>) -> Result<String, GenerationError> {
+fn resolve_model(
+    state: &RequestSnapshot,
+    requested: Option<String>,
+) -> Result<String, GenerationError> {
     if let Some(model) = requested {
-        return (state.models)()
+        return state
+            .models
             .iter()
             .any(|candidate| candidate == &model)
             .then_some(model)
             .ok_or(GenerationError::ModelNotFound);
     }
-    let models = (state.models)();
-    match models.as_slice() {
+    match state.models.as_ref() {
         [model] => Ok(model.clone()),
         _ => Err(GenerationError::InvalidRequest),
     }
 }
 
 async fn tokenize(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<TokenizeRequest>, JsonRejection>,
 ) -> Response {
@@ -216,7 +219,7 @@ async fn tokenize(
 }
 
 async fn detokenize(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<DetokenizeRequest>, JsonRejection>,
 ) -> Response {
@@ -736,7 +739,7 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
         .into_response()
 }
 async fn completions(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
@@ -842,7 +845,7 @@ async fn completions(
 }
 
 async fn chat_completions(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
 ) -> Response {

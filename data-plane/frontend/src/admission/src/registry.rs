@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Per-model admission publication and drain-before-replacement ownership.
+//! Per-model admission publication with stable built-in capacity and custom-rule draining.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -46,7 +46,7 @@ pub struct AdmissionRegistry(Mutex<RegistryState>);
 
 impl AdmissionRegistry {
     /// Commits a validated model directory at the runtime's publication boundary.
-    /// Changed rules drain independently; unchanged models keep their queues and reservations.
+    /// Built-in rules update their shared capacity in place; other changed rules drain independently.
     pub fn publish(&self, prepared: PreparedAdmissions) {
         let mut registry = self.0.lock().expect("admission registry lock poisoned");
         if registry.closed {
@@ -74,6 +74,17 @@ impl AdmissionRegistry {
         registry.retired.retain(|_, entry| entry.strong_count() > 0);
         set_configured_models(&current.keys().cloned().collect::<Vec<_>>());
         registry.current = current;
+    }
+
+    /// Reports whether every currently configured model has activated its published rule.
+    /// Runtime status uses this to defer acknowledgement while a custom rule is still draining.
+    pub fn is_applied(&self) -> bool {
+        let registry = self.0.lock().expect("admission registry lock poisoned");
+        !registry.closed
+            && registry.current.values().all(|entry| {
+                let state = entry.state.lock().expect("model admission lock poisoned");
+                !state.draining && state.active.is_some() && state.pending.is_none()
+            })
     }
 
     /// Returns the currently configured model handle; arbitrary request names create no state.
@@ -136,9 +147,9 @@ impl Admission {
                 .is_some_and(|active| active.prepared.rule.requires_ready_runtime())
     }
 
-    // Callers hold the registry/publication boundary. New rules are never activated until every
-    // old attempt or accepted batch releases its lease, including resource-free allow_all work.
-    fn replace(&self, replacement: Option<PreparedRule>) {
+    // Publication preserves the built-in capacity owner; custom changes and removal close the
+    // old rule and wait for all attempt and accepted-batch leases before replacing its lifecycle.
+    fn replace(&self, mut replacement: Option<PreparedRule>) {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if !state.draining
             && state
@@ -147,6 +158,23 @@ impl Admission {
                 .zip(replacement.as_ref())
                 .is_some_and(|(active, next)| active.prepared.config == next.config)
         {
+            return;
+        }
+        if !state.draining
+            && let Some(active) = state.active.as_mut()
+            && let Some(next) = replacement.as_mut()
+            && let Some((owner, candidate)) = active
+                .prepared
+                .rule
+                .capacity_state()
+                .zip(next.rule.capacity_state())
+        {
+            owner.update(candidate);
+            active
+                .metrics
+                .update(next.name, active.prepared.rule.capacity());
+            next.rule = active.prepared.rule.clone();
+            std::mem::swap(&mut active.prepared, next);
             return;
         }
         state.pending = replacement;
@@ -251,7 +279,7 @@ impl Drop for WorkLease {
 }
 
 // The resource permit is dropped before its lifecycle lease. Splits share a batch lease so
-// a replacement cannot start while any child or undistributed reservation is still alive.
+// a draining custom rule cannot be replaced while any child or undistributed unit is alive.
 struct WorkReservation {
     permit: AdmissionPermit,
     lease: Arc<WorkLease>,

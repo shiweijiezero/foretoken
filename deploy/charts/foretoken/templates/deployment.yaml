@@ -104,12 +104,15 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - {{ ternary (printf "%s/current/bin/manager" $applicationMount) "/manager" (not (empty $application)) }}
-          {{- if $application }}
           volumeMounts:
+            - name: controller-configuration
+              mountPath: /etc/foretoken/controller
+              readOnly: true
+            {{- if $application }}
             - name: application
               mountPath: {{ $applicationMount }}
               readOnly: true
-          {{- end }}
+            {{- end }}
           args:
             {{- if or $sourceMode $application $frontendApplication $modelApplication }}
             - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
@@ -125,9 +128,7 @@ spec:
             {{- end }}
             - --leader-elect=true
             - {{ printf "--source-mode=%t" $sourceMode | quote }}
-            - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
-            - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
-            - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
+            - --autoscaling-telemetry-config=/etc/foretoken/controller/autoscaling-telemetry.json
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - --metrics-bind-address=:8080
             - {{ printf "--observability-prometheus=%s" .Values.observability.prometheus | quote }}
@@ -251,9 +252,12 @@ spec:
             capabilities:
               drop:
                 - ALL
-      {{- if $application }}
       volumes:
+        - name: controller-configuration
+          configMap:
+            name: {{ include "foretoken.fullname" . }}
+        {{- if $application }}
         - name: application
           emptyDir: {}
-      {{- end }}
+        {{- end }}
       terminationGracePeriodSeconds: 10

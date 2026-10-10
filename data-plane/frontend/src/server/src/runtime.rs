@@ -175,11 +175,16 @@ pub struct KvIndexDiagnostics {
 pub struct RuntimeDiagnostics {
     pub serving_ready: bool,
     pub active_generation: Option<u64>,
+    pub target_generation: Option<u64>,
+    pub configuration_error: Option<String>,
     pub kv_index: KvIndexDiagnostics,
 }
 
 #[async_trait]
 pub trait RuntimeControl: Send + Sync {
+    /// Applies prepared process-local settings inside the generation publication boundary.
+    fn activate(&self, version: u64);
+
     /// Refreshes backend and KV-index readiness for a candidate or published runtime generation.
     async fn refresh_backend_readiness(&self);
 
@@ -217,12 +222,19 @@ pub trait RuntimeControl: Send + Sync {
     }
 }
 
+/// Request-scoped execution and budgets captured together before HTTP body extraction.
+#[derive(Clone)]
+pub struct RequestSnapshot {
+    pub models: Arc<[String]>,
+    pub generation: Arc<dyn Generation>,
+    pub request_timeout: Duration,
+    pub stream_idle: Duration,
+}
+
 #[async_trait]
 pub trait Generation: Send + Sync {
-    /// Exposes the existing total budget to HTTP intake before body extraction.
-    fn request_timeout(&self) -> Option<Duration> {
-        None
-    }
+    /// Captures the active rules for one HTTP request; later updates do not alter its budgets.
+    fn request_snapshot(&self) -> Result<RequestSnapshot, GenerationError>;
 
     /// Reserves a complete candidate batch before any child is submitted.
     async fn admit(&self, _request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
@@ -309,6 +321,8 @@ pub trait Generation: Send + Sync {
         RuntimeDiagnostics {
             serving_ready: self.ready(),
             active_generation: None,
+            target_generation: None,
+            configuration_error: None,
             kv_index: KvIndexDiagnostics {
                 state: "unavailable".into(),
                 reason: Some("no_active_generation".into()),
@@ -361,6 +375,8 @@ struct VideoBackendContext {
 /// Models share the Router. Text models own immutable request processors; video models
 /// delegate preprocessing to their selected HTTP backend.
 pub struct RuntimeState {
+    request_timeout: Duration,
+    stream_idle: Duration,
     models: BTreeMap<String, ModelRuntime>,
     video: Option<VideoBackendContext>,
     admission_targets: BTreeMap<String, AdmissionTargets>,
@@ -377,8 +393,12 @@ impl RuntimeState {
         models: BTreeMap<String, ModelRuntime>,
         router: Arc<dyn Router>,
         resolver: Arc<dyn LlmFacadeResolver>,
+        request_timeout: Duration,
+        stream_idle: Duration,
     ) -> Self {
         Self {
+            request_timeout,
+            stream_idle,
             models,
             video: None,
             admission_targets: BTreeMap::new(),
@@ -441,17 +461,26 @@ impl RuntimeState {
 /// atomic slot.
 struct RuntimeSlot {
     version: u64,
+    models: Arc<[String]>,
     state: Arc<RuntimeState>,
     control: Arc<dyn RuntimeControl>,
 }
 
+#[derive(Default, Clone)]
+struct ConfigurationStatus {
+    target_generation: Option<u64>,
+    error: Option<String>,
+}
+
 /// Real adapter: each request loads one immutable runtime state before lowering and routing.
+#[derive(Clone)]
 pub struct RuntimeGeneration {
-    slot: ArcSwapOption<RuntimeSlot>,
-    publication: Mutex<()>,
+    slot: Arc<ArcSwapOption<RuntimeSlot>>,
+    publication: Arc<Mutex<()>>,
     publication_updates: tokio::sync::watch::Sender<u64>,
-    accepting: AtomicBool,
-    request_timeout: Duration,
+    accepting: Arc<AtomicBool>,
+    request_slot: Option<Arc<RuntimeSlot>>,
+    configuration: Arc<Mutex<ConfigurationStatus>>,
     admission: Arc<AdmissionRegistry>,
 }
 
@@ -460,16 +489,40 @@ impl RuntimeGeneration {
     ///
     /// The frontend process retains the returned owner for its full lifetime; snapshot watchers
     /// publish into it and HTTP handlers load its current immutable state per request.
-    pub fn new(request_timeout: Duration, admission: Arc<AdmissionRegistry>) -> Self {
+    pub fn new(admission: Arc<AdmissionRegistry>) -> Self {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
-            slot: ArcSwapOption::empty(),
-            publication: Mutex::new(()),
+            slot: Arc::new(ArcSwapOption::empty()),
+            publication: Arc::new(Mutex::new(())),
             publication_updates,
-            accepting: AtomicBool::new(true),
-            request_timeout,
+            accepting: Arc::new(AtomicBool::new(true)),
+            request_slot: None,
+            configuration: Arc::default(),
             admission,
         }
+    }
+
+    fn request_timeout(&self) -> Result<Duration, GenerationError> {
+        Ok(self
+            .request_slot
+            .as_ref()
+            .cloned()
+            .or_else(|| self.slot.load_full())
+            .ok_or(GenerationError::Unavailable)?
+            .state
+            .request_timeout)
+    }
+
+    /// Records watcher progress without changing the last valid request-processing state.
+    pub fn record_configuration(&self, version: Option<u64>, error: Option<String>) {
+        let mut status = self
+            .configuration
+            .lock()
+            .expect("configuration status lock poisoned");
+        if let Some(version) = version {
+            status.target_generation = Some(version);
+        }
+        status.error = error;
     }
 
     /// Publishes a newer serving generation without allowing concurrent stale writers to win.
@@ -494,12 +547,15 @@ impl RuntimeGeneration {
         if !self.accepting.load(Ordering::Acquire) {
             return false;
         }
+        control.activate(version);
         self.admission.publish(admission);
         self.slot.store(Some(Arc::new(RuntimeSlot {
             version,
+            models: control.configured_models().into(),
             state,
             control,
         })));
+        self.record_configuration(Some(version), None);
         self.publication_updates.send_replace(version);
         true
     }
@@ -545,7 +601,8 @@ impl RuntimeGeneration {
         &self,
         request: &AdmissionRequest,
     ) -> Result<AdmissionPermit, GenerationError> {
-        let deadline = tokio::time::Instant::from_std(request.received_at + self.request_timeout);
+        let deadline =
+            tokio::time::Instant::from_std(request.received_at + self.request_timeout()?);
         let admission = self.model_admission(&request.model)?;
         admission
             .admit(request, deadline, AdmissionService::default(), self)
@@ -579,7 +636,11 @@ impl RuntimeGeneration {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(GenerationError::Unavailable);
         }
-        let slot = self.slot.load_full().ok_or(GenerationError::Unavailable)?;
+        let slot = self
+            .request_slot
+            .clone()
+            .or_else(|| self.slot.load_full())
+            .ok_or(GenerationError::Unavailable)?;
         if slot.control.is_ready() {
             Ok(slot)
         } else {
@@ -592,8 +653,8 @@ impl RuntimeGeneration {
         // queued while waiting, then reload the complete slot across each generation boundary.
         let mut publication_updates = self.publication_updates.subscribe();
         let mut queued = None;
+        let mut slot = self.ready_state()?;
         loop {
-            let slot = self.ready_state()?;
             if (slot.state.models.contains_key(model)
                 || slot
                     .state
@@ -623,6 +684,9 @@ impl RuntimeGeneration {
             {
                 return Err(GenerationError::Unavailable);
             }
+            // A cold model can become executable in a later generation; the request budget
+            // remains the one captured at intake while preparation waits for that model.
+            slot = self.slot.load_full().ok_or(GenerationError::Unavailable)?;
         }
     }
 
@@ -647,7 +711,7 @@ impl RuntimeGeneration {
                 }
             })?;
         // Tokenization is synchronous; do not admit backend work if it exhausted the budget.
-        if Instant::now() >= request.started_at + self.request_timeout {
+        if Instant::now() >= request.started_at + self.request_timeout()? {
             return Err(GenerationError::DeadlineExceeded);
         }
         let generate_request = prepared.generate_request;
@@ -817,8 +881,18 @@ impl AdmissionStateReader for RuntimeGeneration {
 
 #[async_trait]
 impl Generation for RuntimeGeneration {
-    fn request_timeout(&self) -> Option<Duration> {
-        Some(self.request_timeout)
+    fn request_snapshot(&self) -> Result<RequestSnapshot, GenerationError> {
+        let slot = self.ready_state()?;
+        let snapshot = RequestSnapshot {
+            models: slot.models.clone(),
+            request_timeout: slot.state.request_timeout,
+            stream_idle: slot.state.stream_idle,
+            generation: Arc::new(Self {
+                request_slot: Some(slot),
+                ..self.clone()
+            }),
+        };
+        Ok(snapshot)
     }
 
     async fn admit(&self, request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
@@ -870,13 +944,13 @@ impl Generation for RuntimeGeneration {
             &endpoint,
             request,
             session,
-            self.request_timeout,
+            self.request_timeout()?,
         )
         .await
     }
 
     async fn generate(&self, mut request: GenerationRequest) -> Result<Generated, GenerationError> {
-        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
+        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout()?);
         let mut generated = before_deadline(deadline, async {
             let admission = match request.admission.take() {
                 Some(permit) => permit,
@@ -914,7 +988,7 @@ impl Generation for RuntimeGeneration {
         chat: ChatRequest,
         include_reasoning: bool,
     ) -> Result<GeneratedChat, GenerationError> {
-        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
+        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout()?);
         let mut chat = before_deadline(deadline, async {
             let admission = match request.admission.take() {
                 Some(permit) => permit,
@@ -1071,10 +1145,17 @@ impl Generation for RuntimeGeneration {
     }
 
     fn diagnostics(&self) -> RuntimeDiagnostics {
+        let status = self
+            .configuration
+            .lock()
+            .expect("configuration status lock poisoned")
+            .clone();
         let Some(slot) = self.slot.load_full() else {
             return RuntimeDiagnostics {
                 serving_ready: false,
                 active_generation: None,
+                target_generation: status.target_generation,
+                configuration_error: status.error,
                 kv_index: KvIndexDiagnostics {
                     state: "unavailable".into(),
                     reason: Some("no_active_generation".into()),
@@ -1085,7 +1166,9 @@ impl Generation for RuntimeGeneration {
         };
         RuntimeDiagnostics {
             serving_ready: self.accepting.load(Ordering::Acquire) && slot.control.is_ready(),
-            active_generation: Some(slot.version),
+            active_generation: self.admission.is_applied().then_some(slot.version),
+            target_generation: status.target_generation,
+            configuration_error: status.error,
             kv_index: slot.control.kv_index_diagnostics(),
         }
     }
