@@ -461,7 +461,7 @@ class EditableDeployment:
                 ):
                     previous = active_control.rsplit("/", 1)[-1]
                 published_at = time.monotonic()
-                origin.publish(
+                published_revision = origin.publish(
                     builder,
                     payload,
                     component,
@@ -470,8 +470,11 @@ class EditableDeployment:
                     references,
                     timeout=timeout,
                 )
+                publication = (
+                    "reused" if previous and published_revision == previous else "published"
+                )
                 print(
-                    f"Application publication completed: {component} in "
+                    f"Application {publication}: {component} in "
                     f"{time.monotonic() - published_at:.1f}s",
                     flush=True,
                 )
