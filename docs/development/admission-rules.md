@@ -49,7 +49,7 @@ Instance permits and routing-load observations end with their own stage; they ar
 
 ## Configuration and observations
 
-Validate a complete candidate before publication. Invalid candidates preserve the active configuration. Publication advances shared settings independently of new traffic, and dispatch uses the current shared limits. Bounded admission acknowledgement waits for ledger application; unrestricted settings can activate locally. Queues, outstanding reservations, and original waiting deadlines survive ordinary limit changes; lowering a limit does not cancel accepted work. A waiting batch larger than its new caller concurrency limit is rejected as an oversized batch.
+Validate a complete candidate before publication. Invalid candidates preserve the active configuration. Controller-observed Pod membership advances independently so confirmed instance termination can release capacity even when a candidate is rejected. Publication advances shared settings independently of new traffic, and dispatch uses the current shared limits. Bounded admission acknowledgement waits for ledger application; unrestricted settings can activate locally. Queues, outstanding reservations, and original waiting deadlines survive ordinary limit changes; lowering a limit does not cancel accepted work. A waiting batch larger than its new caller concurrency limit is rejected as an oversized batch.
 
 Pending requests resolve current roles and Pools when receiving a dispatch grant. Already-granted batches retain their resolved decision. Enabling bounded rules rejects untracked requests that have not yet dispatched; it does not retrospectively account for unrestricted execution. Model removal rejects new and waiting work while accepted execution drains.
 
