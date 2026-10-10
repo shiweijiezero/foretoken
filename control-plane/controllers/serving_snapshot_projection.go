@@ -663,6 +663,11 @@ func configuredTemplateIdentity(template inferencev1alpha1.NormalizedPoolTemplat
 // An empty model validates frontend defaults before they are bound to any model's Pools.
 // Canonical list order and durations keep snapshot revisions and same-model comparisons semantic.
 func effectiveModelAdmission(frontend inferencev1alpha1.FrontendServiceSpec, model inferencev1alpha1.ModelServiceSpec) (servingSnapshotAdmission, error) {
+	if model.Backend == "vllm-omni" {
+		// Video keeps its own execution lifecycle and does not inherit text admission rules.
+		_, err := compiler.CompileModelService(model)
+		return servingSnapshotAdmission{}, err
+	}
 	selected := model.Admission
 	if selected == nil {
 		selected = frontend.Admission

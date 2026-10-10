@@ -57,8 +57,13 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if err != nil {
 		return nil, err
 	}
-	if spec.InstanceAdmission != nil && spec.Backend == "vllm-omni" {
-		return nil, fmt.Errorf("instanceAdmission is not supported by the vllm-omni video backend")
+	if spec.Backend == "vllm-omni" {
+		if spec.InstanceAdmission != nil {
+			return nil, fmt.Errorf("instanceAdmission is not supported by the vllm-omni video backend")
+		}
+		if (spec.Admission != nil && (spec.Admission.MaxWaitingRequests != nil || spec.Admission.QueueTimeout != "")) || (spec.RoleRules != nil && len(*spec.RoleRules) > 0) {
+			return nil, fmt.Errorf("admission and roleRules are not supported by the vllm-omni video backend")
+		}
 	}
 	if spec.InstanceAdmission != nil && spec.InstanceAdmission.MaxConcurrentRequests == 0 {
 		return nil, fmt.Errorf("instanceAdmission.maxConcurrentRequests must be positive")
