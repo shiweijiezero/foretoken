@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Build the three development images through the repository image targets.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=dev-deploy-lib.sh
-source "$ROOT/deploy/dev-deploy-lib.sh"
-cd "$ROOT"
-
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
 
 CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend"
 MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server"
 
-for command in docker make; do
+for command in docker make "${FORETOKEN_PYTHON:-python3}"; do
   command -v "$command" >/dev/null || {
     printf 'missing required command: %s\n' "$command" >&2
     exit 1
   }
 done
 
-build_dev_images
+export DOCKER_BUILDKIT=1
+make -C "$ROOT" image-control-plane \
+  CONTROL_PLANE_IMAGE="$CONTROL_PLANE_IMAGE" IMAGE_TARGET=runtime
+make -C "$ROOT" vllm-source
+make -C "$ROOT" image-frontend image-model-server \
+  FRONTEND_IMAGE="$FRONTEND_IMAGE" MODEL_SERVER_IMAGE="$MODEL_SERVER_IMAGE" \
+  IMAGE_TARGET=runtime
 
 printf 'Built images:\n'
 printf '  %s\n' "$CONTROL_PLANE_IMAGE" "$FRONTEND_IMAGE" "$MODEL_SERVER_IMAGE"

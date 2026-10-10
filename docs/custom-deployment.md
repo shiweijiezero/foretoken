@@ -63,7 +63,17 @@ foretoken install -e . \
 
 ### Select a different runtime environment
 
-The runtime image supplies Python, PyTorch, and accelerator libraries. To change that environment, set a compatible image in `deploy/platform-values.yaml`, replacing the example with an image available to the cluster builder:
+A standard deployment does not require changing the base image. The default image includes the Python, PyTorch, CUDA, and vLLM components needed to run the model service.
+
+To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json):
+
+```json
+{"baseImage": "ghcr.io/example/custom-vllm:latest"}
+```
+
+Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, run `foretoken deploy` again.
+
+To override the base for one installation instead, set `runtime.vllm.image` in `deploy/platform-values.yaml`:
 
 ```yaml
 runtime:
@@ -71,7 +81,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Then deploy the workload again.
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Set the field to `auto` to restore automatic runtime selection. Then deploy the workload again.
 
 MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
 

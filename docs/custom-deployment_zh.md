@@ -63,7 +63,17 @@ foretoken install -e . \
 
 ### 更换运行环境
 
-运行时镜像提供 Python、PyTorch 和设备库。需要更换时，在 `deploy/platform-values.yaml` 中指定兼容镜像，将示例地址替换为集群构建器能够使用的镜像：
+普通部署不需要修改基础镜像。默认镜像包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
+
+如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
+
+```json
+{"baseImage": "ghcr.io/example/custom-vllm:latest"}
+```
+
+源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，重新执行 `foretoken deploy`。
+
+只为某次安装指定不同基础镜像时，在 `deploy/platform-values.yaml` 中设置 `runtime.vllm.image`：
 
 ```yaml
 runtime:
@@ -71,7 +81,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；安装完成后重新部署工作负载。
+重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；将该字段设为 `auto` 可恢复自动选择。安装完成后重新部署工作负载。
 
 沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
 
