@@ -84,4 +84,4 @@ foretoken perf examples/quickstart --num-prompts 20 \
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 
-Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results from the selected directories. `--columns 2` selects double-column width. See [saved result comparisons](docs/recipes.md#compare-saved-results) and [parameter sweeps](docs/perf/sweep.md).
+Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection, layout and output locations.

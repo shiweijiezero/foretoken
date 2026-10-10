@@ -176,27 +176,26 @@ foretoken perf "$BASELINE" "$CANDIDATE" \
   --output local,wandb,plot
 ```
 
-## 重新绘图
+## 绘制与对照结果
 
-读取已保存的结果，调整图宽或选择指标，无需重新推理。
-
-```bash
-foretoken plot results/fixed-length --columns 2
-
-foretoken plot results/fixed-length --metric latency_p95_seconds \
-  --output-dir results/fixed-length/latency-figure
-```
-
-## 对照已保存结果
-
-直接传入要比较的结果目录。假设结果分别保存在 `results/baseline` 和 `results/mtp5`：
+从已有结果生成图表和对照表，无需重新推理。在保存结果的机器上执行，将下面路径换成评测结果目录：
 
 ```bash
-foretoken plot results/baseline results/mtp5
+# 重绘一个目录的结果。
+foretoken plot results/baseline
+
+# 对照两个目录的结果。
+foretoken plot results/baseline results/candidate
 ```
 
-目录可以是单次结果、sweep、实验、迭代、命令运行，或包含这些结果的父目录。用目录路径选择方案；重叠输入中的同一结果只计一次，同名来源通过目录标签区分。
+也可以选择整个实验目录或包含多次运行的文件夹。输出包括 PDF、SVG、PNG 和 CSV；单个输入保存到该目录的 `plots/`，多个输入保存到当前目录的 `plots/`。
 
-性能图按相同的已保存负载设置比较；质量图保留各次运行的原生评分和误差，任务设置在对应原生报告中查看。CSV 保留来源路径、运行状态、配置与环境链接、重复次数及缺失指标。
+选择指标、图宽和输出位置：
 
-单个输入默认输出到该目录的 `plots/`，多个输入默认输出到当前目录的 `plots/`。用 `--output-dir` 修改位置，`--metric` 和 `--method` 选择指标或记录中的方法。
+```bash
+foretoken plot results/baseline results/candidate \
+  --metric generation_tokens_per_second --columns 2 \
+  --output-dir results/comparison
+```
+
+重复 `--metric` 可选择多个指标，`--method` 可选择已命名的方法。性能对照按相同负载分组，具体数值、样本数和运行状态可查看 CSV。评分口径与评测报告见[质量结果](eval/README_zh.md#查看评分)。

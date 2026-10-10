@@ -176,27 +176,26 @@ foretoken perf "$BASELINE" "$CANDIDATE" \
   --output local,wandb,plot
 ```
 
-## Redraw figures
+## Plot saved results
 
-Read saved results to change figure width or select a metric without rerunning inference.
-
-```bash
-foretoken plot results/fixed-length --columns 2
-
-foretoken plot results/fixed-length --metric latency_p95_seconds \
-  --output-dir results/fixed-length/latency-figure
-```
-
-## Compare saved results
-
-Pass the directories containing the results you want to compare. For results saved under `results/baseline` and `results/mtp5`:
+Create figures and comparison tables from saved results without rerunning inference. Run on the machine holding the results and replace these paths with your result directories:
 
 ```bash
-foretoken plot results/baseline results/mtp5
+# Redraw one directory.
+foretoken plot results/baseline
+
+# Compare two directories.
+foretoken plot results/baseline results/candidate
 ```
 
-Inputs can be individual results, sweeps, experiments, iterations, command runs, or parent folders containing them. Select approaches by their directory paths. Overlapping selections count each result once, and directory labels distinguish sources with the same name.
+You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs write to `./plots`.
 
-Performance figures compare matching saved workload settings. Native quality figures retain each run’s scores and evaluator error bars; task settings remain in the native reports. CSV tables retain source paths, run status, configuration and environment links, repetition counts, and missing measurements.
+Choose a metric, figure width and output location:
 
-A single input writes to its `plots/` subdirectory; multiple inputs write to `./plots`. Use `--output-dir` to choose another destination, and `--metric` or `--method` to select metrics or recorded methods.
+```bash
+foretoken plot results/baseline results/candidate \
+  --metric generation_tokens_per_second --columns 2 \
+  --output-dir results/comparison
+```
+
+Repeat `--metric` to select more metrics, or use `--method` to select named methods. Performance comparisons group matching workloads; use the CSV tables to inspect values, sample counts and run status. For score definitions and evaluator reports, see [quality results](eval/README.md#read-scores).
