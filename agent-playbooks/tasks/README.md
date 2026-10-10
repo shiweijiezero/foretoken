@@ -15,8 +15,6 @@ Continue working within the task scope and resource budget. Judge completion by 
 
 ## Examples
 
-Explore autonomously for 12 hours:
-
 ```text
 Models: Qwen3.5-35B-A3B
 Precision: unrestricted
@@ -26,27 +24,32 @@ Available resources: 2*8 C500 GPUs, allocatable across parallel experiments
 Evaluation workloads: agent-selected, covering input/output lengths, concurrency levels and natural conversations
 Optimization objectives: improve throughput and reduce latency; compare performance and answer quality for each workload
 Allowed changes: unrestricted
-Work and completion conditions: optimize continuously for 12 hours
+Work and completion conditions: optimize autonomously for 12 hours
 Deliverables: retained approach, code changes, per-workload result comparisons and experiment records
 ```
 
-For a single-workload target, keep the task above and change these conditions:
-
 ```text
+Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: colocated serving
 Per-service configuration: fixed two GPUs on one host with TP2
+Available resources: 2*8 C500 GPUs, allocatable across parallel experiments
 Evaluation workloads: 8,192 input tokens, 512 output tokens, concurrency 1
 Optimization objectives: reduce mean time per output token (TPOT) to 5 ms or less
+Allowed changes: unrestricted
 Work and completion conditions: finish when the target is reached
+Deliverables: retained approach, code changes, per-workload result comparisons and experiment records
 ```
 
-For a time-bounded target across workloads, start from the first example and change these conditions:
-
 ```text
+Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: compare colocated serving with prefill/decode disaggregation
+Per-service configuration: agent-selected GPU count and parallelism
+Available resources: 2*8 C500 GPUs, allocatable across parallel experiments
 Evaluation workloads: combinations of 1,024/8,192 input tokens, 128/512 output tokens and concurrency 1/8
 Optimization objectives: reduce p95 time to first token to 1 second or less for every workload group
+Allowed changes: unrestricted
 Work and completion conditions: reach the target within 12 hours; summarize when the target is reached or the time budget expires
+Deliverables: retained approach, code changes, per-workload result comparisons and experiment records
 ```
