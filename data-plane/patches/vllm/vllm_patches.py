@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import os
 import py_compile
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -180,6 +181,55 @@ def repair_installed_dependencies() -> None:
         ["uv", "pip", "uninstall", "--python", sys.executable, *sorted(remnants)],
         check=True,
     )
+
+
+def install_mooncake_dependencies() -> None:
+    """Prepare the CUDA transfer runtime during model-server image construction."""
+    import ctypes
+
+    import torch
+
+    if getattr(torch.version, "maca", None) or not torch.version.cuda:
+        return
+
+    # Reuse native libraries supplied by the base image, including vendor RDMA
+    # installations. Only missing libraries require system package installation.
+    packages = []
+    for library, package in (
+        ("libcurl.so.4", "libcurl4"),
+        ("libibverbs.so.1", "libibverbs1"),
+        ("libmlx5.so.1", "ibverbs-providers"),
+    ):
+        try:
+            ctypes.CDLL(library)
+        except OSError:
+            packages.append(package)
+    if packages:
+        subprocess.run(["apt-get", "update"], check=True)
+        subprocess.run(
+            ["apt-get", "install", "-y", "--no-install-recommends", *packages],
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+            check=True,
+        )
+        shutil.rmtree("/var/lib/apt/lists")
+
+    package, other = "mooncake-transfer-engine", "mooncake-transfer-engine-cuda13"
+    if int(torch.version.cuda.split(".", 1)[0]) >= 13:
+        package, other = other, package
+    command = ["uv", "pip", "install", "--no-cache", "--python", sys.executable]
+    try:
+        importlib.metadata.distribution(other)
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    else:
+        # Both distributions own mooncake/*; uninstall before restoring the
+        # selected wheel, even when both distribution records were present.
+        subprocess.run(
+            ["uv", "pip", "uninstall", "--python", sys.executable, other],
+            check=True,
+        )
+        command.extend(["--reinstall-package", package])
+    subprocess.run(command + [f"{package}==0.3.12.post1"], check=True)
 
 
 def check_installed_dependencies() -> None:

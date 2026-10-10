@@ -151,7 +151,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
-      'from vllm_patches import check_installed_dependencies; check_installed_dependencies()' \
+      'from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(); check_installed_dependencies()' \
     && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 
