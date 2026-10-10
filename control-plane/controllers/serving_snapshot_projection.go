@@ -85,8 +85,8 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	}
 	projectionErr = errors.Join(catalogErr, projectionErr)
 
-	// Status is the durable version floor, while the persisted ConfigMap is the last semantic payload.
-	// Increment only for changed content so recreation or reconcile replay cannot publish an older generation.
+	// A restored payload below the durable floor cannot prove what consumers applied
+	// at that version. Allocate a fresh version even when it matches current intent.
 	version := frontend.Status.ServingSnapshotVersion
 	contentsChanged := true
 	if previousValid {
@@ -95,7 +95,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		}
 		contentsChanged = !reflect.DeepEqual(previous.Settings, settings) || !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope)
 	}
-	if contentsChanged || version == 0 {
+	if contentsChanged || previous.Version < frontend.Status.ServingSnapshotVersion || version == 0 {
 		version++
 	}
 	payload, err := json.Marshal(servingSnapshot{Version: version, Settings: settings, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes})
@@ -113,6 +113,17 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	}
 	if err := controllerutil.SetControllerReference(frontend, desired, reconciler.Scheme()); err != nil {
 		return false, fmt.Errorf("set serving snapshot ConfigMap owner: %w", err)
+	}
+	// Reserve the version before it becomes visible to consumers, including across
+	// a controller restart between publication and the later readiness observation.
+	if frontend.Status.ServingSnapshotVersion < version {
+		base := frontend.DeepCopy()
+		frontend.Status.ServingSnapshotVersion = version
+		setFrontendCondition(frontend, frontendConditionRoutingReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
+		setFrontendCondition(frontend, conditionReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
+		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return false, fmt.Errorf("reserve serving snapshot version: %w", err)
+		}
 	}
 	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(frontendServiceFieldOwner), client.ForceOwnership); err != nil {
 		return false, fmt.Errorf("apply serving snapshot ConfigMap: %w", err)
@@ -137,16 +148,6 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		pod.Annotations[refreshAnnotation] = refreshVersion
 		if err := reconciler.Patch(ctx, pod, client.MergeFrom(base)); err != nil && !apierrors.IsNotFound(err) {
 			return false, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
-		}
-	}
-	if frontend.Status.ServingSnapshotVersion < version {
-		base := frontend.DeepCopy()
-		frontend.Status.ServingSnapshotVersion = version
-		// A previous rejection belongs to the previous publication, not its replacement.
-		setFrontendCondition(frontend, frontendConditionRoutingReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
-		setFrontendCondition(frontend, conditionReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
-		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFrom(base)); err != nil {
-			return false, fmt.Errorf("persist serving snapshot version: %w", err)
 		}
 	}
 	if projectionErr != nil {
