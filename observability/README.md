@@ -28,7 +28,7 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 
 TTFT is first-token latency; E2EL is completion latency. TPOT is the average output-token interval per request; ITL measures individual intervals. Units are shown on each panel.
 
-In Admission, select a model and frontend service, then expand the results or resources rows. Waiting capacity and dispatch-reserved or accepted unfinished work are shared by that service's replicas for each model. Resource curves deduplicate replica observations rather than adding them; there is no model-wide concurrency limit. Select a frontend Pod to inspect its request results and ledger availability. A failed ledger read leaves occupancy unavailable, not zero.
+In Admission, select a model and frontend service to inspect shared waiting and unfinished-request occupancy. Select a frontend Pod for its request results and capacity-store availability. Occupancy is unavailable when the store cannot be read.
 
 ## Query logs
 
@@ -50,7 +50,7 @@ To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack]
 
 ## Platform settings
 
-Reapply the original `foretoken install` command to update dashboards and collection settings. Then run `foretoken deploy` with your deployment directory to update the serving applications. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
+Reapply the original `foretoken install` command to update dashboards and collection settings. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
 
 ### Grafana login
 
