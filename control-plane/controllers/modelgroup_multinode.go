@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,9 +25,9 @@ func modelGroupLeaderWorkerSetName(group *inferencev1alpha1.ModelGroup) string {
 }
 
 // reconcileWorkload keeps complete Group availability independent of the Pod orchestration backend.
-func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, group *inferencev1alpha1.ModelGroup) (bool, error) {
+func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, group *inferencev1alpha1.ModelGroup, deployment *appsv1.Deployment) (bool, error) {
 	if group.Spec.NodeCount == 1 {
-		deployment, err := reconciler.reconcileDeployment(ctx, group)
+		deployment, err := reconciler.reconcileDeployment(ctx, group, deployment)
 		if err != nil {
 			return false, err
 		}
@@ -53,10 +54,6 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 			return false, fmt.Errorf("get superseded LeaderWorkerSet: %w", err)
 		}
 	}
-	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
-	if err != nil {
-		return false, err
-	}
 	member := deployment.Spec.Template
 	member.Spec.Affinity = &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{
 		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
@@ -67,9 +64,6 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 	if err := placeRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &member); err != nil {
 		return false, err
 	}
-	member.Spec.Containers[0].Env = append(member.Spec.Containers[0].Env,
-		corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
-	)
 	one := int32(1)
 	desired := &lwsv1.LeaderWorkerSet{
 		TypeMeta:   metav1.TypeMeta{APIVersion: lwsv1.GroupVersion.String(), Kind: "LeaderWorkerSet"},

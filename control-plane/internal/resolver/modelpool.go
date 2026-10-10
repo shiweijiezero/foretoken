@@ -303,6 +303,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			ApplicationURL: applicationURL,
 			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
+			Env:                                   template.DeepCopy().Env,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,

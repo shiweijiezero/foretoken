@@ -124,6 +124,11 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if group.Spec.NodeCount > 1 && !reconciler.LeaderWorkerSets {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(fmt.Errorf("multi-node Groups require LeaderWorkerSet; run foretoken install to prepare the controller")))
 	}
+	// Report configuration errors before allocating preparation or serving resources.
+	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
+	if err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -152,7 +157,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	available, err := reconciler.reconcileWorkload(ctx, group)
+	available, err := reconciler.reconcileWorkload(ctx, group, deployment)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -354,11 +359,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 }
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
-func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
-	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
-	if err != nil {
-		return nil, err
-	}
+func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
 		return nil, fmt.Errorf("set Deployment owner: %w", err)
 	}
@@ -454,6 +455,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: launchEnv, Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+	}
+	if group.Spec.NodeCount > 1 {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
 	if group.Spec.Runtime.Backend == "vllm" {
 		env = append(env,
@@ -604,7 +608,48 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if err := configureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
 		return nil, err
 	}
+	container := &deployment.Spec.Template.Spec.Containers[0]
+	if err := configureModelEnvironment(group.Spec, container); err != nil {
+		return nil, err
+	}
 	return deployment, nil
+}
+
+// configureModelEnvironment appends ordered model variables after platform configuration.
+// Platform-owned values must remain consistent with the launch plan and child processes.
+func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container *corev1.Container) error {
+	managed := make(map[string]bool, len(container.Env))
+	for _, variable := range container.Env {
+		managed[variable.Name] = true
+	}
+	managed["VLLM_USE_MODELSCOPE"] = true
+	managed["USE_PRECOMPILED_KERNEL"] = true
+	// The device plugin supplies allocation variables after Pod template generation.
+	if strings.HasPrefix(spec.Accelerator.DeviceResourceName, "nvidia.com/") {
+		managed["NVIDIA_VISIBLE_DEVICES"] = true
+	}
+	if spec.NodeCount > 1 {
+		managed["LWS_WORKER_INDEX"] = true
+		managed["LWS_LEADER_ADDRESS"] = true
+		managed["VLLM_HOST_IP"] = true
+	}
+	if spec.PDRuntime != nil {
+		managed["MC_FORCE_HCA"] = true
+		managed["MC_FORCE_TCP"] = true
+	}
+	if spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight" {
+		managed["VLLM_WORKER_MULTIPROC_METHOD"] = true
+	}
+	if spec.Artifacts.Source == inferencev1alpha1.ModelSourceModelScope {
+		managed["MODELSCOPE_CACHE"] = true
+	}
+	for _, variable := range spec.Runtime.Env {
+		if managed[variable.Name] || strings.HasPrefix(variable.Name, "FORETOKEN_") {
+			return fmt.Errorf("env name %q is managed by Foretoken", variable.Name)
+		}
+		container.Env = append(container.Env, *variable.DeepCopy())
+	}
+	return nil
 }
 
 func dns1035NamePart(value string) string {
