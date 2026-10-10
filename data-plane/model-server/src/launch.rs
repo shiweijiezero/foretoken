@@ -16,10 +16,14 @@ use foretoken_model_protocol::{
     KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
 };
 
-use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
+use crate::afd::AfdPlan;
+use crate::runtime_transport::{
+    KV_EVENT_TCP_BASE_PORT, KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint,
+};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
 const DEFAULT_VLLM_PYTHON: &str = "python";
+const DISTRIBUTED_MASTER_PORT: u16 = 29800;
 
 /// Python adapters bundled with the model-server image for its managed engine.
 pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
@@ -36,6 +40,8 @@ pub struct LaunchPlanV1 {
     pub kv: KvPlan,
     #[serde(default)]
     pub ec: EcTransferPlan,
+    #[serde(default)]
+    pub afd: AfdPlan,
     pub lifecycle: Lifecycle,
     #[serde(default)]
     pub profiling: crate::profiling::Preparation,
@@ -324,7 +330,43 @@ impl LaunchPlanV1 {
             } => return Err("Mooncake Store cannot be producer-only".into()),
             _ => {}
         }
-        self.ec.validate()
+        self.ec.validate()?;
+        self.afd.validate()?;
+        if self.afd.enabled() {
+            if p.ep.is_none() {
+                return Err("AFD requires expert parallelism".into());
+            }
+            if let Some(config) = self.engine_args.get("additional-config")
+                && !config.is_object()
+            {
+                return Err("AFD requires engineArgs.additional-config to be a JSON object".into());
+            }
+            // Eager is the supported experimental profile, not a requirement of every connector.
+            // EC producers render eager explicitly even when the native argument is absent.
+            if !matches!(self.ec.role, Some(EcRole::Producer))
+                && self.engine_args.get("enforce-eager") != Some(&serde_json::Value::Bool(true))
+            {
+                return Err("experimental AFD requires engineArgs.enforce-eager=true".into());
+            }
+            if self.profiling.engine == crate::profiling::Engine::Mctracer {
+                return Err("AFD requires plugin-owned workers and cannot use mcTracer".into());
+            }
+            // The leader's subscriber can bind even when publisher events are disabled.
+            self.afd
+                .validate_port_range(KV_EVENT_TCP_BASE_PORT, p.dp, "KV event listeners")?;
+            if self.shared_prefix_lookup() {
+                self.afd.validate_port_range(
+                    crate::shared_kv::LOOKUP_BASE_PORT,
+                    p.dp,
+                    "shared KV lookup listeners",
+                )?;
+            }
+            if self.node_count > 1 {
+                self.afd
+                    .validate_port_range(DISTRIBUTED_MASTER_PORT, 1, "distributed master")?;
+            }
+        }
+        Ok(())
     }
 
     /// Resolves the image's Python interpreter for engine launch and native report inspection.
@@ -358,13 +400,17 @@ impl LaunchPlanV1 {
         handshake_port: u16,
         member: Option<&crate::config::MemberContext>,
     ) -> Result<ManagedEngineConfig, String> {
+        let python_args = self.render_vllm_args(member)?;
+        // The single-node handshake port is allocated after plan parsing.
+        self.afd
+            .validate_port_range(handshake_port, 1, "EngineCore handshake")?;
         let mut config = ManagedEngineConfig {
             python: self.python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
-            python_args: self.render_vllm_args(member)?,
+            python_args,
         };
         if let Some(member) = member {
             config.handshake_host = member.leader_address.clone();
@@ -372,7 +418,7 @@ impl LaunchPlanV1 {
                 format!("--nnodes={}", self.node_count),
                 format!("--node-rank={}", member.index),
                 format!("--master-addr={}", member.leader_address),
-                "--master-port=29800".into(),
+                format!("--master-port={DISTRIBUTED_MASTER_PORT}"),
                 "--distributed-executor-backend=mp".into(),
                 "--data-parallel-backend=mp".into(),
             ]);
@@ -448,6 +494,9 @@ impl LaunchPlanV1 {
         // The controller has already normalized native option names.
         // Keep argument values intact: this command never goes through a shell.
         for (name, value) in &self.engine_args {
+            if self.afd.enabled() && name == "additional-config" {
+                continue;
+            }
             if matches!(self.ec.role, Some(EcRole::Producer))
                 && matches!(name.as_str(), "mm-encoder-only" | "enforce-eager")
             {
@@ -461,6 +510,17 @@ impl LaunchPlanV1 {
                 "--enforce-eager".into(),
                 "--no-enable-prefix-caching".into(),
             ]);
+        }
+        if let Some(afd) = self.afd.config() {
+            // Validation guarantees an object. The typed plan owns AFD; unrelated native keys
+            // survive unchanged and the generic loop skips this option to avoid duplicate flags.
+            let mut config = self
+                .engine_args
+                .get("additional-config")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            config["afd"] = afd;
+            args.push(format!("--additional-config={config}"));
         }
         if self.kv.events() {
             args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
