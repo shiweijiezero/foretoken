@@ -596,7 +596,7 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
             BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
         )
     if ghcr:
-        result.update(UV_IMAGE_REGISTRY=ghcr, INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr)
+        result["UV_IMAGE_REGISTRY"] = ghcr
     if gcr:
         result["DISTROLESS_IMAGE_REGISTRY"] = gcr
     return result

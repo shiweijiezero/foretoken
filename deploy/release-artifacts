@@ -40,7 +40,7 @@ Options:
   -h, --help                Show this help.
 
 Build inputs:
-  INFERENCE_ENGINE_IMAGE        Compatible NVIDIA inference runtime image.
+  INFERENCE_ENGINE_IMAGE        Optional override for the default NVIDIA vLLM base.
   METAX_INFERENCE_ENGINE_IMAGE  Compatible MetaX inference runtime image.
 
 Optional inputs such as FORETOKEN_VLLM_PYTHON, METAX_VLLM_PYTHON, registry
@@ -213,8 +213,8 @@ build_model_server() {
   local -a args=(
     make -C "$ROOT" image-model-server
     "MODEL_SERVER_IMAGE=$image"
-    "INFERENCE_ENGINE_IMAGE=$inference_engine_image"
   )
+  [[ -z "$inference_engine_image" ]] || args+=("INFERENCE_ENGINE_IMAGE=$inference_engine_image")
   [[ -z "$python_path" ]] || args+=("FORETOKEN_VLLM_PYTHON=$python_path")
   args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION" "IMAGE_TARGET=environment")
   run "${args[@]}"
@@ -278,21 +278,10 @@ if [[ "$MODE" == build || "$MODE" == export ]]; then
         "OCI_REVISION=$OCI_REVISION"
     fi
     if selected model-server; then
-      if [[ "$DRY_RUN" == true ]]; then
-        build_model_server \
-          "$MODEL_SERVER_IMAGE" \
-          "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
-          "${FORETOKEN_VLLM_PYTHON:-}"
-      else
-        [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
-          printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
-          exit 2
-        }
-        build_model_server \
-          "$MODEL_SERVER_IMAGE" \
-          "$INFERENCE_ENGINE_IMAGE" \
-          "${FORETOKEN_VLLM_PYTHON:-}"
-      fi
+      build_model_server \
+        "$MODEL_SERVER_IMAGE" \
+        "${INFERENCE_ENGINE_IMAGE:-}" \
+        "${FORETOKEN_VLLM_PYTHON:-}"
     fi
     if selected model-server-metax; then
       if [[ "$DRY_RUN" == true ]]; then
@@ -330,8 +319,7 @@ if [[ "$MODE" == build || "$MODE" == export ]]; then
     run make -C "$ROOT" image-frontend "IMAGE_TARGET=source-export" \
       "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
     run make -C "$ROOT" image-model-server "IMAGE_TARGET=source-export" \
-      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server" \
-      "INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-${METAX_INFERENCE_ENGINE_IMAGE:-unused}}"
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server"
     run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
 from pathlib import Path
 import sys

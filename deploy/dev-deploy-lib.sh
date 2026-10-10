@@ -40,15 +40,8 @@ build_dev_images() {
       --build-arg "DISTROLESS_IMAGE_REGISTRY=${gcr_registry%/}"
     )
   fi
-  if [[ -n "$ghcr_registry" ]]; then
-    model_image_args+=(
-      --build-arg "INFERENCE_ENGINE_IMAGE_REGISTRY=${ghcr_registry%/}"
-    )
-    if [[ -z "${UV_IMAGE:-}" ]]; then
-      model_image_args+=(
-        --build-arg "UV_IMAGE_REGISTRY=${ghcr_registry%/}"
-      )
-    fi
+  if [[ -n "$ghcr_registry" && -z "${UV_IMAGE:-}" ]]; then
+    model_image_args+=(--build-arg "UV_IMAGE_REGISTRY=${ghcr_registry%/}")
   fi
   if [[ -n "${UV_IMAGE:-}" ]]; then
     model_image_args+=(--build-arg "UV_IMAGE=$UV_IMAGE")
