@@ -57,7 +57,7 @@ GitHub Release tag 使用带 `v` 前缀的 Python 版本。
 
 ## 构建与推送发布产物
 
-NVIDIA 构建使用默认的 vLLM 基础镜像。准备兼容的沐曦运行时镜像，再设置目标仓库和沐曦镜像：
+NVIDIA 构建使用源码目录中的[统一 vLLM 基础镜像设置](../custom-deployment_zh.md#更换运行环境)。准备兼容的沐曦运行时镜像，再设置目标仓库和沐曦镜像：
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken

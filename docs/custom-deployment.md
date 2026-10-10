@@ -63,7 +63,15 @@ foretoken install -e . \
 
 ### Select a different runtime environment
 
-The runtime image supplies Python, PyTorch, and accelerator libraries. To change that environment, set a compatible image in `deploy/platform-values.yaml`, replacing the example with an image available to the cluster builder:
+The base image supplies Python, PyTorch, and accelerator libraries. To change the standard NVIDIA build environment for this checkout, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json), for example:
+
+```json
+{"baseImage": "ghcr.io/example/custom-vllm:latest"}
+```
+
+Source installation, `make image-model-server`, `deploy/dev-build`, and release builds use this setting unless an image is explicitly selected. Choose a compatible image available to the builder. After changing it in an existing source installation, rerun `foretoken deploy` to rebuild and deploy the environment.
+
+To override the base for one installation instead, set `runtime.vllm.image` in `deploy/platform-values.yaml`:
 
 ```yaml
 runtime:
@@ -71,7 +79,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Then deploy the workload again.
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Set the field to `auto` to restore automatic runtime selection. Then deploy the workload again.
 
 MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
 

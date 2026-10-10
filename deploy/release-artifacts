@@ -12,6 +12,7 @@ REGISTRY=
 DRY_RUN=false
 PLAIN_HTTP=false
 PYTHON=${FORETOKEN_PYTHON:-python}
+export FORETOKEN_PYTHON="$PYTHON"
 
 usage() {
   cat <<'EOF'
@@ -40,7 +41,7 @@ Options:
   -h, --help                Show this help.
 
 Build inputs:
-  INFERENCE_ENGINE_IMAGE        Optional override for the default NVIDIA vLLM base.
+  INFERENCE_ENGINE_IMAGE       Override deploy/inference-engines/vllm/source-environment.json.
   METAX_INFERENCE_ENGINE_IMAGE  Compatible MetaX inference runtime image.
 
 Optional inputs such as FORETOKEN_VLLM_PYTHON, METAX_VLLM_PYTHON, registry

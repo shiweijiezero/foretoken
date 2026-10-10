@@ -406,11 +406,16 @@ class EditableDeployment:
                     if component == "control-plane"
                     else f"data-plane/{component}/Dockerfile"
                 )
+                arguments = dict(build["arguments"])
+                if component == "model-server":
+                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
+                        "model_image"
+                    ]
                 builder.build(
                     dockerfile,
                     target="source-export",
                     destination=payload,
-                    arguments=build["arguments"],
+                    arguments=arguments,
                 )
                 if component == "model-server" and self.state.get("engines"):
                     builder.build(

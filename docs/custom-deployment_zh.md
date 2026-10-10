@@ -63,7 +63,15 @@ foretoken install -e . \
 
 ### 更换运行环境
 
-运行时镜像提供 Python、PyTorch 和设备库。需要更换时，在 `deploy/platform-values.yaml` 中指定兼容镜像，将示例地址替换为集群构建器能够使用的镜像：
+基础镜像提供 Python、PyTorch 和设备库。要统一更换当前源码目录的 NVIDIA 构建环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`，例如：
+
+```json
+{"baseImage": "ghcr.io/example/custom-vllm:latest"}
+```
+
+未显式指定镜像时，源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都使用这一设置。镜像需与引擎兼容，并能由构建器访问。已有源码安装修改后，重新执行 `foretoken deploy` 即可重建运行环境并部署。
+
+只为某次安装指定不同基础镜像时，在 `deploy/platform-values.yaml` 中设置 `runtime.vllm.image`：
 
 ```yaml
 runtime:
@@ -71,7 +79,7 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；安装完成后重新部署工作负载。
+重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；将该字段设为 `auto` 可恢复自动选择。安装完成后重新部署工作负载。
 
 沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
 

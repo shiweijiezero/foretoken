@@ -57,7 +57,7 @@ Use the [Release Description Template](release-template.md) when creating a GitH
 
 ## Build and push the release artifacts
 
-The NVIDIA build uses the default vLLM base image. Prepare a compatible MetaX runtime, then set the destination registry and MetaX image:
+The NVIDIA build uses the checkout's [shared vLLM base-image setting](../custom-deployment.md#select-a-different-runtime-environment). Prepare a compatible MetaX runtime, then set the destination registry and MetaX image:
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken

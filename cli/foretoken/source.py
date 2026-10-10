@@ -28,6 +28,7 @@ from foretoken.cluster_build import (
     registry_credentials,
     remove_build_pods,
 )
+from foretoken.engine_environment import resolve_vllm_base_image
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
@@ -781,7 +782,9 @@ def prepare_source_images(
     configuration = build_configuration(
         root,
         values,
-        arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
+        arguments.get(
+            "BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]
+        ),
     )
     registry = (command.registry or "").rstrip("/")
     prefix = registry if registry else "docker.io/library/foretoken-dev"
@@ -796,19 +799,6 @@ def prepare_source_images(
         secret["name"]
         for value in values
         for secret in value.get("imagePullSecrets", [])
-    )
-    credentials = registry_credentials(
-        [
-            configuration["image"],
-            prefix,
-            inference_engine_image or "",
-            arguments.get("UV_IMAGE", ""),
-            "docker.io",
-            "gcr.io",
-            "ghcr.io",
-            *(endpoint for endpoints in registry_mirrors.values() for endpoint in endpoints),
-            *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
-        ]
     )
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
@@ -833,6 +823,38 @@ def prepare_source_images(
     for _, _, claim in nodes:
         ensure_build_cache(kubectl, namespace, claim, configuration)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
+        # Resolve automatic defaults from the same inputs used by the build, without
+        # recording them as an explicit base selection in the installation binding.
+        base_image = (
+            None
+            if build_metax_runtime
+            else resolve_vllm_base_image(
+                snapshot,
+                inference_engine_image,
+                arguments.get("BASE_IMAGE_REGISTRY", ""),
+            )
+        )
+        credentials = registry_credentials(
+            [
+                configuration["image"],
+                prefix,
+                base_image or "",
+                arguments.get("UV_IMAGE", ""),
+                "docker.io",
+                "gcr.io",
+                "ghcr.io",
+                *(
+                    endpoint
+                    for endpoints in registry_mirrors.values()
+                    for endpoint in endpoints
+                ),
+                *(
+                    value
+                    for key, value in arguments.items()
+                    if key.endswith("REGISTRY")
+                ),
+            ]
+        )
         old = state_directory / previous["inputs"] if previous.get("inputs") else None
         versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
@@ -873,7 +895,7 @@ def prepare_source_images(
             )
             builders.append(builder)
             builder.sync(files, versions)
-            engine_image = inference_engine_image
+            engine_image = base_image
             if build_metax_runtime:
                 engine_image = (
                     f"{prefix}/vllm-metax:{suffix}"
@@ -1017,9 +1039,11 @@ def prepare_source_images(
         application_revisions = {}
         publisher = next(builder for builder in builders if builder.node == origin.node)
         for component in references:
-            prior = previous.get("bundles", {}).get(
-                component, build.get("applications", {}).get(component, {})
-            ).get("revision", "")
+            prior = (
+                previous.get("bundles", {})
+                .get(component, build.get("applications", {}).get(component, {}))
+                .get("revision", "")
+            )
             application_revisions[component] = origin.publish(
                 publisher,
                 publisher.root + "/applications/" + component,
