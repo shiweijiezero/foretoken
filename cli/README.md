@@ -224,4 +224,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-CRDs, log storage, shared admission storage, and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.
+CRDs, log storage, and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

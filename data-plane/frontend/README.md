@@ -137,9 +137,16 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-For each model, these limits are shared across all replicas of the FrontendService. Each caller has a separate allowance. `maxWaitingRequests` bounds waiting work, including input preparation; `maxConcurrentRequests` bounds dispatched work until it finishes; `queueTimeout` limits the time spent waiting and preparing input before backend acceptance. Batched prompts and `best_of` count each generated candidate.
+For each model, limits are shared across all replicas of the FrontendService; each caller has a separate allowance. Role rules require a waiting-capacity limit.
 
-Higher `priority` values dispatch first. At equal priority, each frontend alternates between callers, keeping each caller's request order. To also prioritize the vLLM queue, set `scheduling-policy: priority` in the model's `engineArgs`.
+| Setting | Meaning |
+| --- | --- |
+| `admission.maxWaitingRequests` | Total waiting capacity, including input preparation |
+| `admission.queueTimeout` | Waiting and preparation time allowed before backend acceptance |
+| `perCaller.maxWaitingRequests` | Waiting capacity for one caller |
+| `perCaller.maxConcurrentRequests` | Dispatched work for one caller, counted until execution ends |
+
+Batched prompts and `best_of` count each generated sequence. Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order. A caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
 The trusted gateway overwrites these headers with the authenticated caller's role and a stable identifier, such as a key identifier:
 
@@ -150,7 +157,9 @@ x-caller-id: caller-a
 
 All text APIs use these headers. With role rules enabled, requests without a caller identifier or matching role are rejected. Configure authentication, authorization, and RPM/token quotas at the gateway, and restrict frontend access to that trusted gateway. Tokenization and detokenization use waiting capacity only; these rules do not apply to video APIs.
 
-`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+
+A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
 
 To separately bound accepted work at each text model-server instance, including its engine queue, add this model setting:
 
@@ -162,9 +171,9 @@ spec:
 
 Instance-limit changes take effect through a normal model-server deployment rollout.
 
-Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
-
 Apply changes using [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting. Cancelled requests count toward concurrency until execution ends.
+
+When upgrading from `admission.algorithm` and `admission.parameters`, replace those fields with the settings above and redeploy the frontend and models together. Old fields are rejected; platform installation alone does not replace running applications.
 
 See [Observability](../../observability/README.md) for queue and dispatch results. Maintainers extending request processing or backend integration can refer to [Admission lifecycle](../../docs/development/admission-rules.md).
 

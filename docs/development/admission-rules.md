@@ -5,52 +5,44 @@
 
 English | [简体中文](admission-rules_zh.md)
 
-Admission chooses which prepared request can be submitted; Router chooses its backend. For configuration examples, see [Frontend admission](../../data-plane/frontend/README.md#configure-admission-rules).
-
-A generation request follows one lifecycle:
+Admission decides which prepared request can run; Router selects its backend. For user configuration, see [Frontend admission](../../data-plane/frontend/README.md#configure-admission-rules).
 
 ```text
-Reserve waiting capacity → wait for model readiness and prepare input
-→ select a caller's turn and reserve concurrency → route and submit
-→ backend acceptance → engine execution → confirmed completion
+Reserve waiting capacity → wait for readiness and prepare input
+→ reserve caller concurrency → route and submit
+→ backend acceptance → execution → confirmed completion
 ```
 
-Waiting and caller concurrency are shared across replicas of one FrontendService, separately for each public model. Local queue order and caller rotation remain frontend-local. The gateway supplies trusted caller and role identity and owns authentication, authorization, and usage quotas.
+Model waiting capacity and per-caller limits are shared across replicas of one FrontendService, separately for each public model. Dispatch order remains local to each frontend: highest eligible priority first, round-robin between callers at the same priority, and FIFO within each caller. A blocked caller does not prevent other eligible callers from progressing. The gateway owns caller authentication and usage quotas.
 
-## Waiting and dispatch
+## Capacity ownership
 
 | Phase | Waiting capacity | Caller concurrency |
 | --- | --- | --- |
-| Readiness waiting, input preparation, or waiting for a turn | Held | Not held |
-| Submitting, acceptance unresolved | Held | Held |
-| Backend accepted | Released | Held |
+| Readiness waiting, input preparation, or waiting for dispatch | Held | Not held |
+| Submission awaiting acceptance | Held | Held |
+| Backend accepted, including engine queuing | Released | Held |
 | Between execution stages | Released | Held |
 | Completed or confirmed terminated | Released | Released |
 
-Reserve the complete batch before preparing or submitting children. Every prompt/candidate combination is a unit, including `best_of` candidates. Splitting transfers each existing slot once; it does not acquire capacity again. CPU-only tokenization, counting, and detokenization use waiting ownership but never reserve backend concurrency.
+Reserve a batch's full capacity before submitting any child. Each prompt/candidate combination, including `best_of`, counts once; splitting transfers existing capacity rather than acquiring it again. Tokenization, counting, and detokenization use waiting capacity only. Non-cancelable preparation retains that capacity until the work ends, even if its HTTP request has already ended. One request deadline covers waiting, preparation, retries, and every execution stage.
 
-After input preparation, dispatch selects the highest eligible priority, rotates among callers at that priority, and selects the caller's oldest request. Preparing, concurrency-full, and temporarily busy callers do not block other eligible callers. Role-resolved Pool restrictions constrain readiness observations and every routing stage. Rotation shares dispatch opportunities, not token throughput or GPU time. Native engine priority conversion belongs to the backend adapter, not Router scores.
+After acceptance, the backend owns execution and completion. Cancellation requests termination but does not release concurrency until execution ends. Closing an HTTP stream is not completion; uncertain execution must be stopped before its capacity is released. Backend integration details are in the [vLLM completion contract](../../data-plane/patches/vllm/README.md#engine-completion-contract).
 
-The HTTP request retains its intake request and stream-idle budgets across configuration changes. The admission waiting deadline covers readiness, preparation, and initial submission, and cannot exceed the original total deadline. Non-cancelable CPU work retains its permit until the work actually finishes, even when the HTTP caller has already timed out or disconnected.
+Only definite nonacceptance permits retry: Router Busy, or backend `503` with `admission_busy` or `admission_unavailable`. Return the dispatch reservation while keeping the original waiting position and deadline. Once any batch child or stage is accepted, do not replay the initial request. Store unavailability prevents new bounded reservations; accepted work continues and completes its accounting when the store recovers.
 
-## Acceptance and cancellation
+## Disaggregated execution
 
-The shared ledger atomically reserves capacity and transfers each candidate to a model-server execution owner. Store unavailability prevents new bounded reservations; accepted work retains its ownership and retries ledger cleanup. Model-server acceptance is distinct from beginning GPU execution; the engine may still queue the request. An optional instance acceptance cap is separate from caller concurrency.
+Prefill/Decode (P/D) and Encoder/Prefill/Decode (E/P/D) share one caller-concurrency reservation per generated sequence. Intermediate stages release their own instance capacity when they finish, while caller concurrency remains held through the next stage. Decode releases it after confirmed completion. Complete the ownership transfer before returning intermediate completion to the next stage. Connector-owned KV and media resources have their own cleanup lifecycle.
 
-Only a definite nonacceptance permits an initial retry. A Router Busy result or backend `503` with `admission_busy` or `admission_unavailable` returns the unaccepted dispatch reservation while preserving waiting order and deadline. Invalid input, incompatible execution paths, and ambiguous transport failures terminate the attempt rather than replaying it. Once any batch child or execution stage is accepted, the initial request is not retried.
+## Configuration updates
 
-Before submission, cancellation removes pending work. After acceptance, cancellation requests backend termination and leaves concurrency charged until termination is confirmed. Output-stream drop, an abort acknowledgement, and locally synthesized abort output are not confirmation. The execution owner retains a completion signal independent of output delivery; if that signal is lost, managed-engine shutdown must be confirmed before releasing uncertain execution. See the [vLLM completion contract](../../data-plane/patches/vllm/README.md#engine-completion-contract).
+Validate settings before activation; invalid settings leave the working configuration unchanged. Authoritative Pod membership still updates independently so terminated owners can be reclaimed. Confirm bounded settings only after their shared limits take effect.
 
-## Prefill/decode handoff
+Limit updates preserve outstanding work, queue order, and original request deadlines. Lower limits do not cancel accepted execution; a waiting batch larger than its new caller-concurrency limit is rejected. Pending requests use current role and Pool rules at dispatch, while already-granted batches retain their decision.
 
-Prefill/decode (P/D) and encoder/prefill/decode (E/P/D) share one outer candidate reservation. Encoder and Prefill are intermediate stages; their confirmed completion moves the slot into handoff without decrementing caller concurrency. Their terminal output waits for that ledger transition so the next stage can claim the same slot. Decode is the final stage and releases the slot after confirmed completion.
+Enabling limits rejects previously untracked requests that have not dispatched, without retroactively counting existing unrestricted execution. Removing a model rejects new and waiting requests while accepted work drains.
 
-Instance permits and routing-load observations end with their own stage; they are not held merely to wait for the next stage. Connector-owned KV and media-transfer resources retain their separate cleanup lifecycle. Engine completion confirms that a request has left engine scheduling, not GPU synchronization or connector resource release.
+## Observations
 
-## Configuration and observations
-
-Validate a complete candidate before publication. Invalid candidates preserve the active configuration. Controller-observed Pod membership advances independently so confirmed instance termination can release capacity even when a candidate is rejected. Publication advances shared settings independently of new traffic, and dispatch uses the current shared limits. Bounded admission acknowledgement waits for ledger application; unrestricted settings can activate locally. Queues, outstanding reservations, and original waiting deadlines survive ordinary limit changes; lowering a limit does not cancel accepted work. A waiting batch larger than its new caller concurrency limit is rejected as an oversized batch.
-
-Pending requests resolve current roles and Pools when receiving a dispatch grant. Already-granted batches retain their resolved decision. Enabling bounded rules rejects untracked requests that have not yet dispatched; it does not retrospectively account for unrestricted execution. Model removal rejects new and waiting work while accepted execution drains.
-
-Record one admission result at first backend acceptance, CPU-only preparation completion, or terminal failure. Busy retries are not failures. A request's observation can finish before non-cancelable preparation or storage cleanup releases capacity. Shared occupancy gauges report ledger state and must be deduplicated across frontend replicas; Prometheus observations never grant or release capacity. Operational metrics are described in [Observability](../../observability/README.md).
+Record one admission result at first backend acceptance, CPU-only preparation completion, or terminal failure. Busy retries are not failures. Shared occupancy must be deduplicated across frontend replicas; metrics observe capacity but never grant or release it. See [Observability](../../observability/README.md).

@@ -137,9 +137,16 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-同一 FrontendService 的所有副本按模型共享这些限额，每个调用方分别计数。`maxWaitingRequests` 限制等待数量，包括正在准备输入的请求；`maxConcurrentRequests` 限制已派发但尚未结束的工作数量；`queueTimeout` 限制后端接收前的等待与输入准备时长。批量输入和 `best_of` 按每个生成候选计数。
+同一 FrontendService 的所有副本按模型共享限额，每个调用方分别计数。使用角色规则时，需同时设置等待容量上限。
 
-`priority` 越大越先派发。同优先级时，各前端在调用方之间轮流派发，保持每个调用方的请求顺序。如需同时启用 vLLM 队列中的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
+| 设置 | 含义 |
+| --- | --- |
+| `admission.maxWaitingRequests` | 总等待容量，包括正在准备输入的请求 |
+| `admission.queueTimeout` | 后端接收前允许的等待与准备时长 |
+| `perCaller.maxWaitingRequests` | 单个调用方的等待容量 |
+| `perCaller.maxConcurrentRequests` | 单个调用方已派发的工作数量，计至执行结束 |
+
+批量输入和 `best_of` 按实际生成序列计数。可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持每个调用方的请求顺序。一个调用方并发已满时，不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
 
 可信网关根据已认证的调用方覆盖以下请求头，使用稳定标识区分调用方，例如认证密钥的标识：
 
@@ -150,7 +157,9 @@ x-caller-id: caller-a
 
 所有文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝。请在网关配置身份认证、授权和 RPM/token 配额，并将前端访问限制为该可信网关。文本与 token ID 转换只占等待容量；这些规则不适用于视频接口。
 
-模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。模型角色规则中的 `roleRules[].allowedPools` 可引用 `spec.modelPools` 中的名称，限制该角色使用的 Pool；分离式部署必须为每个必需执行阶段保留一个 Pool。要让一个模型不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端默认省略这两项时也不限流。
+模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。要让一个模型不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
+
+模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。
 
 模型服务实例还能独立限制已接收工作，包括引擎内排队的请求。在模型配置中添加：
 
@@ -162,9 +171,9 @@ spec:
 
 实例限额修改通过模型服务的常规部署和副本滚动更新生效。
 
-如仍使用 `admission.algorithm` 和 `admission.parameters`，改为上面的等待限额和角色规则，旧字段会被明确拒绝。升级时按常规 `foretoken deploy` 同时部署前端与模型服务；仅升级平台不会替换运行中的应用。
-
 按[修改服务配置](#修改服务配置)应用变更。响应开始前，队列已满或等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。取消的请求在执行结束前仍计入并发。
+
+从旧版升级时，将 `admission.algorithm` 和 `admission.parameters` 替换为上面的配置，再一起部署前端和模型服务。旧字段会被拒绝；仅升级平台不会替换运行中的应用。
 
 查看等待和派发结果见[可观测性](../../observability/README_zh.md)。维护者扩展请求处理或后端接入时，可参考[准入生命周期](../../docs/development/admission-rules_zh.md)。
 

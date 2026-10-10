@@ -1,9 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Keeps shared admission reservations durable under a single Valkey writer.
-{{- if not (or .Values.admissionStore.externalURL .Values.admissionStore.externalURLSecret.name) }}
+# Existing applications retain their store when the default connection changes.
 {{- $name := include "foretoken.admissionStoreName" . }}
+{{- $existing := lookup "apps/v1" "StatefulSet" .Release.Namespace $name }}
+{{- $metadata := get $existing "metadata" | default dict }}
+{{- $annotations := get $metadata "annotations" | default dict }}
+{{- $labels := get $metadata "labels" | default dict }}
+{{- $owned := and (eq (get $labels "app.kubernetes.io/managed-by") .Release.Service) (eq (get $annotations "meta.helm.sh/release-name") .Release.Name) (eq (get $annotations "meta.helm.sh/release-namespace") .Release.Namespace) }}
+{{- if or $owned (not (or .Values.admissionStore.externalURL .Values.admissionStore.externalURLSecret.name)) }}
+{{- range $resource := list (dict "api" "v1" "kind" "Service") (dict "api" "apps/v1" "kind" "StatefulSet") (dict "api" "networking.k8s.io/v1" "kind" "NetworkPolicy") }}
+{{- with lookup $resource.api $resource.kind $.Release.Namespace $name }}
+{{- $meta := .metadata }}
+{{- $ann := get $meta "annotations" | default dict }}
+{{- $lab := get $meta "labels" | default dict }}
+{{- if not (and (eq (get $lab "app.kubernetes.io/managed-by") $.Release.Service) (eq (get $ann "meta.helm.sh/release-name") $.Release.Name) (eq (get $ann "meta.helm.sh/release-namespace") $.Release.Namespace)) }}
+{{- fail (printf "%s/%s is not owned by this Helm release" $resource.kind $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with lookup "v1" "PersistentVolumeClaim" .Release.Namespace (printf "ledger-%s-0" $name) }}
+{{- $labels := get .metadata "labels" | default dict }}
+{{- if not (and $owned (eq (get $labels "app.kubernetes.io/name") "foretoken-admission-store") (eq (get $labels "app.kubernetes.io/instance") $.Release.Name)) }}
+{{- fail (printf "PersistentVolumeClaim/%s already exists without a managed admission store" .metadata.name) }}
+{{- end }}
+{{- $annotations := get .metadata "annotations" | default dict }}
+{{- if or (and (hasKey $labels "app.kubernetes.io/managed-by") (ne (get $labels "app.kubernetes.io/managed-by") $.Release.Service)) (and (hasKey $annotations "meta.helm.sh/release-name") (ne (get $annotations "meta.helm.sh/release-name") $.Release.Name)) (and (hasKey $annotations "meta.helm.sh/release-namespace") (ne (get $annotations "meta.helm.sh/release-namespace") $.Release.Namespace)) }}
+{{- fail (printf "PersistentVolumeClaim/%s belongs to another release" .metadata.name) }}
+{{- end }}
+{{- range .metadata.ownerReferences }}
+{{- if ne .uid $metadata.uid }}
+{{- fail (printf "admission store claim has another owner: %s/%s" .kind .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -36,7 +66,7 @@ spec:
   serviceName: {{ $name }}
   replicas: 1
   persistentVolumeClaimRetentionPolicy:
-    whenDeleted: Retain
+    whenDeleted: Delete
     whenScaled: Retain
   selector:
     matchLabels:

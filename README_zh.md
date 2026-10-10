@@ -172,7 +172,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-卸载时会保留 Foretoken CRD、日志存储、共享准入存储和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
+卸载时会保留 Foretoken CRD、日志存储和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
 
 ## 相关项目
 

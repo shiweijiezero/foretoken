@@ -33,7 +33,7 @@ spec:
 | [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | 前端服务 | 5 分钟窗口内，每秒至少 0.1 次 HTTP 响应开始时，5xx 比例连续 2 分钟超过 5%。 |
 | [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | 前端服务 | 准入容量拒绝比例超过配置阈值。 |
 | [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | 前端服务 | 准入超时比例超过配置阈值。 |
-| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 排队后获准请求的等待 p95 超过配置时长。 |
+| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 后端接受前的等待时间 p95 超过配置时长。 |
 | [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | 前端服务 | 抓取成功，但必要准入指标连续缺失 5 分钟。 |
 | [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | 模型服务 | NVIDIA GPU 温度连续 2 分钟达到阈值，默认 85°C。 |
 | [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | 模型服务 | NVIDIA GPU 功耗连续 5 分钟达到配置阈值。 |
