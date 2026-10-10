@@ -112,6 +112,14 @@ type ApplicationSelection struct {
 	ApplicationURL string `json:"applicationURL,omitempty"`
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+	// AdmissionStore retains the ledger connection selected with this executable application.
+	// +optional
+	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	// InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+	// Zero retains startup-only limits; one selects live file configuration.
+	// +optional
+	// +kubebuilder:validation:Maximum=1
+	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -173,6 +181,11 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// InstanceAdmission retains the immutable startup limit of a protocol-zero application.
+	// Live-file applications use ModelPoolSpec.InstanceAdmission instead.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
 	// request body limit.
 	// +kubebuilder:validation:Minimum=1048576
@@ -230,6 +243,10 @@ type ModelPoolSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
 
+	// InstanceAdmission is the live acceptance limit published to each instance ingress.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	Template NormalizedPoolTemplate `json:"template"`
 }
 
@@ -243,6 +260,12 @@ type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PreparedRevision string `json:"preparedRevision,omitempty"`
+
+	// InstanceAdmissionVersion is reserved before publishing an instance configuration.
+	// It prevents ConfigMap restoration from rolling the publication version backward.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	InstanceAdmissionVersion uint64 `json:"instanceAdmissionVersion,omitempty"`
 
 	// +optional
 	// +listType=map

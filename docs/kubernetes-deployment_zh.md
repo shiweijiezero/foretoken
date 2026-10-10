@@ -19,7 +19,7 @@ kubectl get nodes
 集群需要具备：
 
 - 可通过 `kubectl` 和 Helm 访问；
-- 用于保存编译缓存的默认 StorageClass；
+- 用于平台持久存储和编译缓存的默认 StorageClass；
 - 部署 GPU 模型时，节点已安装 GPU 驱动和对应设备插件；
 - 使用源码构建镜像时，构建 Pod 和所有节点都能访问同一个镜像仓库。
 

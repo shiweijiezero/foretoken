@@ -718,6 +718,9 @@ class PlatformLifecycle:
         unadopted_origin = (
             () if platform_exists else helm.application_origin_resources()
         )
+        admission_claims = {
+            claim["uid"]: claim for claim in helm.admission_store_claims(kubectl)
+        }
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
@@ -735,6 +738,7 @@ class PlatformLifecycle:
         if (
             platform_exists
             or unadopted_origin
+            or admission_claims
             or dcgm_managed
             or prometheus_managed
             or metax_managed
@@ -749,12 +753,18 @@ class PlatformLifecycle:
                     for resource in resources
                 )
                 raise DeploymentError(
-                    "delete Foretoken services before uninstalling the platform: "
+                    "delete Foretoken services and wait for their workloads to be removed before uninstalling the platform: "
                     f"{remaining}"
                 )
 
         if platform_exists:
             require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
+            admission_claims.update(
+                (claim["uid"], claim)
+                for claim in helm.prepare_admission_store_uninstall(
+                    kubectl, command.timeout
+                )
+            )
             _print_plan("Foretoken platform", "Remove", platform.display_name)
         else:
             _print_plan("Foretoken platform", "Skip", "not installed")
@@ -792,6 +802,10 @@ class PlatformLifecycle:
         elif unadopted_origin:
             helm.remove_application_origin(unadopted_origin, command.timeout)
             _print_plan("Application file storage", "Removed", platform.display_name)
+        for claim in admission_claims.values():
+            kubectl.wait_deleted("persistentvolumeclaim", claim, command.timeout)
+        if admission_claims:
+            _print_plan("Admission storage", "Removed", platform.display_name)
         if dcgm_managed:
             helm.uninstall(managed_dcgm, command.timeout)
             _print_plan("NVIDIA DCGM Exporter", "Removed", managed_dcgm.display_name)

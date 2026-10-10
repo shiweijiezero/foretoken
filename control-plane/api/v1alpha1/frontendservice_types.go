@@ -95,10 +95,16 @@ type FrontendServiceSpec struct {
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
-	// Admission supplies defaults applied independently to each model in each frontend replica.
-	// A ModelService admission block replaces these defaults; omitted defaults are unrestricted.
+	// Admission supplies per-model defaults shared across frontend replicas.
+	// A ModelService admission block replaces these defaults; omission is unrestricted.
 	// +optional
 	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules supplies per-model caller rules unless the ModelService replaces the list.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}

@@ -1,42 +1,50 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# 开发准入规则
+# 准入生命周期
 
 [English](admission-rules.md) | 简体中文
 
-新增规则可从 [allow_all](../../data-plane/frontend/src/admission/src/algorithm/allow_all.rs) 开始；需要排队和资源预留时，参考 [concurrency](../../data-plane/frontend/src/admission/src/algorithm/concurrency.rs)。使用现有规则见[前端准入配置](../../data-plane/frontend/README_zh.md#配置准入规则)。
+准入决定哪个已准备好的请求可以执行，路由器为它选择后端。用户配置见[前端准入配置](../../data-plane/frontend/README_zh.md#配置准入规则)。
 
-## 实现准入决策
-
-实现 `AdmissionRule::admit`：
-
-```rust
-async fn admit(
-    &self,
-    request: &AdmissionRequest,
-    context: &AdmissionContext<'_>,
-) -> Result<AdmissionPermit, AdmissionError>;
+```text
+取得等待名额 → 等待模型就绪并准备输入
+→ 预留调用方并发 → 路由与提交
+→ 后端接收 → 执行 → 确认完成
 ```
 
-从 `request` 获取输入摘要和输出预算，从 `context` 获取截止时间及当前模型观测。字段说明见 [AdmissionRequest](../../data-plane/frontend/src/admission/src/request.rs) 和 [AdmissionContext](../../data-plane/frontend/src/admission/src/context.rs)。
+同一 FrontendService 的所有副本按公开模型共享等待容量及各调用方限额。派发顺序由各前端本地维护：优先处理可派发的高优先级请求，同优先级按调用方轮转，调用方内部保持先入先出。一个调用方暂时无法派发时，不阻塞其他可派发调用方。身份认证和用量配额由网关负责。
 
-接受请求时返回许可，拒绝时返回错误。规则可以等待，框架负责超时和调用方取消。排队期间持有 `context.queue.begin_wait()` 返回的 guard，以记录等待时长。
+## 容量归属
 
-无需占用资源时返回 `AdmissionPermit::default()`；否则返回 `AdmissionPermit::new(reservation)`。reservation 应持有已取得的容量，在丢弃时释放，并通过 `split_one()` 将一个候选所需的份额交给批次子请求。
+| 阶段 | 等待名额 | 调用方并发 |
+| --- | --- | --- |
+| 等待模型就绪、准备输入或等待派发 | 占用 | 不占用 |
+| 已提交，尚未确认接收 | 占用 | 占用 |
+| 后端已接收，包括引擎内排队 | 释放 | 占用 |
+| 执行阶段之间的交接 | 不占用 | 占用 |
+| 执行完成或已确认终止 | 释放 | 释放 |
 
-只有算法实际预留容量或进入队列时，才更新 `context.metrics.active` 和 `context.metrics.queued` 的工作量计数。随资源释放扣除相应计数；拆分只转移已计量的份额，不重复增加。调用结果和等待时长由框架独立记录。
+提交批次中的任何请求前，先取得整批容量。每个输入与生成结果的组合计一次，包含 `best_of` 的全部候选；拆分批次只转移已有容量，不重复申请。分词、token 计数和解码只占等待名额。不可取消的准备工作即使已失去 HTTP 请求，也要持有容量直到实际结束。同一请求时限覆盖等待、准备、重试和全部执行阶段。
 
-## 注册规则
+后端接收后，由后端负责执行和完成确认。取消只请求终止，执行结束后才释放并发；关闭 HTTP 连接不代表执行结束。无法确认执行状态时，先停止对应执行，再释放容量。后端接入细节见 [vLLM 完成契约](../../data-plane/patches/vllm/README_zh.md#引擎完成契约)。
 
-提供 `from_parameters(Value) -> Result<Self, String>`，校验参数并为模型构造规则。将其加入 [algorithm/mod.rs](../../data-plane/frontend/src/admission/src/algorithm/mod.rs) 的 `declare_admission_algorithms!` 列表；外部实现也可通过 `inventory` 注册 `AdmissionDescriptor`。
+只有明确未接收才可重试：路由器返回 Busy，或后端返回带 `admission_busy`、`admission_unavailable` 的 `503`。此时归还派发预留，保留原等待位置和截止时间。任一批次子请求或执行阶段已被接收后，不重放初始请求。存储不可用时，新的受限请求无法取得容量；已接收的工作继续执行，存储恢复后完成记账。
 
-新增配置需同步 FrontendService 和 ModelService 共用的准入 API，并重新生成 CRD。可选方法 `capacity`、`requires_ready_runtime` 和 `close` 见 [AdmissionRule](../../data-plane/frontend/src/admission/src/lib.rs) 的接口说明。`close` 应唤醒算法自己的等待任务，不撤销已获准请求的资源预留。
+## 分离式执行
 
-## 配置生命周期
+Prefill/Decode（P/D）和 Encoder/Prefill/Decode（E/P/D）为每条生成序列共用一个调用方并发名额。中间阶段完成后释放本实例的容量，调用方并发则持续占用，直到 Decode 确认完成。中间阶段先完成容量归属交接，再向下一阶段返回完成结果。连接器持有的 KV 和媒体资源按自身生命周期清理。
 
-新配置先校验、后生效；构造规则时不修改在线状态，校验失败则继续使用原配置。
+## 配置更新
 
-内置规则更新保留在途计数和等待队列，已有请求沿用原超时预算。降低限额不取消已执行请求；已排队批次超过新并发上限时返回 HTTP 503。
+新设置先校验、后生效；配置无效时继续使用原设置。控制器确认的 Pod 成员变化独立更新，以便回收已终止实例的占用。受限配置的共享限额实际生效后，才确认配置更新成功。
 
-自定义规则更换时，取消等待请求，待已接收工作结束后再启用新规则；期间该模型的新请求返回 HTTP 503。配置状态在新规则实际启用后才确认生效。
+调整限额保留已有工作、等待顺序和原请求时限。降低限额不取消已接收执行；等待批次超过新的调用方并发上限时被拒绝。尚未派发的请求使用当前角色和 Pool 规则，已获派发预留的批次保留原决策。
+
+启用限额会拒绝此前未参与计数且尚未派发的请求，不追溯计量已经派发的不限流执行。移除模型会拒绝新请求和等待请求，已接收的工作继续排空。
+
+实例接收上限与引擎自身的调度上限分开。在线更新只影响新请求；已有工作以及实例当前的接收或排空状态保持不变。降低上限后，待占用下降才会接收新请求；所需实例报告新配置后，状态才确认生效。
+
+## 观测
+
+一次准入结果在首次后端接收、纯 CPU 准备完成或终止错误时记录，Busy 重试不计为失败。跨前端副本使用共享占用指标时须去重；指标只观测容量，不决定授予或释放。运维说明见[可观测性](../../observability/README_zh.md)。

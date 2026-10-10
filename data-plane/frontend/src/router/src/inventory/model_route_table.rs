@@ -36,6 +36,8 @@ impl ModelRouteTable {
             .filter(|route| {
                 route.ready
                     && route.model == request.model
+                    && (request.allowed_pools.is_empty()
+                        || request.allowed_pools.contains(&route.target.name))
                     && route
                         .max_input_tokens
                         .is_none_or(|limit| request.token_count() <= limit)

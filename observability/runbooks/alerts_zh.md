@@ -33,7 +33,7 @@ spec:
 | [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | 前端服务 | 5 分钟窗口内，每秒至少 0.1 次 HTTP 响应开始时，5xx 比例连续 2 分钟超过 5%。 |
 | [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | 前端服务 | 准入容量拒绝比例超过配置阈值。 |
 | [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | 前端服务 | 准入超时比例超过配置阈值。 |
-| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 排队后获准请求的等待 p95 超过配置时长。 |
+| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | 前端服务 | 后端接受前的等待时间 p95 超过配置时长。 |
 | [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | 前端服务 | 抓取成功，但必要准入指标连续缺失 5 分钟。 |
 | [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | 模型服务 | NVIDIA GPU 温度连续 2 分钟达到阈值，默认 85°C。 |
 | [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | 模型服务 | NVIDIA GPU 功耗连续 5 分钟达到配置阈值。 |
@@ -56,7 +56,7 @@ spec:
 
 在准入阈值下填写 0 至 1 的 `capacityRejectionRatio`，以及以已结束调用次数/秒为单位的 `minResultRate`。拒绝比例按模型分别计算，以该模型已结束的 HTTP 准入调用为分母。
 
-选择受影响的模型，比较其在各前端 Pod 的流量、占用和配置上限。调整该模型的限额前，同时查看后端负载。
+选择受影响的模型，对照各前端 Pod 的派发结果、共享等待占用与调用方限额。调整限额前，同时查看后端负载。
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
@@ -66,13 +66,13 @@ spec:
 
 ### ForetokenAdmissionAdmittedQueueP95High
 
-在准入阈值下填写正数 `admittedQueueP95Seconds`（秒）和 `minQueuedAdmissionRate`（调用次数/秒）。此规则只统计实际排队后获准的请求，不包含直接获准或等待超时的请求。
+在准入阈值下填写正数 `admittedQueueP95Seconds`（秒）和 `minQueuedAdmissionRate`（调用次数/秒）。此规则统计取得等待名额至首次后端接受的耗时，包括输入准备和提交；不包含无限流请求或超时请求。
 
-选择受影响的模型，结合其获准等待曲线、队列占用和模型容量定位延迟，同时查看超时结果，判断是否还有请求等待后未能获准。
+选择受影响的模型，结合等待曲线、共享等待占用和上限定位延迟，同时查看超时结果，判断是否有请求在后端接受前退出。
 
 ### ForetokenAdmissionTelemetryMissing
 
-在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本。升级完成后仍未恢复时，检查监控配置。
+在准入副本表中定位指标不完整的模型与 Pod，并核对运行版本和监控配置。
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

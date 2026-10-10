@@ -224,4 +224,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-卸载保留 CRD 和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。
+卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。

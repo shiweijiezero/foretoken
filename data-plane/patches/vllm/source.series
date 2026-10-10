@@ -10,6 +10,8 @@ common/multinode-pcp-world-size.patch
 rust/http-latency-histogram-buckets.patch
 rust/latency-histogram-buckets.patch
 rust/managed-engine-command.patch
+rust/engine-request-completion.patch
+common/engine-abort-completion.patch
 common/ready-logprobs.patch
 rust/ready-logprobs.patch
 rust/logprob-padding-tokens.patch

@@ -47,4 +47,4 @@ The built-in [KvLeastLoadedScorer](../router/src/algorithm/scorer/kv_least_loade
 
 ## Observe
 
-Use the frontend's `/statusz` for index health and `/metrics` for monitoring. See [frontend endpoint access](../../README.md#endpoint-access).
+Use the frontend's `/statusz` for index health and `/metrics` for monitoring. See [frontend endpoint access](../../README.md#operations).

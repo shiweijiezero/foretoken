@@ -65,9 +65,12 @@ pub trait Router: Send + Sync {
 /// Failure returned while selecting one model-server routing stage.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouteError {
+    /// Compatible execution paths exist, but policy filtering temporarily excludes them.
+    #[error("compatible model servers are temporarily busy")]
+    Busy,
     /// No ready Aggregate or Prefill model-server route matches the request.
     #[error("no ready model server route matches model {model}")]
-    NoMatchingRouteTarget {
+    NoCompatibleTarget {
         /// Requested logical model.
         model: String,
     },

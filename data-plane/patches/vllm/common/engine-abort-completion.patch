@@ -1,0 +1,25 @@
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -489,7 +489,7 @@
+         # TODO: The scheduler doesn't really need to know the
+         # specific finish reason, TBD whether we propagate that
+         # (i.e. client-aborted vs stop criteria met).
+-        self.scheduler.finish_requests(request_ids, RequestStatus.FINISHED_ABORTED)
++        return self.scheduler.finish_requests(request_ids, RequestStatus.FINISHED_ABORTED)
+ 
+     @contextmanager
+     def log_error_detail(self, scheduler_output: SchedulerOutput):
+@@ -2009,6 +2009,12 @@
+         eco = EngineCoreOutputs(finished_requests=req_ids, outputs=outputs)
+         self.output_queue.put_nowait((client_index, eco))
+ 
++    def abort_requests(self, request_ids: list[str]):
++        """Confirm scheduler termination on every transport, including eager aborts."""
++        aborted = super().abort_requests(request_ids)
++        self._send_abort_outputs(aborted)
++        return aborted
++
+     def _send_abort_outputs_to_client(
+         self, req_ids: list[str], client_index: int
+     ) -> None:

@@ -73,6 +73,8 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
+		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "HF_HOME", Value: modelRoot},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
 		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
@@ -85,6 +87,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	if profile.SourceRevision != "" {
 		annotations[runtimeconfig.SourceRevisionAnnotation] = profile.SourceRevision
 	}
+	frontendEnv = append(frontendEnv, runtimeconfig.AdmissionStoreEnv(profile.AdmissionStore)...)
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {

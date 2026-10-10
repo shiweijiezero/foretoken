@@ -59,45 +59,27 @@ spec:
             properties:
               admission:
                 description: |-
-                  Admission supplies defaults applied independently to each model in each frontend replica.
-                  A ModelService admission block replaces these defaults; omitted defaults are unrestricted.
+                  Admission supplies per-model defaults shared across frontend replicas.
+                  A ModelService admission block replaces these defaults; omission is unrestricted.
                 properties:
-                  algorithm:
-                    default: allow_all
-                    minLength: 1
+                  maxWaitingRequests:
+                    description: MaxWaitingRequests is shared across frontend replicas;
+                      omission leaves waiting unrestricted.
+                    format: int64
+                    maximum: 4294967295
+                    minimum: 1
+                    type: integer
+                  queueTimeout:
+                    description: QueueTimeout bounds preparation and waiting until
+                      backend acceptance within the request deadline.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
-                  parameters:
-                    description: AdmissionParameters sets per-model concurrency and
-                      queue limits in each frontend process.
-                    properties:
-                      maxConcurrentRequests:
-                        format: int64
-                        maximum: 4294967295
-                        minimum: 1
-                        type: integer
-                      maxQueuedRequests:
-                        format: int64
-                        maximum: 4294967295
-                        minimum: 0
-                        type: integer
-                      queueTimeout:
-                        description: QueueTimeout limits queueing within the remaining
-                          request budget.
-                        minLength: 2
-                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a positive duration
-                          rule: duration(self) > duration('0s')
-                    required:
-                    - maxConcurrentRequests
-                    type: object
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                 type: object
-                x-kubernetes-validations:
-                - message: concurrency admission requires parameters
-                  rule: self.algorithm != 'concurrency' || has(self.parameters)
-                - message: allow_all admission accepts no parameters
-                  rule: self.algorithm != 'allow_all' || !has(self.parameters)
+                x-kubernetes-preserve-unknown-fields: true
               deploymentRevision:
                 description: DeploymentRevision requests current platform applications
                   on an explicit deployment.
@@ -293,6 +275,59 @@ spec:
                 - message: resources.requests.memory must not exceed resources.limits.memory
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
+              roleRules:
+                description: RoleRules supplies per-model caller rules unless the
+                  ModelService replaces the list.
+                items:
+                  description: RoleRule resolves trusted caller roles into dispatch
+                    priority, capacity, and eligible Pools.
+                  properties:
+                    allowedPools:
+                      description: AllowedPools names this model's Pools; omission
+                        retains the normal candidate range.
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
+                    perCaller:
+                      description: CallerCapacity bounds each caller's generation
+                        units across frontend replicas.
+                      properties:
+                        maxConcurrentRequests:
+                          description: MaxConcurrentRequests includes dispatch reservations
+                            and accepted, unfinished work.
+                          format: int64
+                          maximum: 4294967295
+                          minimum: 1
+                          type: integer
+                        maxWaitingRequests:
+                          format: int64
+                          maximum: 4294967295
+                          minimum: 1
+                          type: integer
+                      required:
+                      - maxConcurrentRequests
+                      - maxWaitingRequests
+                      type: object
+                    priority:
+                      description: Priority gives higher values earlier dispatch.
+                      format: int32
+                      maximum: 2147483647
+                      minimum: -2147483648
+                      type: integer
+                    role:
+                      minLength: 1
+                      type: string
+                  required:
+                  - perCaller
+                  - priority
+                  - role
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - role
+                x-kubernetes-list-type: map
               routerPipeline:
                 default:
                   filter:
@@ -432,6 +467,44 @@ spec:
                 description: Application retains the selected frontend environment
                   and files across workload recovery.
                 properties:
+                  admissionStore:
+                    description: AdmissionStore retains the ledger connection selected
+                      with this executable application.
+                    properties:
+                      url:
+                        description: URL is a credential-free Redis-compatible endpoint.
+                        pattern: ^rediss?://[^@]+$
+                        type: string
+                      urlSecretRef:
+                        description: URLSecretRef contains the full connection URL
+                          in a namespace-local Secret.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one admission store URL or Secret reference
+                        is required
+                      rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     type: string
                   deploymentRevision:
@@ -442,6 +515,13 @@ spec:
                     description: ImageProfile distinguishes serving, Omni and diagnostic
                       environments during selection.
                     type: string
+                  instanceAdmissionProtocol:
+                    description: |-
+                      InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+                      Zero retains startup-only limits; one selects live file configuration.
+                    format: int32
+                    maximum: 1
+                    type: integer
                   sourceRevision:
                     description: SourceRevision retains the admitted source intent
                       independently of source-mode defaults.

@@ -18,15 +18,24 @@ type servingSettings struct {
 }
 
 type servingSnapshot struct {
-	Settings          servingSettings                              `json:"settings"`
-	Version           uint64                                       `json:"version"`
-	Models            []servingSnapshotModel                       `json:"models"`
-	Admission         map[string]inferencev1alpha1.AdmissionConfig `json:"admission"`
-	Groups            []servingSnapshotGroup                       `json:"groups"`
-	PDComponents      []servingSnapshotPDComponent                 `json:"pd_components,omitempty"`
-	PDPipelineScopes  []servingSnapshotPDPipelineScope             `json:"pd_pipeline_scopes,omitempty"`
-	EPDComponents     []servingSnapshotEPDComponent                `json:"epd_components,omitempty"`
-	EPDPipelineScopes []servingSnapshotEPDPipelineScope            `json:"epd_pipeline_scopes,omitempty"`
+	Settings          servingSettings                     `json:"settings"`
+	Version           uint64                              `json:"version"`
+	FrontendInstances []string                            `json:"frontend_instances"`
+	BackendInstances  []string                            `json:"backend_instances"`
+	Models            []servingSnapshotModel              `json:"models"`
+	Admission         map[string]servingSnapshotAdmission `json:"admission"`
+	Groups            []servingSnapshotGroup              `json:"groups"`
+	PDComponents      []servingSnapshotPDComponent        `json:"pd_components,omitempty"`
+	PDPipelineScopes  []servingSnapshotPDPipelineScope    `json:"pd_pipeline_scopes,omitempty"`
+	EPDComponents     []servingSnapshotEPDComponent       `json:"epd_components,omitempty"`
+	EPDPipelineScopes []servingSnapshotEPDPipelineScope   `json:"epd_pipeline_scopes,omitempty"`
+}
+
+// servingSnapshotAdmission contains the effective per-model settings consumed by the frontend.
+type servingSnapshotAdmission struct {
+	MaxWaitingRequests *uint32                      `json:"maxWaitingRequests,omitempty"`
+	QueueTimeout       inferencev1alpha1.Duration   `json:"queueTimeout,omitempty"`
+	RoleRules          []inferencev1alpha1.RoleRule `json:"roleRules,omitempty"`
 }
 
 type servingSnapshotModel struct {

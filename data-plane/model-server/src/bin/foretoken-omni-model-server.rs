@@ -247,7 +247,7 @@ async fn proxy_video(State(state): State<AppState>, request: Request<Body>) -> R
     if !state.health.ready() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(guard) = state.health.try_admit() else {
+    let Ok(guard) = state.health.try_admit() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let (parts, body) = request.into_parts();

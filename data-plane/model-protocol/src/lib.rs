@@ -33,6 +33,8 @@ pub enum ModelServerRole {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<foretoken_request_ledger::ReservationRef>,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -50,6 +52,7 @@ pub struct GenerateInput {
 impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
+            reservation: None,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,

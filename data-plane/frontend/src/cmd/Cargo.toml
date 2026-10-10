@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-request-ledger = { path = "../../../request-ledger" }
 foretoken-admission = { path = "../admission" }
 async-trait.workspace = true
 axum.workspace = true

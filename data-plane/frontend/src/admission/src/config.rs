@@ -1,88 +1,99 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Configuration and compiled algorithm registration for frontend admission.
+//! Resolved model waiting limits and caller rules published by the control plane.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::AdmissionRule;
-use crate::registry::PreparedRule;
-
-/// A compiled admission rule that accepts its own configuration parameters.
-pub struct AdmissionDescriptor {
-    /// Stable name selected by frontend configuration.
-    pub name: &'static str,
-    /// Constructs an independent validated rule candidate before publication.
-    pub factory: fn(serde_json::Value) -> Result<Arc<dyn AdmissionRule>, String>,
-}
-inventory::collect!(AdmissionDescriptor);
-
-/// Process-local admission selection, independent of the routing pipeline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// Effective settings for one public model within a frontend service.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdmissionConfig {
-    /// Compiled rule selected for this model.
-    pub algorithm: String,
-    /// Parameters interpreted when preparing a rule.
-    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
-    pub parameters: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_waiting_requests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_timeout: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_rules: Vec<RoleRule>,
 }
 
-impl Default for AdmissionConfig {
-    fn default() -> Self {
-        Self {
-            algorithm: "allow_all".into(),
-            parameters: Default::default(),
-        }
-    }
+/// Scheduling and capacity assigned to each caller with the matching trusted role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoleRule {
+    pub role: String,
+    #[serde(default)]
+    pub priority: i32,
+    pub per_caller: CallerCapacity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_pools: Vec<String>,
+}
+
+/// Independent waiting and unfinished-generation limits for each caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallerCapacity {
+    pub max_waiting_requests: u32,
+    pub max_concurrent_requests: u32,
 }
 
 impl AdmissionConfig {
-    /// Prepares a validated rule without publishing metrics or changing active reservations.
-    pub(crate) fn prepare(&self) -> Result<PreparedRule, AdmissionConfigError> {
-        let mut names = HashSet::new();
-        let mut selected = None;
-        for descriptor in inventory::iter::<AdmissionDescriptor> {
-            if descriptor.name.is_empty() {
-                return Err(AdmissionConfigError::EmptyDescriptorName);
-            }
-            if !names.insert(descriptor.name) {
-                return Err(AdmissionConfigError::DuplicateDescriptorName(
-                    descriptor.name,
+    /// Validates a candidate without modifying the live queue or reservation ledger.
+    pub(crate) fn validate(&self) -> Result<(), AdmissionConfigError> {
+        if self.max_waiting_requests == Some(0) {
+            return Err(AdmissionConfigError(
+                "maxWaitingRequests must be positive".into(),
+            ));
+        }
+        if !self.role_rules.is_empty() && self.max_waiting_requests.is_none() {
+            return Err(AdmissionConfigError(
+                "roleRules requires admission.maxWaitingRequests".into(),
+            ));
+        }
+        self.wait_timeout()?;
+        let mut roles = BTreeSet::new();
+        for rule in &self.role_rules {
+            if rule.role.is_empty() || !roles.insert(&rule.role) {
+                return Err(AdmissionConfigError(
+                    "roleRules requires unique nonempty roles".into(),
                 ));
             }
-            if descriptor.name == self.algorithm {
-                selected = Some(descriptor);
+            if rule.per_caller.max_waiting_requests == 0
+                || rule.per_caller.max_concurrent_requests == 0
+            {
+                return Err(AdmissionConfigError(format!(
+                    "role {:?} caller limits must be positive",
+                    rule.role
+                )));
             }
         }
-        let descriptor = selected
-            .ok_or_else(|| AdmissionConfigError::UnknownAlgorithm(self.algorithm.clone()))?;
-        let rule = (descriptor.factory)(serde_json::Value::Object(self.parameters.clone()))
-            .map_err(|message| AdmissionConfigError::InvalidParameters {
-                algorithm: self.algorithm.clone(),
-                message,
-            })?;
-        Ok(PreparedRule {
-            config: self.clone(),
-            name: descriptor.name,
-            rule,
-        })
+        Ok(())
+    }
+
+    /// Resolves the optional waiting budget for request admission and configuration validation.
+    pub(crate) fn wait_timeout(&self) -> Result<Option<Duration>, AdmissionConfigError> {
+        self.queue_timeout
+            .as_ref()
+            .map(|value| {
+                humantime::parse_duration(value)
+                    .map_err(|error| AdmissionConfigError(format!("queueTimeout: {error}")))
+                    .and_then(|duration| {
+                        if duration.is_zero() {
+                            Err(AdmissionConfigError("queueTimeout must be positive".into()))
+                        } else {
+                            Ok(duration)
+                        }
+                    })
+            })
+            .transpose()
     }
 }
 
-/// Invalid admission configuration or ambiguous compiled rule registration.
+/// Invalid resolved settings; the active publication remains in effect.
 #[derive(Debug, Error)]
-pub enum AdmissionConfigError {
-    #[error("unknown admission algorithm {0:?}")]
-    UnknownAlgorithm(String),
-    #[error("invalid parameters for admission algorithm {algorithm:?}: {message}")]
-    InvalidParameters { algorithm: String, message: String },
-    #[error("compiled admission descriptor has an empty name")]
-    EmptyDescriptorName,
-    #[error("duplicate compiled admission algorithm name {0:?}")]
-    DuplicateDescriptorName(&'static str),
-}
+#[error("invalid admission configuration: {0}")]
+pub struct AdmissionConfigError(pub String);

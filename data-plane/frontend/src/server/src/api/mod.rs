@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Router;
-use foretoken_admission::AdmissionApi;
 use foretoken_chat::{ChatRequest, ParserSelection};
 use foretoken_text::Prompt;
 use uuid::Uuid;
@@ -39,12 +38,9 @@ impl RequestSnapshot {
         chat: ChatRequest,
         include_reasoning: bool,
         timing: RequestTiming,
-        api: AdmissionApi,
     ) -> Result<GeneratedChat, GenerationError> {
         let request = GenerationRequest {
             admission: None,
-            api: Some(api),
-            requested_max_tokens: chat.sampling_params.max_tokens,
             model,
             request_id: chat.request_id.clone(),
             prompt: Prompt::Text(String::new()),

@@ -6,6 +6,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +71,15 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 	member.Spec.Containers[0].Env = append(member.Spec.Containers[0].Env,
 		corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
 	)
+	leader := member.DeepCopy()
+	if groupUsesLiveInstanceAdmission(group) {
+		// Only the leader owns HTTP ingress admission; workers prove local process readiness.
+		member.Spec.Volumes = slices.DeleteFunc(member.Spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == instanceAdmissionVolumeName })
+		container := &member.Spec.Containers[0]
+		container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == instanceAdmissionVolumeName })
+		container.Env = slices.DeleteFunc(container.Env, func(env corev1.EnvVar) bool { return env.Name == instanceAdmissionConfigEnv })
+		container.ReadinessProbe.HTTPGet.Path = "/readyz"
+	}
 	one := int32(1)
 	desired := &lwsv1.LeaderWorkerSet{
 		TypeMeta:   metav1.TypeMeta{APIVersion: lwsv1.GroupVersion.String(), Kind: "LeaderWorkerSet"},
@@ -79,7 +89,7 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 			StartupPolicy: lwsv1.LeaderCreatedStartupPolicy,
 			LeaderWorkerTemplate: lwsv1.LeaderWorkerTemplate{
 				Size:           &group.Spec.MemberCount,
-				LeaderTemplate: member.DeepCopy(),
+				LeaderTemplate: leader,
 				WorkerTemplate: member,
 				RestartPolicy:  lwsv1.RecreateGroupOnPodRestart,
 			},

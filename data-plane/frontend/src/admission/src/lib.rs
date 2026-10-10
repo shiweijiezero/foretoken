@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Request admission and resource ownership before preprocessing and execution.
+//! Role-based request waiting and fair dispatch before Router instance selection.
 
-pub mod algorithm;
-mod capacity;
 mod config;
-mod context;
 mod permit;
 mod registry;
 mod request;
@@ -14,56 +11,14 @@ mod telemetry;
 
 use thiserror::Error;
 
-pub use capacity::AdmissionCapacityState;
-pub use config::{AdmissionConfig, AdmissionConfigError, AdmissionDescriptor};
-pub use context::{
-    AdmissionContext, AdmissionIdentity, AdmissionModelState, AdmissionModelStatus,
-    AdmissionObjectives, AdmissionService, AdmissionStateReader, AdmissionTargetState,
-};
-pub use permit::{AdmissionPermit, AdmissionReservation};
+pub use config::{AdmissionConfig, AdmissionConfigError, CallerCapacity, RoleRule};
+pub use foretoken_request_ledger::{RequestLedger, ReservationRef};
+pub use permit::{AdmissionPermit, DispatchRules};
 pub use registry::{Admission, AdmissionRegistry, PreparedAdmissions};
-pub use request::{
-    AdmissionApi, AdmissionInput, AdmissionInputKind, AdmissionMedia, AdmissionOperation,
-    AdmissionOutput, AdmissionRequest, AdmissionTokenCount,
-};
-pub use telemetry::{
-    AdmissionAttempt, AdmissionCapacity, AdmissionMetricsHandle, AdmissionQueueObservation,
-    AdmissionQueueWait, mark_request_deadline, observe_http, render_metrics,
-};
+pub use request::{AdmissionRequest, CallerIdentity, with_caller};
+pub use telemetry::{AdmissionAttempt, mark_request_deadline, observe_http, render_metrics};
 
-/// Accepts complete requests and owns any admission waiting and capacity reservations.
-/// A successful result already holds its resources; dropping the future cancels its waiter.
-#[async_trait::async_trait]
-pub trait AdmissionRule: Send + Sync {
-    /// Advertises the rule's finite resource limits for process-local observability.
-    fn capacity(&self) -> Option<AdmissionCapacity> {
-        None
-    }
-
-    /// Exposes the built-in work-unit owner for in-place registry updates.
-    /// When both rules supply an owner, publication copies the candidate settings into the active
-    /// owner and retains the active rule. Other rules keep their close-and-drain lifecycle.
-    fn capacity_state(&self) -> Option<&AdmissionCapacityState> {
-        None
-    }
-
-    /// Requires the runtime to check model preparation before admission, without waiting for it.
-    fn requires_ready_runtime(&self) -> bool {
-        false
-    }
-
-    /// Reserves the entire request weight atomically, waiting only within its original budget.
-    async fn admit(
-        &self,
-        request: &AdmissionRequest,
-        context: &AdmissionContext<'_>,
-    ) -> Result<AdmissionPermit, AdmissionError>;
-
-    /// Wakes admission waiters on shutdown without revoking permits held by running work.
-    fn close(&self) {}
-}
-
-/// Admission outcomes translated by protocol adapters before response headers.
+/// Admission outcomes translated into each external protocol's existing error envelope.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum AdmissionError {
     #[error("generation service is overloaded")]
@@ -72,8 +27,22 @@ pub enum AdmissionError {
     QueueTimeout,
     #[error("request deadline exceeded")]
     DeadlineExceeded,
-    #[error("request fan-out exceeds configured admission concurrency")]
+    #[error("request fan-out exceeds configured admission capacity")]
     BatchTooLarge,
     #[error("generation admission is closed")]
     Closed,
+    #[error("configured role rules require a matching role and trusted caller identifier")]
+    IdentityRequired,
+    #[error("request capacity store is unavailable")]
+    StoreUnavailable,
+}
+
+impl From<foretoken_request_ledger::LedgerError> for AdmissionError {
+    fn from(error: foretoken_request_ledger::LedgerError) -> Self {
+        if matches!(&error, foretoken_request_ledger::LedgerError::OwnerClosed) {
+            return Self::Closed;
+        }
+        tracing::warn!(error = %error, "request capacity operation failed");
+        Self::StoreUnavailable
+    }
 }

@@ -3,6 +3,7 @@
 
 common/python-profiling.patch
 common/worker-profiling.patch
+common/engine-abort-completion.patch
 compatibility/v1-legacy/ready-logprobs.patch
 common/spec-decode-timing-collector.patch
 common/spec-decode-timing-hooks.patch

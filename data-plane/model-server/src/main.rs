@@ -14,6 +14,7 @@ use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, Runti
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
+use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::launch::LaunchPlanV1;
 use foretoken_model_server::managed_engine::ManagedEngine;
@@ -55,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+    let request_ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
     let cache_shutdown = Arc::new(Notify::new());
     let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
     let profiling_config = if let Some(cache) = &cache_config {
@@ -96,6 +98,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await;
     }
+    // Validate initial limits before allocating an engine or accepting requests. The supervisor
+    // polls the same watcher after startup so updates retain this execution-accounting owner.
+    let health = Arc::new(RuntimeHealth::new());
+    health.set_startup_admission_limit(config.startup_admission_limit);
+    let instance_admission = config
+        .instance_admission_path
+        .clone()
+        .map(|path| InstanceAdmissionWatcher::load(path, health.clone()))
+        .transpose()?;
+
+    // Bind before recovering process ownership: another live ingress in this Pod must not have
+    // its reservations retired by a second process that will later fail to acquire the port.
+    let listener = TcpListener::bind(config.listen_address).await?;
+    let execution_store = if let Some(ledger) = request_ledger {
+        let pod_uid = required_env("FORETOKEN_POD_UID")?;
+        let epoch = ledger.register_backend(&pod_uid).await?;
+        Some((ledger, pod_uid, epoch))
+    } else {
+        None
+    };
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&config) {
         Ok(adapter) => Some(adapter),
@@ -163,7 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(failure) => return Err(failure.into_error().into()),
     };
-    let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(true);
 
     let mut client_health = client.subscribe_health();
@@ -238,19 +259,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profiling.map(|config| profiling::Supervisor::new(config, backend.clone(), health.clone()));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
-    let listener = match TcpListener::bind(config.listen_address).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            health.set_accepting(false);
-            health.set_client_healthy(false);
-            let _ = backend.shutdown().await;
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
-            return Err(error.into());
-        }
-    };
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    if let Some((ledger, pod_uid, epoch)) = execution_store {
+        app_state = app_state.with_request_ledger(ledger, pod_uid, epoch);
+    }
     if let Some(profiler) = &profiler {
         app_state = app_state.with_profiling(profiler.handle());
     }
@@ -289,7 +303,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Profiling(String),
     }
     let stop = tokio::select! {
+        // Refresh projected limits after slow engine preparation before polling HTTP intake.
+        biased;
+        never = async move {
+            match instance_admission {
+                Some(watcher) => watcher.run().await,
+                None => std::future::pending::<std::convert::Infallible>().await,
+            }
+        } => match never {},
         () = shutdown_signal() => Stop::Signal,
+        () = health.execution_failed() => Stop::ClientUnhealthy("request termination could not be confirmed".into()),
         changed = client_health.changed() => {
             if changed.is_err() || !*client_health.borrow() {
                 Stop::ClientUnhealthy("EngineCore client became unhealthy".into())
@@ -325,6 +348,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
+    if matches!(&stop, Stop::ClientUnhealthy(_) | Stop::ChildExited(_)) {
+        engine.shutdown(config.launch.drain_timeout()).await?;
+        health.set_process_alive(false);
+    }
     // Only an active native capture can hold the backend lock or require forced profiler stop.
     // Merely preparing profiling must not bypass normal request draining on SIGTERM.
     if let Some(profiler) = &mut profiler
@@ -332,6 +359,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         engine.shutdown(config.launch.drain_timeout()).await?;
         engine.wait_for_exit().await;
+        health.set_process_alive(false);
         profiler
             .engine_stopped("diagnostic runtime terminated")
             .await;
@@ -350,6 +378,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(server);
             }
         }
+    }
+    if tokio::time::timeout(
+        deadline.saturating_duration_since(Instant::now()),
+        health.wait_drained(),
+    )
+    .await
+    .is_err()
+    {
+        warn!("accepted requests did not finish before the drain deadline");
+        // Stopping the process resolves pending submissions before client shutdown needs their
+        // read locks. A canceled HTTP consumer is not evidence that those submissions ended.
+        engine
+            .shutdown(deadline.saturating_duration_since(Instant::now()))
+            .await
+            .map_err(io::Error::other)?;
+        health.set_process_alive(false);
     }
     if let Err(error) = backend.shutdown().await {
         warn!(%error, "could not shut down EngineCore client cleanly");

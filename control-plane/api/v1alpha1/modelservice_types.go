@@ -17,6 +17,15 @@ const (
 	MaxInternalGenerateRequestBodyLimitBytes     int64 = 256 * 1024 * 1024
 )
 
+// InstanceAdmissionConfig bounds unfinished generation units accepted by each model instance.
+type InstanceAdmissionConfig struct {
+	// MaxConcurrentRequests includes engine waiting, running, and unfinished submissions.
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+}
+
 // ModelTimeouts defines ModelService lifecycle budgets.
 type ModelTimeouts struct {
 	Startup Duration `json:"startup"`
@@ -222,6 +231,10 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
+	// InstanceAdmission limits accepted unfinished work in each instance; omission is unrestricted.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
 	// a group-local generate endpoint. It defaults to 64 MiB.
 	// +optional
@@ -261,10 +274,15 @@ type ModelServiceSpec struct {
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
 
-	// Admission replaces the frontend's entire admission block for this model.
-	// Limits apply independently in each frontend replica; omission uses its defaults.
+	// Admission replaces the frontend's entire admission block; omission uses its defaults.
 	// +optional
 	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules replaces the frontend's entire list; an empty list disables role rules.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.

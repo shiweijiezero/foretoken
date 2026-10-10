@@ -41,7 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let admission = Arc::new(foretoken_admission::AdmissionRegistry::default());
+    // Capacity is shared by service identity; opening the store remains lazy so an
+    // unrestricted service does not depend on its availability. Never log the store URL.
+    let ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
+    let admission = Arc::new(foretoken_admission::AdmissionRegistry::new(
+        config.frontend_uid,
+        config.pod_uid,
+        ledger,
+    ));
     let builder = Arc::new(RuntimeBuilder::new(kv_credential, logging));
     let generation = Arc::new(RuntimeGeneration::new(admission));
 

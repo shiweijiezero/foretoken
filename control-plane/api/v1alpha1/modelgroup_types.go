@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -184,6 +185,22 @@ type ModelGroupKVRuntimeConfig struct {
 	MooncakeStore *ModelGroupMooncakeStoreRuntime `json:"mooncakeStore,omitempty"`
 }
 
+// AdmissionStoreConnection selects the platform ledger without exposing credential values.
+// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.urlSecretRef)",message="exactly one admission store URL or Secret reference is required"
+type AdmissionStoreConnection struct {
+	// URL is a credential-free Redis-compatible endpoint.
+	// +optional
+	// +kubebuilder:validation:Pattern="^rediss?://[^@]+$"
+	URL string `json:"url,omitempty"`
+
+	// URLSecretRef contains the full connection URL in a namespace-local Secret.
+	// +optional
+	URLSecretRef *corev1.SecretKeySelector `json:"urlSecretRef,omitempty"`
+}
+
+// InstanceAdmissionFileProtocol selects the live-file configuration interface of a model application.
+const InstanceAdmissionFileProtocol uint32 = 1
+
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
 	// PreparationVersion selects the source-publication contract for this immutable cohort.
@@ -216,6 +233,20 @@ type ModelGroupRuntime struct {
 	// EngineArgs contains resolved native options; worker topology is stored in Parallelism.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// InstanceAdmissionProtocol pins the configuration interface of the selected executable.
+	// Zero retains startup-only limits; one selects live file configuration.
+	// +optional
+	// +kubebuilder:validation:Maximum=1
+	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
+
+	// InstanceAdmission retains the immutable startup limit for protocol-zero applications.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
+	// AdmissionStore pins the shared ledger selected by the platform for this cohort.
+	// +optional
+	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
 
 	// TritonCacheDirectory is the initial worker cache path; Kubernetes expands its node reference.
 	// +optional

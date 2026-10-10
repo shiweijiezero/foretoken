@@ -515,16 +515,7 @@ class ApplicationFiles:
             if current is not None and current["metadata"]["uid"] == uid:
                 raise
             return
-        deadline = time.monotonic() + timeout_seconds(timeout)
-        while True:
-            current = self.kubectl.get_if_exists(resource, name, self.namespace)
-            if current is None or current["metadata"]["uid"] != uid:
-                return
-            if time.monotonic() >= deadline:
-                raise DeploymentError(
-                    f"application publisher {resource}/{name} did not terminate within {timeout}"
-                )
-            time.sleep(1)
+        self.kubectl.wait_deleted(resource, metadata, timeout)
 
     def _wait(self, job: dict[str, Any], timeout: str) -> None:
         """Wait for the owned Job's publication and surface native failure diagnostics."""

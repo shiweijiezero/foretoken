@@ -31,9 +31,9 @@ use self::output::{
     text_stream_many,
 };
 use super::{ApiState, RequestTiming, server_request_id};
+use crate::AdmissionOrigin;
 use crate::runtime::{GenerationError, GenerationRequest, RequestSnapshot};
-use crate::{AdmissionOrigin, admission};
-use foretoken_admission::{AdmissionApi, AdmissionOperation, AdmissionOutput, AdmissionRequest};
+use foretoken_admission::{AdmissionRequest, CallerIdentity};
 
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 
@@ -114,7 +114,6 @@ async fn tokenize(
 ) -> Response {
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let origin = AdmissionOrigin {
-        api: Some(AdmissionApi::OpenAi),
         received_at: timing.started_at,
     };
     let Json(request) = match request {
@@ -225,7 +224,6 @@ async fn detokenize(
 ) -> Response {
     let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
     let origin = AdmissionOrigin {
-        api: Some(AdmissionApi::OpenAi),
         received_at: timing.started_at,
     };
     let Json(request) = match request {
@@ -677,7 +675,7 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
             "invalid_request_error",
             "model_not_found",
         ),
-        GenerationError::Unavailable => (
+        GenerationError::Unavailable | GenerationError::BackendBusy => (
             StatusCode::SERVICE_UNAVAILABLE,
             "generation service is unavailable",
             "server_error",
@@ -697,7 +695,7 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
         ),
         GenerationError::AdmissionCapacityExceeded => (
             StatusCode::BAD_REQUEST,
-            "request fan-out exceeds configured admission concurrency",
+            "request fan-out exceeds configured admission capacity",
             "invalid_request_error",
             "concurrency_limit_exceeded",
         ),
@@ -775,18 +773,8 @@ async fn completions(
     let request_id = server_request_id("cmpl");
     let admission_request = AdmissionRequest {
         model: request.model.clone(),
-        operation: AdmissionOperation::Completion,
-        api: Some(AdmissionApi::OpenAi),
-        request_id: Some(request_id.clone()),
-        inputs: prompts.iter().map(admission::prompt_input).collect(),
-        candidates_per_input: best_of,
-        output: AdmissionOutput {
-            requested_max_tokens: request.max_tokens,
-            execution_max_tokens: sampling_params.max_tokens,
-            expected_tokens: None,
-        },
-        requested_priority: request.priority,
-        stream,
+        caller: CallerIdentity::current(),
+        units: units as u32,
         received_at: timing.started_at,
     };
     let mut admission = match state.generation.admit(&admission_request).await {
@@ -800,8 +788,6 @@ async fn completions(
                 .generation
                 .generate(GenerationRequest {
                     admission: Some(admission.split_one()),
-                    api: Some(AdmissionApi::OpenAi),
-                    requested_max_tokens: request.max_tokens,
                     model: request.model.clone(),
                     request_id: if generated.is_empty() {
                         request_id.clone()
@@ -957,13 +943,7 @@ async fn chat_completions(
         return client_error();
     }
     let generated = match state
-        .generate_chat(
-            request.model,
-            chat,
-            include_reasoning,
-            timing,
-            AdmissionApi::OpenAi,
-        )
+        .generate_chat(request.model, chat, include_reasoning, timing)
         .await
     {
         Ok(generated) => generated,

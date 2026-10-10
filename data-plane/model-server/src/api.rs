@@ -4,8 +4,8 @@
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
 use std::convert::Infallible;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -20,15 +20,13 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
+use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
 
-// One atomic word linearizes admission close against request acceptance.
-const ADMISSION_OPEN: u64 = 1 << 63;
-const RUNNING_REQUESTS_MASK: u64 = !ADMISSION_OPEN;
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// Engine state used for API health and admission only; process ownership stays upstream.
@@ -36,7 +34,11 @@ const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.
 pub struct RuntimeHealth {
     process_alive: AtomicBool,
     client_healthy: AtomicBool,
-    admission: AtomicU64,
+    // Acceptance, configuration publication, and close share one linearization boundary.
+    admission: Mutex<InstanceAdmissionStatus>,
+    failure: tokio::sync::Notify,
+    drained: tokio::sync::Notify,
+    stopped: tokio::sync::Notify,
 }
 
 impl RuntimeHealth {
@@ -45,9 +47,104 @@ impl RuntimeHealth {
         Self::default()
     }
 
+    /// Initializes a protocol-0 startup limit before the supervisor opens ingress.
+    /// This does not acknowledge support for projected live configuration.
+    pub fn set_startup_admission_limit(&self, limit: Option<u32>) {
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .max_concurrent_requests = limit;
+    }
+
+    /// Applies a newer or identical configuration without resetting occupancy or reopening admission.
+    /// The configuration watcher calls this before acknowledging the controller's version.
+    pub fn apply_instance_configuration(&self, configuration: InstanceAdmissionConfig) {
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        let version = configuration.version.get();
+        let limit = configuration
+            .max_concurrent_requests
+            .map(|limit| limit.get());
+        if state.active_generation.is_some_and(|active| {
+            version < active || version == active && state.max_concurrent_requests != limit
+        }) {
+            state.target_generation = Some(version);
+            state.configuration_error =
+                Some("instance admission version is stale or has different limits".into());
+            return;
+        }
+        state.max_concurrent_requests = limit;
+        state.active_generation = Some(version);
+        state.target_generation = Some(version);
+        state.configuration_error = None;
+    }
+
+    /// Reports a rejected candidate while retaining the last applied limit and permits.
+    pub fn reject_instance_configuration(&self, version: Option<u64>, error: String) {
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        if let Some(version) = version {
+            state.target_generation = Some(version);
+        }
+        state.configuration_error = Some(error);
+    }
+
+    /// Returns one coherent configuration and occupancy observation for the controller.
+    pub fn instance_admission_status(&self) -> InstanceAdmissionStatus {
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .clone()
+    }
+
+    /// Requests supervised engine shutdown when a submitted request's completion becomes unknown.
+    pub fn fail_execution(&self) {
+        self.set_accepting(false);
+        self.set_client_healthy(false);
+        self.failure.notify_one();
+    }
+
+    /// Waits for an execution-lifecycle failure requiring the supervisor to stop the engine.
+    pub async fn execution_failed(&self) {
+        self.failure.notified().await;
+    }
+
+    /// Waits until every accepted execution has relinquished its instance slot.
+    pub async fn wait_drained(&self) {
+        loop {
+            let drained = self.drained.notified();
+            tokio::pin!(drained);
+            drained.as_mut().enable();
+            if self.running_requests() == 0 {
+                return;
+            }
+            drained.await;
+        }
+    }
+
     /// Publishes managed-engine process liveness to probe handlers; the supervisor owns updates.
     pub fn set_process_alive(&self, value: bool) {
         self.process_alive.store(value, Ordering::Release);
+        if !value {
+            self.stopped.notify_waiters();
+        }
+    }
+
+    /// Waits for the supervisor's confirmation that the managed engine has stopped.
+    pub async fn wait_stopped(&self) {
+        loop {
+            let stopped = self.stopped.notified();
+            tokio::pin!(stopped);
+            stopped.as_mut().enable();
+            if !self.process_alive.load(Ordering::Acquire) {
+                return;
+            }
+            stopped.await;
+        }
     }
 
     /// Publishes EngineCore client health to probe handlers; the supervisor owns updates.
@@ -55,14 +152,12 @@ impl RuntimeHealth {
         self.client_healthy.store(value, Ordering::Release);
     }
 
-    /// Opens or closes new HTTP admission for lifecycle coordination; accepted streams retain permits.
+    /// Opens or closes new HTTP admission; accepted executions retain their instance slots.
     pub fn set_accepting(&self, value: bool) {
-        if value {
-            self.admission.fetch_or(ADMISSION_OPEN, Ordering::AcqRel);
-        } else {
-            self.admission
-                .fetch_and(RUNNING_REQUESTS_MASK, Ordering::AcqRel);
-        }
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .accepting = value;
     }
     /// Returns process-and-client health for the `/healthz` probe without changing lifecycle state.
     pub fn healthy(&self) -> bool {
@@ -76,49 +171,70 @@ impl RuntimeHealth {
 
     /// Returns whether new requests may enter for telemetry and admission consumers.
     ///
-    /// Existing stream permits remain owned by their handlers after this signal closes.
+    /// Execution tasks retain existing permits after this signal closes.
     pub fn accepting(&self) -> bool {
-        self.admission.load(Ordering::Acquire) & ADMISSION_OPEN != 0
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .accepting
     }
-    /// Reserves admission and transfers the slot to a response-held permit.
-    /// Closing admission clears only the open bit, so existing requests can drain.
-    pub fn try_admit(self: &Arc<Self>) -> Option<AdmissionPermit> {
-        let mut current = self.admission.load(Ordering::Acquire);
-        loop {
-            if current & ADMISSION_OPEN == 0 {
-                return None;
-            }
-            let next = current + 1;
-            match self.admission.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    return Some(AdmissionPermit {
-                        health: self.clone(),
-                    });
-                }
-                Err(observed) => current = observed,
-            }
+    /// Reserves an instance slot against the current limit; the execution task owns its release.
+    pub fn try_admit(self: &Arc<Self>) -> Result<AdmissionPermit, AdmissionRejection> {
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        if !state.accepting {
+            return Err(AdmissionRejection::Closed);
         }
+        if state
+            .max_concurrent_requests
+            .is_some_and(|limit| state.running_requests >= u64::from(limit))
+        {
+            return Err(AdmissionRejection::Busy);
+        }
+        state.running_requests += 1;
+        Ok(AdmissionPermit {
+            health: self.clone(),
+        })
     }
     /// Returns the number of accepted requests still holding a permit.
     pub fn running_requests(&self) -> u64 {
-        self.admission.load(Ordering::Acquire) & RUNNING_REQUESTS_MASK
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .running_requests
     }
 }
 
-/// Slot released when an accepted response stream is dropped.
+/// A definite rejection before any request is submitted to the inference engine.
+#[derive(Debug, Clone, Copy)]
+pub enum AdmissionRejection {
+    Closed,
+    Busy,
+}
+
+/// Instance slot retained until engine termination is confirmed.
 pub struct AdmissionPermit {
     health: Arc<RuntimeHealth>,
 }
 
 impl Drop for AdmissionPermit {
     fn drop(&mut self) {
-        self.health.admission.fetch_sub(1, Ordering::AcqRel);
+        self.health
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .running_requests -= 1;
+        self.health.drained.notify_waiters();
     }
+}
+
+#[derive(Clone)]
+struct ExecutionStore {
+    ledger: Arc<foretoken_request_ledger::RequestLedger>,
+    pod_uid: String,
+    epoch: u64,
 }
 
 /// Mutable process state shared by typed HTTP handlers.
@@ -131,6 +247,7 @@ pub struct AppState {
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
     shared_kv: Option<crate::shared_kv::SharedKvLookup>,
+    ledger: Option<ExecutionStore>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -147,8 +264,25 @@ impl AppState {
             runtime_cache: None,
             profiling: None,
             shared_kv: None,
+            ledger: None,
         }
     }
+
+    /// Attaches the platform capacity ledger used to accept and finish frontend reservations.
+    pub fn with_request_ledger(
+        mut self,
+        ledger: Arc<foretoken_request_ledger::RequestLedger>,
+        pod_uid: String,
+        epoch: u64,
+    ) -> Self {
+        self.ledger = Some(ExecutionStore {
+            ledger,
+            pod_uid,
+            epoch,
+        });
+        self
+    }
+
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
     ///
     /// The router owns this state while its handlers retain cloned adapter references.
@@ -186,6 +320,11 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
+        .route("/v1/internal/admission", get(instance_admission_status))
+        .route(
+            "/v1/internal/admission/ready",
+            get(instance_admission_ready),
+        )
         .route("/v1/internal/admission/close", post(close_admission))
         .route(
             "/v1/internal/profiling",
@@ -202,6 +341,26 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
+}
+
+// The protocol-1 workload probe cannot admit an older binary that ignores the projected limit.
+async fn instance_admission_ready(State(state): State<AppState>) -> StatusCode {
+    if state.health.ready()
+        && state
+            .health
+            .instance_admission_status()
+            .active_generation
+            .is_some()
+    {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+// The controller observes applied limits through the same listener used for drain and execution.
+async fn instance_admission_status(State(state): State<AppState>) -> Json<InstanceAdmissionStatus> {
+    Json(state.health.instance_admission_status())
 }
 
 #[derive(Deserialize)]
@@ -330,7 +489,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     }
 }
 
-/// Decode one internal generation request and hold its admission slot for the response stream.
+/// Decodes an internal request and transfers its instance slot to the engine execution task.
 async fn generate(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -342,20 +501,24 @@ async fn generate(
     } else {
         serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
     };
+    if input
+        .reservation
+        .as_ref()
+        .is_some_and(|reference| reference.model != state.metadata.model.model)
+    {
+        return Err(ApiError::InvalidRequest);
+    }
     if !state.health.healthy() {
         return Err(ApiError::Unavailable);
     }
-    // Admission closes before drain; the permit remains owned by the stream until completion or drop.
-    let permit = state.health.try_admit().ok_or(ApiError::Unavailable)?;
+    let permit = state.health.try_admit().map_err(|error| match error {
+        AdmissionRejection::Closed => ApiError::Unavailable,
+        AdmissionRejection::Busy => ApiError::Busy,
+    })?;
     let request_id = input.request_id.clone();
-    let stream = state
-        .backend
-        .generate(input)
-        .await
-        .map_err(ApiError::backend)?;
+    let stream = start_execution(state, input, permit).await?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let body_stream = stream.map(move |item| {
-        let _permit = &permit;
         let event = match item {
             Ok(event) => event,
             Err(error) => TokenEvent::Error {
@@ -373,6 +536,212 @@ async fn generate(
         Body::from_stream(body_stream),
     )
         .into_response())
+}
+
+// Submission outlives the HTTP handler. A disconnect during engine submission must not drop
+// the future and leave an accepted request without a completion owner.
+async fn start_execution(
+    state: AppState,
+    mut input: GenerateInput,
+    permit: AdmissionPermit,
+) -> Result<crate::backend::TokenStream, ApiError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let owner = uuid::Uuid::new_v4().to_string();
+        let shared = match input.reservation.take() {
+            Some(reference) => match state.ledger.clone() {
+                Some(store) => Some((store, reference)),
+                None => {
+                    let _ = reply.send(Err(ApiError::Unavailable));
+                    return;
+                }
+            },
+            None => None,
+        };
+        if let Some((store, reference)) = &shared {
+            loop {
+                match store
+                    .ledger
+                    .accept(reference, &owner, &store.pod_uid, store.epoch)
+                    .await
+                {
+                    Ok(foretoken_request_ledger::Outcome::Applied) => break,
+                    Ok(foretoken_request_ledger::Outcome::BackendUnavailable) => {
+                        let _ = reply.send(Err(ApiError::AdmissionUnavailable));
+                        return;
+                    }
+                    Ok(_) => {
+                        drop(permit);
+                        finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
+                        let _ = reply.send(Err(ApiError::InvalidRequest));
+                        return;
+                    }
+                    Err(_) if reply.is_closed() => {
+                        drop(permit);
+                        finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
+                        return;
+                    }
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
+        }
+        if reply.is_closed() {
+            drop(permit);
+            finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
+            return;
+        }
+        let request_id = input.request_id.clone();
+        let submission = tokio::select! {
+            biased;
+            () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+            result = state.backend.generate(input) => result,
+        };
+        let generation = match submission {
+            Ok(generation) => generation,
+            Err(error) => {
+                let _ = reply.send(Err(ApiError::backend(error)));
+                let end = if matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
+                {
+                    ReservationEnd::NotSubmitted
+                } else {
+                    stop_uncertain_execution(&state.health).await;
+                    ReservationEnd::RequestTerminated
+                };
+                drop(permit);
+                finish_shared(&shared, &owner, end).await;
+                return;
+            }
+        };
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let cancellation = cancel.clone();
+        let (completed, mut completion) = tokio::sync::watch::channel(false);
+        let crate::backend::BackendGeneration {
+            mut stream,
+            completion: mut engine_completion,
+        } = generation;
+        tokio::spawn(async move {
+            let cancellation_requested = async {
+                loop {
+                    tokio::select! {
+                        _ = cancellation.notified() => return,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {},
+                    }
+                    if let Some((store, reference)) = &shared
+                        && matches!(store.ledger.cancelled(reference).await, Ok(true))
+                    {
+                        return;
+                    }
+                }
+            };
+            let result = tokio::select! {
+                result = &mut engine_completion => result,
+                () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+                () = cancellation_requested => {
+                    let ids = [request_id];
+                    let abort = tokio::select! {
+                        result = state.backend.abort(&ids) => result,
+                        () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+                    };
+                    if abort.is_err() { state.health.fail_execution(); }
+                    tokio::select! {
+                        result = engine_completion => result,
+                        () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+                    }
+                },
+            };
+            if result.is_err() {
+                stop_uncertain_execution(&state.health).await;
+            }
+            drop(permit);
+            // Final output can finish while persistence recovers. Intermediate output waits for
+            // the ownership handoff, because the next engine must claim the same caller slot.
+            let handoff = result.is_ok()
+                && shared
+                    .as_ref()
+                    .is_some_and(|(_, reference)| !reference.final_stage);
+            if !handoff {
+                completed.send_replace(true);
+            }
+            let end = if result.is_ok() {
+                ReservationEnd::StageTerminated
+            } else {
+                ReservationEnd::RequestTerminated
+            };
+            finish_shared(&shared, &owner, end).await;
+            if handoff {
+                completed.send_replace(true);
+            }
+        });
+        let cleanup = CancelExecution(cancel);
+        let output: crate::backend::TokenStream = Box::pin(async_stream::stream! {
+            let _cleanup = cleanup;
+            while let Some(item) = stream.next().await {
+                let terminal = match &item {
+                    Ok(TokenEvent::Token(output)) => output.finish_reason.is_some(),
+                    Ok(TokenEvent::Error { .. }) | Err(_) => true,
+                };
+                if terminal && completion.wait_for(|complete| *complete).await.is_err() {
+                    yield Err(BackendError::Unavailable);
+                    return;
+                }
+                yield item;
+                if terminal { return; }
+            }
+        });
+        let _ = reply.send(Ok(output));
+    });
+    received.await.map_err(|_| ApiError::RequestFailed)?
+}
+
+struct CancelExecution(Arc<tokio::sync::Notify>);
+impl Drop for CancelExecution {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+// The managed process owner, not an HTTP EOF or abort receipt, establishes termination when
+// transport failure made per-request confirmation impossible.
+async fn stop_uncertain_execution(health: &RuntimeHealth) {
+    health.fail_execution();
+    health.wait_stopped().await;
+}
+
+#[derive(Clone, Copy)]
+enum ReservationEnd {
+    NotSubmitted,
+    StageTerminated,
+    RequestTerminated,
+}
+
+// Persist the execution owner's terminal evidence, retaining the reservation across storage outages.
+async fn finish_shared(
+    shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
+    owner: &str,
+    end: ReservationEnd,
+) {
+    let Some((store, reference)) = shared else {
+        return;
+    };
+    let mut reference = reference.clone();
+    reference.final_stage |= matches!(end, ReservationEnd::RequestTerminated);
+    loop {
+        let result = match end {
+            ReservationEnd::NotSubmitted => {
+                store
+                    .ledger
+                    .reject_before_submission(&reference, owner)
+                    .await
+            }
+            ReservationEnd::StageTerminated | ReservationEnd::RequestTerminated => {
+                store.ledger.complete(&reference, owner).await
+            }
+        };
+        match result {
+            Ok(()) => return,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+        }
+    }
 }
 
 async fn abort(
@@ -437,6 +806,8 @@ fn status(healthy: bool) -> StatusCode {
 enum ApiError {
     InvalidRequest,
     Unavailable,
+    Busy,
+    AdmissionUnavailable,
     Rejected,
     Protocol,
     RequestFailed,
@@ -454,7 +825,9 @@ impl ApiError {
     const fn status(self) -> StatusCode {
         match self {
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
-            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable | Self::Busy | Self::AdmissionUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::Rejected | Self::Protocol | Self::RequestFailed => StatusCode::BAD_GATEWAY,
         }
     }
@@ -462,6 +835,8 @@ impl ApiError {
         match self {
             Self::InvalidRequest => "invalid_request",
             Self::Unavailable => "unavailable",
+            Self::Busy => "admission_busy",
+            Self::AdmissionUnavailable => "admission_unavailable",
             Self::Rejected => "rejected",
             Self::Protocol => "protocol",
             Self::RequestFailed => "request_failed",
@@ -471,6 +846,8 @@ impl ApiError {
         match self {
             Self::InvalidRequest => "invalid internal request",
             Self::Unavailable => "model server is unavailable",
+            Self::Busy => "model server acceptance capacity is full",
+            Self::AdmissionUnavailable => "model server admission membership is not published",
             Self::Rejected => "model server rejected the request",
             Self::Protocol => "model server protocol failed",
             Self::RequestFailed => "model server request failed",

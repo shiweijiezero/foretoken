@@ -19,7 +19,7 @@ kubectl get nodes
 The cluster needs:
 
 - Kubernetes access through `kubectl` and Helm;
-- a default StorageClass for compiler caches;
+- a default StorageClass for platform persistent storage and compiler caches;
 - GPU drivers and the vendor device plugin when deploying GPU models; and
 - a registry reachable by the Build Pods and every node when using source-built images.
 

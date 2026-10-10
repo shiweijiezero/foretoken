@@ -7,15 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use foretoken_admission::{AdmissionTargetState, PreparedAdmissions};
+use foretoken_admission::PreparedAdmissions;
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ModelIdentity, ServingSnapshot,
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_router::{
-    PipelineRouter, RouteInventory, RouteTargetStatsReader, Router, RouterPipeline,
-    RouterPipelineConfigError,
+    PipelineRouter, RouteInventory, Router, RouterPipeline, RouterPipelineConfigError,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -124,9 +123,13 @@ impl RuntimeBuilder {
                 "model catalog and admission rules differ".into(),
             ));
         }
-        let admission = PreparedAdmissions::new(&snapshot.admission)
-            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
-        let admission_targets = snapshot
+        let admission = PreparedAdmissions::new(
+            &snapshot.admission,
+            &snapshot.frontend_instances,
+            &snapshot.backend_instances,
+        )
+        .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        let preparation_targets = snapshot
             .admission_target_sets()
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
         let backends = self.prepare_backends(snapshot, identities).await?;
@@ -137,7 +140,6 @@ impl RuntimeBuilder {
             log_level,
             backends: backends.clone(),
             published_backends: self.backends.clone(),
-            routing_load: self.routing_load.clone(),
             pipeline: pipeline.clone(),
             published_pipeline: self.router_pipeline.clone(),
         });
@@ -163,8 +165,8 @@ impl RuntimeBuilder {
                 client.clone(),
             );
         }
-        for (model, candidates) in admission_targets {
-            state = state.with_admission_targets(model, candidates);
+        for (model, candidates) in preparation_targets {
+            state = state.with_preparation_targets(model, candidates);
         }
         Ok(PreparedRuntime {
             version,
@@ -326,7 +328,6 @@ struct RegistryRuntimeControl {
     published_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
     backends: Arc<CachedBackends>,
     published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
-    routing_load: foretoken_router::RoutingLoadState,
 }
 
 #[async_trait]
@@ -359,48 +360,8 @@ impl RuntimeControl for RegistryRuntimeControl {
         self.backends.registry.is_configured()
     }
 
-    fn model_ready(&self, model: &str) -> bool {
-        self.backends.registry.is_model_ready(model)
-    }
-
-    fn route_target_states(
-        &self,
-        model: &str,
-        window: std::time::Duration,
-    ) -> Vec<AdmissionTargetState> {
-        self.backends
-            .registry
-            .model_routes()
-            .routes()
-            .iter()
-            .filter(|target| target.model == model)
-            .map(|target| {
-                let mut target = target.clone();
-                target.capabilities = self
-                    .backends
-                    .registry
-                    .effective_capabilities(&target.route_target_id);
-                AdmissionTargetState {
-                    healthy: self
-                        .backends
-                        .registry
-                        .is_route_target_healthy(&target.route_target_id),
-                    statistics: self
-                        .backends
-                        .registry
-                        .stats(&target.route_target_id, window),
-                    frontend_load: (0..target.data_parallel_size)
-                        .map(|rank| {
-                            (
-                                rank,
-                                self.routing_load.snapshot(&target.route_target_id, rank),
-                            )
-                        })
-                        .collect(),
-                    target,
-                }
-            })
-            .collect()
+    fn model_ready(&self, model: &str, allowed_pools: &[String]) -> bool {
+        self.backends.registry.is_model_ready(model, allowed_pools)
     }
 
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {

@@ -13,6 +13,8 @@ const DRAIN_SECONDS_ENV: &str = "FORETOKEN_DRAIN_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 
 pub(crate) struct RuntimeConfig {
+    pub(crate) frontend_uid: String,
+    pub(crate) pod_uid: String,
     pub(crate) serving_snapshot: PathBuf,
     pub(crate) listen_address: String,
     pub(crate) drain: Duration,
@@ -32,6 +34,8 @@ impl RuntimeConfig {
             return Err(format!("{DRAIN_SECONDS_ENV} must be a positive integer"));
         }
         Ok(Self {
+            frontend_uid: required_env("FORETOKEN_FRONTEND_UID")?,
+            pod_uid: required_env("FORETOKEN_POD_UID")?,
             serving_snapshot: serving_snapshot.into(),
             listen_address: required_env(LISTEN_ADDRESS_ENV)?,
             drain: Duration::from_secs(seconds),

@@ -64,6 +64,20 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              instanceAdmission:
+                description: InstanceAdmission is the live acceptance limit published
+                  to each instance ingress.
+                properties:
+                  maxConcurrentRequests:
+                    description: MaxConcurrentRequests includes engine waiting, running,
+                      and unfinished submissions.
+                    format: int64
+                    maximum: 4294967295
+                    minimum: 1
+                    type: integer
+                required:
+                - maxConcurrentRequests
+                type: object
               maxInputTokens:
                 description: MaxInputTokens is the live prompt limit published to
                   routing clients.
@@ -100,6 +114,45 @@ spec:
                     description: Application is selected by the ModelService controller,
                       not by user model intent.
                     properties:
+                      admissionStore:
+                        description: AdmissionStore retains the ledger connection
+                          selected with this executable application.
+                        properties:
+                          url:
+                            description: URL is a credential-free Redis-compatible
+                              endpoint.
+                            pattern: ^rediss?://[^@]+$
+                            type: string
+                          urlSecretRef:
+                            description: URLSecretRef contains the full connection
+                              URL in a namespace-local Secret.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one admission store URL or Secret reference
+                            is required
+                          rule: has(self.url) != has(self.urlSecretRef)
                       applicationURL:
                         type: string
                       deploymentRevision:
@@ -110,6 +163,13 @@ spec:
                         description: ImageProfile distinguishes serving, Omni and
                           diagnostic environments during selection.
                         type: string
+                      instanceAdmissionProtocol:
+                        description: |-
+                          InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+                          Zero retains startup-only limits; one selects live file configuration.
+                        format: int32
+                        maximum: 1
+                        type: integer
                       sourceRevision:
                         description: SourceRevision retains the admitted source intent
                           independently of source-mode defaults.
@@ -182,6 +242,21 @@ spec:
                         description: TokenSecretName and TokenSecretKey identify an
                           optional namespace-local credential.
                         type: string
+                    type: object
+                  instanceAdmission:
+                    description: |-
+                      InstanceAdmission retains the immutable startup limit of a protocol-zero application.
+                      Live-file applications use ModelPoolSpec.InstanceAdmission instead.
+                    properties:
+                      maxConcurrentRequests:
+                        description: MaxConcurrentRequests includes engine waiting,
+                          running, and unfinished submissions.
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                    required:
+                    - maxConcurrentRequests
                     type: object
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
@@ -552,6 +627,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              instanceAdmissionVersion:
+                description: |-
+                  InstanceAdmissionVersion is reserved before publishing an instance configuration.
+                  It prevents ConfigMap restoration from rolling the publication version backward.
+                format: int64
+                minimum: 0
+                type: integer
               observedGeneration:
                 format: int64
                 minimum: 0

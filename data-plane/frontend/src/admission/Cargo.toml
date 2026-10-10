@@ -8,10 +8,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-foretoken-serving-types = { path = "../serving-types" }
+foretoken-request-ledger = { path = "../../../request-ledger" }
 humantime.workspace = true
-inventory.workspace = true
+uuid.workspace = true
+tracing.workspace = true
 prometheus-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true

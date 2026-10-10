@@ -124,6 +124,22 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def wait_deleted(
+        self, resource: str, metadata: dict[str, Any], timeout: str
+    ) -> None:
+        """Wait for one owned UID to disappear without waiting on a reused resource name."""
+        name, namespace, uid = metadata["name"], metadata["namespace"], metadata["uid"]
+        deadline = time.monotonic() + timeout_seconds(timeout)
+        while True:
+            current = self.get_if_exists(resource, name, namespace)
+            if current is None or current["metadata"]["uid"] != uid:
+                return
+            if time.monotonic() >= deadline:
+                raise DeploymentError(
+                    f"{resource}/{name} in {namespace} was not deleted within {timeout}"
+                )
+            time.sleep(1)
+
     def rollout_status(self, resource: ResourceRef, timeout: str) -> None:
         """Wait for one namespaced workload to become ready."""
         self.run(
@@ -302,11 +318,12 @@ class Kubectl:
             args.extend(["--selector", label_selector])
         return _decode_resource_list(self.run(args).stdout)
 
-    def api_resource_names(self, group: str) -> tuple[str, ...]:
-        """Return resource names currently served for one Kubernetes API group."""
-        output = self.run(
-            ["api-resources", "--api-group", group, "-o", "name"]
-        ).stdout
+    def api_resource_names(self, group: str | None = None) -> tuple[str, ...]:
+        """Discover served resources, optionally selecting one API group; empty selects core."""
+        args = ["api-resources", "-o", "name"]
+        if group is not None:
+            args.extend(["--api-group", group])
+        output = self.run(args).stdout
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
     def current_context(self) -> str:
@@ -409,21 +426,36 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
 
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
-    """Return user-owned services that require the Foretoken control plane."""
-    supported = set(kubectl.api_resource_names("inference.foretoken.io"))
-    top_level_kinds = tuple(
+    """Find services and remaining serving workloads before their platform is removed."""
+    supported = set(kubectl.api_resource_names())
+    kinds = tuple(
         name
         for name in (
             "frontendservices.inference.foretoken.io",
             "modelservices.inference.foretoken.io",
             "kvservices.inference.foretoken.io",
+            "modelpools.inference.foretoken.io",
+            "modelgroups.inference.foretoken.io",
         )
         if name in supported
     )
-    if not top_level_kinds:
-        return ()
-
-    return _resource_refs(kubectl.list_all_resources(top_level_kinds))
+    objects = list(kubectl.list_all_resources(kinds)) if kinds else []
+    workloads = ("pods", "jobs", "replicasets", "deployments", "statefulsets")
+    if "leaderworkersets.leaderworkerset.x-k8s.io" in supported:
+        workloads += ("leaderworkersets.leaderworkerset.x-k8s.io",)
+    # Deleting a service does not synchronously terminate its descendants.
+    for label in (
+        "inference.foretoken.io/frontend-service",
+        "inference.foretoken.io/model-group",
+        "inference.foretoken.io/model-preparation-group",
+    ):
+        objects.extend(
+            kubectl.list_all_resources(
+                workloads,
+                label_selector=label,
+            )
+        )
+    return tuple(dict.fromkeys(_resource_refs(objects)))
 
 
 def timeout_seconds(value: str) -> float:
@@ -523,7 +555,9 @@ def resource_progress(
                 "Waiting for the selected service alerts", False,
             )
         return ResourceProgress(resource, "Ready", reason, message, True)
-    if condition_status == "False" and reason in {"InvalidIntent", "ConfigurationRejected"}:
+    if condition_status == "False" and reason in {
+        "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
+    }:
         return ResourceProgress(resource, "Failed", reason, message, False)
     return ResourceProgress(resource, "Progressing", reason, message, False)
 

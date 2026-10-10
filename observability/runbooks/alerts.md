@@ -33,7 +33,7 @@ Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/
 | [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | Frontend | HTTP response-start 5xx exceeds 5% for 2 minutes, with at least 0.1 responses/s over a 5-minute window. |
 | [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | Frontend | Admission capacity rejections exceed the configured fraction. |
 | [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | Frontend | Admission timeouts exceed the configured fraction. |
-| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | Frontend | Queue-wait p95 for requests that queued and were admitted exceeds the configured duration. |
+| [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | Frontend | Waiting-time p95 before backend acceptance exceeds the configured duration. |
 | [ForetokenAdmissionTelemetryMissing](#foretokenadmissiontelemetrymissing) | Frontend | Scraping succeeds but required admission metrics are missing for 5 minutes. |
 | [ForetokenNVIDIAGPUTemperatureHigh](#foretokennvidiagputemperaturehigh) | Model | NVIDIA GPU temperature reaches the threshold for 2 minutes; default 85°C. |
 | [ForetokenNVIDIAGPUPowerUsageHigh](#foretokennvidiagpupowerusagehigh) | Model | NVIDIA GPU power reaches the configured threshold for 5 minutes. |
@@ -56,7 +56,7 @@ Inspect frontend status-code trends and logs. Use the Admission section to ident
 
 Set `capacityRejectionRatio` from 0 to 1 and `minResultRate` in completed calls/s under the admission thresholds. The ratio counts capacity rejections among completed HTTP admission calls for each model.
 
-Select the affected model and compare its traffic, occupancy, and configured limits across frontend Pods. Check backend load before adjusting that model's limits.
+Select the affected model and compare dispatch results across frontend Pods with shared waiting occupancy and caller limits. Check backend load before adjusting limits.
 
 ### ForetokenAdmissionTimeoutRatioHigh
 
@@ -66,13 +66,13 @@ Compare queue occupancy and waiting time with `queueTimeout` and the request tim
 
 ### ForetokenAdmissionAdmittedQueueP95High
 
-Set positive `admittedQueueP95Seconds` in seconds and `minQueuedAdmissionRate` in calls/s under the admission thresholds. This rule measures only requests that actually queued and were admitted, not immediate admissions or timed-out requests.
+Set positive `admittedQueueP95Seconds` in seconds and `minQueuedAdmissionRate` in calls/s under the admission thresholds. This rule measures requests that acquired waiting ownership and reached first backend acceptance. Waiting includes input preparation and submission; unrestricted requests and timed-out requests are excluded.
 
-Select the affected model and inspect its admitted-wait curve alongside queue occupancy and model capacity. Use timeout results to see whether requests are also leaving the queue without admission.
+Select the affected model and inspect its waiting curve alongside shared waiting occupancy and limits. Use timeout results to see whether requests are also leaving without backend acceptance.
 
 ### ForetokenAdmissionTelemetryMissing
 
-Inspect the Admission replica table for the affected model and Pod with incomplete reporting, and compare Pod runtime versions. Check monitoring configuration if the issue persists after an upgrade completes.
+Inspect the Admission replica table for the affected model and Pod, then compare Pod runtime versions and monitoring configuration.
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 
