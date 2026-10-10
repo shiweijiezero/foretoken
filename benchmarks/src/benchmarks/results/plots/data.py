@@ -94,13 +94,15 @@ def sweep_charts(
     *,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
+    vary_axes: bool = True,
 ) -> tuple[Chart, ...]:
     """Return metric curves for each parameter group and fixed-workload slice.
 
     The summary owns means, sample counts and run-level standard deviations.
     Each changing numeric bench parameter becomes an x axis; all other bench
     parameters remain fixed within a chart, so unrelated workloads never form
-    one connected curve. W&B and the local renderer consume these same charts.
+    one connected curve. Historical iteration comparisons keep every workload
+    fixed with vary_axes=False. W&B and the local renderer consume these charts.
     """
     point_by_key = {(_method(p), str(p["combination"])): p for p in points}
     method_order = list(dict.fromkeys(_method(point) for point in points))
@@ -123,6 +125,9 @@ def sweep_charts(
         "tpot_p95_seconds",
         "requests_per_second",
         "generation_tokens_per_second",
+        "success_rate",
+        "resources_cpu_usage_cores",
+        "resources_cpu_throttled_periods_ratio",
         "e2e_s",
         "denoise_s",
         "peak_gpu_memory_mb",
@@ -183,7 +188,7 @@ def sweep_charts(
             for key in dict.fromkeys(k for _, bench in entries for k in bench)
             if len({_numeric(bench.get(key)) for _, bench in entries}) > 1
             and all(_numeric(bench.get(key)) is not None for _, bench in entries)
-        ]
+        ] if vary_axes else []
         if not axes:
             axes = [""]
         for axis in axes:
@@ -204,7 +209,8 @@ def sweep_charts(
                     or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}
                 )
                 ratio = metric in {
-                    "slo_slo_attainment", "speculative_decoding_acceptance_ratio",
+                    "slo_slo_attainment", "success_rate", "resources_cpu_throttled_periods_ratio",
+                    "speculative_decoding_acceptance_ratio",
                     "speculative_decoding_draft_time_share_ratio",
                     "speculative_decoding_target_forward_time_share_ratio",
                 }
@@ -303,6 +309,9 @@ def sweep_charts(
                                 "ttft_p95_seconds": "TTFT p95 (s)",
                                 "requests_per_second": "Request throughput (req/s)",
                                 "generation_tokens_per_second": "Output throughput (tokens/s)",
+                                "success_rate": "Successful requests (%)",
+                                "resources_cpu_usage_cores": "Mean CPU usage (cores)",
+                                "resources_cpu_throttled_periods_ratio": "Throttled CPU periods (%)",
                                 "e2e_s": "Video E2E latency (s)",
                                 "denoise_s": "Denoise latency (s)",
                                 "peak_gpu_memory_mb": "Peak GPU memory (MiB)",

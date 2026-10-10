@@ -641,6 +641,20 @@ def _distribution_charts(comparison: dict[str, Any]) -> list[Chart]:
     return charts
 
 
+def comparison_charts(metrics: dict[str, Any]) -> tuple[list[Chart], list[str]] | None:
+    """Read comparison charts and method identities for standalone and experiment exports."""
+    if "evaluation_comparison" in metrics:
+        comparison = metrics["evaluation_comparison"]
+        return _evaluation_comparison_charts(comparison), [method["label"] for method in comparison["methods"]]
+    if "greedy_comparison" in metrics:
+        comparison = metrics["greedy_comparison"]
+        return _greedy_charts(comparison), list(dict.fromkeys(str(row["method"]) for row in comparison["candidates"]))
+    if "distribution_comparison" in metrics:
+        comparison = metrics["distribution_comparison"]
+        return _distribution_charts(comparison), list(dict.fromkeys(str(row["method"]) for row in comparison["candidates"]))
+    return None
+
+
 def _evaluation_comparison_charts(comparison: dict[str, Any]) -> list[Chart]:
     """Keep every task, subset, filter, and metric in its own candidate chart."""
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)

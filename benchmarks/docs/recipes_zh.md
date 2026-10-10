@@ -186,3 +186,14 @@ foretoken plot results/fixed-length --columns 2
 foretoken plot results/fixed-length --metric latency_p95_seconds \
   --output-dir results/fixed-length/latency-figure
 ```
+
+## 对照历史迭代
+
+传入 `--output experiment` 创建的实验目录。假设已保存的两个方案名为 `baseline` 和 `mtp5`，直接比较：
+
+```bash
+foretoken plot results/decode/parallelism \
+  --iteration baseline --iteration mtp5
+```
+
+省略 `--iteration` 时包含全部已保存的方案。性能图按相同的已保存负载设置比较；质量图保留各次运行的原生评分和误差，任务设置在对应原生报告中查看。CSV 保留运行状态、配置与环境链接、重复次数及缺失指标；也可以传入单个迭代目录或命令运行目录。

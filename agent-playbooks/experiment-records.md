@@ -75,6 +75,8 @@ The table below lists common experiment files. Paths start at `results/decode/pa
 | 4 | `raw_output.json`; `responses.jsonl` with `raw` enabled | Find anomalous requests and use `request_id` to match measurements, stop reasons, and actual answers; for quality evaluations, inspect native reports and saved per-sample records under `native/` |
 | 5 | `generated/run.log` and the result directory's `run.log` with `quiet` enabled; `evaluator.log` for quality evaluations | Locate errors in client preparation and execution. Use existing resource observations and profiles to explain performance differences and decide what to measure next. Check the corresponding server logs for model-loading or engine errors. |
 
+Saved iterations can be [compared directly from the experiment directory](../benchmarks/docs/recipes.md#compare-saved-iterations).
+
 ## Complete the experiment notes
 
 After each run, append to the iteration's `notes/iteration.md`:

@@ -186,3 +186,14 @@ foretoken plot results/fixed-length --columns 2
 foretoken plot results/fixed-length --metric latency_p95_seconds \
   --output-dir results/fixed-length/latency-figure
 ```
+
+## Compare saved iterations
+
+Pass the experiment directory created with `--output experiment`. To compare saved iterations named `baseline` and `mtp5`:
+
+```bash
+foretoken plot results/decode/parallelism \
+  --iteration baseline --iteration mtp5
+```
+
+Omit `--iteration` to include all saved iterations. Performance figures compare matching saved workload settings. Native quality figures retain each run’s scores and evaluator error bars; task settings remain in the native reports. CSV tables retain run status, configuration and environment links, repetition counts, and missing measurements. A single iteration directory or command run directory is also accepted.
