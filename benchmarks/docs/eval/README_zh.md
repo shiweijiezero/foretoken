@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型](distribution-comparison_zh.md)：既能比较固定原文前缀下的概率分布，也能比较贪心生成的 token 序列。
+使用 `foretoken eval` 评测生成文本和已有视频的质量。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的评测方式。比较文本模型时，添加 `--reference` 可[比较参考与候选模型](distribution-comparison_zh.md)：既能比较固定原文前缀下的概率分布，也能比较贪心生成的 token 序列。
 
 ## lm-evaluation-harness
 
@@ -70,6 +70,32 @@ foretoken eval examples/quickstart \
 
 两个框架都可去掉 `--limit`，运行完整的所选任务。提示词和判分规则由框架及任务定义。全部选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
 
+## 视频质量评测
+
+先准备 VBench，再为 `VIDEO_DIR` 中已有的 MP4 或 GIF 视频评分：
+
+```bash
+foretoken eval setup vbench
+foretoken eval --video VIDEO_DIR --output local
+```
+
+`setup` 将可复用的配置保存到 `foretoken-evaluators.yaml`。`eval --video` 只给已有视频评分；生成视频和测量服务性能使用 `foretoken perf video`。
+
+Foretoken 视频结果的提示词来自 `raw_results.json`，其他目录则从文件名读取。可通过 `--prompt-file` 传入 JSON 映射，例如 `{"clip.mp4": "一辆红色汽车驶过。"}`；用 `--dimension` 选择评测维度。分数保存在 `metrics.json`，运行元数据保存在 `config.json`。
+
+### 使用自定义镜像或配置
+
+用 `--image IMAGE` 可让 `setup` 准备其他 VBench 镜像。如果权重已经准备好，也可以通过 `--config PATH` 指定评测器 YAML：
+
+```yaml
+evaluators:
+  vbench:
+    image: foretoken-vbench:local
+    cache: .foretoken/evaluators/vbench/cache
+```
+
+直接评测时，镜像和缓存须已在本机。镜像需要包含 VBench 和 `org.foretoken.vbench.commit` 标签；缓存的相对路径以 YAML 所在目录为基准。公开镜像使用 NVIDIA GPU；共享服务器上可通过 `CUDA_VISIBLE_DEVICES` 指定空闲显卡。
+
 ## 评测已有服务
 
 将部署目录换成服务的 Chat Completions URL，并指定模型名：
@@ -85,7 +111,7 @@ foretoken eval \
 
 此模式不使用 Kubernetes 资源。需要认证时添加 `--api-key`。Foretoken Gateway 部署则传入 Kustomize 目录，由命令查找地址并配置路由请求头。
 
-## 恢复中断的评测
+## 恢复文本评测或模型对比
 
 单部署评测保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
 
@@ -117,4 +143,4 @@ foretoken eval examples/quickstart \
 
 结果保存位置见[输出设置](../../README_zh.md#查看和保存结果)。
 
-比较分数时，使用相同的框架、任务配置和样本范围。
+比较分数时，应使用相同的评测器、输入、提示词和评分设置。

@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-Measure service latency and throughput with `foretoken perf`, score model answers with `foretoken eval`, and inspect execution bottlenecks with profiling.
+Measure service latency and throughput with `foretoken perf`, score generated text or video with `foretoken eval`, and inspect execution bottlenecks with profiling.
 
 [Experiment commands](docs/recipes.md)
 
@@ -44,7 +44,7 @@ foretoken eval examples/quickstart \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers lm-evaluation-harness and EvalScope. Add `--reference` for [reference/candidate probability comparisons](docs/eval/distribution-comparison.md).
+This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers text and video inputs and score reports. For text models, add `--reference` for [reference/candidate probability comparisons](docs/eval/distribution-comparison.md).
 
 ## Profile execution
 

@@ -10,11 +10,12 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote
 
 import wandb
 
+from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.results.output import (
     BenchmarkRun,
@@ -25,6 +26,15 @@ from benchmarks.results.output import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class EvaluationResultConfig(Protocol):
+    """Publication fields shared by text and video evaluation configurations."""
+
+    outputs: BenchmarkOutputConfig
+    wandb: WandbRunConfig
+
+    def to_dict(self) -> dict[str, Any]: ...
 
 
 def read_quality_metrics(evaluator: str, directory: Path) -> dict[str, Any]:
@@ -202,7 +212,7 @@ class EvaluationConsoleSink:
 class EvaluationArtifactSink:
     """Save invocation identity and the complete display projection beside native artifacts."""
 
-    def __init__(self, config: EvaluationConfig, directory: str) -> None:
+    def __init__(self, config: EvaluationResultConfig, directory: str) -> None:
         self.config = config
         self.directory = directory
 
@@ -338,7 +348,7 @@ def evaluation_comparison_sinks(config: EvaluationConfig, record: dict[str, Any]
 
 
 def evaluation_sinks(
-    config: EvaluationConfig, record: dict[str, Any], directory: str,
+    config: EvaluationResultConfig, record: dict[str, Any], directory: str,
     *,
     console_sink: ResultSink | None = None,
     publisher: Callable[[Any, BenchmarkRun], None] = publish_quality_wandb,

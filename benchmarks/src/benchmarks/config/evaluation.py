@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Shared service and result options for answer scoring and model comparisons."""
+"""Shared option parsing for text, video, and model comparisons."""
 
 from __future__ import annotations
 
@@ -15,6 +15,11 @@ from benchmarks.config.benchmark import (
     BenchmarkOutputConfig,
     ModelServiceSource,
     WandbRunConfig,
+)
+from benchmarks.config.video_evaluation import (
+    VBenchEvaluationConfig,
+    add_vbench_evaluation_arguments,
+    vbench_evaluation_config,
 )
 
 
@@ -56,63 +61,88 @@ def deployment_labels(services: tuple[ModelServiceSource, ...]) -> tuple[str, ..
     )
 
 
-def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, bool]:
-    """Extract exact Foretoken options; leave task options and their values in original order."""
+def parse_evaluation_arguments(
+    argv: Sequence[str],
+) -> tuple[EvaluationConfig | VBenchEvaluationConfig, bool]:
+    """Parse shared evaluation options, then retain native text task arguments."""
     arguments = list(argv)
+    video = any(argument.partition("=")[0] == "--video" for argument in arguments)
     comparison = any(
         argument.partition("=")[0] in ("--reference", "--reference-url", "--reference-model", "--greedy-compare")
         for argument in arguments
     )
     # Only leading operands are deployment paths; native option values retain their position.
     paths = []
-    while arguments and not arguments[0].startswith("-"):
+    while not video and arguments and not arguments[0].startswith("-"):
         paths.append(arguments.pop(0))
     source = ModelServiceSource()
     output = BenchmarkOutputConfig()
     tracking = WandbRunConfig()
+    if video:
+        description = "Score existing videos with VBench."
+        epilog = None
+    elif comparison:
+        description = "Compare reference and candidate models."
+        epilog = "Leading PATH operands select candidate Kustomize deployments; --reference selects their reference."
+    else:
+        description = "Evaluate model quality with an evaluation framework."
+        epilog = (
+            "Leading PATH operands select Kustomize deployments for one task comparison. "
+            "Add --reference PATH for model comparisons. Native task options need no separator."
+        )
     parser = argparse.ArgumentParser(
         prog="foretoken eval",
         allow_abbrev=False,
         add_help=False,
-        usage="%(prog)s [PATH ... | --url URL] [options]",
-        description="Compare reference and candidate models." if comparison else "Evaluate model quality with an evaluation framework.",
-        epilog=(
-            "Leading PATH operands select candidate Kustomize deployments; --reference selects their reference."
-            if comparison else
-            "Leading PATH operands select Kustomize deployments for one task comparison. "
-            "Add --reference PATH for model comparisons. Native task options need no separator."
+        usage=(
+            "%(prog)s --video VIDEO_DIR [options]"
+            if video else "%(prog)s [PATH ... | --url URL] [options]"
         ),
+        description=description,
+        epilog=epilog,
     )
     parser.add_argument(
         "-h",
         "--help",
         action="store_true",
-        help="show comparison options" if comparison else "show Foretoken and selected evaluator options",
+        help="show comparison options" if comparison else "show evaluation options",
     )
     parser.add_argument(
-        "--evaluator", choices=("lm-eval", "evalscope"), default=None,
-        help="evaluation framework (default: lm-eval); omit with a reference",
+        "--evaluator",
+        choices=("vbench",) if video else ("lm-eval", "evalscope"),
+        default="vbench" if video else None,
+        help=(
+            "video evaluator (default: vbench)"
+            if video else "evaluation framework (default: lm-eval); omit with a reference"
+        ),
     )
     parser.add_argument(
-        "--resume", default="", metavar="RESULT_DIR",
-        help="reuse completed evaluation work from a previous result directory; repeat the original task options",
+        "--video", metavar="VIDEO_DIR",
+        help="score existing MP4 or GIF videos",
     )
-    parser.add_argument(
-        "--url", default=source.url, help="existing Chat Completions or Completions URL"
-    )
-    parser.add_argument(
-        "--model",
-        default=source.model,
-        help="served model ID; inferred for a single-model PATH",
-    )
-    parser.add_argument(
-        "--api-key", default=source.api_key, help="model service API key"
-    )
-    parser.add_argument(
-        "--wait-timeout",
-        default=source.wait_timeout,
-        help="deployment readiness timeout",
-    )
+    if video:
+        add_vbench_evaluation_arguments(parser)
+    else:
+        parser.add_argument(
+            "--resume", default="", metavar="RESULT_DIR",
+            help="reuse completed evaluation work from a previous result directory; repeat the original task options",
+        )
+        parser.add_argument(
+            "--url", default=source.url, help="existing Chat Completions or Completions URL"
+        )
+        parser.add_argument(
+            "--model",
+            default=source.model,
+            help="served model ID; inferred for a single-model PATH",
+        )
+        parser.add_argument(
+            "--api-key", default=source.api_key, help="model service API key"
+        )
+        parser.add_argument(
+            "--wait-timeout",
+            default=source.wait_timeout,
+            help="deployment readiness timeout",
+        )
     parser.add_argument(
         "--output",
         default=output.destinations,
@@ -134,6 +164,17 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     parser.add_argument("--wandb-run-name", default=tracking.run_name)
     parser.add_argument("--wandb-group", default=tracking.group)
     options, native = parser.parse_known_args(arguments)
+    if video:
+        if comparison:
+            parser.error("--video cannot be combined with a reference")
+        if native:
+            parser.error(f"unrecognized arguments: {' '.join(native)}")
+        if not options.video:
+            parser.error("--video requires a directory")
+        if options.help:
+            parser.print_help()
+            parser.exit()
+        return vbench_evaluation_config(options), False
     if comparison and options.evaluator is not None:
         parser.error("--evaluator cannot be combined with a reference")
     if len(paths) > 1 and len({str(Path(path).resolve()) for path in paths}) != len(paths):
