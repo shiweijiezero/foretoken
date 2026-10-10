@@ -14,16 +14,14 @@ Continue working within the task scope and resource budget. Judge completion by 
 - Use evidence to choose the next action after each iteration. Investigate ineffective approaches, refine or replace them, and assess the remaining gap to the objective after a partial improvement.
 - Use resources for informative experiments: schedule independent approaches within the available GPU, CPU, memory and parallel-experiment budget, and advance analysis or implementation that does not depend on pending measurements. Coordinate shared resources to keep results comparable.
 - Keep iterations short, using enough requests or measurement time to judge the current hypothesis. Increase samples, repeat measurements or extend a run when gains are uncertain or tail latency or stability needs closer evaluation, and state the purpose. The total work period includes analysis, implementation and deployment; it is not a continuous load-test duration.
-- Treat code changes, service startup, and individual test runs as progress rather than task completion. Support conclusions with performance and quality measurements under actual workloads.
+- Treat code changes, service startup, and individual test runs as progress rather than task completion. Support conclusions with measurements under actual workloads; evaluate answer quality when changes affect generation behavior.
 - Keep experiment records current. At completion, state which objectives were met, which changes were retained, and where results are stored. If the budget is exhausted or progress requires outside intervention, identify the concrete blocker and what is needed to resume.
 
-Task: [Qwen throughput and decode latency](qwen-decode.md).
+Reference task: [Qwen throughput and decode latency](qwen-decode.md).
 
 ## Examples
 
 ```text
-Execution entry: current Foretoken working directory and Kubernetes context
-Previous experiments: when available, use earlier records for this model to continue from comparable results, retained approaches and open questions
 Models: Qwen3.5-35B-A3B
 Precision: unrestricted
 Deployment layout: unrestricted
@@ -31,15 +29,13 @@ Per-service configuration: agent-selected GPU count, parallelism, CPU cores and 
 Available resources: 2*8 C500 GPUs with 64 available CPU cores and 512 GiB memory per node
 Maximum parallel experiments: 4
 Evaluation workloads: agent-selected, covering input/output lengths, concurrency levels and natural conversations
-Optimization objectives: improve throughput and reduce latency; report performance and answer-quality trade-offs for each workload
+Optimization objectives: improve throughput and reduce latency
 Allowed changes: unrestricted
 Work and completion conditions: optimize autonomously for 12 hours from the start of task execution
 Deliverables: full iteration history with motivation, approach and changes, measurements, analysis, time spent and next decision for each iteration; per-workload gains, retained approach, code changes and result links
 ```
 
 ```text
-Execution entry: current Foretoken working directory and Kubernetes context
-Previous experiments: when available, use earlier records for this model to continue from comparable results, retained approaches and open questions
 Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: colocated serving
@@ -54,8 +50,6 @@ Deliverables: full iteration history with motivation, approach and changes, meas
 ```
 
 ```text
-Execution entry: current Foretoken working directory and Kubernetes context
-Previous experiments: when available, use earlier records for this model to continue from comparable results, retained approaches and open questions
 Models: Qwen3.5-35B-A3B
 Precision: fixed BF16
 Deployment layout: compare colocated serving with prefill/decode disaggregation
