@@ -32,7 +32,6 @@ The Quick Start model requires a GPU; use the [k3d deployment guide](k3d-deploym
 ## 3. Remove the cluster
 
 ```bash
-foretoken delete examples/quickstart
 foretoken uninstall
 foretoken cluster delete kind --name foretoken-dev
 ```

@@ -24,9 +24,7 @@ Apply the edited configuration:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Each `routerPipeline` stage (`filter`, `scorer`, and `picker`) accepts an `algorithm` and its own `parameters`. Changes apply without restarting frontend Pods. New requests use the updated pipeline; requests already routing retain their original pipeline. Unknown algorithms or invalid parameters leave the previous working configuration active.
-
-With no `routerPipeline` settings, routing considers every compatible healthy target (`allow_all`), ranks them with `kv_least_loaded`, and selects one with `gamble_sampling`.
+The default strategy combines cache reuse and load balancing with `kv_least_loaded` and selects a target with `gamble_sampling`.
 
 Choose a scorer for the workload:
 
@@ -55,8 +53,6 @@ spec:
       parameters:
         matchLengthWeight: 0.5
 ```
-
-Parameter updates to `session_affinity` keep existing session bindings. Updates to `no_hit_lru` keep selection history; reducing `lruSize` removes only excess oldest entries. Switching scorer algorithms starts fresh state for the newly selected algorithm.
 
 When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
