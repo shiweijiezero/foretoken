@@ -82,14 +82,16 @@ impl RequestLedger {
         format!("{MODEL_KEY_PREFIX}{}:{scope}:{model}", scope.len())
     }
 
-    /// Shares the upstream reconnecting client without minute-long retry sleeps after store restarts.
-    /// The base delay is capped at one second; the client's jitter can add up to another second.
+    /// Shares the upstream client with bounded connection attempts and short reconnect sleeps.
+    /// Connection deadlines cover stale service endpoints; retry jitter adds up to one second.
     async fn connection(&self) -> Result<ConnectionManager, LedgerError> {
         let connection = self
             .connection
             .get_or_try_init(|| {
                 self.client.get_connection_manager_with_config(
-                    ConnectionManagerConfig::new().set_max_delay(1_000),
+                    ConnectionManagerConfig::new()
+                        .set_connection_timeout(std::time::Duration::from_secs(5))
+                        .set_max_delay(1_000),
                 )
             })
             .await?;
