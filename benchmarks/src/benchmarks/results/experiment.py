@@ -146,7 +146,7 @@ def capture_changes(destination: Path, output_root: Path) -> dict[str, Any]:
     return {"status": "captured", "root": str(root), **_snapshot_repository(root, destination, output_root)}
 
 
-def _command_arguments(arguments: Sequence[str]) -> list[str]:
+def _command_arguments(arguments: Sequence[str], public_selectors: set[str]) -> list[str]:
     """Retain command options while omitting credential and opaque native argument values."""
     # Native evaluator dictionaries can contain provider-specific credentials.
     # Their safe resolved settings are already emitted by the evaluation adapter.
@@ -156,13 +156,14 @@ def _command_arguments(arguments: Sequence[str]) -> list[str]:
         "--extra-body", "--dataset-args", "--dataset_args", "--judge-model-args",
         "--judge_model_args", "--hf-token", "--hf_token",
     }
+    # argparse resolves complete public option names before private abbreviations.
     result = []
     redact = False
     for argument in arguments:
         name, separator, _ = argument.partition("=")
         if name.startswith("--"):
             redact = False
-        if name.startswith("--") and any(option.startswith(name) for option in private):
+        if name.startswith("--") and name not in public_selectors and any(option.startswith(name) for option in private):
             result.append(name + "=<redacted>" if separator else name)
             redact = True
         elif redact:
@@ -209,8 +210,15 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     generated = run / "generated"
     generated.mkdir()
     started = time.monotonic()
+    public_selectors = set()
+    if isinstance(config, BenchmarkConfig):
+        public_selectors = {"--model", "--dataset"}
+    elif isinstance(config, EvaluationConfig):
+        public_selectors = {"--model", "--reference"}
+        if config.evaluator is None:
+            public_selectors.add("--dataset")
     context: dict[str, Any] = {
-        "command": ["foretoken", *command.split("-"), *_command_arguments(arguments)],
+        "command": ["foretoken", *command.split("-"), *_command_arguments(arguments, public_selectors)],
         "started_at": datetime.now(UTC).isoformat(),
         "status": "running",
     }

@@ -209,7 +209,7 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 
 ## Export figures
 
-Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw a saved run or sweep without running inference. Export options and comparisons are in [parameter sweeps](../benchmarks/docs/perf/sweep.md).
+Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw saved results without running inference. See [saved iteration comparisons](../benchmarks/docs/recipes.md#compare-saved-iterations) and [parameter sweeps](../benchmarks/docs/perf/sweep.md).
 
 ## Find execution bottlenecks
 

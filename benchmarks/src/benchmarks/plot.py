@@ -14,10 +14,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Parse the standalone plotting command and report the exported figure directory."""
     parser = argparse.ArgumentParser(
         prog="foretoken plot",
-        description="Export PDF, SVG, PNG, and CSV from a saved run or sweep.",
+        description="Export PDF, SVG, PNG, and CSV from saved results or experiment iterations.",
     )
     parser.add_argument(
-        "source", type=Path, metavar="RESULT_DIR", help="Saved run or sweep directory"
+        "source", type=Path, metavar="RESULT_DIR", help="Saved result, sweep, experiment, iteration, or command run directory"
     )
     parser.add_argument(
         "--output-dir", type=Path, help="Figure directory (default: RESULT_DIR/plots)"
@@ -41,6 +41,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=[],
         help="Method to include; repeat to select several",
     )
+    parser.add_argument(
+        "--iteration", action="append", default=[],
+        help="Experiment iteration to include; repeat to compare selected iterations",
+    )
     options = parser.parse_args(argv)
     from benchmarks.results.plots import render_results
 
@@ -51,6 +55,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             columns=options.columns,
             metrics=tuple(options.metric),
             methods=tuple(options.method),
+            iterations=tuple(options.iteration),
         )
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

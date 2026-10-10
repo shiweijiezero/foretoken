@@ -16,15 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
+from benchmarks.results.plots.experiments import read_experiment
 from benchmarks.results.plots.measurements import (
-    _distribution_charts,
-    _evaluation_comparison_charts,
-    _greedy_charts,
     _http_charts,
     _prometheus_charts,
     _quality_charts,
     _slo_charts,
     _video_phase_charts,
+    comparison_charts,
     gpu_allocation_charts,
     phase_summary_charts,
 )
@@ -429,8 +428,9 @@ def render_results(
     columns: int = 1,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
+    iterations: tuple[str, ...] = (),
 ) -> dict[str, Path]:
-    """Re-render a saved perf, sweep, video or evaluation directory into figures and tables.
+    """Render saved measurements or recorded experiment iterations into figures and tables.
 
     The caller owns the source and destination directory. This function only reads
     persisted measurement and summary artifacts; it neither runs benchmarks nor
@@ -440,8 +440,16 @@ def render_results(
     out = Path(output_dir) if output_dir is not None else source / "plots"
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
+    experiment = read_experiment(source, iterations=iterations, methods=methods)
+    if experiment is not None and (source / "generated/context.json").is_file() and len(experiment.runs) == 1:
+        measured = experiment.runs[0].get("result")
+        if experiment.runs[0].get("measured") and measured is not None:
+            return render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
+                                  methods=experiment.method_filters.get(Path(measured), ()))
+    if experiment is None and iterations:
+        raise ValueError("--iteration requires an experiment, iteration, or command run directory")
     config_path = source / "config.json"
-    if not config_path.is_file() and not (source / "slo_results.json").is_file():
+    if experiment is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
     config = (
         json.loads((config_path).read_text(encoding="utf-8"))
@@ -451,7 +459,27 @@ def render_results(
     charts: list[Chart] = []
     identities: list[str] = []
     points_path = source / "sweep_points.json"
-    if points_path.is_file():
+    if experiment is not None:
+        points = experiment.points
+        summary = experiment.summary
+        scalar_metrics = {row["metric"] for row in summary}
+        native_metrics = {chart.metric for chart in experiment.native}
+        missing = set(metrics) - scalar_metrics - native_metrics
+        if missing:
+            raise ValueError("No measured values for plot metrics: " + ", ".join(sorted(missing)))
+        identities = list(dict.fromkeys(_method(point) for point in points))
+        charts = list(sweep_charts(points, summary, metrics=tuple(m for m in metrics if m in scalar_metrics), vary_axes=False)) if (
+            points and (not metrics or set(metrics) & scalar_metrics)
+        ) else []
+        charts += [chart for chart in experiment.native if not metrics or chart.metric in metrics]
+        out.mkdir(parents=True, exist_ok=True)
+        result = _pareto(points, summary, out, (), columns) if points else {}
+        for name, rows in (("experiment-runs", experiment.runs), ("experiment-summary", summary)):
+            if not rows:
+                continue
+            file = _table(out / name, rows)
+            result[file.name] = file
+    elif points_path.is_file():
         points = json.loads((points_path).read_text(encoding="utf-8"))
         summary = json.loads(
             (source / "sweep_summary.json").read_text(encoding="utf-8")
@@ -484,45 +512,14 @@ def render_results(
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
         warmup_metrics_path = source / "warmup_metrics.json"
         warmup_metrics = json.loads(warmup_metrics_path.read_text(encoding="utf-8")) if warmup_metrics_path.is_file() else None
-        if "evaluation_comparison" in run_metrics:
-            comparison = run_metrics["evaluation_comparison"]
-            identities = [method["label"] for method in comparison["methods"]]
-            charts = _evaluation_comparison_charts(comparison)
-            if methods:
-                charts = [replace(chart, series=tuple(item for item in chart.series
-                                                      if item.name in methods)) for chart in charts]
-                charts = [chart for chart in charts if chart.series]
-        elif "greedy_comparison" in run_metrics:
-            comparison = run_metrics["greedy_comparison"]
-            identities = list(dict.fromkeys(str(point["method"]) for point in comparison["candidates"]))
-            charts = _greedy_charts(comparison)
+        comparison = comparison_charts(run_metrics)
+        if comparison is not None:
+            charts, identities = comparison
             if methods:
                 charts = [replace(chart, series=tuple(
                     item for item in chart.series
                     if str(item.records[0].get("method") or item.name) in methods
                 )) for chart in charts]
-                charts = [chart for chart in charts if chart.series]
-        elif "distribution_comparison" in run_metrics:
-            comparison = run_metrics["distribution_comparison"]
-            identities = list(
-                dict.fromkeys(
-                    str(point["method"]) for point in comparison["candidates"]
-                )
-            )
-            charts = _distribution_charts(comparison)
-            if methods:
-                charts = [
-                    replace(
-                        chart,
-                        series=tuple(
-                            series
-                            for series in chart.series
-                            if str(series.records[0].get("method") or series.name)
-                            in methods
-                        ),
-                    )
-                    for chart in charts
-                ]
                 charts = [chart for chart in charts if chart.series]
         elif "scores" in run_metrics:
             charts = _quality_charts(run_metrics)
@@ -555,7 +552,7 @@ def render_results(
                 result[file.name] = file
     else:
         raise FileNotFoundError(f"No saved metrics or sweep results in {source}")
-    if not points_path.is_file():
+    if experiment is None and not points_path.is_file():
         if set(methods) - set(identities):
             raise ValueError(
                 "Unknown plot methods: "
@@ -573,7 +570,7 @@ def render_results(
             charts,
             out,
             identities
-            or list(dict.fromkeys(s.name for chart in charts for s in chart.series)),
+            or list(dict.fromkeys(str(s.records[0].get("method") or s.name) for chart in charts for s in chart.series)),
             columns,
         )
     )
