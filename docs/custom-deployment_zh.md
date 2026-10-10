@@ -63,13 +63,15 @@ foretoken install -e . \
 
 ### 更换运行环境
 
-基础镜像提供 Python、PyTorch 和设备库。要统一更换当前源码目录的 NVIDIA 构建环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`，例如：
+普通部署不需要修改基础镜像。Foretoken 默认使用 `vllm/vllm-openai:v0.31.0`，其中包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
+
+如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
 
 ```json
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-未显式指定镜像时，源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都使用这一设置。镜像需与引擎兼容，并能由构建器访问。已有源码安装修改后，重新执行 `foretoken deploy` 即可重建运行环境并部署。
+源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，重新执行 `foretoken deploy`。
 
 只为某次安装指定不同基础镜像时，在 `deploy/platform-values.yaml` 中设置 `runtime.vllm.image`：
 
