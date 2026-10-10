@@ -112,6 +112,10 @@ class EditableDeployment:
         if not self.state.get("build") or self.state["build"]["arguments"].get(
             "VLLM_REVISION"
         ) != pinned_rust_revision(self.root):
+            print(
+                "Source plan: rebuild the source installation environment",
+                flush=True,
+            )
             self._rebuild(timeout)
             return
         engines = self.state.get("engines", {})
@@ -133,7 +137,10 @@ class EditableDeployment:
             or (old / name).stat().st_mode != current[name].stat().st_mode
         }
         if not changed:
-            print("Source code unchanged; reusing runtime artifacts", flush=True)
+            print(
+                "Source plan: reuse runtime artifacts (no source inputs changed)",
+                flush=True,
+            )
             return
         components: set[str] = set()
         rebuild = False
@@ -176,11 +183,20 @@ class EditableDeployment:
                 rebuild = True
         if rebuild:
             print(
-                "Build environment or platform sources changed; updating source installation",
+                "Source plan: rebuild the source installation environment",
                 flush=True,
             )
             self._rebuild(timeout)
             return
+        if components:
+            print(
+                "Source plan: publish "
+                + ", ".join(sorted(components))
+                + " applications",
+                flush=True,
+            )
+        else:
+            print("Source plan: update source snapshot only", flush=True)
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
         _snapshot(
             current,
