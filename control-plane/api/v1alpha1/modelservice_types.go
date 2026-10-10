@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,6 +126,11 @@ type ModelPoolTemplate struct {
 	// EngineArgs replaces service-level native options for this Pool when supplied.
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env replaces the service environment when supplied; an empty list clears inheritance.
+	// +optional
+	// +listType=atomic
+	Env *[]corev1.EnvVar `json:"env,omitempty"`
 
 	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
 	// +optional
@@ -299,6 +305,11 @@ type ModelServiceSpec struct {
 	// EngineArgs uses the selected backend's native option names without leading --.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env configures model runtime containers and their child processes.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AutoscalingStageStatus describes one named pipeline stage result.

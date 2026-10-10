@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -216,6 +217,11 @@ type ModelGroupRuntime struct {
 	// EngineArgs contains resolved native options; worker topology is stored in Parallelism.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env retains the selected runtime environment in declaration order.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// TritonCacheDirectory is the initial worker cache path; Kubernetes expands its node reference.
 	// +optional

@@ -278,7 +278,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		}
 		if previous := byPoolName[compiled.Name]; previous != nil {
 			before, after := previous.Spec.Template, compiled.Template
-			if before.EncoderCacheGeneration > 0 && before.Model == after.Model && before.Source == after.Source && before.ModelRevision == after.ModelRevision && before.Backend == after.Backend && before.ECProfile == after.ECProfile && reflect.DeepEqual(before.EngineArgs, after.EngineArgs) {
+			if before.EncoderCacheGeneration > 0 && before.Model == after.Model && before.Source == after.Source && before.ModelRevision == after.ModelRevision && before.Backend == after.Backend && before.ECProfile == after.ECProfile && reflect.DeepEqual(before.EngineArgs, after.EngineArgs) && reflect.DeepEqual(before.Env, after.Env) {
 				cacheGeneration = before.EncoderCacheGeneration
 			}
 		}

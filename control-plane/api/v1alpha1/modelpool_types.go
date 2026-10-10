@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -205,6 +206,11 @@ type NormalizedPoolTemplate struct {
 	// EngineArgs contains the native backend options selected for this Pool.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Env retains the selected runtime environment in declaration order.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// Profiling is the service-selected instrumentation for this Pool's processes.
 	// +optional

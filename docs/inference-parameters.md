@@ -21,6 +21,30 @@ spec:
 
 Values are YAML booleans, numbers, strings, lists or objects. Omitted options retain engine defaults; `null` omits a native option. Supported values depend on the backend image, model and hardware.
 
+## Model environment variables
+
+Use `spec.env` for runtime environment variables, separately from `engineArgs`:
+
+```yaml
+spec:
+  env:
+    - name: VLLM_LOGGING_LEVEL
+      value: "DEBUG"
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: model-storage
+          key: access-key-id
+```
+
+Entries use Kubernetes `EnvVar` syntax: `value` is a string; `valueFrom` can reference a Secret, ConfigMap, Pod field or container resource. Referenced Secrets and ConfigMaps must exist in the service namespace. Use Secret references for credentials; literal values are included in saved deployment and experiment configuration.
+
+Every model Pool inherits `spec.env`. Set `modelPools[].env` to replace the entire list for one Pool, or `env: []` to clear its inherited custom variables. Omission or `null` inherits the service list. Entries retain their order, so `$(NAME)` can reference a preceding entry; names must be unique within each effective list.
+
+The variables apply to each model runtime container and its child processes, including all members of a multi-node replica. They do not configure image builds, separate model-preparation Jobs, init containers or frontend services. Foretoken-managed startup, topology and cache variables cannot be overridden through `env`.
+
+Apply changes through the usual `foretoken deploy` command. Changes to the effective list replace the affected model instances. Updating a referenced Secret or ConfigMap alone does not restart them: existing processes keep their environment, while newly started containers read the updated values. To roll out new values immediately, use a new reference and deploy it.
+
 ## Select serving nodes
 
 Use a Kubernetes label to place a service or Pool on a machine group. Assign the same key/value to every node in the group:

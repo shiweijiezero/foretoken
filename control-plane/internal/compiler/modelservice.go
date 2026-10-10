@@ -12,6 +12,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
@@ -61,7 +62,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.Env, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
 		if err != nil {
 			return nil, err
 		}
@@ -89,11 +90,15 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if entry.EngineArgs != nil {
 			engineArgs = *entry.EngineArgs
 		}
+		environment := spec.Env
+		if entry.Env != nil {
+			environment = *entry.Env
+		}
 		nodeSelector := spec.NodeSelector
 		if entry.NodeSelector != nil {
 			nodeSelector = entry.NodeSelector
 		}
-		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, environment, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -135,9 +140,13 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, environment []corev1.EnvVar, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes < 1 {
 		return ModelPool{}, fmt.Errorf("nodes must be positive")
+	}
+	env, err := normalizeEnvironment(environment)
+	if err != nil {
+		return ModelPool{}, err
 	}
 	normalizedResources, err := normalizeResources(resources)
 	if err != nil {
@@ -187,9 +196,27 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
+			Env:                                   env,
 			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
+}
+
+// normalizeEnvironment retains ordered native references without reading their values.
+func normalizeEnvironment(input []corev1.EnvVar) ([]corev1.EnvVar, error) {
+	var output []corev1.EnvVar
+	names := make(map[string]bool, len(input))
+	for _, variable := range input {
+		if errors := utilvalidation.IsRelaxedEnvVarName(variable.Name); len(errors) > 0 {
+			return nil, fmt.Errorf("env name %q is invalid: %s", variable.Name, errors[0])
+		}
+		if names[variable.Name] {
+			return nil, fmt.Errorf("env contains duplicate name %q", variable.Name)
+		}
+		names[variable.Name] = true
+		output = append(output, *variable.DeepCopy())
+	}
+	return output, nil
 }
 
 func normalizeNodeSelector(input map[string]string) (map[string]string, error) {
