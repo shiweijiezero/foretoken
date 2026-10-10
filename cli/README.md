@@ -178,7 +178,7 @@ Inspect the same deployment without applying it:
 foretoken status examples/multi-model-quickstart
 ```
 
-Inspect every Foretoken service in a namespace. With `--watch`, follow service state changes and Pod/container logs until Ctrl+C:
+Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
 
 ```bash
 foretoken status -n foretoken-multi-model-demo

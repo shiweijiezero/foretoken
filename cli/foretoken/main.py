@@ -186,7 +186,10 @@ def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> N
         return namespace_progress(namespace or "", kubectl)
 
     if not watch:
-        _print_status(selected_progress())
+        progress = selected_progress()
+        _print_status(progress)
+        with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+            startup.poll((item.resource for item in progress), 0.0, follow_logs=False)
         return
 
     started = time.monotonic()
