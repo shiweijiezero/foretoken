@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
@@ -98,7 +97,7 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	}
 	// Preserve the active limit until this Pool reflects the owning service's current intent.
 	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
-		return ctrl.Result{RequeueAfter: time.Second}, nil
+		return ctrl.Result{}, nil
 	}
 	if reconciler.TemplateResolver == nil {
 		return ctrl.Result{}, fmt.Errorf("ModelPool template resolver is not configured")

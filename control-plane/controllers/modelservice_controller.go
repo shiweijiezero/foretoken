@@ -318,9 +318,6 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		if err != nil {
 			return err
 		}
-		if compiledPools[index].InstanceAdmission != nil && (selection == nil || selection.AdmissionStore == nil) {
-			return &instanceAdmissionDeploymentRequiredError{poolName: compiledPools[index].Name}
-		}
 		if template.Backend == "vllm" && selection != nil && selection.InstanceAdmissionProtocol == 0 {
 			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, compiledPools[index].Name)
 			if err != nil {
