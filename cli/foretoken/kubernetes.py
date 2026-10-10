@@ -523,7 +523,9 @@ def resource_progress(
                 "Waiting for the selected service alerts", False,
             )
         return ResourceProgress(resource, "Ready", reason, message, True)
-    if condition_status == "False" and reason in {"InvalidIntent", "ConfigurationRejected"}:
+    if condition_status == "False" and reason in {
+        "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
+    }:
         return ResourceProgress(resource, "Failed", reason, message, False)
     return ResourceProgress(resource, "Progressing", reason, message, False)
 

@@ -4,8 +4,8 @@
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
 use std::convert::Infallible;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -20,15 +20,13 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
+use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
 
-// One atomic word linearizes admission close against request acceptance.
-const ADMISSION_OPEN: u64 = 1 << 63;
-const RUNNING_REQUESTS_MASK: u64 = !ADMISSION_OPEN;
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// Engine state used for API health and admission only; process ownership stays upstream.
@@ -36,8 +34,8 @@ const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.
 pub struct RuntimeHealth {
     process_alive: AtomicBool,
     client_healthy: AtomicBool,
-    admission: AtomicU64,
-    limit: AtomicU64,
+    // Acceptance, configuration publication, and close share one linearization boundary.
+    admission: Mutex<InstanceAdmissionStatus>,
     failure: tokio::sync::Notify,
     drained: tokio::sync::Notify,
     stopped: tokio::sync::Notify,
@@ -49,10 +47,58 @@ impl RuntimeHealth {
         Self::default()
     }
 
-    /// Configures the explicit instance acceptance cap; omission leaves admission unlimited.
-    pub fn set_limit(&self, limit: Option<u32>) {
-        self.limit
-            .store(u64::from(limit.unwrap_or(0)), Ordering::Release);
+    /// Initializes a protocol-0 startup limit before the supervisor opens ingress.
+    /// This does not acknowledge support for projected live configuration.
+    pub fn set_startup_admission_limit(&self, limit: Option<u32>) {
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .max_concurrent_requests = limit;
+    }
+
+    /// Applies a newer or identical configuration without resetting occupancy or reopening admission.
+    /// The configuration watcher calls this before acknowledging the controller's version.
+    pub fn apply_instance_configuration(&self, configuration: InstanceAdmissionConfig) {
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        let version = configuration.version.get();
+        let limit = configuration
+            .max_concurrent_requests
+            .map(|limit| limit.get());
+        if state.active_generation.is_some_and(|active| {
+            version < active || version == active && state.max_concurrent_requests != limit
+        }) {
+            state.target_generation = Some(version);
+            state.configuration_error =
+                Some("instance admission version is stale or has different limits".into());
+            return;
+        }
+        state.max_concurrent_requests = limit;
+        state.active_generation = Some(version);
+        state.target_generation = Some(version);
+        state.configuration_error = None;
+    }
+
+    /// Reports a rejected candidate while retaining the last applied limit and permits.
+    pub fn reject_instance_configuration(&self, version: Option<u64>, error: String) {
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        if let Some(version) = version {
+            state.target_generation = Some(version);
+        }
+        state.configuration_error = Some(error);
+    }
+
+    /// Returns one coherent configuration and occupancy observation for the controller.
+    pub fn instance_admission_status(&self) -> InstanceAdmissionStatus {
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .clone()
     }
 
     /// Requests supervised engine shutdown when a submitted request's completion becomes unknown.
@@ -108,12 +154,10 @@ impl RuntimeHealth {
 
     /// Opens or closes new HTTP admission; accepted executions retain their instance slots.
     pub fn set_accepting(&self, value: bool) {
-        if value {
-            self.admission.fetch_or(ADMISSION_OPEN, Ordering::AcqRel);
-        } else {
-            self.admission
-                .fetch_and(RUNNING_REQUESTS_MASK, Ordering::AcqRel);
-        }
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .accepting = value;
     }
     /// Returns process-and-client health for the `/healthz` probe without changing lifecycle state.
     pub fn healthy(&self) -> bool {
@@ -129,38 +173,37 @@ impl RuntimeHealth {
     ///
     /// Execution tasks retain existing permits after this signal closes.
     pub fn accepting(&self) -> bool {
-        self.admission.load(Ordering::Acquire) & ADMISSION_OPEN != 0
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .accepting
     }
-    /// Atomically reserves an instance slot before submission; the execution task owns its release.
+    /// Reserves an instance slot against the current limit; the execution task owns its release.
     pub fn try_admit(self: &Arc<Self>) -> Result<AdmissionPermit, AdmissionRejection> {
-        let mut current = self.admission.load(Ordering::Acquire);
-        loop {
-            if current & ADMISSION_OPEN == 0 {
-                return Err(AdmissionRejection::Closed);
-            }
-            let limit = self.limit.load(Ordering::Acquire);
-            if limit != 0 && current & RUNNING_REQUESTS_MASK >= limit {
-                return Err(AdmissionRejection::Busy);
-            }
-            let next = current + 1;
-            match self.admission.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    return Ok(AdmissionPermit {
-                        health: self.clone(),
-                    });
-                }
-                Err(observed) => current = observed,
-            }
+        let mut state = self
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned");
+        if !state.accepting {
+            return Err(AdmissionRejection::Closed);
         }
+        if state
+            .max_concurrent_requests
+            .is_some_and(|limit| state.running_requests >= u64::from(limit))
+        {
+            return Err(AdmissionRejection::Busy);
+        }
+        state.running_requests += 1;
+        Ok(AdmissionPermit {
+            health: self.clone(),
+        })
     }
     /// Returns the number of accepted requests still holding a permit.
     pub fn running_requests(&self) -> u64 {
-        self.admission.load(Ordering::Acquire) & RUNNING_REQUESTS_MASK
+        self.admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .running_requests
     }
 }
 
@@ -178,7 +221,11 @@ pub struct AdmissionPermit {
 
 impl Drop for AdmissionPermit {
     fn drop(&mut self) {
-        self.health.admission.fetch_sub(1, Ordering::AcqRel);
+        self.health
+            .admission
+            .lock()
+            .expect("instance admission lock poisoned")
+            .running_requests -= 1;
         self.health.drained.notify_waiters();
     }
 }
@@ -273,6 +320,11 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
+        .route("/v1/internal/admission", get(instance_admission_status))
+        .route(
+            "/v1/internal/admission/ready",
+            get(instance_admission_ready),
+        )
         .route("/v1/internal/admission/close", post(close_admission))
         .route(
             "/v1/internal/profiling",
@@ -289,6 +341,26 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
+}
+
+// The protocol-1 workload probe cannot admit an older binary that ignores the projected limit.
+async fn instance_admission_ready(State(state): State<AppState>) -> StatusCode {
+    if state.health.ready()
+        && state
+            .health
+            .instance_admission_status()
+            .active_generation
+            .is_some()
+    {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+// The controller observes applied limits through the same listener used for drain and execution.
+async fn instance_admission_status(State(state): State<AppState>) -> Json<InstanceAdmissionStatus> {
+    Json(state.health.instance_admission_status())
 }
 
 #[derive(Deserialize)]

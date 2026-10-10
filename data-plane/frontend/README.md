@@ -150,9 +150,9 @@ x-caller-id: caller-a
 
 All text APIs use these headers. With role rules enabled, requests without a caller identifier or matching role are rejected. Configure authentication, authorization, and RPM/token quotas at the gateway, and restrict frontend access to that trusted gateway. Tokenization and detokenization use waiting capacity only; these rules do not apply to video APIs.
 
-`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave frontend admission unrestricted for one model, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
 
-To separately bound accepted work at each text model-server instance, including its engine queue, add this model setting:
+To limit how many unfinished requests each text model-server instance accepts, add `instanceAdmission` to the model YAML. This includes requests waiting in the engine queue. Omit it for unlimited acceptance:
 
 ```yaml
 spec:
@@ -160,7 +160,7 @@ spec:
     maxConcurrentRequests: 32
 ```
 
-Instance-limit changes take effect through a normal model-server deployment rollout.
+After upgrading the platform, run `foretoken deploy` once to select the current model application. Later limit changes apply online. Existing work continues; when the limit is full, new requests receive `503` until occupancy falls below it.
 
 Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
 

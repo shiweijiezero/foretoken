@@ -198,6 +198,9 @@ type AdmissionStoreConnection struct {
 	URLSecretRef *corev1.SecretKeySelector `json:"urlSecretRef,omitempty"`
 }
 
+// InstanceAdmissionFileProtocol selects the live-file configuration interface of a model application.
+const InstanceAdmissionFileProtocol uint32 = 1
+
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
 	// PreparationVersion selects the source-publication contract for this immutable cohort.
@@ -231,7 +234,13 @@ type ModelGroupRuntime struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
-	// InstanceAdmission pins the acceptance limit for this instance's runtime.
+	// InstanceAdmissionProtocol pins the configuration interface of the selected executable.
+	// Zero retains startup-only limits; one selects live file configuration.
+	// +optional
+	// +kubebuilder:validation:Maximum=1
+	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
+
+	// InstanceAdmission retains the immutable startup limit for protocol-zero applications.
 	// +optional
 	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
 
