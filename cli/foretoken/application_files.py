@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from importlib.resources import files
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from foretoken.cluster_build import ClusterBuilder
 from foretoken.kubernetes import Kubectl, timeout_seconds
@@ -110,6 +110,22 @@ class ApplicationFiles:
         self.client_image = data["clientImage"]
         self.mount = data["storageMount"]
 
+    def read_sources(self, application_url: str) -> dict[str, Any] | None:
+        """Read published build provenance for a benchmark without starting a publisher."""
+        prefix = self.endpoint.rstrip("/") + "/"
+        if not application_url.startswith(prefix):
+            return None
+        relative = application_url.removeprefix(prefix).rstrip("/")
+        path = (
+            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/"
+            + quote(relative, safe="/") + "/manifest.json"
+        )
+        try:
+            manifest = json.loads(self.kubectl.get_raw(path, "5s"))
+        except json.JSONDecodeError as error:
+            raise DeploymentError("application manifest returned invalid JSON") from error
+        return manifest.get("sources")
+
     def prepare(self, timeout: str) -> None:
         """Wait for the file origin and select its volume's current publisher node."""
         kubectl, namespace = self.kubectl, self.namespace
@@ -190,8 +206,9 @@ class ApplicationFiles:
         *,
         timeout: str,
         reuse_previous: bool = False,
+        sources: dict[str, Any] | None = None,
     ) -> str:
-        """Publish a compiler export under the caller's binding lock and return its selected revision."""
+        """Publish a compiler export with provenance and return the selected immutable revision."""
         command = [
             "python",
             "-c",
@@ -202,6 +219,7 @@ class ApplicationFiles:
             f"{self.mount}/{component}/{previous}" if previous else "",
             json.dumps(self._retained_versions(references)),
             json.dumps(reuse_previous),
+            json.dumps(sources),
         ]
         with self._publisher(command, builder.binding, timeout, builder=builder) as job:
             self._wait(job, timeout)

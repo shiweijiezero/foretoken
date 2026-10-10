@@ -131,13 +131,7 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 通过 `sweep_summary.csv` 和对比图，比较相同负载设置下的延迟与吞吐量。误差线表示各轮结果的样本标准差，分位数也先逐轮计算、再汇总；只有一轮时不估计误差。比较参数点时，同时查看各指标的有效样本数和失败运行数。
 
-重复使用同一个 `--experiment-name` 会覆盖该实验目录；省略它时创建带时间戳的新目录。将第一个示例重新绘制为双栏宽度，无需发送请求：
-
-```bash
-foretoken plot results/concurrency --columns 2
-```
-
-用 `--metric` 选择汇总指标，用 `--method` 选择方法，两者均可重复指定。`--output-dir` 将另一版排版保存到独立目录。输出位置见[结果设置](../../README_zh.md#查看和保存结果)。
+重复使用同一个 `--experiment-name` 会覆盖该实验目录；省略它时创建带时间戳的新目录。调整指标、图宽或对照历史运行，见[绘制与对照结果](../recipes_zh.md#绘制与对照结果)。
 
 ## 视频参数
 

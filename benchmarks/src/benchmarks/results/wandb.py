@@ -155,6 +155,16 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         if allocation["gpu_seconds"] is None:
             for resource, seconds in allocation["observed_gpu_seconds"].items():
                 message[f"GPU allocation/{resource}/Observed GPU-seconds (partial)"] = seconds
+    resources = metrics.get("resources")
+    if isinstance(resources, dict):
+        for key, label, scale in (
+            ("cpu_usage_cores", "Resources/Mean CPU usage (cores)", 1),
+            ("cpu_throttled_periods_ratio", "Resources/Throttled CPU periods (%)", 100),
+            ("cpu_throttled_seconds", "Resources/CPU throttled time (s)", 1),
+        ):
+            value = resources.get(key)
+            if value is not None:
+                message[label] = round(float(value) * scale, 4)
     speculative = metrics.get("speculative_decoding")
     if isinstance(speculative, dict):
         for key, name, scale in (
@@ -357,7 +367,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     observations = [
         run.artifacts[name]
         for name in (
-            "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
+            "environment", "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
         )
         if name in run.artifacts
     ]
@@ -372,14 +382,20 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         from benchmarks.results.plots.measurements import _prometheus_charts
 
         for chart in _prometheus_charts(run.artifacts["prometheus_observations"].parent):
-            if not chart.metric.startswith("spec_"):
+            if chart.metric.startswith("spec_"):
+                group = "Speculative"
+                title = f"{chart.ylabel} · 5-minute observation window"
+            elif chart.metric.startswith(("cpu_", "memory_")):
+                group = "Resources"
+                title = chart.ylabel
+            else:
                 continue
-            sdk_run.log({f"Speculative/{chart.metric}": wandb.plot.line_series(
+            sdk_run.log({f"{group}/{chart.metric}": wandb.plot.line_series(
                 xs=[list(series.x) for series in chart.series],
                 ys=[list(series.y) for series in chart.series],
                 keys=[series.name for series in chart.series],
                 xname="Elapsed time (s)",
-                title=f"{chart.ylabel} · 5-minute observation window",
+                title=title,
             )})
 
 

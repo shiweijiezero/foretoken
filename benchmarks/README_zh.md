@@ -80,8 +80,8 @@ foretoken perf examples/quickstart --num-prompts 20 \
   --iteration baseline
 ```
 
-`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[任务手册](../agent-playbooks/README_zh.md#组织记录)。
+`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[实验记录手册](../agent-playbooks/experiment-records_zh.md)。
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-已有结果可用 `foretoken plot RESULT_DIR` 重新绘图；`RESULT_DIR` 是运行时打印的结果目录。`--columns 2` 使用双栏宽度。多方法与参数扫描见[参数扫描](docs/perf/sweep_zh.md)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果。指标选择、图宽和输出位置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)。

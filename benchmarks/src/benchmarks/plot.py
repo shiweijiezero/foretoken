@@ -14,13 +14,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Parse the standalone plotting command and report the exported figure directory."""
     parser = argparse.ArgumentParser(
         prog="foretoken plot",
-        description="Export PDF, SVG, PNG, and CSV from a saved run or sweep.",
+        description="Export PDF, SVG, PNG, and CSV from one or more saved-result directories.",
     )
     parser.add_argument(
-        "source", type=Path, metavar="RESULT_DIR", help="Saved run or sweep directory"
+        "sources", type=Path, nargs="+", metavar="RESULT_DIR",
+        help="Result directories or folders containing saved results; pass several to compare"
     )
     parser.add_argument(
-        "--output-dir", type=Path, help="Figure directory (default: RESULT_DIR/plots)"
+        "--output-dir", type=Path, help="Figure directory (default: RESULT_DIR/plots for one input, ./plots for multiple inputs)"
     )
     parser.add_argument(
         "--columns",
@@ -42,11 +43,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Method to include; repeat to select several",
     )
     options = parser.parse_args(argv)
-    from benchmarks.results.plots import render_results
+    from benchmarks.results.plots.figures import (
+        default_output_directory,
+        render_results,
+    )
 
     try:
         artifacts = render_results(
-            options.source,
+            *options.sources,
             output_dir=options.output_dir,
             columns=options.columns,
             metrics=tuple(options.metric),
@@ -55,5 +59,5 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     print(
-        f"Exported {len(artifacts)} files to {options.output_dir or options.source / 'plots'}"
+        f"Exported {len(artifacts)} files to {options.output_dir or default_output_directory(*options.sources)}"
     )

@@ -57,17 +57,16 @@ GitHub Release tag 使用带 `v` 前缀的 Python 版本。
 
 ## 构建与推送发布产物
 
-准备兼容的 NVIDIA 和沐曦推理运行时镜像，然后将下面的仓库前缀和镜像名称替换为实际值：
+NVIDIA 构建使用源码目录中的[统一 vLLM 基础镜像设置](../custom-deployment_zh.md#更换运行环境)。准备兼容的沐曦运行时镜像，再设置目标仓库和沐曦镜像：
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken
-export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
 export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
-命令构建运行环境镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz` 和匹配的 Helm Chart 保存到 `/tmp/foretoken-release`。沐曦镜像 tag 使用 `-metax` 后缀。
+命令构建运行环境镜像，并将 `foretoken-applications-<version>-linux-amd64.tar.gz` 和匹配的 Helm Chart 保存到 `/tmp/foretoken-release`。沐曦镜像 tag 使用 `-metax` 后缀。如需替换 NVIDIA 基础镜像，在构建前设置 `INFERENCE_ENGINE_IMAGE`。
 
 只导出应用文件、不重建运行环境时，执行：
 

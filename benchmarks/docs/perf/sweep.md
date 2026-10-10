@@ -131,13 +131,7 @@ All points for one method run before the next method starts. Temporary deploymen
 
 Use `sweep_summary.csv` and the comparison plots to compare latency and throughput under the same workload settings. Error bars show sample standard deviation across repetitions, including for per-run percentiles; one repetition has no error estimate. Check each metric's sample count and failed runs when comparing points.
 
-Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory. Redraw the first example at double-column width without sending requests:
-
-```bash
-foretoken plot results/concurrency --columns 2
-```
-
-Use `--metric` to select a summary metric and `--method` to select a named method; both may be repeated. `--output-dir` saves an alternative layout separately. See [output settings](../../README.md#read-and-save-results) for destination selection.
+Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
 
 ## Video settings
 

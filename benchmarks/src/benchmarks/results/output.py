@@ -30,7 +30,11 @@ from benchmarks.config.benchmark import (
 )
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import capture_run_logs, log_benchmark_summary
-from benchmarks.results.environment import client_environment, serving_environment
+from benchmarks.results.environment import (
+    ApplicationSources,
+    client_environment,
+    serving_environment,
+)
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
@@ -480,6 +484,7 @@ class ResultOutputs:
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
+        self._applications = ApplicationSources()
         self._exit_code = 0
 
     @property
@@ -635,6 +640,7 @@ class ResultOutputs:
         outputs = self.benchmark.outputs
         if self._environment is not None and self.service is not None:
             self._environment["before"] = serving_environment(self.service)
+            self._applications.capture(self._environment["before"])
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -648,6 +654,7 @@ class ResultOutputs:
                 observer = KubernetesReplicaObserver(
                     self.service.model_service_refs,
                     self.service.model,
+                    self._applications,
                 )
                 observer.start()
             except (DeploymentError, RuntimeError) as exc:
@@ -658,8 +665,10 @@ class ResultOutputs:
             else:
                 self._replica_observer = observer
                 self._resources.callback(self._close_replica_observer)
+            if self._replica_observer is None:
+                return
             try:
-                prometheus_observer = PrometheusObserver(self.service)
+                prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
                 prometheus_observer.start()
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
@@ -781,6 +790,10 @@ class ResultOutputs:
                 observations = observer.finish(
                     run.time_origin, float(run.metrics["benchmark_time"])
                 )
+                if self._environment is not None:
+                    self._environment["workloads"] = observer.workload_history(
+                        run.time_origin, float(run.metrics["benchmark_time"]),
+                    )
                 allocation = observer.gpu_allocation
                 if allocation is not None:
                     run.metrics["gpu_allocation"] = {
@@ -803,6 +816,11 @@ class ResultOutputs:
         self._prometheus_observer = None
         if prometheus_observer is not None:
             observations = prometheus_observer.finish(run.time_origin, run.metrics.get("benchmark_time"))
+            if observations["resources"] is not None:
+                run.metrics["resources"] = {
+                    key: value for key, value in observations["resources"].items()
+                    if key not in {"queries", "window_end_unix_seconds"}
+                }
             if observations["speculative_decoding"] is not None:
                 run.metrics["speculative_decoding"] = {
                     key: value for key, value in observations["speculative_decoding"].items()
@@ -818,6 +836,10 @@ class ResultOutputs:
                 self._environment["after"] = serving_environment(
                     self.service
                 )
+            if "after" in self._environment:
+                self._applications.capture(self._environment["after"])
+            if self._applications.records:
+                self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )

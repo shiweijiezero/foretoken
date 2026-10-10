@@ -176,13 +176,26 @@ foretoken perf "$BASELINE" "$CANDIDATE" \
   --output local,wandb,plot
 ```
 
-## Redraw figures
+## Plot saved results
 
-Read saved results to change figure width or select a metric without rerunning inference.
+Create figures and comparison tables from saved results without rerunning inference. Run on the machine holding the results and replace these paths with your result directories:
 
 ```bash
-foretoken plot results/fixed-length --columns 2
+# Redraw one directory.
+foretoken plot results/baseline
 
-foretoken plot results/fixed-length --metric latency_p95_seconds \
-  --output-dir results/fixed-length/latency-figure
+# Compare two directories.
+foretoken plot results/baseline results/candidate
 ```
+
+You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs write to `./plots`.
+
+Choose a metric, figure width and output location:
+
+```bash
+foretoken plot results/baseline results/candidate \
+  --metric generation_tokens_per_second --columns 2 \
+  --output-dir results/comparison
+```
+
+Repeat `--metric` to select more metrics, or use `--method` to select named methods. Performance comparisons group matching workloads; use the CSV tables to inspect values, sample counts and run status. For score definitions and evaluator reports, see [quality results](eval/README.md#read-scores).

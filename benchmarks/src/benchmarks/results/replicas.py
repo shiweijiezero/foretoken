@@ -16,6 +16,7 @@ from typing import Any
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
 
+from benchmarks.results.environment import ApplicationSources
 from benchmarks.results.timeseries import ELAPSED_TIME
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,10 @@ class KubernetesReplicaObserver:
     Both observations share one bounded kubectl sampling lifecycle.
     """
 
-    def __init__(self, resources: tuple[ResourceRef, ...], model: str) -> None:
+    def __init__(self, resources: tuple[ResourceRef, ...], model: str, applications: ApplicationSources) -> None:
         self._resources = resources
         self._model = model
+        self._applications = applications
         self._kubectl = Kubectl()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -85,7 +87,27 @@ class KubernetesReplicaObserver:
         self._service_uids: dict[str, str] | None = None
         self._known_groups: dict[str, str] = {}
         self._known_group_names: set[str] = set()
+        self._workload_samples: list[tuple[float, dict[str, Any]]] = []
         self.gpu_allocation: dict[str, Any] | None = None
+
+    @property
+    def group_names(self) -> tuple[str, ...]:
+        """Return verified Group names for service-scoped metric queries, including retired Groups."""
+        return tuple(sorted(self._known_group_names))
+
+    @property
+    def pod_names(self) -> tuple[str, ...]:
+        """Return observed serving Pod names so window queries include Pods replaced during a run."""
+        return tuple(sorted({pod["name"] for _, sample in self._workload_samples for pod in sample["pods"]}))
+
+    def workload_history(self, time_origin: float, duration: float) -> list[dict[str, Any]]:
+        """Return runtime identity changes on the measured clock after sampling has stopped."""
+        before = [item for item in self._workload_samples if item[0] <= time_origin]
+        within = [item for item in self._workload_samples if time_origin < item[0] <= time_origin + duration]
+        return [
+            {"elapsed_time_s": max(0.0, at - time_origin), **sample}
+            for at, sample in before[-1:] + within
+        ]
 
     def start(self) -> None:
         """Read the pre-measurement boundary, then start one sampling thread."""
@@ -125,6 +147,8 @@ class KubernetesReplicaObserver:
         except (DeploymentError, KeyError, TypeError, ValueError) as exc:
             self._gpu_failures.append(time.perf_counter())
             self._last_gpu_error = str(exc)
+        if self._workload_samples:
+            self._applications.capture(self._workload_samples[-1][1])
 
     def _read_observations(
         self, values: tuple[dict[str, Any], ...], observed_at: float,
@@ -239,7 +263,16 @@ class KubernetesReplicaObserver:
             known_groups[item["metadata"]["uid"]] = item["spec"]["accelerator"]["deviceResourceName"]
             known_group_names.add(item["metadata"]["name"])
 
+        groups = [{
+            "name": item["metadata"]["name"], "uid": item["metadata"]["uid"],
+            "runtime": item["spec"]["runtime"],
+            "artifacts": {key: item["spec"]["artifacts"][key] for key in (
+                "model", "source", "modelRevision", "tokenizer", "tokenizerRevision",
+            ) if key in item["spec"]["artifacts"]},
+        } for item in items if item["kind"] == "ModelGroup" and item["metadata"]["uid"] in known_groups]
+        pods = []
         counts: dict[str, int] = {resource: 0 for resource in set(known_groups.values())}
+        allocation_error = None
         for item in items:
             if item["kind"] != "Pod":
                 continue
@@ -270,20 +303,37 @@ class KubernetesReplicaObserver:
                     continue
                 # Without a live Group or previously observed ownership, a
                 # terminating Pod cannot safely be attributed to any service.
-                raise ValueError(
-                    f"Pod {item['metadata']['name']} has unresolvable ModelGroup ownership"
-                )
+                allocation_error = f"Pod {item['metadata']['name']} has unresolvable ModelGroup ownership"
+                continue
+            status = next((entry for entry in item["status"].get("containerStatuses", [])
+                           if entry["name"] == "model-server"), {})
+            pods.append({
+                "name": item["metadata"]["name"], "uid": item["metadata"]["uid"],
+                "node": spec["nodeName"], "model_group": group_name,
+                "model_group_uid": group_uid, "image": model_server["image"],
+                "image_id": status.get("imageID"), "container_id": status.get("containerID"),
+                "restart_count": status.get("restartCount"),
+                "resources": model_server["resources"],
+            })
             request = model_server["resources"]["requests"][device_resource]
             count = int(request)
             if count < 1 or str(count) != str(request):
-                raise ValueError(
-                    f"Pod {item['metadata']['name']} has invalid GPU request {request!r}"
-                )
-            counts[device_resource] = counts.get(device_resource, 0) + count
+                allocation_error = f"Pod {item['metadata']['name']} has invalid GPU request {request!r}"
+            else:
+                counts[device_resource] = counts.get(device_resource, 0) + count
         self._service_uids = service_uids
         self._known_groups = known_groups
         self._known_group_names = known_group_names
-        return GPUAllocationSample(time.perf_counter(), counts)
+        observed_at = time.perf_counter()
+        sample = {
+            "groups": sorted(groups, key=lambda item: item["uid"]),
+            "pods": sorted(pods, key=lambda item: item["uid"]),
+        }
+        if not self._workload_samples or self._workload_samples[-1][1] != sample:
+            self._workload_samples.append((observed_at, sample))
+        if allocation_error is not None:
+            raise ValueError(allocation_error)
+        return GPUAllocationSample(observed_at, counts)
 
     def finish(self, time_origin: float, duration: float | None = None) -> list[dict[str, Any]]:
         """Stop and align replica rows; optionally integrate measured GPU allocation."""

@@ -28,12 +28,15 @@ from foretoken.cluster_build import (
     registry_credentials,
     remove_build_pods,
 )
+from foretoken.engine_environment import resolve_vllm_base_image
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
 
 _BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 _INSTALL_SOURCE = "foretoken.io/install-source"
+_SOURCE_METADATA = ".foretoken-sources.json"
+_SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})
 
 
 def _source_home() -> Path:
@@ -240,8 +243,10 @@ def _snapshot(
     engines: dict[str, str] | None = None,
     previous: Path | None = None,
     unchanged: set[str] | None = None,
+    *,
+    root: Path,
 ) -> None:
-    """Save exact input bytes, reusing already-compared snapshot files without copying them."""
+    """Save build inputs and their checkout provenance before compilation begins."""
     destination.mkdir(parents=True)
     for name, source in files.items():
         target = destination / name
@@ -274,6 +279,30 @@ def _snapshot(
         (destination / "engine").mkdir(exist_ok=True)
         _write_json(destination / "engine/manifest.json", manifest)
         _write_json(destination / "engine/deleted.json", deleted)
+    _write_json(destination / _SOURCE_METADATA, {
+        "foretoken": _checkout_source(root),
+        "engines": {name: _checkout_source(Path(checkout)) for name, checkout in (engines or {}).items()},
+    })
+
+
+def _checkout_source(root: Path) -> dict[str, Any] | None:
+    """Record a build checkout's Git state without retaining local paths or remote credentials."""
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
+    if result.returncode:
+        return None
+    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
+    return {"commit": result.stdout.strip(), "dirty": bool(changed)}
+
+
+def build_sources(snapshot: Path, component: str) -> dict[str, Any] | None:
+    """Read captured provenance for the component being published, including bound model engines."""
+    metadata = snapshot / _SOURCE_METADATA
+    if not metadata.is_file():
+        return None
+    sources = json.loads(metadata.read_text())
+    if component != "model-server":
+        sources.pop("engines", None)
+    return sources
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -296,7 +325,7 @@ def capture_build_inputs(
     """Own candidate image inputs until record_install moves them into committed state."""
     destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
     try:
-        _snapshot(_inputs(root, engines), destination, engines)
+        _snapshot(_inputs(root, engines), destination, engines, root=root)
         yield destination
     finally:
         if destination.exists():
@@ -348,7 +377,7 @@ def validate_build_inputs(
         for path in snapshot.rglob("*")
         if path.is_file()
         and str(path.relative_to(snapshot))
-        not in {"engine/manifest.json", "engine/deleted.json"}
+        not in _SNAPSHOT_METADATA
     }
     if previous != current.keys() or any(
         not filecmp.cmp(snapshot / name, path, shallow=False)
@@ -375,8 +404,8 @@ def snapshot_versions(
         name = str(path.relative_to(snapshot))
         old = previous / name if previous else None
         unchanged = (
-            name not in changed
-            if changed is not None
+            name in versions and name not in changed
+            if changed is not None and name not in _SNAPSHOT_METADATA
             else (
                 name in versions
                 and old is not None
@@ -596,7 +625,7 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
             BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
         )
     if ghcr:
-        result.update(UV_IMAGE_REGISTRY=ghcr, INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr)
+        result["UV_IMAGE_REGISTRY"] = ghcr
     if gcr:
         result["DISTROLESS_IMAGE_REGISTRY"] = gcr
     return result
@@ -781,7 +810,9 @@ def prepare_source_images(
     configuration = build_configuration(
         root,
         values,
-        arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
+        arguments.get(
+            "BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]
+        ),
     )
     registry = (command.registry or "").rstrip("/")
     prefix = registry if registry else "docker.io/library/foretoken-dev"
@@ -796,19 +827,6 @@ def prepare_source_images(
         secret["name"]
         for value in values
         for secret in value.get("imagePullSecrets", [])
-    )
-    credentials = registry_credentials(
-        [
-            configuration["image"],
-            prefix,
-            inference_engine_image or "",
-            arguments.get("UV_IMAGE", ""),
-            "docker.io",
-            "gcr.io",
-            "ghcr.io",
-            *(endpoint for endpoints in registry_mirrors.values() for endpoint in endpoints),
-            *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
-        ]
     )
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
@@ -833,6 +851,38 @@ def prepare_source_images(
     for _, _, claim in nodes:
         ensure_build_cache(kubectl, namespace, claim, configuration)
     with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
+        # Resolve automatic defaults from the same inputs used by the build, without
+        # recording them as an explicit base selection in the installation binding.
+        base_image = (
+            None
+            if build_metax_runtime
+            else resolve_vllm_base_image(
+                snapshot,
+                inference_engine_image,
+                arguments.get("BASE_IMAGE_REGISTRY", ""),
+            )
+        )
+        credentials = registry_credentials(
+            [
+                configuration["image"],
+                prefix,
+                base_image or "",
+                arguments.get("UV_IMAGE", ""),
+                "docker.io",
+                "gcr.io",
+                "ghcr.io",
+                *(
+                    endpoint
+                    for endpoints in registry_mirrors.values()
+                    for endpoint in endpoints
+                ),
+                *(
+                    value
+                    for key, value in arguments.items()
+                    if key.endswith("REGISTRY")
+                ),
+            ]
+        )
         old = state_directory / previous["inputs"] if previous.get("inputs") else None
         versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
@@ -873,7 +923,7 @@ def prepare_source_images(
             )
             builders.append(builder)
             builder.sync(files, versions)
-            engine_image = inference_engine_image
+            engine_image = base_image
             if build_metax_runtime:
                 engine_image = (
                     f"{prefix}/vllm-metax:{suffix}"
@@ -1017,9 +1067,11 @@ def prepare_source_images(
         application_revisions = {}
         publisher = next(builder for builder in builders if builder.node == origin.node)
         for component in references:
-            prior = previous.get("bundles", {}).get(
-                component, build.get("applications", {}).get(component, {})
-            ).get("revision", "")
+            prior = (
+                previous.get("bundles", {})
+                .get(component, build.get("applications", {}).get(component, {}))
+                .get("revision", "")
+            )
             application_revisions[component] = origin.publish(
                 publisher,
                 publisher.root + "/applications/" + component,
@@ -1029,6 +1081,7 @@ def prepare_source_images(
                 None,
                 timeout=command.timeout,
                 reuse_previous=True,
+                sources=build_sources(snapshot, component),
             )
         publisher.run(["rm", "-rf", "--", publisher.root + "/applications"])
         applications = {

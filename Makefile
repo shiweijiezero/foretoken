@@ -94,9 +94,11 @@ image-vllm-metax: mooncake-source
 		-t "$(VLLM_METAX_IMAGE)" .
 
 image-model-server:
-	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
-		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
-	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
+	engine_image=$$("$(or $(FORETOKEN_PYTHON),python3)" cli/foretoken/engine_environment.py \
+		--root "$(CURDIR)" --image "$(INFERENCE_ENGINE_IMAGE)" \
+		--docker-registry "$(DOCKER_REGISTRY)") && \
+	docker build \
+		--build-arg INFERENCE_ENGINE_IMAGE="$$engine_image" \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \
 		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \

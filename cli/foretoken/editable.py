@@ -35,6 +35,7 @@ from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.source import (
     _INSTALL_SOURCE,
+    _SNAPSHOT_METADATA,
     _has_server_binding,
     _inputs,
     _local_candidates,
@@ -42,6 +43,7 @@ from foretoken.source import (
     _snapshot,
     _state_directory,
     _write_json,
+    build_sources,
     ensure_build_cache,
     image_tools_image,
     local_build_nodes,
@@ -122,7 +124,7 @@ class EditableDeployment:
             for p in old.rglob("*")
             if p.is_file()
             and str(p.relative_to(old))
-            not in {"engine/manifest.json", "engine/deleted.json"}
+            not in _SNAPSHOT_METADATA
         }
         changed = {
             name
@@ -188,6 +190,7 @@ class EditableDeployment:
             engines,
             previous=old,
             unchanged=set(current).difference(changed),
+            root=self.root,
         )
         validate_build_inputs(self.root, snapshot, engines)
         self.state["build"]["versions"] = snapshot_versions(
@@ -406,11 +409,16 @@ class EditableDeployment:
                     if component == "control-plane"
                     else f"data-plane/{component}/Dockerfile"
                 )
+                arguments = dict(build["arguments"])
+                if component == "model-server":
+                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"][
+                        "model_image"
+                    ]
                 builder.build(
                     dockerfile,
                     target="source-export",
                     destination=payload,
-                    arguments=build["arguments"],
+                    arguments=arguments,
                 )
                 if component == "model-server" and self.state.get("engines"):
                     builder.build(
@@ -452,6 +460,7 @@ class EditableDeployment:
                     previous,
                     references,
                     timeout=timeout,
+                    sources=build_sources(snapshot, component),
                 )
                 builder.run(["rm", "-rf", "--", staging])
         if "control-plane" in pending:

@@ -17,17 +17,16 @@ from typing import Any
 
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
 from benchmarks.results.plots.measurements import (
-    _distribution_charts,
-    _evaluation_comparison_charts,
-    _greedy_charts,
     _http_charts,
     _prometheus_charts,
     _quality_charts,
     _slo_charts,
     _video_phase_charts,
+    comparison_charts,
     gpu_allocation_charts,
     phase_summary_charts,
 )
+from benchmarks.results.plots.saved_results import read_saved_results
 
 _PALETTE = (
     "#2a78d6",
@@ -74,6 +73,19 @@ def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
     axis.spines[["top", "right"]].set_visible(False)
     axis.spines[["left", "bottom"]].set_color("#c3c2b7")
     axis.tick_params(labelsize=8, colors="#52514e", length=2)
+
+
+
+def _legend(fig: Any, axis: Any, columns: int) -> None:
+    """Keep complete series identities readable without covering measured curves."""
+    handles, labels = axis.get_legend_handles_labels()
+    labels = [textwrap.fill(label, width=38 if columns == 1 else 80) for label in labels]
+    if any("\n" in label for label in labels):
+        lines = sum(label.count("\n") + 1 for label in labels)
+        fig.set_size_inches(fig.get_figwidth(), fig.get_figheight() + lines * 0.12)
+        fig.legend(handles, labels, fontsize=8, frameon=False, loc="outside lower center")
+    else:
+        axis.legend(handles, labels, fontsize=8, frameon=False, loc="best")
 
 
 def _save(fig: Any, path: Path) -> dict[str, Path]:
@@ -189,7 +201,7 @@ def _charts(
                         linewidth=1,
                         label="Min-cost / min-KL frontier",
                     )
-            if chart.metric.startswith("gpu_allocation_"):
+            if chart.kind == "step" and chart.metric.startswith("gpu_allocation_"):
                 axis.set_xlim(0, float(series_list[0].records[0]["duration_s"]))
                 axis.set_ylim(bottom=0)
             if chart.yscale == "symlog":
@@ -219,7 +231,7 @@ def _charts(
                     ha="right",
                 )
             if len(series_list) > 1 or chart.kind == "pareto":
-                axis.legend(fontsize=8, frameon=False, loc="best")
+                _legend(fig, axis, columns)
             for extension, file in _save(fig, path).items():
                 exported[f"{base}.{extension}"] = file
             rows = []
@@ -401,7 +413,7 @@ def _pareto(
                 "Output throughput per GPU (tokens/s)",
             )
             if len({row["method"] for row in plotted}) > 1:
-                axis.legend(fontsize=8, frameon=False)
+                _legend(figure, axis, columns)
             for extension, file in _save(figure, path).items():
                 exported[f"{base}.{extension}"] = file
             file = _table(path, plotted)
@@ -409,26 +421,43 @@ def _pareto(
     return exported
 
 
+def default_output_directory(source: Path, *others: Path) -> Path:
+    """Choose the shared default for the standalone CLI and automatic result exporter."""
+    return Path("plots") if others else Path(source) / "plots"
+
+
 def render_results(
     source: Path,
-    *,
+    *others: Path,
     output_dir: Path | None = None,
     columns: int = 1,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
 ) -> dict[str, Path]:
-    """Re-render a saved perf, sweep, video or evaluation directory into figures and tables.
+    """Render saved results from one or more directories into figures and comparison tables.
 
     The caller owns the source and destination directory. This function only reads
     persisted measurement and summary artifacts; it neither runs benchmarks nor
     changes the existing JSON or native evaluator outputs.
     """
     source = Path(source)
-    out = Path(output_dir) if output_dir is not None else source / "plots"
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
+    direct = not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
+    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods)
+    if comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
+        measured = comparison_results.runs[0].get("result")
+        collection_metrics = {row["metric"] for row in comparison_results.summary} | {
+            chart.metric for chart in comparison_results.native
+        }
+        if comparison_results.runs[0].get("measured") and measured is not None and (
+            not metrics or not set(metrics) <= collection_metrics
+        ):
+            return render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
+                                  methods=comparison_results.method_filters.get(Path(measured), ()))
     config_path = source / "config.json"
-    if not config_path.is_file() and not (source / "slo_results.json").is_file():
+    if comparison_results is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
     config = (
         json.loads((config_path).read_text(encoding="utf-8"))
@@ -438,7 +467,27 @@ def render_results(
     charts: list[Chart] = []
     identities: list[str] = []
     points_path = source / "sweep_points.json"
-    if points_path.is_file():
+    if comparison_results is not None:
+        points = comparison_results.points
+        summary = comparison_results.summary
+        scalar_metrics = {row["metric"] for row in summary}
+        native_metrics = {chart.metric for chart in comparison_results.native}
+        missing = set(metrics) - scalar_metrics - native_metrics
+        if missing:
+            raise ValueError("No measured values for plot metrics: " + ", ".join(sorted(missing)))
+        identities = list(dict.fromkeys(_method(point) for point in points))
+        charts = list(sweep_charts(points, summary, metrics=tuple(m for m in metrics if m in scalar_metrics), vary_axes=False)) if (
+            points and (not metrics or set(metrics) & scalar_metrics)
+        ) else []
+        charts += [chart for chart in comparison_results.native if not metrics or chart.metric in metrics]
+        out.mkdir(parents=True, exist_ok=True)
+        result = _pareto(points, summary, out, (), columns) if points else {}
+        for name, rows in (("comparison-runs", comparison_results.runs), ("comparison-summary", summary)):
+            if not rows:
+                continue
+            file = _table(out / name, rows)
+            result[file.name] = file
+    elif points_path.is_file():
         points = json.loads((points_path).read_text(encoding="utf-8"))
         summary = json.loads(
             (source / "sweep_summary.json").read_text(encoding="utf-8")
@@ -471,45 +520,14 @@ def render_results(
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
         warmup_metrics_path = source / "warmup_metrics.json"
         warmup_metrics = json.loads(warmup_metrics_path.read_text(encoding="utf-8")) if warmup_metrics_path.is_file() else None
-        if "evaluation_comparison" in run_metrics:
-            comparison = run_metrics["evaluation_comparison"]
-            identities = [method["label"] for method in comparison["methods"]]
-            charts = _evaluation_comparison_charts(comparison)
-            if methods:
-                charts = [replace(chart, series=tuple(item for item in chart.series
-                                                      if item.name in methods)) for chart in charts]
-                charts = [chart for chart in charts if chart.series]
-        elif "greedy_comparison" in run_metrics:
-            comparison = run_metrics["greedy_comparison"]
-            identities = list(dict.fromkeys(str(point["method"]) for point in comparison["candidates"]))
-            charts = _greedy_charts(comparison)
+        comparison = comparison_charts(run_metrics)
+        if comparison is not None:
+            charts, identities = comparison
             if methods:
                 charts = [replace(chart, series=tuple(
                     item for item in chart.series
                     if str(item.records[0].get("method") or item.name) in methods
                 )) for chart in charts]
-                charts = [chart for chart in charts if chart.series]
-        elif "distribution_comparison" in run_metrics:
-            comparison = run_metrics["distribution_comparison"]
-            identities = list(
-                dict.fromkeys(
-                    str(point["method"]) for point in comparison["candidates"]
-                )
-            )
-            charts = _distribution_charts(comparison)
-            if methods:
-                charts = [
-                    replace(
-                        chart,
-                        series=tuple(
-                            series
-                            for series in chart.series
-                            if str(series.records[0].get("method") or series.name)
-                            in methods
-                        ),
-                    )
-                    for chart in charts
-                ]
                 charts = [chart for chart in charts if chart.series]
         elif "scores" in run_metrics:
             charts = _quality_charts(run_metrics)
@@ -542,7 +560,7 @@ def render_results(
                 result[file.name] = file
     else:
         raise FileNotFoundError(f"No saved metrics or sweep results in {source}")
-    if not points_path.is_file():
+    if comparison_results is None and not points_path.is_file():
         if set(methods) - set(identities):
             raise ValueError(
                 "Unknown plot methods: "
@@ -560,7 +578,7 @@ def render_results(
             charts,
             out,
             identities
-            or list(dict.fromkeys(s.name for chart in charts for s in chart.series)),
+            or list(dict.fromkeys(str(s.records[0].get("method") or s.name) for chart in charts for s in chart.series)),
             columns,
         )
     )
