@@ -63,15 +63,15 @@ foretoken install -e . \
 
 ### Select a different runtime environment
 
-普通部署不需要修改基础镜像。Foretoken 默认使用 `vllm/vllm-openai:v0.31.0`，其中包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
+A standard deployment does not require changing the base image. Foretoken uses `vllm/vllm-openai:v0.31.0` by default, and that image includes the Python, PyTorch, CUDA, and vLLM components needed to run the model service.
 
-如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
+To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json):
 
 ```json
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，重新执行 `foretoken deploy`。
+Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, run `foretoken deploy` again.
 
 To override the base for one installation instead, set `runtime.vllm.image` in `deploy/platform-values.yaml`:
 
