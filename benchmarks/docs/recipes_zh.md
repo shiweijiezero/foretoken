@@ -187,13 +187,16 @@ foretoken plot results/fixed-length --metric latency_p95_seconds \
   --output-dir results/fixed-length/latency-figure
 ```
 
-## 对照历史迭代
+## 对照已保存结果
 
-传入 `--output experiment` 创建的实验目录。假设已保存的两个方案名为 `baseline` 和 `mtp5`，直接比较：
+直接传入要比较的结果目录。假设结果分别保存在 `results/baseline` 和 `results/mtp5`：
 
 ```bash
-foretoken plot results/decode/parallelism \
-  --iteration baseline --iteration mtp5
+foretoken plot results/baseline results/mtp5
 ```
 
-省略 `--iteration` 时包含全部已保存的方案。性能图按相同的已保存负载设置比较；质量图保留各次运行的原生评分和误差，任务设置在对应原生报告中查看。CSV 保留运行状态、配置与环境链接、重复次数及缺失指标；也可以传入单个迭代目录或命令运行目录。
+目录可以是单次结果、sweep、实验、迭代、命令运行，或包含这些结果的父目录。用目录路径选择方案；重叠输入中的同一结果只计一次，同名来源通过目录标签区分。
+
+性能图按相同的已保存负载设置比较；质量图保留各次运行的原生评分和误差，任务设置在对应原生报告中查看。CSV 保留来源路径、运行状态、配置与环境链接、重复次数及缺失指标。
+
+单个输入默认输出到该目录的 `plots/`，多个输入默认输出到当前目录的 `plots/`。用 `--output-dir` 修改位置，`--metric` 和 `--method` 选择指标或记录中的方法。

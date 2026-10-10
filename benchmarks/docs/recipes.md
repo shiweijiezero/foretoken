@@ -187,13 +187,16 @@ foretoken plot results/fixed-length --metric latency_p95_seconds \
   --output-dir results/fixed-length/latency-figure
 ```
 
-## Compare saved iterations
+## Compare saved results
 
-Pass the experiment directory created with `--output experiment`. To compare saved iterations named `baseline` and `mtp5`:
+Pass the directories containing the results you want to compare. For results saved under `results/baseline` and `results/mtp5`:
 
 ```bash
-foretoken plot results/decode/parallelism \
-  --iteration baseline --iteration mtp5
+foretoken plot results/baseline results/mtp5
 ```
 
-Omit `--iteration` to include all saved iterations. Performance figures compare matching saved workload settings. Native quality figures retain each run’s scores and evaluator error bars; task settings remain in the native reports. CSV tables retain run status, configuration and environment links, repetition counts, and missing measurements. A single iteration directory or command run directory is also accepted.
+Inputs can be individual results, sweeps, experiments, iterations, command runs, or parent folders containing them. Select approaches by their directory paths. Overlapping selections count each result once, and directory labels distinguish sources with the same name.
+
+Performance figures compare matching saved workload settings. Native quality figures retain each run’s scores and evaluator error bars; task settings remain in the native reports. CSV tables retain source paths, run status, configuration and environment links, repetition counts, and missing measurements.
+
+A single input writes to its `plots/` subdirectory; multiple inputs write to `./plots`. Use `--output-dir` to choose another destination, and `--metric` or `--method` to select metrics or recorded methods.

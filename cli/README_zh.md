@@ -209,7 +209,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 导出图表
 
-评测时使用 `--output local,wandb,plot`，或用 `foretoken plot RESULT_DIR` 从已有结果重新绘图，无需再次推理。对照用法见[历史迭代](../benchmarks/docs/recipes_zh.md#对照历史迭代)和[参数扫描](../benchmarks/docs/perf/sweep_zh.md)。
+评测时使用 `--output local,wandb,plot`，或用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 从已有结果重新绘图或对照，无需再次推理。对照用法见[已有结果对照](../benchmarks/docs/recipes_zh.md#对照已保存结果)和[参数扫描](../benchmarks/docs/perf/sweep_zh.md)。
 
 ## 性能剖析：执行瓶颈
 

@@ -84,4 +84,4 @@ foretoken perf examples/quickstart --num-prompts 20 \
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-已有结果可用 `foretoken plot RESULT_DIR` 重新绘图，传入运行时打印的结果目录或实验目录。`--columns 2` 使用双栏宽度。对照用法见[历史迭代](docs/recipes_zh.md#对照历史迭代)和[参数扫描](docs/perf/sweep_zh.md)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]`，从所选目录中的已有结果重新绘图或生成对照图。`--columns 2` 使用双栏宽度。对照用法见[已有结果对照](docs/recipes_zh.md#对照已保存结果)和[参数扫描](docs/perf/sweep_zh.md)。

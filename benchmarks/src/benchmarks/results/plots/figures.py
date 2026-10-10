@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
-from benchmarks.results.plots.experiments import read_experiment
 from benchmarks.results.plots.measurements import (
     _http_charts,
     _prometheus_charts,
@@ -27,6 +26,7 @@ from benchmarks.results.plots.measurements import (
     gpu_allocation_charts,
     phase_summary_charts,
 )
+from benchmarks.results.plots.saved_results import read_saved_results
 
 _PALETTE = (
     "#2a78d6",
@@ -421,35 +421,43 @@ def _pareto(
     return exported
 
 
+def default_output_directory(source: Path, *others: Path) -> Path:
+    """Choose the shared default for the standalone CLI and automatic result exporter."""
+    return Path("plots") if others else Path(source) / "plots"
+
+
 def render_results(
     source: Path,
-    *,
+    *others: Path,
     output_dir: Path | None = None,
     columns: int = 1,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
-    iterations: tuple[str, ...] = (),
 ) -> dict[str, Path]:
-    """Render saved measurements or recorded experiment iterations into figures and tables.
+    """Render saved results from one or more directories into figures and comparison tables.
 
     The caller owns the source and destination directory. This function only reads
     persisted measurement and summary artifacts; it neither runs benchmarks nor
     changes the existing JSON or native evaluator outputs.
     """
     source = Path(source)
-    out = Path(output_dir) if output_dir is not None else source / "plots"
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
-    experiment = read_experiment(source, iterations=iterations, methods=methods)
-    if experiment is not None and (source / "generated/context.json").is_file() and len(experiment.runs) == 1:
-        measured = experiment.runs[0].get("result")
-        if experiment.runs[0].get("measured") and measured is not None:
+    direct = not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
+    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods)
+    if comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
+        measured = comparison_results.runs[0].get("result")
+        collection_metrics = {row["metric"] for row in comparison_results.summary} | {
+            chart.metric for chart in comparison_results.native
+        }
+        if comparison_results.runs[0].get("measured") and measured is not None and (
+            not metrics or not set(metrics) <= collection_metrics
+        ):
             return render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
-                                  methods=experiment.method_filters.get(Path(measured), ()))
-    if experiment is None and iterations:
-        raise ValueError("--iteration requires an experiment, iteration, or command run directory")
+                                  methods=comparison_results.method_filters.get(Path(measured), ()))
     config_path = source / "config.json"
-    if experiment is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
+    if comparison_results is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
     config = (
         json.loads((config_path).read_text(encoding="utf-8"))
@@ -459,11 +467,11 @@ def render_results(
     charts: list[Chart] = []
     identities: list[str] = []
     points_path = source / "sweep_points.json"
-    if experiment is not None:
-        points = experiment.points
-        summary = experiment.summary
+    if comparison_results is not None:
+        points = comparison_results.points
+        summary = comparison_results.summary
         scalar_metrics = {row["metric"] for row in summary}
-        native_metrics = {chart.metric for chart in experiment.native}
+        native_metrics = {chart.metric for chart in comparison_results.native}
         missing = set(metrics) - scalar_metrics - native_metrics
         if missing:
             raise ValueError("No measured values for plot metrics: " + ", ".join(sorted(missing)))
@@ -471,10 +479,10 @@ def render_results(
         charts = list(sweep_charts(points, summary, metrics=tuple(m for m in metrics if m in scalar_metrics), vary_axes=False)) if (
             points and (not metrics or set(metrics) & scalar_metrics)
         ) else []
-        charts += [chart for chart in experiment.native if not metrics or chart.metric in metrics]
+        charts += [chart for chart in comparison_results.native if not metrics or chart.metric in metrics]
         out.mkdir(parents=True, exist_ok=True)
         result = _pareto(points, summary, out, (), columns) if points else {}
-        for name, rows in (("experiment-runs", experiment.runs), ("experiment-summary", summary)):
+        for name, rows in (("comparison-runs", comparison_results.runs), ("comparison-summary", summary)):
             if not rows:
                 continue
             file = _table(out / name, rows)
@@ -552,7 +560,7 @@ def render_results(
                 result[file.name] = file
     else:
         raise FileNotFoundError(f"No saved metrics or sweep results in {source}")
-    if experiment is None and not points_path.is_file():
+    if comparison_results is None and not points_path.is_file():
         if set(methods) - set(identities):
             raise ValueError(
                 "Unknown plot methods: "

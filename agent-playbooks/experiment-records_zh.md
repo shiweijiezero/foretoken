@@ -75,7 +75,7 @@ results/decode/parallelism/
 | 4 | `raw_output.json`；启用 `raw` 时的 `responses.jsonl` | 定位异常请求，以 `request_id` 对照指标、停止原因与实际回答；质量评测查看 `native/` 中的原生报告和已保存的逐题记录 |
 | 5 | 启用 `quiet` 时的 `generated/run.log` 和结果目录中的 `run.log`；质量评测的 `evaluator.log` | 定位客户端准备与执行中的错误；结合已有资源观测和 profile 解释性能差异，确定下一步补测。模型加载或引擎错误查看对应服务端日志。 |
 
-已有迭代可以直接从实验目录[生成对照图](../benchmarks/docs/recipes_zh.md#对照历史迭代)。
+直接选择已有结果的目录即可[生成对照图](../benchmarks/docs/recipes_zh.md#对照已保存结果)。
 
 ## 完善实验说明
 
