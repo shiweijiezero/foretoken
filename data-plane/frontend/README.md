@@ -160,7 +160,7 @@ spec:
     maxConcurrentRequests: 32
 ```
 
-After upgrading the model application, further instance-limit changes take effect without restarting model processes: edit the YAML and run `foretoken deploy` for the same deployment directory. Accepted, unfinished work remains counted; lowering the limit does not cancel it. With a limit configured, new work is accepted only when occupancy is below it. A limit update does not reopen an instance closed for draining.
+Instance limits update online after the model application has been upgraded. Lowering a limit lets existing work finish and pauses new acceptance until occupancy falls below the limit.
 
 Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
 
