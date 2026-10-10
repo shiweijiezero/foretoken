@@ -150,9 +150,9 @@ x-caller-id: caller-a
 
 The text APIs above share these headers. With role rules enabled, missing caller identity or an unmatched role is rejected; client scheduling preferences cannot override the role priority. Credentials, authorization, and RPM/token quotas belong to the gateway, and the frontend must be reachable only through its trusted ingress path. Tokenization and detokenization use waiting capacity without reserving generation concurrency. Video APIs retain their separate lifecycle.
 
-`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave one model unrestricted, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults. A model's `roleRules[].allowedPools` can restrict a role to names in `spec.modelPools`; a disaggregated model must retain a Pool for every required execution stage. To leave frontend admission unrestricted for one model, set both `admission: {}` and `roleRules: []`. Omitting both settings at the frontend leaves admission unrestricted by default.
 
-To separately bound accepted work at each text model-server instance, including its engine queue, add this model setting:
+To separately bound accepted, unfinished work at each text model-server instance, including requests waiting in its engine queue, set `ModelService.spec.instanceAdmission` in the model YAML. Omitting this setting leaves instance acceptance unlimited:
 
 ```yaml
 spec:
@@ -160,7 +160,7 @@ spec:
     maxConcurrentRequests: 32
 ```
 
-Instance-limit changes take effect through a normal model-server deployment rollout.
+After upgrading the model application, further instance-limit changes take effect without restarting model processes: edit the YAML and run `foretoken deploy` for the same deployment directory. Accepted, unfinished work remains counted; lowering the limit does not cancel it. With a limit configured, new work is accepted only when occupancy is below it. A limit update does not reopen an instance closed for draining.
 
 Replace legacy `admission.algorithm` and `admission.parameters` with the typed settings above; old fields are explicitly rejected. When upgrading, deploy the frontend and models together through the normal `foretoken deploy` path. Platform installation alone leaves running applications unchanged.
 

@@ -1772,6 +1772,11 @@ func (in *ModelPoolSpec) DeepCopyInto(out *ModelPoolSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.InstanceAdmission != nil {
+		in, out := &in.InstanceAdmission, &out.InstanceAdmission
+		*out = new(InstanceAdmissionConfig)
+		**out = **in
+	}
 	in.Template.DeepCopyInto(&out.Template)
 }
 

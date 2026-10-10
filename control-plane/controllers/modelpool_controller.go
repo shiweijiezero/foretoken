@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
@@ -50,6 +51,8 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 		For(&inferencev1alpha1.ModelPool{}).
 		Owns(&inferencev1alpha1.ModelGroup{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForInstancePod)).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
 		Complete(reconciler)
 }
@@ -73,11 +76,17 @@ func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, obje
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 
 // Reconcile materializes the desired Group revision and aggregates Group readiness.
 func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	pool := new(inferencev1alpha1.ModelPool)
-	if err := reconciler.Get(ctx, request.NamespacedName, pool); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.Get(ctx, request.NamespacedName, pool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !pool.DeletionTimestamp.IsZero() {
@@ -86,6 +95,10 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	service, err := reconciler.validateModelServiceOwnership(ctx, pool)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	// Preserve the active limit until this Pool reflects the owning service's current intent.
+	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	if reconciler.TemplateResolver == nil {
 		return ctrl.Result{}, fmt.Errorf("ModelPool template resolver is not configured")
@@ -96,6 +109,9 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		state.Reason, state.Message = "ResolutionFailed", "The target Pool execution config could not be resolved"
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionFalse, "ResolutionFailed", err.Error(), state)
 		return ctrl.Result{}, errors.Join(stateErr, statusErr)
+	}
+	if err := reconciler.reconcileInstanceAdmission(ctx, pool, template); err != nil {
+		return ctrl.Result{}, err
 	}
 	servingRevision := serviceServingRevision(service, pool)
 	template.Revision, err = reconciler.targetRevision(ctx, pool, template, servingRevision)
@@ -125,7 +141,11 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context.Context, pool *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ModelService, error) {
 	service := new(inferencev1alpha1.ModelService)
 	key := client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}
-	if err := reconciler.Get(ctx, key, service); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.Get(ctx, key, service); err != nil {
 		return nil, fmt.Errorf("get owning ModelService: %w", err)
 	}
 	if pool.Spec.ModelServiceRef.UID != string(service.UID) || !metav1.IsControlledBy(pool, service) {

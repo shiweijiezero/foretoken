@@ -1076,6 +1076,13 @@ spec:
                       description: ImageProfile distinguishes serving, Omni and diagnostic
                         environments during selection.
                       type: string
+                    instanceAdmissionProtocol:
+                      description: |-
+                        InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+                        Zero retains startup-only limits; one selects live file configuration.
+                      format: int32
+                      maximum: 1
+                      type: integer
                     sourceRevision:
                       description: SourceRevision retains the admitted source intent
                         independently of source-mode defaults.

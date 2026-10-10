@@ -150,9 +150,9 @@ x-caller-id: caller-a
 
 上面的文本接口共用这两个请求头。启用角色规则后，缺少调用方标识或角色不匹配的请求会被拒绝，客户端指定的调度偏好不能覆盖角色优先级。凭据、授权和 RPM/token 配额由网关管理，前端只应通过部署建立的可信入口访问。分词和 token ID 解码占用等待容量，不占用生成并发；视频接口仍使用独立生命周期。
 
-模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。模型角色规则中的 `roleRules[].allowedPools` 可引用 `spec.modelPools` 中的名称，限制该角色使用的 Pool；分离式部署必须为每个必需执行阶段保留一个 Pool。要让一个模型不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端默认省略这两项时也不限流。
+模型的 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应前端默认配置。模型角色规则中的 `roleRules[].allowedPools` 可引用 `spec.modelPools` 中的名称，限制该角色使用的 Pool；分离式部署必须为每个必需执行阶段保留一个 Pool。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端默认省略这两项时也不限流。
 
-模型服务实例还能独立限制已接收工作，包括引擎内排队的请求。在模型配置中添加：
+每个文本模型服务实例还能独立限制已接收但尚未结束的工作，包括引擎内排队的请求。在模型 YAML 中设置 `ModelService.spec.instanceAdmission`；省略此项时，实例接收不限流：
 
 ```yaml
 spec:
@@ -160,7 +160,7 @@ spec:
     maxConcurrentRequests: 32
 ```
 
-实例限额修改通过模型服务的常规部署和副本滚动更新生效。
+模型程序升级后，后续实例限额调整无需重启模型进程：修改 YAML，再对同一部署目录执行 `foretoken deploy` 即可在线生效。已接收但尚未结束的工作继续占用容量，下调限额不会取消这些工作；设置上限时，已有占用低于当前上限才接收新工作。限额更新不会重新打开正在排空且已关闭接收的实例。
 
 如仍使用 `admission.algorithm` 和 `admission.parameters`，改为上面的等待限额和角色规则，旧字段会被明确拒绝。升级时按常规 `foretoken deploy` 同时部署前端与模型服务；仅升级平台不会替换运行中的应用。
 

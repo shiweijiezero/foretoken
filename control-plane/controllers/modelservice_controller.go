@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -20,6 +21,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -75,6 +77,7 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForInstanceConfiguration)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForGroup)).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
@@ -159,7 +162,9 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	}
 	if !cacheReady {
 		ready, reason, message, readinessErr := reconciler.serviceReadiness(ctx, service, compiledPools)
-		if ready {
+		if ready && service.Status.ServingGeneration == service.Generation {
+			ready, reason, message, readinessErr = reconciler.instanceAdmissionApplied(ctx, service, compiledPools)
+		} else if ready {
 			reason, message = "ServingPreviousGeneration", "The previous complete ModelService generation remains ready while runtime cache storage is preparing"
 		}
 		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
@@ -167,7 +172,11 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 			pools:    conditionState{metav1.ConditionFalse, "CacheNotReady", "No new ModelPools were materialized"},
 			ready:    conditionState{conditionStatus(ready), reason, message},
 		})
-		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
+		result := ctrl.Result{}
+		if reason == "ConfigurationPending" || reason == "ConfigurationRejected" {
+			result.RequeueAfter = time.Second
+		}
+		return result, errors.Join(readinessErr, statusErr)
 	}
 	huggingFaceAccess := reconciler.HuggingFaceAccessProfile.Access()
 	for index := range compiledPools {
@@ -179,6 +188,14 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
+		var deploymentRequired *instanceAdmissionDeploymentRequiredError
+		if errors.As(err, &deploymentRequired) {
+			return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
+				compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+				pools:    conditionState{metav1.ConditionFalse, "DeploymentRequired", err.Error()},
+				ready:    conditionState{metav1.ConditionFalse, "DeploymentRequired", err.Error()},
+			})
+		}
 		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
 			pools:    conditionState{metav1.ConditionFalse, "ApplyFailed", "ModelPools were not fully materialized"},
@@ -194,6 +211,12 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{}, err
 	}
 	if ready && service.Status.ServingGeneration == service.Generation {
+		ready, readyReason, readyMessage, err = reconciler.instanceAdmissionApplied(ctx, service, compiledPools)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if ready && service.Status.ServingGeneration == service.Generation {
 		ready, readyReason, readyMessage, err = reconciler.frontendConfigurationApplied(ctx, service)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -207,6 +230,9 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		autoscaling: &autoscalingStatus,
 	}); err != nil {
 		return ctrl.Result{}, err
+	}
+	if readyReason == "ConfigurationPending" || readyReason == "ConfigurationRejected" {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	if scaling.Autoscaler.Automatic() {
 		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
@@ -292,8 +318,18 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		if err != nil {
 			return err
 		}
-		if template.InstanceAdmission != nil && (selection == nil || selection.AdmissionStore == nil) {
-			return fmt.Errorf("ModelService %q instanceAdmission requires redeploying its model-server application", service.Name)
+		if compiledPools[index].InstanceAdmission != nil && (selection == nil || selection.AdmissionStore == nil) {
+			return &instanceAdmissionDeploymentRequiredError{poolName: compiledPools[index].Name}
+		}
+		if template.Backend == "vllm" && selection != nil && selection.InstanceAdmissionProtocol == 0 {
+			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, compiledPools[index].Name)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(startupAdmission, compiledPools[index].InstanceAdmission) {
+				return &instanceAdmissionDeploymentRequiredError{poolName: compiledPools[index].Name}
+			}
+			template.InstanceAdmission = startupAdmission
 		}
 		template.Application = selection
 		if selection != nil {
@@ -335,11 +371,12 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		created := pool.ResourceVersion == ""
 		before := pool.DeepCopy()
 		pool.Spec = inferencev1alpha1.ModelPoolSpec{
-			ModelServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
-			PoolName:        compiled.Name,
-			DesiredGroups:   compiled.DesiredGroups,
-			MaxInputTokens:  copyOptionalInt32(compiled.MaxInputTokens),
-			Template:        compiled.Template,
+			ModelServiceRef:   inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
+			PoolName:          compiled.Name,
+			DesiredGroups:     compiled.DesiredGroups,
+			MaxInputTokens:    copyOptionalInt32(compiled.MaxInputTokens),
+			InstanceAdmission: compiled.InstanceAdmission.DeepCopy(),
+			Template:          compiled.Template,
 		}
 		if err := controllerutil.SetControllerReference(service, pool, reconciler.Scheme()); err != nil {
 			return fmt.Errorf("set ModelPool %q owner: %w", compiled.Name, err)
@@ -404,6 +441,9 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 		}
 	}
 	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy()}
+	if template.Backend == "vllm" {
+		selection.InstanceAdmissionProtocol = inferencev1alpha1.InstanceAdmissionFileProtocol
+	}
 	if previous != nil && previous.Spec.Template.Backend == template.Backend && previous.Spec.Template.SourceRevision == template.SourceRevision {
 		previousProfile := previous.Spec.Template.Backend
 		if previous.Spec.Template.Profiling != nil && previous.Spec.Template.Profiling.Engine == "nsight" {
@@ -415,7 +455,11 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 			return retained, nil
 		}
 		if previous.Spec.Template.Application == nil && deployment == "" && previousProfile == imageProfile {
-			groups, err := ownedModelGroups(ctx, reconciler.Client, previous)
+			reader := reconciler.APIReader
+			if reader == nil {
+				reader = reconciler.Client
+			}
+			groups, err := ownedModelGroups(ctx, reader, previous)
 			if err != nil {
 				return nil, err
 			}
@@ -424,6 +468,7 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 					selection.Image = group.Spec.Runtime.Image
 					selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
 					selection.AdmissionStore = group.Spec.Runtime.AdmissionStore.DeepCopy()
+					selection.InstanceAdmissionProtocol = group.Spec.Runtime.InstanceAdmissionProtocol
 					if selection.ApplicationURL == "" {
 						selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", group.Spec.Runtime.SourceRevision)
 					}
@@ -444,6 +489,52 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 		}
 	}
 	return selection, nil
+}
+
+type instanceAdmissionDeploymentRequiredError struct {
+	poolName string
+}
+
+// Error identifies instance intent that the selected executable cannot apply without redeployment.
+func (err *instanceAdmissionDeploymentRequiredError) Error() string {
+	return fmt.Sprintf("ModelPool %q requires an explicit deployment of a compatible model-server application for instance admission", err.poolName)
+}
+
+// legacyInstanceAdmission recovers a retained application's startup limit without taking new intent as its value.
+// The selected actual cohort is authoritative; an idle Pool retains its immutable template limit.
+func (reconciler *ModelServiceReconciler) legacyInstanceAdmission(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, poolName string) (*inferencev1alpha1.InstanceAdmissionConfig, error) {
+	if pool == nil {
+		return nil, &instanceAdmissionDeploymentRequiredError{poolName: poolName}
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	groups, err := ownedModelGroups(ctx, reader, pool)
+	if err != nil {
+		return nil, err
+	}
+	selected := serviceServingRevision(service, pool)
+	if selected == "" {
+		selected = pool.Status.PreparedRevision
+	}
+	startupAdmission := pool.Spec.Template.InstanceAdmission.DeepCopy()
+	found := false
+	for index := range groups {
+		group := &groups[index]
+		if selected != "" && group.Spec.Revision != selected || group.Spec.Runtime.InstanceAdmissionProtocol != 0 {
+			continue
+		}
+		if found && !reflect.DeepEqual(startupAdmission, group.Spec.Runtime.InstanceAdmission) {
+			return nil, &instanceAdmissionDeploymentRequiredError{poolName: poolName}
+		}
+		startupAdmission = group.Spec.Runtime.InstanceAdmission.DeepCopy()
+		found = true
+	}
+	if !found && pool.Spec.Template.Application != nil && pool.Spec.Template.Application.InstanceAdmissionProtocol != 0 {
+		return nil, &instanceAdmissionDeploymentRequiredError{poolName: poolName}
+	}
+	return startupAdmission, nil
 }
 
 // commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
@@ -469,7 +560,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 			continue
 		}
 		pool := byName[compiled.Name]
-		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
+		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
 			return false, nil
 		}
 		selected = append(selected, inferencev1alpha1.ServingPoolRevision{PoolName: pool.Spec.PoolName, PoolUID: string(pool.UID), Revision: pool.Status.PreparedRevision})
