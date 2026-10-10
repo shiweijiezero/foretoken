@@ -35,10 +35,8 @@ Expose new configuration through the shared FrontendService and ModelService adm
 
 ## Configuration lifecycle
 
-Each frontend replica maintains independent model admission state. `PreparedAdmissions::new` validates every selected algorithm through its factory and constructs independent candidates. Factories must not change active reservations, waiters, or metrics; an invalid candidate leaves the published rules unchanged. The runtime publisher calls `AdmissionRegistry::publish` only after accepting the prepared runtime.
+Validate new configuration before activation. Rule construction must leave live state untouched; invalid configuration keeps the existing rules in effect.
 
-The built-in `allow_all` and `concurrency` rules expose their shared work-unit state through `AdmissionRule::capacity_state`. Publication copies the candidate's limits into the active state and retains the active rule instance. Counts, FIFO waiters, and resource gauges survive the update; even unrestricted work returns counted permits so switching back to `concurrency` includes it. This hook is specific to rules whose entire decision is expressed by those shared limits, not a general algorithm replacement interface.
+Built-in rule updates preserve in-flight counts and queued requests, including their original deadlines. Lower limits do not cancel running requests; a queued batch exceeding the new concurrency limit receives HTTP 503.
 
-Lowering concurrency does not revoke running permits. Reducing or disabling the queue limits new arrivals, while existing waiters keep their original timeout. A previously queued batch larger than the new concurrency limit returns `AdmissionError::Closed` (HTTP 503), rather than `BatchTooLarge` (HTTP 400); dropping its queue reservation allows later waiters to proceed. Cancellation and timeout must likewise remove the waiter and release its queued count.
-
-A new rule with different decision semantics should leave `capacity_state` at its default `None`. Changed custom rules stop accepting new requests, cancel waiting attempts through `close`, and activate their replacement only after accepted work releases its permits. New requests receive HTTP 503 during this handover; other models continue independently. `AdmissionRegistry::is_applied` remains false while any configured model is draining or has a pending replacement, so configuration acknowledgement reports actual activation rather than preparation.
+Replacing a custom rule cancels its waiters and waits for accepted work to finish before activating the replacement. New requests for that model receive HTTP 503 during the handover. Configuration status confirms the update only after the new rule is active.
