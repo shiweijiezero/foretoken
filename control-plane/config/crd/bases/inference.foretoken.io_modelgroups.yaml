@@ -318,12 +318,6 @@ spec:
                 - message: kvRuntime must select exactly one KV storage mode
                   rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                     && has(self.mooncakeStore))
-              maxInputTokens:
-                description: MaxInputTokens is the prompt admission limit advertised
-                  to routing clients.
-                format: int32
-                minimum: 1
-                type: integer
               memberCount:
                 description: MemberCount is the number of runtime member Pods in this
                   Group.

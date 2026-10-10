@@ -39,9 +39,7 @@ Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled c
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. It uses the saved installation settings and reuses the runtime environment for code updates. Changes to runtime dependencies or image build settings update the platform installation.
-
-Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
+After editing the checkout, run the same command again. Code updates restart affected workloads and may reload model weights. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
 Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
 

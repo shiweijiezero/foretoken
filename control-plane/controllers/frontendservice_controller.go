@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -45,8 +46,6 @@ const (
 	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
 	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
 	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its LoadBalancer Service"
-	frontendRoutingInstalledMessage         = "A routable backend snapshot is installed"
-	frontendRoutingNotInstalledMessage      = "No routable backend snapshot is installed"
 )
 
 var frontendConditionTypes = [...]string{
@@ -109,6 +108,7 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendForPod)).
 		Complete(reconciler)
 }
 
@@ -123,6 +123,15 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&frontends.Items[index])})
 	}
 	return requests
+}
+
+// frontendForPod wakes configuration acknowledgement when a frontend replica changes.
+func (reconciler *FrontendServiceReconciler) frontendForPod(_ context.Context, object client.Object) []reconcile.Request {
+	name := object.GetLabels()[frontendServiceLabel]
+	if name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: name}}}
 }
 
 // servingCacheReady lets frontends share a cache only after a serving workload has bound it.
@@ -200,7 +209,11 @@ func (reconciler *FrontendServiceReconciler) placeFrontendCache(ctx context.Cont
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
 func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	frontend := new(inferencev1alpha1.FrontendService)
-	if err := reconciler.Get(ctx, request.NamespacedName, frontend); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.Get(ctx, request.NamespacedName, frontend); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	result, err := reconciler.reconcileFrontend(ctx, frontend)
@@ -229,7 +242,7 @@ func (reconciler *FrontendServiceReconciler) sourceSelectionAllowed(ctx context.
 }
 
 // Serving configuration protocol selected with the frontend application.
-const frontendServingConfigVersion uint32 = 1
+const frontendServingConfigVersion uint32 = 2
 const frontendServingConfigAnnotation = "inference.foretoken.io/serving-config-protocol"
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
@@ -296,12 +309,8 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	// Application selection and its serving protocol advance together. A platform update
 	// leaves an explicitly retained application and its existing configuration untouched.
-	if frontend.Status.Application != nil && frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
-		previous := frontend.Status.Application
-		sameApplication := previous.ApplicationURL == selection.ApplicationURL && (selection.ApplicationURL != "" || previous.Image == selection.Image)
-		if retained || sameApplication {
-			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
-		}
+	if retained && frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, deploymentRequired)
 	}
 	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != frontendServingConfigVersion {
 		base := frontend.DeepCopy()
@@ -319,10 +328,8 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
-	servingSnapshotInstalled, err := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
-	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
-	}
+	_, projectionErr := reconciler.reconcileServingSnapshot(ctx, frontend, services.Items)
+
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
 	if err != nil {
 		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
@@ -420,15 +427,23 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		currentDeployment.Status.Replicas == targetReplicas &&
 		currentDeployment.Spec.Template.Spec.Containers[0].Image == selection.Image &&
 		currentDeployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == selection.ApplicationURL
+	configuration := reconciler.observeConfiguration(ctx, frontend, currentDeployment)
+	if projectionErr != nil {
+		configuration = metav1.Condition{Status: metav1.ConditionFalse, Reason: "ServingSnapshotProjectionFailed", Message: projectionErr.Error()}
+	}
 	state := frontendState{
+		Configuration:  configuration,
 		Materialized:   applyDeployment,
 		Available:      available,
 		ExecutionReady: executionReady,
 		RouteRequired:  routeRequired,
 		RouteReady:     routeReady,
-		RoutingReady:   available && servingSnapshotInstalled,
 	}
-	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, state)
+	result := ctrl.Result{}
+	if configuration.Status != metav1.ConditionTrue {
+		result.RequeueAfter = time.Second
+	}
+	return result, reconciler.updateStatus(ctx, frontend, state)
 }
 
 func (profile FrontendRuntimeProfile) validate() error {
@@ -513,7 +528,7 @@ type frontendState struct {
 	Available      bool
 	RouteRequired  bool
 	RouteReady     bool
-	RoutingReady   bool
+	Configuration  metav1.Condition
 	FailureReason  string
 	FailureMessage string
 }
@@ -552,12 +567,15 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 		} else {
 			setFrontendCondition(frontend, frontendConditionRouteReady, metav1.ConditionTrue, "NotRequired", frontendRouteNotRequiredMessage)
 		}
+		if state.Configuration.Status == metav1.ConditionTrue {
+			frontend.Status.AppliedServingSnapshotVersion = frontend.Status.ServingSnapshotVersion
+		}
 		setFrontendCondition(
 			frontend,
 			frontendConditionRoutingReady,
-			conditionStatus(state.RoutingReady),
-			frontendBooleanReason(state.RoutingReady, "Installed", "NotInstalled"),
-			frontendBooleanMessage(state.RoutingReady, frontendRoutingInstalledMessage, frontendRoutingNotInstalledMessage),
+			state.Configuration.Status,
+			state.Configuration.Reason,
+			state.Configuration.Message,
 		)
 		reason, message := frontendReadyFailure(state)
 		setFrontendCondition(frontend, conditionReady, conditionStatus(reason == "Ready"), reason, message)
@@ -585,8 +603,8 @@ func frontendReadyFailure(state frontendState) (string, string) {
 		return "ExecutionPending", "The selected frontend application and target replicas are not ready"
 	case state.RouteRequired && !state.RouteReady:
 		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
-	case !state.RoutingReady:
-		return "RoutingNotReady", frontendRoutingNotInstalledMessage
+	case state.Configuration.Status != metav1.ConditionTrue:
+		return state.Configuration.Reason, state.Configuration.Message
 	default:
 		return "Ready", "The frontend workload and backend routing are ready"
 	}

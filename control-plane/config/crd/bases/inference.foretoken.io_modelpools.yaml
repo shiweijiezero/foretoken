@@ -64,6 +64,12 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              maxInputTokens:
+                description: MaxInputTokens is the live prompt limit published to
+                  routing clients.
+                format: int32
+                minimum: 1
+                type: integer
               modelServiceRef:
                 description: LocalObjectReference identifies an object in the same
                   namespace by stable UID.
@@ -253,12 +259,6 @@ spec:
                     - message: kvCache must select exactly one storage mode
                       rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                         && has(self.mooncakeStore))
-                  maxInputTokens:
-                    description: MaxInputTokens is the immutable prompt admission
-                      limit for this Pool.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   memberCount:
                     format: int32
                     minimum: 1

@@ -137,10 +137,35 @@ spec:
     algorithm: allow_all
 ```
 
-重新部署服务配置后生效。准入规则更新和模型增删不会重启前端 Pod；模型更换规则期间，新请求可能返回 HTTP 503。
+调整 `concurrency` 参数，或在它与 `allow_all` 之间切换时，会保留在途计数和已排队请求，不重启前端 Pod。降低限额不会取消正在执行的工作，已有等待沿用原来的排队时限；若已排队批次超过降低后的并发上限，则返回 HTTP 503。自定义规则仍需等旧工作结束后启用替代规则，交接期间新请求可能返回 HTTP 503。
 
 查看准入结果见[可观测性](../../observability/README_zh.md)，新增算法见[开发准入规则](../../docs/development/admission-rules_zh.md)。
 
+## 修改服务配置
+
+修改部署 YAML 后，再执行 `foretoken deploy` 即可。例如，在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中调整日志级别和请求时限：
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+重新部署快速开始示例：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+命令等待配置生效后退出。[路由算法及其参数](src/router/README_zh.md)、准入规则、`timeouts.request`、`timeouts.streamIdle` 和 `logLevel` 均可在线更新，不重启前端 Pod。算法名称或参数无效时，继续使用上一份可用配置。
+
+`timeouts.request` 限制请求总时长，`timeouts.streamIdle` 限制流式响应连续没有数据块的时长，不能大于 `request`。更新后的时限用于新请求，已有请求和流式响应保留原预算。`logLevel` 默认为 `info`，可选 `trace`、`debug`、`info`、`warn`、`error` 或 `off`。
+
+输入长度上限也可在线调整：修改 `ModelService.spec.maxInputTokens`；使用多个 Pool 时，在对应的 `spec.modelPools` 条目中设置 `maxInputTokens`，然后重新部署同一目录。这不会重启模型服务，也不会改变引擎的输入与输出合计上下文上限。
+
+`timeouts.drain` 单独控制前端进程退出时等待已接收请求完成的时长，默认 `10m`。修改它会更新前端 Pod；修改在线请求时限不会。
 
 ## 运维
 

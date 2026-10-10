@@ -14,7 +14,7 @@ mod types;
 use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
+use crate::runtime::RequestSnapshot;
 use axum::extract::rejection::JsonRejection;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -43,7 +43,7 @@ pub(super) fn router() -> Router<ApiState> {
 
 /// Lower a Responses request once, then expose the shared chat output as JSON or SSE.
 async fn create(
-    State(state): State<ApiState>,
+    Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     body: Result<Json<ResponsesRequest>, JsonRejection>,
 ) -> Response {

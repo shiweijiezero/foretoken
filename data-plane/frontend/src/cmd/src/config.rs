@@ -1,74 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Frontend process configuration.
+//! Frontend listener, configuration source, and process shutdown settings.
 
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use foretoken_router::RouterPipelineConfig;
-
 const SERVING_SNAPSHOT_ENV: &str = "FORETOKEN_SERVING_SNAPSHOT";
 const LISTEN_ADDRESS_ENV: &str = "FORETOKEN_LISTEN_ADDRESS";
-const REQUEST_TIMEOUT_SECONDS_ENV: &str = "FORETOKEN_REQUEST_TIMEOUT_SECONDS";
-const STREAM_IDLE_SECONDS_ENV: &str = "FORETOKEN_STREAM_IDLE_SECONDS";
+const DRAIN_SECONDS_ENV: &str = "FORETOKEN_DRAIN_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
-const ROUTER_PIPELINE_ENV: &str = "FORETOKEN_ROUTER_PIPELINE";
+
 pub(crate) struct RuntimeConfig {
     pub(crate) serving_snapshot: PathBuf,
     pub(crate) listen_address: String,
-    pub(crate) request_timeout: Duration,
-    pub(crate) stream_idle: Duration,
-    pub(crate) router_pipeline: RouterPipelineConfig,
+    pub(crate) drain: Duration,
 }
 
 impl RuntimeConfig {
-    /// Loads the controller-owned frontend settings once during process startup.
-    ///
-    /// `main` consumes the returned configuration to construct the listener and generation loops;
-    /// invalid or absent required values prevent the process from starting.
+    /// Loads process initialization settings; live request rules come from the serving snapshot.
     pub(crate) fn from_env() -> Result<Self, String> {
+        let serving_snapshot = required_env(SERVING_SNAPSHOT_ENV)?;
+        if serving_snapshot.is_empty() {
+            return Err(format!("{SERVING_SNAPSHOT_ENV} must not be empty"));
+        }
+        let seconds = required_env(DRAIN_SECONDS_ENV)?
+            .parse::<u64>()
+            .map_err(|_| format!("{DRAIN_SECONDS_ENV} must be a positive integer"))?;
+        if seconds == 0 {
+            return Err(format!("{DRAIN_SECONDS_ENV} must be a positive integer"));
+        }
         Ok(Self {
-            serving_snapshot: required_path(SERVING_SNAPSHOT_ENV)?,
+            serving_snapshot: serving_snapshot.into(),
             listen_address: required_env(LISTEN_ADDRESS_ENV)?,
-            request_timeout: required_positive_duration(REQUEST_TIMEOUT_SECONDS_ENV)?,
-            stream_idle: required_positive_duration(STREAM_IDLE_SECONDS_ENV)?,
-            router_pipeline: router_pipeline_from_env(|name| env::var(name))?,
+            drain: Duration::from_secs(seconds),
         })
     }
 }
 
-/// Resolves the router pipeline selected for this frontend process.
-///
-/// Startup decodes this configuration before RuntimeBuilder constructs and validates the rules.
-/// The resulting pipeline is retained across serving-snapshot generations.
-pub(crate) fn router_pipeline_from_env(
-    get_env: impl Fn(&str) -> Result<String, env::VarError>,
-) -> Result<RouterPipelineConfig, String> {
-    let pipeline = match get_env(ROUTER_PIPELINE_ENV) {
-        Ok(value) => serde_json::from_str(&value)
-            .map_err(|error| format!("invalid router pipeline: {error}"))?,
-        Err(env::VarError::NotPresent) => RouterPipelineConfig::default(),
-        Err(env::VarError::NotUnicode(_)) => {
-            return Err("router pipeline must be valid UTF-8".into());
-        }
-    };
-    Ok(pipeline)
-}
-
 fn required_env(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("{name} must be set by the frontend controller"))
-}
-
-fn required_positive_duration(name: &str) -> Result<Duration, String> {
-    let seconds = required_env(name)?
-        .parse::<u64>()
-        .map_err(|_| format!("{name} must be a positive integer"))?;
-    if seconds == 0 {
-        return Err(format!("{name} must be a positive integer"));
-    }
-    Ok(Duration::from_secs(seconds))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,9 +50,7 @@ pub(crate) enum KvIndexKeyError {
 }
 
 /// Loads the optional KV-index credential for runtime-builder startup.
-///
-/// The frontend process converts the result into enabled, disabled, or degraded routing state;
-/// unreadable configured credentials remain visible as errors rather than silently disabling KV hints.
+/// Unreadable configured credentials remain visible as degraded routing state.
 pub(crate) fn kv_index_key() -> Result<Option<[u8; 32]>, KvIndexKeyError> {
     let Ok(path) = env::var(KV_INDEX_KEY_PATH_ENV) else {
         return Ok(None);
@@ -91,12 +61,4 @@ pub(crate) fn kv_index_key() -> Result<Option<[u8; 32]>, KvIndexKeyError> {
         .try_into()
         .map(Some)
         .map_err(|_| KvIndexKeyError::InvalidLength)
-}
-
-fn required_path(name: &str) -> Result<PathBuf, String> {
-    let value = required_env(name)?;
-    if value.is_empty() {
-        return Err(format!("{name} must not be empty"));
-    }
-    Ok(value.into())
 }

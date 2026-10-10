@@ -266,12 +266,37 @@ diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 +from vllm.v1.worker.spec_decode_timing import TimedAsyncOutput
  from vllm.v1.worker.startup_plan import (
      maybe_apply_startup_plan,
-@@ -1248,6 +1250,7 @@
-
+@@ -1249,1 +1251,1 @@
 -    def execute_dummy_batch(self) -> None:
 +    def execute_dummy_batch(self) -> SpecDecodeTimingResult | None:
-         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
+@@ -1251,3 +1253,4 @@
          self.model_runner._dummy_run(num_tokens, uniform_decode=True)
 +        return self.collect_spec_decode_timings()
 
      def add_lora(self, lora_request: LoRARequest) -> bool:
+diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
+--- a/vllm/v1/outputs.py
++++ b/vllm/v1/outputs.py
+@@ -335,6 +336,8 @@
+     # information related to cudagraph execution
+     cudagraph_stats: CUDAGraphStat | None = None
+
++    spec_decode_timing: SpecDecodeTimingResult | None = None
++
+     # Per-step routed experts data captured by the worker.
+     # ``routing_data`` shape: (num_scheduled_tokens, num_layers,
+     #                         num_experts_per_tok); expert IDs as uint8/uint16.
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -838,6 +840,10 @@
+             mode=self.observability_config.jit_monitor_mode,
+             verbose=self.observability_config.jit_monitor_verbose,
+         )
++
++        # Kernel warmup uses the request APIs but must not publish serving timings.
++        if self.model_runner.spec_decode_timing_collector is not None:
++            self.model_runner.spec_decode_timing_collector.start_serving()
+
+         # Freeze the worker heap so the GC won't scan static objects
+         # (model weights, KV caches, CUDA graphs) during inference.

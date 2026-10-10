@@ -83,9 +83,7 @@ func main() {
 	var vllmMooncakeStoreConfigMapName string
 	var vllmMooncakeStoreConfigMapKey string
 	var vllmMooncakeStorePythonHashSeed string
-	var autoscalingTelemetryCollectionTimeout time.Duration
-	var autoscalingTelemetryRequestTimeout time.Duration
-	var autoscalingTelemetryConcurrency int
+	var autoscalingTelemetryConfigurationPath string
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
@@ -108,9 +106,7 @@ func main() {
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
 	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
 	flag.StringVar(&logStorageMaxSize, "log-storage-max-size", "", "Maximum capacity of each managed log volume.")
-	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
-	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
-	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
+	flag.StringVar(&autoscalingTelemetryConfigurationPath, "autoscaling-telemetry-config", "", "Platform configuration file supplying autoscaling telemetry collection budgets.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
@@ -202,10 +198,6 @@ func main() {
 	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
-		os.Exit(1)
-	}
-	if autoscalingTelemetryCollectionTimeout <= 0 || autoscalingTelemetryRequestTimeout <= 0 || autoscalingTelemetryConcurrency < 1 {
-		ctrl.Log.Error(errors.New("autoscaling telemetry timeouts and concurrency must be positive"), "invalid autoscaling telemetry settings")
 		os.Exit(1)
 	}
 	if frontendMode != frontendModeLocal && frontendMode != frontendModeGateway {
@@ -400,6 +392,11 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	metricsProvider, err := controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
+	if err != nil {
+		ctrl.Log.Error(err, "invalid autoscaling telemetry configuration")
+		os.Exit(1)
+	}
 	if err := (&controllers.ModelServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
@@ -409,11 +406,7 @@ func main() {
 		ApplicationURL:           modelServerApplicationURL,
 		HuggingFaceAccessProfile: huggingFaceAccessProfile,
 		Alerts:                   serviceAlerts,
-		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
-			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
-			RequestTimeout:    autoscalingTelemetryRequestTimeout,
-			Concurrency:       autoscalingTelemetryConcurrency,
-		}),
+		MetricsProvider:          metricsProvider,
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)

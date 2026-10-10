@@ -9,7 +9,7 @@
 
 ## 选择路由策略
 
-优先选择等待请求较少的副本时，在 `FrontendService` 中设置评分算法：
+优先选择等待请求较少的副本时，在 `FrontendService` YAML 中设置评分算法。以快速开始示例为例，修改 `examples/quickstart/frontend.yaml`：
 
 ```yaml
 spec:
@@ -18,7 +18,13 @@ spec:
       algorithm: queue_depth
 ```
 
-重新部署前端配置后生效。不配置 `routerPipeline` 时，路由保留全部兼容且健康的目标（`allow_all`），通过 `kv_least_loaded` 评分，再由 `gamble_sampling` 选择。
+重新部署修改后的配置：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+默认使用 `kv_least_loaded` 兼顾缓存复用和负载均衡，再由 `gamble_sampling` 选择目标。
 
 根据工作负载选择评分算法：
 

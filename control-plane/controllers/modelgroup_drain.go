@@ -46,7 +46,9 @@ type modelServerTelemetry struct {
 }
 
 type frontendDiagnostics struct {
-	ActiveGeneration *uint64 `json:"active_generation"`
+	ActiveGeneration   *uint64 `json:"active_generation"`
+	TargetGeneration   *uint64 `json:"target_generation"`
+	ConfigurationError *string `json:"configuration_error"`
 }
 
 // ModelGroupDrainClient observes frontend generations and controls group-local admission.
@@ -65,26 +67,35 @@ func newHTTPModelGroupDrainClient() ModelGroupDrainClient {
 
 // FrontendGeneration reads the active serving snapshot generation from one frontend Pod.
 func (client *httpModelGroupDrainClient) FrontendGeneration(ctx context.Context, endpoint string) (uint64, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/statusz", nil)
+	diagnostics, err := readFrontendDiagnostics(ctx, client.client, endpoint)
 	if err != nil {
 		return 0, err
-	}
-	response, err := client.client.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("frontend status returned HTTP %d", response.StatusCode)
-	}
-	var diagnostics frontendDiagnostics
-	if err := json.NewDecoder(response.Body).Decode(&diagnostics); err != nil {
-		return 0, fmt.Errorf("decode frontend status: %w", err)
 	}
 	if diagnostics.ActiveGeneration == nil {
 		return 0, fmt.Errorf("frontend has no active serving generation")
 	}
 	return *diagnostics.ActiveGeneration, nil
+}
+
+// readFrontendDiagnostics is shared by configuration acknowledgement and route withdrawal.
+func readFrontendDiagnostics(ctx context.Context, transport *http.Client, endpoint string) (frontendDiagnostics, error) {
+	var diagnostics frontendDiagnostics
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/statusz", nil)
+	if err != nil {
+		return diagnostics, err
+	}
+	response, err := transport.Do(request)
+	if err != nil {
+		return diagnostics, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return diagnostics, fmt.Errorf("frontend status returned HTTP %d", response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&diagnostics); err != nil {
+		return diagnostics, fmt.Errorf("decode frontend status: %w", err)
+	}
+	return diagnostics, nil
 }
 
 // CloseAdmission closes model-server admission and returns its current drain telemetry.
