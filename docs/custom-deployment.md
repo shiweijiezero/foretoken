@@ -63,7 +63,7 @@ foretoken install -e . \
 
 ### Select a different runtime environment
 
-A standard deployment does not require changing the base image. Foretoken uses `vllm/vllm-openai:v0.31.0` by default, and that image includes the Python, PyTorch, CUDA, and vLLM components needed to run the model service.
+A standard deployment does not require changing the base image. The default image includes the Python, PyTorch, CUDA, and vLLM components needed to run the model service.
 
 To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json):
 

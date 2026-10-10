@@ -63,7 +63,7 @@ foretoken install -e . \
 
 ### 更换运行环境
 
-普通部署不需要修改基础镜像。Foretoken 默认使用 `vllm/vllm-openai:v0.31.0`，其中包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
+普通部署不需要修改基础镜像。默认镜像包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
 
 如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
 
