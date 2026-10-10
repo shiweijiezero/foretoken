@@ -47,9 +47,12 @@ impl RuntimeConfig {
     /// Startup receives an owned configuration; environment values are not retained after parsing.
     pub fn from_env() -> Result<Self, String> {
         let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
-        let listen_address = required_env(LISTEN_ENV)?
+        let listen_address: SocketAddr = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
+        launch
+            .afd
+            .validate_port_range(listen_address.port(), 1, "model-server listener")?;
         let member = if launch.node_count > 1 {
             let index = required_env("LWS_WORKER_INDEX")?
                 .parse::<usize>()

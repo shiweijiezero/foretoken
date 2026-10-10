@@ -3,6 +3,7 @@
 
 //! Group-local typed streaming API backed by one vLLM EngineCore instance.
 
+pub mod afd;
 pub mod api;
 pub mod backend;
 mod backend_telemetry;
