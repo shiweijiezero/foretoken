@@ -172,7 +172,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-The uninstall command preserves Foretoken CRDs, log storage, and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
+The uninstall command preserves Foretoken CRDs, log storage, shared admission storage, and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
 
 ## Related Projects
 
