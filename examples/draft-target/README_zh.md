@@ -7,119 +7,61 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md)
 
-为 `Qwen/Qwen3-4B` 配置独立的 `Qwen/Qwen3-0.6B` Draft，通过兼容 OpenAI 的 API 调用主模型。
-两个模型分别运行在 Aggregate Pool 中，可以独立调整副本数。
+本示例将主模型和独立 Draft 模型分别部署为 Aggregate Pool，由现有前端 Router 自动发现和选择实例。
+需要两张 GPU、共享 RuntimeCache，以及包含 [DT 插件与其支持的原版 vLLM](../../data-plane/dt-plugin/docs/mrv2-integration.md) 的源码构建平台。
+NVIDIA 源码构建会自动准备受支持的 CUDA 13 引擎并安装 DT 包，主机驱动需兼容 CUDA 13。
+部署此示例不会升级已有发行版镜像，应先从源码重建平台。
+自定义引擎镜像必须匹配插件支持的原版 vLLM 版本。
 
-这个 Kubernetes 示例使用独立的自回归 Draft。DFlash、EAGLE/EAGLE3、DSpark 和 MTP
-请使用[独立 neural Draft 指南](../../data-plane/dt-plugin/README_zh.md#在-nvidia-上运行神经-draft)。
-当前 ModelService 部署路径尚未开放 neural `speculative-config` 配置。
+平台配置现有 `rdma.resourceName`、`rdma.resourceCount` 后，控制器会为每个角色分配
+RDMA 设备并启用 Mooncake GPU 概率传输。Worker 使用 Pod IP 建立握手；网络需允许
+HTTP 和 Mooncake 动态握手端口。控制器允许同一服务的 D/T Pod 互通这些端口。
+Mooncake 从可见 HCA 中选择，资源申请本身不能证明 NIC 隔离。镜像还需具备匹配的
+Mooncake wheel 和 GPU 内存注册支持。
 
-## 部署并发送请求
+没有 RDMA 分配时，此示例只接受温度 0。启用 RDMA 后，请求可使用 `temperature`、
+`top_p`、`top_k` 和 Target 的 `seed`。
 
-需要具有 GPU 支持的 Kubernetes 集群、至少两张可用 GPU 和共享模型存储。
-默认资源申请为 Draft 4 CPU、16 GiB 内存，Target 4 CPU、32 GiB 内存，
-另加 frontend 2 CPU、2 GiB 内存。示例的 [RuntimeCache](cache.yaml) 使用仓库中的
-`data/` 目录；集群共享存储的准备方式见[模型存储](../../docs/model-storage_zh.md)。
+角色启动器在 NVIDIA 上默认启用 vLLM batch invariance，在沐曦上默认关闭。
+NVIDIA 模式要求计算能力 8.0 及以上的 GPU 和兼容的引擎后端；原生环境变量覆盖方式及数值、性能限制见
+[角色启动要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
 
-DT 需要从源码构建的平台及其支持的引擎。NVIDIA 构建会自动准备 CUDA 13 运行环境和 DT 插件；
-主机驱动需兼容 CUDA 13，默认 batch-invariant 模式要求 GPU 计算能力至少为 8.0。
-沐曦或自定义引擎镜像的要求见[角色兼容条件](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
-构建工具要求见[源码安装](../../docs/custom-deployment_zh.md)。
-
-在仓库根目录安装源码 CLI 和平台，然后部署：
+安装好上述平台后，在仓库根目录执行：
 
 ```bash
-python -m pip install -e .
-foretoken install -e .
 foretoken deploy examples/draft-target --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint examples/draft-target)"
-
+FRONTEND_URL="$(foretoken endpoint examples/draft-target)"
 curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-4B","messages":[{"role":"user","content":"Explain speculative decoding in two sentences."}],"temperature":0,"max_tokens":128,"chat_template_kwargs":{"enable_thinking":false}}'
+  -d '{"model":"Qwen/Qwen3-4B","messages":[{"role":"user","content":"Hello"}],"temperature":0,"max_tokens":256}'
 ```
 
-如果已安装当前 checkout 对应的源码平台，从 `foretoken deploy` 开始即可。
-返回的 `choices[0].message.content` 是 Target 确认的回答，`usage` 包含 token 用量。
-`enable_thinking: false` 让这个 Qwen3 示例直接回答；需要流式输出时，在 JSON 中添加
-`"stream": true`，并给 curl 添加 `--no-buffer`。最小部署不需要 RDMA，使用 `temperature: 0`。
+`spec.model` 指定主模型，`spec.speculation.draftPool` 引用负责产生候选的 Pool。
+该 Pool 必须通过 `modelPools[].model` 指定 Draft 权重；其余 Pool 使用主模型并负责验证。
+两边都保留 `role: aggregate`。普通 Aggregate 部署不配置 `speculation`，也不配置独立 Draft Pool。
+只有被引用的 Draft Pool 可以覆盖模型。两者继承服务的模型来源和 tokenizer，默认使用主模型的
+tokenizer。需要选择 token ID 含义兼容的模型，不能只根据名称判断。
+当前 `source: local` 部署要求模型、tokenizer 使用 Pod 内可见的绝对路径。
 
-## 使用 Python 调用
+分别修改各 Pool 的 `replicas` 后重新部署，即可独立调整副本数。frontend 每轮将
+ready request 组 batch，再选择 DT worker。Draft 可以跨轮切换；公开 scheduler
+让已有 Target session 继续使用原 worker。显式 Target migration 可通过独立的
+[batch example](../../data-plane/dt-plugin/docs/frontend-workflow.md#move-a-request-between-targets)运行。新 request 和尚未建立 Target session 的排队 request 使用更新后的 worker inventory，
+已有 Target session 的 request 保留原 runtime generation。缩容先关闭准入，再撤销路由，等待已有
+session 结束；model-server 还会在关闭时限内等待持有的传输产物释放。
+选中的 worker 若在新 session 建立前关闭准入，request 会返回 ready queue，
+后续 placement 排除这个 worker，保留已有 Target session 和 confirmed prefix。
+暂时没有兼容且可接收的 worker 时，request 等待 worker 状态更新或容量释放，
+直到能够执行、超时或被取消。仍接受任务的 worker 不必完全空闲，vLLM 也会负责本地排队。
+网络故障或已开始的推理操作失败时，不会重放。
+多个 Draft 副本提供更多容量，当前不会共同生成候选树。
 
-运行 `python -m pip install openai` 安装 SDK，然后使用上面导出的 `FRONTEND_URL`：
-
-```python
-import os
-from openai import OpenAI
-
-with OpenAI(
-    base_url=os.environ["FRONTEND_URL"].rstrip("/") + "/v1",
-    api_key="unused",
-) as client:
-    response = client.chat.completions.create(
-        model="Qwen/Qwen3-4B",
-        messages=[{"role": "user", "content": "Explain speculative decoding in two sentences."}],
-        temperature=0,
-        max_tokens=128,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
-    print(response.choices[0].message.content)
-    print(response.usage)
-```
-
-`api_key` 用于满足 SDK 接口要求；此示例直连 frontend，没有认证网关。
-应用只需提供 Target 模型 ID 和普通 messages，不必管理 Draft session 或 verification round。
-
-## 选择模型和副本数
-
-编辑 [model.yaml](model.yaml)：
-
-| 配置 | 含义 |
-| --- | --- |
-| `spec.model` | 对外服务的 Target 模型；修改后也要更新客户端 model ID。 |
-| `spec.speculation.draftPool` | Draft Pool 的名称，本例为 `draft`。 |
-| Draft Pool 的 `model` | Draft 权重；只有被引用的 Draft Pool 可以覆盖服务模型。 |
-| 各 Pool 的 `replicas` | 独立的实例数，每个实例使用一张 GPU。 |
-| `spec.engineArgs.max-model-len` | 同时应用于两端的上下文上限，prompt 加输出长度不能超过它。 |
-
-两边都保留 `role: aggregate`，继承服务的模型来源和 tokenizer，默认使用 Target tokenizer。
-需要选择 token ID 含义兼容的模型。使用 `source: local` 时，模型和 tokenizer
-路径必须是 Pod 内可见的绝对路径。
-
-运行两个 Draft 和两个 Target 时，把两个 Pool 的 `replicas` 都改为 `2`，再执行
-`foretoken deploy examples/draft-target --timeout 20m`。这需要四张 GPU，以及两倍的
-模型 Pool CPU/内存；frontend 配置和客户端 API 不变。只增加 Draft 容量时，
-仅修改 Draft Pool 的副本数。多个 Draft 副本提供容量，不会共同生成候选树。
-
-需要与 Target-only 对比时，从 `model.yaml` 删除 `spec.speculation` 和 Draft Pool，
-再重新部署；保持 Target 模型和客户端采样设置一致。
-
-frontend 每轮调度 ready request，可以在下一轮选择其他 Draft；已有 Target session
-继续使用原实例。缩容会等待已有 session 结束，没有空闲 GPU 时滚动更新可能导致服务短暂不可用。
-取消、服务更新和自定义 scheduling 的细节见[前端执行说明](../../data-plane/dt-plugin/docs/frontend-workflow.md)。
-
-## 启用随机采样
-
-在具备 RDMA 的集群中，`foretoken install` 会发现已有的共享 RDMA 资源，或准备共享 device plugin。
-需要选择外部资源分配时，才在平台 values 中覆盖 `rdma.resourceName`、`rdma.resourceCount`。
-有可用资源后，控制器为两端分配 RDMA 设备并启用 Mooncake 传输。Worker 使用 Pod IP；
-网络需允许角色 HTTP 和 Mooncake 动态握手端口。运行环境还需具备匹配的 Mooncake
-构建和 GPU 内存注册支持；资源申请成功不等于已经确认实际传输路径。
-
-启用后，请求可使用 `temperature`、`top_p`、`top_k` 和 Target `seed`。
-Draft 的随机数独立于该 seed。未启用 RDMA 时，随机采样请求会被拒绝。
-
-## 支持范围与后续实验
-
-当前支持文本输入和线性候选，每个角色使用一个 GPU Worker、eager 执行和本地同步调度。
-尚不支持 P/D 组合、多模态、KV offload、结构化输出、非默认 penalties、`min_p` 或 profiling。
-模型 generation 配置中的非默认 penalties 同样会导致拒绝，见[采样要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
-
-自定义 scheduling 使用 [batch 示例](../../data-plane/dt-plugin/docs/frontend-workflow.md#run-per-round-batches-through-router)，
-调用者选择目标实例的 Target KV migration 使用 [migration API](../../data-plane/dt-plugin/docs/frontend-workflow.md#move-a-request-between-targets)。
-公开请求不会自动迁移 Target。Kubernetes RDMA 网络、依赖指标的自动扩缩容和性能收益尚未验证。
-
-## 删除部署
+当前限制：文本输入、线性候选、每个角色实例一张 GPU、eager 执行、本地同步调度。
+不支持 P/D 组合、多模态、KV offload、自动 Target migration、结构化输出、profiling 或 `min_p`。
+HTTP 传候选 ID 和描述符；完整提议分布由 Mooncake 在 GPU Worker 间传输。
+Draft 随机数独立于 Target seed。Kubernetes RDMA 网络、依赖指标的自动扩缩容、
+随机采样质量评估和公开 API 性能基准尚未验证。没有空闲 GPU 容量时，
+滚动更新可能导致服务短暂不可用。
 
 ```bash
 foretoken delete examples/draft-target

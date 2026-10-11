@@ -25,7 +25,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | [性能剖析](benchmarks/docs/profile/README_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
-| 分布式推理 | 聚合部署、[Draft/Target 分离](examples/draft-target/README_zh.md)、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
+| 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
 | [可观测性](observability/README_zh.md) | 采集指标、持久保存服务日志、评估告警，并通过系统看板查看运行状态 | 开发中 |
 
