@@ -11,42 +11,10 @@ model replica using tensor parallelism across two GPUs (TP=2). The model request
 two A100 80 GB GPUs, 32 CPU cores, and 256 GiB of host memory; allow additional
 capacity for the platform.
 
-## Build and install
+## Before deploying
 
-Prepare a GPU-enabled Kubernetes cluster and the tools in the
-[source deployment guide](../../../../docs/custom-deployment.md). For a local
-cluster, follow the [k3d guide](../../../../docs/k3d-deployment.md).
-Run from the Foretoken repository root:
-
-```bash
-make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
-make image-model-server-omni \
-  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
-  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
-```
-
-For k3d, import the model-server image into the cluster selected by `CLUSTER`:
-
-```bash
-k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
-```
-
-For a remote cluster, tag and push that image to a registry reachable by its
-nodes, and use the pushed image reference below. Save the following as
-`platform-values.yaml`:
-
-```yaml
-runtime:
-  vllmOmni:
-    image: foretoken-omni-model-server:latest
-```
-
-Install or update the platform. Remote clusters also need `--registry` as
-shown in the source deployment guide.
-
-```bash
-foretoken install -e . --values platform-values.yaml
-```
+The platform must use the [vLLM-Omni runtime](../../../../docs/custom-deployment.md#vllm-omni-runtime).
+Run the recipe commands below from the Foretoken repository root.
 
 ## Deploy
 
@@ -129,7 +97,7 @@ spec:
   source: modelscope
 ```
 
-For a Hugging Face-compatible mirror, add its URL to `platform-values.yaml`
+For a Hugging Face-compatible mirror, add its URL to `deploy/platform-values.yaml`
 and rerun the platform installation command before deploying the model:
 
 ```yaml

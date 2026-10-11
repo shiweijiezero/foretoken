@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -67,6 +68,18 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
+// RuntimeCacheDirectoryOwner is the host identity discovered for a local directory mount.
+// Cache consumers use it so private runtime files remain manageable by the host owner.
+type RuntimeCacheDirectoryOwner struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967294
+	UID int64 `json:"uid"`
+
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967294
+	GID int64 `json:"gid"`
+}
+
 // RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
 type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
@@ -77,6 +90,10 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
+
+	// DirectoryOwner preserves a locally discovered directory identity across cache consumers.
+	// +optional
+	DirectoryOwner *RuntimeCacheDirectoryOwner `json:"directoryOwner,omitempty"`
 }
 
 // HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
@@ -90,6 +107,30 @@ type HuggingFaceAccess struct {
 	TokenSecretName string `json:"tokenSecretName,omitempty"`
 	// +optional
 	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
+}
+
+// ApplicationSelection pins trusted platform execution settings until an explicit deployment.
+// Controllers persist it before creating consumers so recovery never reselects platform defaults.
+type ApplicationSelection struct {
+	Image string `json:"image"`
+	// ImageProfile distinguishes serving, Omni and diagnostic environments during selection.
+	// +optional
+	ImageProfile string `json:"imageProfile,omitempty"`
+	// SourceRevision retains the admitted source intent independently of source-mode defaults.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+	// +optional
+	ApplicationURL string `json:"applicationURL,omitempty"`
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+	// AdmissionStore retains the ledger connection selected with this executable application.
+	// +optional
+	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	// InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+	// Zero retains startup-only limits; one selects live file configuration.
+	// +optional
+	// +kubebuilder:validation:Maximum=1
+	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -118,6 +159,14 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
+	// SourceRevision pins the CLI-published source bundle used by this Pool's Groups.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+
+	// Application is selected by the ModelService controller, not by user model intent.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
 	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
@@ -143,10 +192,15 @@ type NormalizedPoolTemplate struct {
 
 	Resources ModelResources `json:"resources"`
 
-	// MaxInputTokens is the immutable prompt admission limit for this Pool.
+	// NodeSelector is the normalized Kubernetes placement constraint for this Pool.
 	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// InstanceAdmission retains the immutable startup limit of a protocol-zero application.
+	// Live-file applications use ModelPoolSpec.InstanceAdmission instead.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
 
 	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
 	// request body limit.
@@ -181,6 +235,11 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
+	// Env retains the compiled runtime environment in dependency order.
+	// +optional
+	// +listType=atomic
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
 	// Profiling is the service-selected instrumentation for this Pool's processes.
 	// +optional
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`
@@ -200,6 +259,15 @@ type ModelPoolSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	DesiredGroups int32 `json:"desiredGroups"`
 
+	// MaxInputTokens is the live prompt limit published to routing clients.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// InstanceAdmission is the live acceptance limit published to each instance ingress.
+	// +optional
+	InstanceAdmission *InstanceAdmissionConfig `json:"instanceAdmission,omitempty"`
+
 	Template NormalizedPoolTemplate `json:"template"`
 }
 
@@ -213,6 +281,12 @@ type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PreparedRevision string `json:"preparedRevision,omitempty"`
+
+	// InstanceAdmissionVersion is reserved before publishing an instance configuration.
+	// It prevents ConfigMap restoration from rolling the publication version backward.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	InstanceAdmissionVersion uint64 `json:"instanceAdmissionVersion,omitempty"`
 
 	// +optional
 	// +listType=map

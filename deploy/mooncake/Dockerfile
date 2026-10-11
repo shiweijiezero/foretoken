@@ -33,8 +33,14 @@ RUN if [ -d extern/yalantinglibs ]; then \
       cmake --install /build/ylt; \
     fi
 
+# Mooncake's download mirror is a prefix before the complete GitHub URL.
+ARG FORETOKEN_GITHUB_MIRROR
 # The Store image does not own GPU requester runtimes or Python wheel lifecycles.
-RUN cmake -S . -B /build/mooncake -G Ninja \
+RUN mirror="${FORETOKEN_GITHUB_MIRROR%/}"; \
+    case "$mirror" in \
+      *https://github.com) export ASCEND_GITHUB_MIRROR_URLS="${mirror%https://github.com}" ;; \
+    esac; \
+    cmake -S . -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
       -DCMAKE_INSTALL_RPATH=/usr/local/lib/mooncake \

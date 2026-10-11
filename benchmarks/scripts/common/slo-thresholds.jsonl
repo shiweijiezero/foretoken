@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Compare request rates and request-level TTFT/TPOT thresholds.
+{"request_rate":[2,4,8,16],"slo_params":[{"ttft":"<=125ms","tpot":"<=100ms"},{"ttft":"<=250ms","tpot":"<=100ms"},{"ttft":"<=500ms","tpot":"<=100ms"}]}

@@ -59,6 +59,9 @@ impl RouteInventory for Roles {
     fn is_route_target_healthy(&self, id: &RouteTargetId) -> bool {
         self.workers[id].1.accepting
     }
+    fn draft_target_context(&self, id: &RouteTargetId) -> Option<serde_json::Value> {
+        self.workers[id].1.context_profile.clone()
+    }
     fn draft_target_format(&self, id: &RouteTargetId) -> Option<DraftTargetCandidateFormat> {
         Some(self.workers[id].1.candidate_format)
     }

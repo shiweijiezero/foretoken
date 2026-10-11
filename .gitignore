@@ -21,7 +21,7 @@ target/
 
 # Experiment records
 results/
-!benchmarks/results/
+!benchmarks/src/benchmarks/results/
 
 # Temp / cache
 tmp/

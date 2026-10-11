@@ -5,7 +5,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-SUPPORTED_VLLM_VERSION = "0.30.1rc1.dev194+g3b4566c5c"
+SUPPORTED_VLLM_VERSION = "0.31.0"
 
 METAX_VLLM_VERSION = "0.30.0.dev0"
 METAX_PLUGIN_VERSION = "0.29.0.dev0"

@@ -4,6 +4,7 @@
 //! Candidate scoring and Scorer implementations.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
@@ -20,6 +21,8 @@ declare_router_algorithms! {
     prefix_scorer => PrefixScorer = "prefix",
     no_hit_lru_scorer => NoHitLruScorer = "no_hit_lru",
     load_aware_scorer => LoadAwareScorer = "load_aware",
+    session_affinity_scorer => SessionAffinityScorer = "session_affinity",
+    two_tier_scorer => TwoTierScorer = "two_tier",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
@@ -108,6 +111,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
             Err("this scorer accepts no parameters".into())
         }
     }
+
+    /// Prepares changed parameters while retaining algorithm-owned request history.
+    /// Stateful scorers return a new immutable instance without changing the shared state;
+    /// `None` asks the pipeline builder to configure a fresh factory instance instead.
+    fn reconfigure(
+        &self,
+        _parameters: serde_json::Value,
+    ) -> Option<Result<Arc<dyn RouteScorer<C>>, String>> {
+        None
+    }
+
+    /// Publishes shared settings only for an accepted runtime generation, before requests start.
+    /// Stateful implementations reject versions older than or equal to their last activation.
+    fn activate(&self, _snapshot_version: u64) {}
 
     fn score(
         &self,

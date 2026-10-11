@@ -180,13 +180,15 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
     match (
         METRICS.render(),
         foretoken_router::render_metrics(),
+        foretoken_admission::render_metrics(),
         draft_target::render(),
     ) {
-        (Ok(mut body), Ok(router), Ok(dt)) => {
+        (Ok(mut body), Ok(router), Ok(admission), Ok(dt)) => {
             if let Some(without_eof) = body.strip_suffix("# EOF\n") {
                 body = without_eof.to_owned();
             }
             body.push_str(router.strip_suffix("# EOF\n").unwrap_or(&router));
+            body.push_str(admission.strip_suffix("# EOF\n").unwrap_or(&admission));
             body.push_str(dt.strip_suffix("# EOF\n").unwrap_or(&dt));
             body.push_str(&render_admission_metrics());
             if let Some((state, reason, sources_healthy, sources_total)) = kv_index {

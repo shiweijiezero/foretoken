@@ -4,17 +4,17 @@
 //! Composes client APIs, operator endpoints, and frontend-wide HTTP middleware.
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
-use axum::middleware;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
+use foretoken_admission::{CallerIdentity, observe_http, with_caller};
 
 use crate::api::{self, ApiState};
-use crate::runtime::Generation;
+use crate::runtime::{Generation, before_deadline};
 
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 
@@ -22,7 +22,6 @@ const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-    stream_idle: Duration,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
     Ok(Router::new()
@@ -37,13 +36,83 @@ pub fn router(
         )
         .merge(api::router())
         .with_state(ApiState {
-            generation,
+            generation: generation.clone(),
             models,
-            stream_idle,
             video_tasks,
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(generation, observe_request))
         .layer(middleware::from_fn(foretoken_metrics::track_http_metrics)))
+}
+
+// Capture the request budget before body extraction and share its origin with model admission.
+async fn observe_request(
+    State(generation): State<Arc<dyn Generation>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    let protected = request.method() == Method::POST
+        && matches!(
+            path.as_str(),
+            "/v1/generate"
+                | "/v1/completions"
+                | "/v1/chat/completions"
+                | "/v1/responses"
+                | "/v1/messages"
+                | "/v1/messages/count_tokens"
+                | "/tokenize"
+                | "/detokenize"
+                | "/v1/videos/sync"
+        );
+    if !protected {
+        return next.run(request).await;
+    }
+    // Resolve owned identity synchronously; no borrow of the non-Sync request body may
+    // cross the middleware's await boundary.
+    let identity = {
+        let headers = request.headers();
+        let header = |name: &str| -> Result<Option<String>, ()> {
+            let mut values = headers.get_all(name).iter();
+            let value = values
+                .next()
+                .map(|value| value.to_str().map(str::to_owned))
+                .transpose()
+                .map_err(|_| ())?;
+            if values.next().is_some() {
+                return Err(());
+            }
+            Ok(value)
+        };
+        match (header("x-caller-id"), header("x-role")) {
+            (Ok(caller), Ok(role)) => CallerIdentity { caller, role },
+            _ => {
+                return api::generation_error(
+                    &path,
+                    crate::runtime::GenerationError::InvalidRequest,
+                );
+            }
+        }
+    };
+    with_caller(
+        identity,
+        observe_http(async move {
+            let timing = api::RequestTiming::now();
+            request.extensions_mut().insert(timing);
+            let snapshot = match generation.request_snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => return api::generation_error(&path, error),
+            };
+            let deadline =
+                tokio::time::Instant::from_std(timing.started_at + snapshot.request_timeout);
+            request.extensions_mut().insert(snapshot);
+            match before_deadline(deadline, async { Ok(next.run(request).await) }).await {
+                Ok(response) => response,
+                Err(error) => api::generation_error(&path, error),
+            }
+        }),
+    )
+    .await
 }
 
 async fn healthz() -> StatusCode {
@@ -67,6 +136,7 @@ async fn autoscaling_telemetry() -> Json<foretoken_metrics::AutoscalingTelemetry
 }
 
 async fn metrics(State(state): State<ApiState>) -> Response {
+    state.generation.refresh_admission_observations().await;
     let diagnostics = state.generation.diagnostics();
     foretoken_metrics::scrape_with_kv_index(
         &diagnostics.kv_index.state,

@@ -27,6 +27,9 @@ pub enum RoutingStage {
 /// mutate routing progress or treat it as client input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoutingProgress<'a> {
+    /// Serving-snapshot version retained by this session; zero denotes an unversioned inventory.
+    /// Shared algorithm state must not let older snapshots supersede newer observations.
+    pub snapshot_version: u64,
     /// Selection round currently being executed.
     pub current_stage: RoutingStage,
     /// Execution roles completed before this selection round.
@@ -57,7 +60,7 @@ pub trait RouteSession: Send {
 /// Creates isolated request-local routing state for tokenized generation requests.
 #[async_trait::async_trait]
 pub trait Router: Send + Sync {
-    /// Prepares required observations and starts isolated routing state for one generation request.
+    /// Binds a prepared request to fresh routing observations and retains its routing load.
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
 
     /// Selects compatible DT workers for one round and reserves its members.
@@ -77,6 +80,9 @@ pub trait Router: Send + Sync {
 /// Failure returned while selecting one model-server routing stage.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouteError {
+    /// Compatible execution paths exist, but policy filtering temporarily excludes them.
+    #[error("compatible model servers are temporarily busy")]
+    Busy,
     /// A batch must contain distinct generation requests for one logical model.
     #[error("DT batch requires distinct generation requests for one model")]
     InvalidBatch,
@@ -85,7 +91,7 @@ pub enum RouteError {
     BatchRoutingUnsupported,
     /// No ready Aggregate or Prefill model-server route matches the request.
     #[error("no ready model server route matches model {model}")]
-    NoMatchingRouteTarget {
+    NoCompatibleTarget {
         /// Requested logical model.
         model: String,
     },

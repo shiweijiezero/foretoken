@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-admission = { path = "../admission" }
 arc-swap.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true

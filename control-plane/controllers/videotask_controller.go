@@ -13,6 +13,7 @@ import (
 	"time"
 
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,10 +37,12 @@ var videoTaskNamePattern = regexp.MustCompile(`^video-[0-9a-f]{8}(-[0-9a-f]{4}){
 // VideoTaskReconciler owns worker Jobs, retention and PVC cleanup for VideoTasks.
 type VideoTaskReconciler struct {
 	client.Client
-	APIReader        client.Reader
-	WorkerImage      string
-	FrontendPort     int32
-	ImagePullSecrets []corev1.LocalObjectReference
+	APIReader            client.Reader
+	WorkerImage          string
+	WorkerApplicationURL string
+	ApplicationFiles     runtimeconfig.ApplicationFiles
+	FrontendPort         int32
+	ImagePullSecrets     []corev1.LocalObjectReference
 }
 
 // SetupWithManager registers task and owned-Job watches for lifecycle reconciliation.
@@ -178,6 +181,11 @@ func (r *VideoTaskReconciler) verifyVideoTaskFrontend(ctx context.Context, task 
 	if !videoTaskNamePattern.MatchString(task.Name) {
 		return nil, fmt.Errorf("VideoTask name must be a video-prefixed UUID")
 	}
+	workerImage := r.WorkerImage
+	if task.Status.Plan != nil {
+		// Admission already selected this worker before the platform defaults changed.
+		workerImage = task.Status.Plan.WorkerImage
+	}
 	var frontends api.FrontendServiceList
 	if err := r.APIReader.List(ctx, &frontends, client.InNamespace(task.Namespace)); err != nil {
 		return nil, err
@@ -189,7 +197,7 @@ func (r *VideoTaskReconciler) verifyVideoTaskFrontend(ctx context.Context, task 
 		}
 		worker := task.Spec.Worker
 		endpoint := fmt.Sprintf("http://%s.%s.svc:%d", frontend.Name, frontend.Namespace, r.FrontendPort)
-		if task.Labels[videoFrontendUIDLabel] != task.Spec.FrontendUID || worker.Image != r.WorkerImage || worker.Endpoint != endpoint || worker.OutputClaimName != frontend.Spec.VideoTasks.ClaimName || worker.OutputPath != fmt.Sprintf("tasks/%s/result.mp4", task.Name) {
+		if task.Labels[videoFrontendUIDLabel] != task.Spec.FrontendUID || worker.Image != workerImage || worker.Endpoint != endpoint || worker.OutputClaimName != frontend.Spec.VideoTasks.ClaimName || worker.OutputPath != fmt.Sprintf("tasks/%s/result.mp4", task.Name) {
 			return nil, fmt.Errorf("VideoTask worker does not match its FrontendService configuration")
 		}
 		return frontend, nil
@@ -210,7 +218,7 @@ func (r *VideoTaskReconciler) prepareVideoTask(ctx context.Context, task *api.Vi
 	plan := api.VideoExecutionPlan{
 		JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName,
 		OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
-		WorkerImage: r.WorkerImage, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds, TimeoutSeconds: timeout,
+		WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds, TimeoutSeconds: timeout,
 	}
 	service := new(api.ModelService)
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); err != nil {
@@ -275,6 +283,7 @@ func (r *VideoTaskReconciler) newVideoWorkerJob(task *api.VideoTask, plan api.Vi
 			},
 		}},
 	}
+	r.ApplicationFiles.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], plan.WorkerApplicationURL, "video-worker")
 	if err := controllerutil.SetControllerReference(task, job, r.Scheme()); err != nil {
 		return nil, err
 	}
@@ -355,7 +364,7 @@ func (r *VideoTaskReconciler) cleanupVideoTask(ctx context.Context, task *api.Vi
 		task.Status.Plan = &api.VideoExecutionPlan{
 			JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName,
 			OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
-			WorkerImage: r.WorkerImage, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds,
+			WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds,
 		}
 		if timeout, err := durationSeconds(frontend.Spec.Timeouts.Request); err == nil {
 			task.Status.Plan.TimeoutSeconds = timeout

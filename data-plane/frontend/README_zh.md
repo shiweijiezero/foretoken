@@ -45,6 +45,16 @@ curl --fail-with-body "$FRONTEND_URL/v1/messages" \
 
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具，不支持服务端托管工具或后台执行模式。强制选择工具和严格约束工具参数需要模型支持结构化输出。
 
+部分工具解析器通过结构标签语法约束强制工具调用或严格工具的输出格式。模型的解析器和语法后端支持该能力时，在 ModelService 已有的结构化输出格式中加入 `structuralTag`：
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+使用 `spec.modelPools` 配置时，在适用池的 `features.structuredOutputs` 中声明该能力，不使用顶层 `features`。
+
 输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受独立的 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`，客户端只应执行完整的工具调用。
 
 ## 视频生成
@@ -105,6 +115,90 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 
 取消和删除请求返回 `202` 后继续由服务处理。以上配置保留结果一天，从任务结束起算；到期后自动清理，原始参考文件保留。
 
+## 配置准入规则
+
+要限制等待中的文本请求，在部署的 `frontend.yaml` 已有 `spec` 下添加 `admission`：
+
+```yaml
+spec:
+  admission:
+    maxWaitingRequests: 128
+    queueTimeout: 30s
+```
+
+同一 FrontendService 的所有副本按模型共享等待上限，正在准备输入的请求也计入其中。`queueTimeout` 限制后端接收前的等待与准备时长。批量输入和 `best_of` 按生成序列计数；这些规则不适用于视频接口。
+
+按[修改服务配置](#修改服务配置)应用 YAML。响应开始前，队列已满或准入等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。
+
+限制单个模型实例已接收的工作，见[实例并发上限](../../docs/inference-parameters_zh.md#实例并发上限)；查看等待和派发指标，见[可观测性](../../observability/README_zh.md)。
+
+### 调用方限额与优先级
+
+需要区分调用方时，在等待上限之外添加 `roleRules`：
+
+```yaml
+spec:
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
+```
+
+每个调用方分别计量等待和并发数量，跨前端副本共享。`maxConcurrentRequests` 统计已派发但尚未结束的工作，取消后仍在执行的请求也计入其中。分词、token 计数和 token ID 转文本只占等待容量。
+
+可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持调用方内部的请求顺序。并发已满的调用方不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
+
+配置可信网关，为每个文本请求覆盖以下请求头，填入已认证的角色和稳定的调用方标识：
+
+```http
+x-role: role1
+x-caller-id: caller-a
+```
+
+缺少调用方标识或角色不匹配的请求会被拒绝。身份认证、授权和 RPM/token 配额由网关负责；前端仅向该可信网关开放。
+
+### 为单个模型覆盖配置
+
+`ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应的前端默认配置。要让一个模型在前端不限流，同时设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
+
+模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。
+
+## 修改服务配置
+
+修改部署 YAML 后，再执行 `foretoken deploy` 即可。例如，在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中调整日志级别和请求时限：
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+重新部署快速开始示例：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+命令等待配置生效后退出。[路由策略](src/router/README_zh.md)、准入规则、日志级别和请求时限支持在线更新；配置无效时保留原设置。
+
+| 设置 | 用途 |
+| --- | --- |
+| `timeouts.request` | 请求总时长 |
+| `timeouts.streamIdle` | 响应数据块之间的最大间隔，不超过 `request` |
+| `timeouts.drain` | 退出时等待已接收请求完成的时长，默认 `10m`；修改它会替换前端 Pod |
+| `logLevel` | 可选 `trace`、`debug`、`info`（默认）、`warn`、`error`、`off` |
+
+请求时限的修改用于新请求。限制输入长度时，设置 `ModelService.spec.maxInputTokens`，或对应的 `spec.modelPools[].maxInputTokens`，再重新部署。该设置支持在线更新，与引擎的输入输出合计上下文上限分别配置。
+
 ## 运维
 
 使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。
@@ -112,8 +206,10 @@ curl --fail-with-body "$FRONTEND_URL/v1/videos" \
 | 接口 | 用途 |
 | --- | --- |
 | `/healthz` | 进程存活状态 |
-| `/readyz` | 服务就绪状态 |
+| `/readyz` | 已加载有效路由配置、可以接收 HTTP 请求 |
 | `/statusz` | 服务和缓存索引状态 |
 | `/metrics` | Prometheus 指标 |
+
+模型启动或切换时，HTTP 前端保持可访问。合法的空模型配置也可接收 HTTP 请求，此时推理请求返回 HTTP 503。服务就绪状态见 `/statusz` 中的 `serving_ready`。
 
 网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。

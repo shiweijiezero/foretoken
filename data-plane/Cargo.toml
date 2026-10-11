@@ -4,6 +4,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "frontend/src/admission",
     "frontend/src/backend-registry",
     "frontend/src/chat",
     "frontend/src/cmd",
@@ -15,11 +16,13 @@ members = [
     "frontend/src/router",
     "frontend/src/runtime-builder",
     "frontend/src/server",
+    "frontend/src/serving-types",
     "frontend/src/text",
     "frontend/src/tokenizer",
     "frontend/src/tracing",
     "artifacts",
     "model-protocol",
+    "request-ledger",
     "model-server",
     "xtask",
 ]
@@ -27,20 +30,7 @@ exclude = ["third_party/vllm"]
 
 [workspace.metadata.foretoken]
 vllm_source = "third_party/vllm"
-vllm_patches = [
-    "patches/vllm/vllm-chat-request-processor.patch",
-    "patches/vllm/vllm-qwen-reasoning-selection.patch",
-    "patches/vllm/vllm-engine-core-version-compatibility.patch",
-    "patches/vllm/vllm-mooncake-context-parallel.patch",
-    "patches/vllm/vllm-multinode-pcp-world-size.patch",
-    "patches/vllm/vllm-http-latency-histogram-buckets.patch",
-    "patches/vllm/vllm-latency-histogram-buckets.patch",
-    "patches/vllm/vllm-managed-engine-command.patch",
-    "patches/vllm/vllm-ready-logprobs.patch",
-    "patches/vllm/vllm-rust-ready-logprobs.patch",
-    "patches/vllm/vllm-logprob-padding-tokens.patch",
-    "patches/vllm/vllm-offloading-event-identity.patch",
-]
+vllm_patch_series = "patches/vllm/source.series"
 
 [workspace.package]
 version = "0.0.1"
@@ -60,6 +50,7 @@ foretoken-artifacts = { path = "artifacts" }
 foretoken-model-protocol = { path = "model-protocol" }
 futures = "0.3.31"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio"] }
+humantime = "2.3.0"
 inventory = "0.3.20"
 prometheus-client = "0.24.1"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -73,6 +64,7 @@ thiserror = "2.0.16"
 tokio = { version = "1.47.1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
 tower = { version = "0.5.3", features = ["util"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "all-transport"] }

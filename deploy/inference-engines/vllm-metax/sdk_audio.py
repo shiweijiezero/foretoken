@@ -4,10 +4,10 @@
 """Package the SDK's ABI-matched audio distribution for an isolated MetaX runtime."""
 
 import json
-from email.parser import Parser
-from pathlib import Path
 import subprocess
 import sys
+from email.parser import Parser
+from pathlib import Path
 
 from wheel.wheelfile import WheelFile
 
@@ -24,10 +24,12 @@ def prepare_sdk_audio(prefix: Path, sdk_python: str) -> None:
         [
             sdk_python,
             "-c",
-            "import importlib.metadata as m, json; import torchaudio; "
-            "d=m.distribution('torchaudio'); "
-            "print(json.dumps({'version':d.version,'root':str(d.locate_file('')),"
-            "'wheel':d.read_text('WHEEL'),'files':[str(f) for f in d.files]}))",
+            (
+                "import importlib.metadata as m, json; import torchaudio; "
+                "d=m.distribution('torchaudio'); "
+                "print(json.dumps({'version':d.version,'root':str(d.locate_file('')),"
+                "'wheel':d.read_text('WHEEL'),'files':[str(f) for f in d.files]}))"
+            ),
         ],
         text=True,
     )

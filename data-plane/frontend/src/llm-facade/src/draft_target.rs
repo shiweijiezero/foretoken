@@ -9,12 +9,19 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::LlmFacadeError;
-use crate::http::{classify_reqwest, classify_status, is_ndjson, ndjson_lines, validate_endpoint};
+use crate::http::{
+    classify_reqwest, classify_response_failure, classify_status, is_ndjson, ndjson_lines,
+    validate_endpoint,
+};
 
 /// Token-input generation request; the caller owns tokenization and model compatibility.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftTargetRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<foretoken_request_ledger::ReservationRef>,
+    #[serde(default)]
+    pub priority: i32,
     pub token_ids: Vec<u32>,
     pub max_tokens: u32,
     #[serde(default)]
@@ -187,7 +194,7 @@ impl RoleClient {
             .await
             .map_err(classify_reqwest)?;
         if !response.status().is_success() {
-            return Err(classify_status(response.status()));
+            return Err(classify_response_failure(response).await);
         }
         Ok(response)
     }
@@ -256,13 +263,16 @@ impl RoleClient {
         token_ids: &[u32],
         version: u64,
         sampling: &DraftTargetSampling,
+        reservation: Option<foretoken_request_ledger::ReservationRef>,
+        priority: i32,
     ) -> Result<Option<RoleSession>, LlmFacadeError> {
         RoleSession::open(
             self.clone(),
             self.post(
                 "/sessions",
                 &serde_json::json!({
-                    "token_ids": token_ids, "version": version, "sampling": sampling
+                    "token_ids": token_ids, "version": version, "sampling": sampling,
+                    "reservation": reservation, "priority": priority
                 }),
             )
             .await?,

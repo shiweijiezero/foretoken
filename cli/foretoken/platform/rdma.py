@@ -15,7 +15,6 @@ from typing import Any
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
 
-
 _PLUGIN_IMAGE = "k8s-rdma-shared-dev-plugin"
 _CONFIG_PATH = "/k8s-rdma-shared-dev-plugin"
 

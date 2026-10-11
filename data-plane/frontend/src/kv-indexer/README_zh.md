@@ -47,4 +47,4 @@ fn candidate_prefix(
 
 ## 查看状态
 
-通过前端的 `/statusz` 查看索引健康状态，通过 `/metrics` 监控。访问方式见[前端接口访问范围](../../README_zh.md#接口访问范围)。
+通过前端的 `/statusz` 查看索引健康状态，通过 `/metrics` 监控。访问方式见[前端接口访问范围](../../README_zh.md#运维)。

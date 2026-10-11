@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-admission = { path = "../admission" }
 foretoken-artifacts.workspace = true
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
@@ -17,5 +18,6 @@ foretoken-router = { path = "../router" }
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

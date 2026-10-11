@@ -12,6 +12,7 @@ from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform.types import ReleaseRef
 
+
 def _gateway_class_accepted(value: dict[str, Any]) -> bool:
     """Return whether a GatewayClass is accepted for its current generation."""
     metadata = value.get("metadata") or {}

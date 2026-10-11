@@ -64,6 +64,26 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              instanceAdmission:
+                description: InstanceAdmission is the live acceptance limit published
+                  to each instance ingress.
+                properties:
+                  maxConcurrentRequests:
+                    description: MaxConcurrentRequests includes engine waiting, running,
+                      and unfinished submissions.
+                    format: int64
+                    maximum: 4294967295
+                    minimum: 1
+                    type: integer
+                required:
+                - maxConcurrentRequests
+                type: object
+              maxInputTokens:
+                description: MaxInputTokens is the live prompt limit published to
+                  routing clients.
+                format: int32
+                minimum: 1
+                type: integer
               modelServiceRef:
                 description: LocalObjectReference identifies an object in the same
                   namespace by stable UID.
@@ -90,6 +110,73 @@ spec:
                   NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
+                  application:
+                    description: Application is selected by the ModelService controller,
+                      not by user model intent.
+                    properties:
+                      admissionStore:
+                        description: AdmissionStore retains the ledger connection
+                          selected with this executable application.
+                        properties:
+                          url:
+                            description: URL is a credential-free Redis-compatible
+                              endpoint.
+                            pattern: ^rediss?://[^@]+$
+                            type: string
+                          urlSecretRef:
+                            description: URLSecretRef contains the full connection
+                              URL in a namespace-local Secret.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one admission store URL or Secret reference
+                            is required
+                          rule: has(self.url) != has(self.urlSecretRef)
+                      applicationURL:
+                        type: string
+                      deploymentRevision:
+                        type: string
+                      image:
+                        type: string
+                      imageProfile:
+                        description: ImageProfile distinguishes serving, Omni and
+                          diagnostic environments during selection.
+                        type: string
+                      instanceAdmissionProtocol:
+                        description: |-
+                          InstanceAdmissionProtocol pins the instance configuration interface of this executable.
+                          Zero retains startup-only limits; one selects live file configuration.
+                        format: int32
+                        maximum: 1
+                        type: integer
+                      sourceRevision:
+                        description: SourceRevision retains the admitted source intent
+                          independently of source-mode defaults.
+                        type: string
+                    required:
+                    - image
+                    type: object
                   backend:
                     enum:
                     - vllm
@@ -110,6 +197,166 @@ spec:
                     description: EngineArgs contains the native backend options selected
                       for this Pool.
                     type: object
+                  env:
+                    description: Env retains the compiled runtime environment in dependency
+                      order.
+                    items:
+                      description: EnvVar represents an environment variable present
+                        in a Container.
+                      properties:
+                        name:
+                          description: |-
+                            Name of the environment variable.
+                            May consist of any printable ASCII characters except '='.
+                          type: string
+                        value:
+                          description: |-
+                            Variable references $(VAR_NAME) are expanded
+                            using the previously defined environment variables in the container and
+                            any service environment variables. If a variable cannot be resolved,
+                            the reference in the input string will be unchanged. Double $$ are reduced
+                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                            Escaped references will never be expanded, regardless of whether the variable
+                            exists or not.
+                            Defaults to "".
+                          type: string
+                        valueFrom:
+                          description: Source for the environment variable's value.
+                            Cannot be used if value is not empty.
+                          properties:
+                            configMapKeyRef:
+                              description: Selects a key of a ConfigMap.
+                              properties:
+                                key:
+                                  description: The key to select.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the ConfigMap or its
+                                    key must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            fieldRef:
+                              description: |-
+                                Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                              properties:
+                                apiVersion:
+                                  description: Version of the schema the FieldPath
+                                    is written in terms of, defaults to "v1".
+                                  type: string
+                                fieldPath:
+                                  description: Path of the field to select in the
+                                    specified API version.
+                                  type: string
+                              required:
+                              - fieldPath
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            fileKeyRef:
+                              description: |-
+                                FileKeyRef selects a key of the env file.
+                                Requires the EnvFiles feature gate to be enabled.
+                              properties:
+                                key:
+                                  description: |-
+                                    The key within the env file. An invalid key will prevent the pod from starting.
+                                    The keys defined within a source may consist of any printable ASCII characters except '='.
+                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                  type: string
+                                optional:
+                                  default: false
+                                  description: |-
+                                    Specify whether the file or its key must be defined. If the file or key
+                                    does not exist, then the env var is not published.
+                                    If optional is set to true and the specified key does not exist,
+                                    the environment variable will not be set in the Pod's containers.
+
+                                    If optional is set to false and the specified key does not exist,
+                                    an error will be returned during Pod creation.
+                                  type: boolean
+                                path:
+                                  description: |-
+                                    The path within the volume from which to select the file.
+                                    Must be relative and may not contain the '..' path or start with '..'.
+                                  type: string
+                                volumeName:
+                                  description: The name of the volume mount containing
+                                    the env file.
+                                  type: string
+                              required:
+                              - key
+                              - path
+                              - volumeName
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            resourceFieldRef:
+                              description: |-
+                                Selects a resource of the container: only resources limits and requests
+                                (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                              properties:
+                                containerName:
+                                  description: 'Container name: required for volumes,
+                                    optional for env vars'
+                                  type: string
+                                divisor:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  description: Specifies the output format of the
+                                    exposed resources, defaults to "1"
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                resource:
+                                  description: 'Required: resource to select'
+                                  type: string
+                              required:
+                              - resource
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            secretKeyRef:
+                              description: Selects a key of a secret in the pod's
+                                namespace
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
                   features:
                     description: Features is the normalized explicit capabilities
                       for this Pool.
@@ -133,8 +380,9 @@ spec:
                           enum:
                           - jsonObject
                           - jsonSchema
+                          - structuralTag
                           type: string
-                        maxItems: 2
+                        maxItems: 3
                         type: array
                         x-kubernetes-list-type: set
                       tools:
@@ -154,6 +402,21 @@ spec:
                         description: TokenSecretName and TokenSecretKey identify an
                           optional namespace-local credential.
                         type: string
+                    type: object
+                  instanceAdmission:
+                    description: |-
+                      InstanceAdmission retains the immutable startup limit of a protocol-zero application.
+                      Live-file applications use ModelPoolSpec.InstanceAdmission instead.
+                    properties:
+                      maxConcurrentRequests:
+                        description: MaxConcurrentRequests includes engine waiting,
+                          running, and unfinished submissions.
+                        format: int64
+                        maximum: 4294967295
+                        minimum: 1
+                        type: integer
+                    required:
+                    - maxConcurrentRequests
                     type: object
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
@@ -231,12 +494,6 @@ spec:
                     - message: kvCache must select exactly one storage mode
                       rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                         && has(self.mooncakeStore))
-                  maxInputTokens:
-                    description: MaxInputTokens is the immutable prompt admission
-                      limit for this Pool.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   memberCount:
                     format: int32
                     minimum: 1
@@ -258,6 +515,13 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: NodeSelector is the normalized Kubernetes placement
+                      constraint for this Pool.
+                    maxProperties: 16
+                    type: object
                   profiling:
                     description: Profiling is the service-selected instrumentation
                       for this Pool's processes.
@@ -369,6 +633,24 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directoryOwner:
+                        description: DirectoryOwner preserves a locally discovered
+                          directory identity across cache consumers.
+                        properties:
+                          gid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 0
+                            type: integer
+                          uid:
+                            format: int64
+                            maximum: 4294967294
+                            minimum: 1
+                            type: integer
+                        required:
+                        - gid
+                        - uid
+                        type: object
                       mountPath:
                         maxLength: 1024
                         minLength: 2
@@ -385,6 +667,10 @@ spec:
                     - local
                     - hf
                     - modelscope
+                    type: string
+                  sourceRevision:
+                    description: SourceRevision pins the CLI-published source bundle
+                      used by this Pool's Groups.
                     type: string
                   speculationRole:
                     description: SpeculationRole is derived from the ModelService
@@ -510,6 +796,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              instanceAdmissionVersion:
+                description: |-
+                  InstanceAdmissionVersion is reserved before publishing an instance configuration.
+                  It prevents ConfigMap restoration from rolling the publication version backward.
+                format: int64
+                minimum: 0
+                type: integer
               observedGeneration:
                 format: int64
                 minimum: 0

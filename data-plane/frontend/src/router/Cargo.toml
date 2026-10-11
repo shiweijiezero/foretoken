@@ -13,6 +13,7 @@ fastrand.workspace = true
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-model-protocol.workspace = true
+foretoken-serving-types = { path = "../serving-types" }
 inventory.workspace = true
 prometheus-client.workspace = true
 serde.workspace = true

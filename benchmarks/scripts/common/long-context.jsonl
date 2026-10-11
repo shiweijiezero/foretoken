@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Measure sensitivity to increasing random input lengths.
+{"_benchmark_name":"long-context","min_prompt_length":16384,"max_prompt_length":16384}
+{"_benchmark_name":"long-context","min_prompt_length":32768,"max_prompt_length":32768}
+{"_benchmark_name":"long-context","min_prompt_length":65536,"max_prompt_length":65536}
+{"_benchmark_name":"long-context","min_prompt_length":131072,"max_prompt_length":131072}
+{"_benchmark_name":"long-context","min_prompt_length":262144,"max_prompt_length":262144}
+{"_benchmark_name":"long-context","min_prompt_length":512000,"max_prompt_length":512000}

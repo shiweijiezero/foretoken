@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Compare StudyChat conversations at selected concurrency levels.
+{"max_concurrency":[1,8,16,32]}

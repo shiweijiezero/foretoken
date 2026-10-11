@@ -11,7 +11,9 @@ Install the Foretoken platform on a MetaX GPU cluster. For model deployment and 
 
 ## Before you start
 
-The cluster needs Kubernetes 1.29 or later, MetaX drivers, and a device plugin publishing `metax-tech.com/gpu`. Prepare a model directory visible to the target nodes or a StorageClass for the model cache; see [Model storage](../model-storage.md). The frontend also needs a reachable LoadBalancer address, or a Gateway when using Gateway mode.
+Use Kubernetes 1.29 or later with MetaX drivers, a GPU-enabled container runtime, and a device plugin exposing `metax-tech.com/gpu` resources.
+
+Provide a model directory accessible to the target nodes or a StorageClass; see [Model storage](../model-storage.md). The frontend needs a reachable LoadBalancer or Gateway endpoint.
 
 Install the [Foretoken CLI](../../cli/README.md#install-the-command-line-tool) and make sure `kubectl` points to the target cluster. The CLI needs Helm and cluster permissions to install the platform and its shared dependencies.
 
@@ -25,13 +27,13 @@ The CLI selects MetaX-compatible release images and installs the platform and re
 
 ## Install from source
 
-To build Foretoken's images from a checkout, follow the [source deployment guide](../custom-deployment.md) to prepare build tools and install the CLI from that checkout. Then run from the repository root:
+From the repository root, build and install the platform in the cluster:
 
 ```bash
 foretoken install -e .
 ```
 
-The build prepares the MetaX inference runtime from public SDK packages and pinned sources, including GLM-5.3 support. See the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) for importing images into the cluster or distributing them through a registry.
+The build automatically prepares the MetaX inference runtime. See the [source deployment guide](../custom-deployment.md#install-from-source) for image import and registry distribution.
 
 To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 

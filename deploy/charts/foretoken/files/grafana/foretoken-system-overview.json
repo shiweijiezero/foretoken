@@ -20,12 +20,28 @@
   "links": [],
   "panels": [
     {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "content": "Select a model for inference metrics, and a model and frontend for admission; HTTP traffic covers the whole frontend. Waiting and unfinished occupancy are shared within each frontend service and model; replica observations are deduplicated. Adjust the time range to inspect trends.",
+        "mode": "markdown"
+      },
+      "repeatDirection": "h",
+      "title": "Reading this dashboard",
+      "transparent": false,
+      "type": "text"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "id": 0,
       "panels": [],
@@ -37,11 +53,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected model groups and roles.",
+      "description": "Number of online model servers in the selected model groups and roles.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -60,12 +77,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -77,12 +90,12 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -91,8 +104,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -101,15 +118,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Model scrape targets",
+          "legendFormat": "Online model servers",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Model scrape targets",
+      "title": "Online model servers",
       "transparent": false,
       "type": "stat"
     },
@@ -155,12 +172,12 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -169,8 +186,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -187,7 +208,7 @@
           "refId": "A"
         }
       ],
-      "title": "Prompt tokens / s",
+      "title": "Input throughput",
       "transparent": false,
       "type": "stat"
     },
@@ -233,12 +254,12 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -247,8 +268,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -265,7 +290,7 @@
           "refId": "A"
         }
       ],
-      "title": "Output tokens / s",
+      "title": "Output throughput",
       "transparent": false,
       "type": "stat"
     },
@@ -314,12 +339,12 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -328,8 +353,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -356,7 +385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "id": 0,
       "panels": [],
@@ -380,6 +409,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -408,7 +439,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -449,7 +480,7 @@
           "refId": "B"
         }
       ],
-      "title": "Input throughput (TPS)",
+      "title": "Input throughput",
       "transparent": false,
       "type": "timeseries"
     },
@@ -470,6 +501,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -498,7 +531,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -539,7 +572,7 @@
           "refId": "B"
         }
       ],
-      "title": "Output throughput (TPS)",
+      "title": "Output throughput",
       "transparent": false,
       "type": "timeseries"
     },
@@ -548,7 +581,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.",
+      "description": "Completed generation requests per second, with backend details.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -560,15 +593,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -630,15 +665,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -708,6 +745,19 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Generation latency",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -725,15 +775,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
+        "w": 12,
         "x": 0,
-        "y": 24
+        "y": 31
       },
       "options": {
         "legend": {
@@ -808,15 +906,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 24
+        "w": 12,
+        "x": 12,
+        "y": 31
       },
       "options": {
         "legend": {
@@ -890,15 +1036,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 24
+        "w": 12,
+        "x": 0,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -972,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
+      "description": "Time between output tokens, in milliseconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -984,15 +1193,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 0,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -1066,7 +1338,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.",
+      "description": "P95 queue, prefill and decode time for completed requests, in seconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1078,13 +1350,15 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "queue"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1098,8 +1372,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "prefill"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1113,8 +1387,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "decode"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -1130,9 +1404,9 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 34
+        "w": 12,
+        "x": 0,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1185,7 +1459,7 @@
           "refId": "C"
         }
       ],
-      "title": "Request time by stage",
+      "title": "Stage latency (p95)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1206,15 +1480,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1255,7 +1531,7 @@
           "refId": "B"
         }
       ],
-      "title": "Preemptions",
+      "title": "Preemption events / s",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1264,12 +1540,163 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of prompt tokens per request across selected engines.",
+      "description": "TTFT and E2EL histogram observations per second for each whole model.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "TTFT / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "E2EL / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Request latency samples / s",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Output-token interval observations per second for each whole model. These count token intervals.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "ITL / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Token interval samples / s",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Request lengths",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Distribution of prompt tokens per request across selected engines.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1326,11 +1753,17 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "description": "Distribution of generated tokens per request across selected engines.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1382,94 +1815,12 @@
       "type": "heatmap"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Observed request and token intervals per second. Sparse windows make histogram quantiles coarse; no observations leave them unavailable.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 52
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "ITL / {{model_name}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "TTFT / {{model_name}}",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "E2EL / {{model_name}}",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "Latency observations / s",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 82
       },
       "id": 0,
       "panels": [],
@@ -1481,7 +1832,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+      "description": "Draft and accepted token rates for each whole model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1493,6 +1844,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -1529,10 +1882,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1582,7 +1935,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+      "description": "Accepted draft tokens divided by proposed draft tokens across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1596,15 +1949,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1654,15 +2008,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1691,7 +2047,7 @@
           "refId": "A"
         }
       ],
-      "title": "Accepted tokens per draft",
+      "title": "Accepted tokens per draft iteration",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1700,7 +2056,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1714,15 +2070,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1751,7 +2108,274 @@
           "refId": "A"
         }
       ],
-      "title": "Acceptance by draft position",
+      "title": "Acceptance probability by position",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Average draft and target-forward time per measured step.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 103
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "Target forward / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "Draft / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Speculative stage GPU time",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Share of measured time spent on drafting and target forward.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "noValue": "No data",
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 103
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) + (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "Target forward share / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) + (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "Draft share / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Speculative GPU time shares",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Measured speculative decoding steps per second.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 113
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Timed speculative steps / s",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1761,7 +2385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 123
       },
       "id": 0,
       "panels": [],
@@ -1787,15 +2411,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 124
       },
       "options": {
         "legend": {
@@ -1832,7 +2457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.",
+      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1846,13 +2471,14 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "local"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1866,8 +2492,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "external"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1882,10 +2508,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 124
       },
       "options": {
         "legend": {
@@ -1949,15 +2575,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 134
       },
       "options": {
         "legend": {
@@ -1978,14 +2605,14 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "legendFormat": "{{model_group_display}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Storage usage",
+      "title": "Runtime cache filesystem usage",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2006,15 +2633,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 134
       },
       "options": {
         "legend": {
@@ -2035,14 +2664,14 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "legendFormat": "{{model_group_display}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Available storage",
+      "title": "Runtime cache filesystem free space",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2052,7 +2681,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 144
       },
       "id": 0,
       "panels": [],
@@ -2078,15 +2707,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 95
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2107,7 +2737,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2137,15 +2767,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 95
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2166,7 +2797,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2174,6 +2805,124 @@
         }
       ],
       "title": "GPU memory by device",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Power draw of each GPU used by the selected model, in watts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 155
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU power by device",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 155
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU temperature by device",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2194,15 +2943,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "cores"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 165
       },
       "options": {
         "legend": {
@@ -2223,7 +2974,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name) ((sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval]))) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval]))) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "Total / {{model_name}}",
@@ -2235,7 +2986,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "(sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "{{model_group_display}} / {{node}}",
@@ -2264,15 +3015,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 165
       },
       "options": {
         "legend": {
@@ -2293,7 +3046,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name) ((sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"})) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"})) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "Total / {{model_name}}",
@@ -2305,7 +3058,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "(sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "{{model_group_display}} / {{node}}",
@@ -2318,126 +3071,12 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Power draw of each GPU used by the selected model, in watts.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "watt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "GPU power by device",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "GPU temperature by device",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 119
+        "y": 175
       },
       "id": 0,
       "panels": [],
@@ -2449,7 +3088,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.",
+      "description": "Routing share by backend within each model and execution role.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2463,15 +3102,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 120
+        "y": 176
       },
       "options": {
         "legend": {
@@ -2521,15 +3161,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 176
       },
       "options": {
         "legend": {
@@ -2579,15 +3221,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 186
       },
       "options": {
         "legend": {
@@ -2616,7 +3260,7 @@
           "refId": "A"
         }
       ],
-      "title": "Routing stage latency",
+      "title": "Routing stage latency (p99)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2637,15 +3281,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 186
       },
       "options": {
         "legend": {
@@ -2684,7 +3330,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 138
+        "y": 196
       },
       "id": 0,
       "panels": [],
@@ -2696,11 +3342,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected Frontend services.",
+      "description": "Number of successfully scraped frontend replicas in the selected services.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -2719,12 +3366,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -2734,14 +3377,14 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 12,
         "x": 0,
-        "y": 139
+        "y": 197
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2750,8 +3393,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2763,12 +3410,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Frontend scrape targets",
+          "legendFormat": "Online frontend replicas",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Frontend scrape targets",
+      "title": "Online frontend replicas",
       "transparent": false,
       "type": "stat"
     },
@@ -2812,14 +3459,14 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 8,
-        "y": 139
+        "w": 12,
+        "x": 12,
+        "y": 197
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2828,8 +3475,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2855,87 +3506,6 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests waiting for frontend admission.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "match": "null+nan",
-                "result": {
-                  "color": "#808080",
-                  "text": "No data"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "noValue": "No data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#eb6834",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 139
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(foretoken:frontend_upstream_queued_requests:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
-          "instant": true,
-          "interval": "5s",
-          "legendFormat": "Frontend queued requests",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Frontend queued requests",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
       "description": "Frontend response starts grouped by HTTP status class.",
       "fieldConfig": {
         "defaults": {
@@ -2948,6 +3518,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": [
@@ -2999,10 +3571,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 143
+        "y": 201
       },
       "options": {
         "legend": {
@@ -3056,15 +3628,17 @@
               "mode": "normal"
             }
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 143
+        "y": 201
       },
       "options": {
         "legend": {
@@ -3102,7 +3676,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Time to HTTP response headers, in seconds; excludes SSE body delivery.",
+      "description": "Time to HTTP response headers, in seconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3115,13 +3689,15 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "p50"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -3135,8 +3711,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p95"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -3150,8 +3726,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p99"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -3169,7 +3745,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 151
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3243,6 +3819,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": [
@@ -3260,21 +3838,6 @@
                 }
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "EPDPipelineScope"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
           }
         ]
       },
@@ -3282,7 +3845,7 @@
         "h": 10,
         "w": 8,
         "x": 8,
-        "y": 151
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3310,7 +3873,7 @@
           "refId": "A"
         }
       ],
-      "title": "Frontend admission queue",
+      "title": "Model preparation and dispatch wait",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3319,7 +3882,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.",
+      "description": "Healthy KV event sources divided by configured sources.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3333,6 +3896,7 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -3341,7 +3905,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 151
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3374,12 +3938,1516 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 221
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Admission",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "HTTP model-admission attempts per second; batches count once.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: calls/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 222
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_attempts_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Admission calls / s",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "HTTP requests reaching first backend acceptance per second; batches count once.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: calls/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 222
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Dispatched calls / s",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "HTTP requests acquiring waiting ownership per second; batches count once.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: calls/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 222
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_enqueued_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Enqueued calls / s",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Share of each model's completed HTTP admission calls rejected for capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 227
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Capacity rejection ratio",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Share of each model's completed HTTP admission calls that timed out.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 227
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Admission timeout ratio",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Waiting-ownership p95 through first backend acceptance, including preparation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No samples"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No samples",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 227
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Dispatch wait (p95)",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "1 means the published model count matches inventory; an empty catalog is valid. 0 means missing reporting or a failed scrape.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "color": "#808080",
+                  "text": "No data"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2a78d6",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 232
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "((label_replace(foretoken_admission_configured_models{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == bool on(namespace,frontend_service,pod) (count by(namespace,frontend_service,pod) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or on(namespace,frontend_service,pod) (0 * (label_replace(foretoken_admission_configured_models{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1) or on(namespace,frontend_service,pod) (0 * (max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))",
+          "instant": true,
+          "interval": "5s",
+          "legendFormat": "{{namespace}} / {{frontend_service}} / {{pod}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Catalog telemetry complete",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Compare bounded admission, ledger availability and request results across frontend replicas.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "noValue": "No data"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 400
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Replica"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 240
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scrape"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Telemetry complete"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bounded admission"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Store available"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Capacity rejection ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Admission timeout ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Dispatch wait p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 236
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "reducer": [],
+          "show": false
+        },
+        "frameIndex": 0,
+        "showHeader": true,
+        "showTypeIcons": false
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_join((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join(((((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * on(namespace,frontend_service,pod) group_left() (max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) ((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 0)) or ((((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 0)) or ((((((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) ((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) == 1)) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) and on(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) or on(namespace,frontend_service,pod,model_name) (0 * (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((label_replace(foretoken_admission_enabled{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"capacity_rejected\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=~\"queue_timeout|deadline_exceeded\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) or (0 * (sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))) / ((sum by(namespace,frontend_service,pod,model_name) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) > 0)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(replica) (label_join((((histogram_quantile(0.95, sum by(namespace,frontend_service,pod,model_name,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",origin=\"http\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "H"
+        }
+      ],
+      "title": "Admission by replica",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "replica",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "model_name",
+                "pod",
+                "Value #B",
+                "Value #C",
+                "Value #D",
+                "Value #E",
+                "Value #F",
+                "Value #G",
+                "Value #H"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4,
+              "Value #E": 5,
+              "Value #F": 6,
+              "Value #G": 7,
+              "Value #H": 8,
+              "model_name": 0,
+              "pod": 1
+            },
+            "renameByName": {
+              "Value #B": "Scrape",
+              "Value #C": "Telemetry complete",
+              "Value #D": "Bounded admission",
+              "Value #E": "Store available",
+              "Value #F": "Capacity rejection ratio",
+              "Value #G": "Admission timeout ratio",
+              "Value #H": "Dispatch wait p95",
+              "model_name": "Model",
+              "pod": "Replica"
+            }
+          }
+        }
+      ],
+      "transparent": false,
+      "type": "table"
+    },
+    {
       "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 161
+        "y": 244
+      },
+      "id": 0,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Results distinguish backend acceptance (dispatched) from CPU-only completion (prepared); arrivals include pending calls.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "pointSize": 8,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "noValue": "No data",
+              "unit": "suffix: calls/s"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        6,
+                        4
+                      ],
+                      "fill": "dash"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 245
+          },
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_dispatch_results_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "sum by(namespace,frontend_service,model_name,origin) (label_replace(rate(foretoken_admission_attempts_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / arrivals",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Admission calls and results / s",
+          "transparent": false,
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Completed waiting-ownership observations per second, grouped by model, origin and result.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "pointSize": 8,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "noValue": "No data",
+              "unit": "suffix: samples/s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 245
+          },
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "sum by(namespace,frontend_service,model_name,origin,result) (label_replace(rate(foretoken_admission_wait_seconds_count{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Waiting exit samples / s",
+          "transparent": false,
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Compare waiting duration for dispatched, prepared, timed-out and cancelled calls.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "pointSize": 8,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "noValue": "No data",
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 255
+          },
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "histogram_quantile(0.5, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p50",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p95",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "histogram_quantile(0.95, sum by(namespace,frontend_service,model_name,origin,result,le) (label_replace(rate(foretoken_admission_wait_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\",result!=\"dispatched\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{origin}} / {{result}} / p95",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Waiting duration by result",
+          "transparent": false,
+          "type": "timeseries"
+        }
+      ],
+      "title": "Admission results and wait",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 265
+      },
+      "id": 0,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Replicas observe the same shared occupancy. Missing counts indicate a failed ledger read, not zero usage.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "match": "null+nan",
+                    "result": {
+                      "text": "No data"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "noValue": "No data"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Model"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 400
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Replica"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 240
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Store available"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Reserved and accepted work units"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Waiting work units"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Waiting limit"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 266
+          },
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "reducer": [],
+              "show": false
+            },
+            "frameIndex": 0,
+            "showHeader": true,
+            "showTypeIcons": false
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "label_join((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\")",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_store_available{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(replica) (label_join(((((label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1)) and on(namespace,frontend_service,pod,model_name) (max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))) or on(namespace,frontend_service,pod,model_name) ((max by(namespace,frontend_service,pod,model_name) (label_replace(foretoken_admission_model_info{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) * (0 / 0))), \"replica\", \" / \", \"namespace\", \"frontend_service\", \"pod\", \"model_name\"))",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "E"
+            }
+          ],
+          "title": "Ledger observations by replica",
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "replica",
+                "mode": "outerTabular"
+              }
+            },
+            {
+              "id": "filterFieldsByName",
+              "options": {
+                "include": {
+                  "names": [
+                    "model_name",
+                    "pod",
+                    "Value #B",
+                    "Value #C",
+                    "Value #D",
+                    "Value #E"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "indexByName": {
+                  "Value #B": 2,
+                  "Value #C": 3,
+                  "Value #D": 4,
+                  "Value #E": 5,
+                  "model_name": 0,
+                  "pod": 1
+                },
+                "renameByName": {
+                  "Value #B": "Store available",
+                  "Value #C": "Reserved and accepted work units",
+                  "Value #D": "Waiting work units",
+                  "Value #E": "Waiting limit",
+                  "model_name": "Model",
+                  "pod": "Replica"
+                }
+              }
+            }
+          ],
+          "transparent": false,
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Shared dispatch reservations plus accepted unfinished generation units. There is no model-wide concurrency limit.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "pointSize": 8,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "noValue": "No data",
+              "unit": "suffix: work units"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 274
+          },
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_active_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "{{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Reserved and accepted work units",
+          "transparent": false,
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Shared waiting occupancy includes preparation and unresolved submission. The limit is shared by the service's replicas.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "pointSize": 8,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "noValue": "No data",
+              "unit": "suffix: work units"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 274
+          },
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "repeatDirection": "h",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_waiting_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "Occupancy / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "max by(namespace,frontend_service,frontend_service_uid,model_name) ((label_replace(foretoken_admission_shared_waiting_limit_work_units{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\",model_name=~\"$model_name\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) and on(namespace,frontend_service,pod) ((max by(namespace,frontend_service,pod) (label_replace(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",pod=~\"$frontend_pod\"}, \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) == 1))",
+              "instant": false,
+              "interval": "5s",
+              "legendFormat": "Limit / {{namespace}} / {{frontend_service}} / {{model_name}} / {{frontend_service_uid}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Waiting work units",
+          "transparent": false,
+          "type": "timeseries"
+        }
+      ],
+      "title": "Admission resources",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 284
       },
       "id": 0,
       "panels": [
@@ -3400,15 +5468,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "ops"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 0,
-            "y": 162
+            "y": 285
           },
           "options": {
             "legend": {
@@ -3458,15 +5528,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "s"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 8,
-            "y": 162
+            "y": 285
           },
           "options": {
             "legend": {
@@ -3495,7 +5567,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile latency",
+          "title": "Reconcile latency (p99)",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3516,15 +5588,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 16,
-            "y": 162
+            "y": 285
           },
           "options": {
             "legend": {
@@ -3567,7 +5641,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 170
+        "y": 295
       },
       "id": 0,
       "panels": [],
@@ -3591,15 +5665,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 0,
-        "y": 171
+        "y": 296
       },
       "options": {
         "legend": {
@@ -3670,15 +5746,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 8,
-        "y": 171
+        "y": 296
       },
       "options": {
         "legend": {
@@ -3749,15 +5827,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 16,
-        "y": 171
+        "y": 296
       },
       "options": {
         "legend": {
@@ -3810,7 +5890,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 179
+        "y": 306
       },
       "options": {
         "cellHeight": "sm",
@@ -3938,10 +6018,30 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
+        "label": "Frontend pod",
+        "multi": true,
+        "name": "frontend_pod",
+        "query": "label_values(up{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",inference_foretoken_io_frontend_service!=\"\"}, pod)",
+        "refresh": 1,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": true,
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "includeAll": true,
         "label": "Model",
         "multi": true,
         "name": "model_name",
-        "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\"}, model_name)",
+        "query": "label_values({__name__=~\"foretoken:model_instance_info|foretoken_admission_model_info\",namespace=~\"$namespace\"}, model_name)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,
@@ -3961,7 +6061,7 @@
         "label": "Model instance",
         "multi": true,
         "name": "model_group",
-        "query": "query_result((label_replace(max by(namespace,inference_foretoken_io_model_group) (max_over_time(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\"}[$__range] @ end())), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\")) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1)))))",
+        "query": "query_result((max by(namespace,model_group) (max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}[$__range] @ end()))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1)))))",
         "refresh": 2,
         "regex": "/model_group=\"(?<value>[^\"]+)\".*model_group_display=\"(?<text>[^\"]+)\"/",
         "skipUrlSync": false,

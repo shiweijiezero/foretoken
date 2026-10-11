@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Dispatch answer scoring or distribution comparisons through shared service and result lifecycles."""
+
+from __future__ import annotations
+
+import sys
+from collections.abc import Sequence
+
+from benchmarks.config.evaluation import (
+    EvaluationConfig,
+    native_arguments,
+    parse_evaluation_arguments,
+)
+from benchmarks.model_service import resolve_model_service
+from benchmarks.results.console import configure_logging
+from benchmarks.results.experiment import experiment_output
+from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
+
+
+def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
+    """Execute the selected evaluation adapter after validating its native options."""
+    if config.evaluator is None:
+        if help_requested:
+            return
+        from benchmarks.config.distribution_comparison import (
+            parse_distribution_comparison_arguments,
+        )
+        from benchmarks.runs.distribution_comparison import (
+            run_distribution_comparison,
+            run_greedy_comparison,
+        )
+
+        comparison = parse_distribution_comparison_arguments(config.arguments, config.services)
+        if comparison.greedy_compare:
+            run_greedy_comparison(config, comparison)
+        else:
+            run_distribution_comparison(config, comparison)
+        return
+    native = native_arguments(
+        config.evaluator,
+        ["--help"] if help_requested else list(config.arguments),
+    )
+    # Only transport and publication belong to Foretoken. Other native
+    # options, including structured model arguments, retain upstream ownership.
+    owned = (
+        ("model", "output_path", "wandb_args")
+        if config.evaluator == "lm-eval"
+        else ("api_url", "work_dir")
+    )
+    for name in owned:
+        value = getattr(native, name, None)
+        if value:
+            raise ValueError(
+                f"Native {name} is managed by Foretoken; use --model, --url, --output-dir or --output instead"
+            )
+    if config.evaluator == "evalscope":
+        if native.eval_type not in (None, "openai_api"):
+            raise ValueError("foretoken eval uses openai_api for the selected model service")
+        if native.eval_backend not in (None, "Native"):
+            raise ValueError("foretoken eval uses EvalScope's Native backend for the selected model service")
+    model_args = getattr(native, "model_args", None) or {}
+    for name in ("model", "base_url", "api_key", "auth_token"):
+        if name in model_args:
+            raise ValueError(
+                f"model arguments cannot replace {name}; select the service with --model, --url and --api-key"
+            )
+
+    if len(config.services) > 1:
+        run_evaluation_comparison(config)
+    else:
+        with resolve_model_service(config.service) as service:
+            run = run_evaluation(config, service)
+            if run.exit_code:
+                raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Select evaluation and retain one experiment record across service preparation and execution."""
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    try:
+        config, help_requested = parse_evaluation_arguments(arguments)
+        if help_requested:
+            _run(config, help_requested=True)
+            return
+        configure_logging(not config.outputs.includes("quiet"))
+        with experiment_output(config, "eval", arguments) as config:
+            _run(config)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error

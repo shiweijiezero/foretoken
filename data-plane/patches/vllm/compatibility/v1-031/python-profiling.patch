@@ -1,0 +1,26 @@
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1327,6 +1327,12 @@
+                 "=YOUR_DIR_PATH_TO_DUMP_TRACE'"
+             )
+
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            # Preserve failures and active captures; only completed Torch state is replaceable.
++            self.profiler._raise_if_failed()
++            if is_start and not self.profiler._active and not self.profiler._running:
++                self.profiler = None
++
+         if is_start:
+             # Generate the trace name by combining prefix with comprehensive rank suffix
+             from vllm.distributed.utils import get_worker_rank_suffix
+@@ -1364,6 +1370,9 @@
+                     # Proton output names are fixed when the wrapper is constructed.
+                     # Recreate it so the next profile_prefix is honored.
+                     self.profiler = None
++
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
+
+     @property
+     def randomize_dummy_inputs(self) -> bool:

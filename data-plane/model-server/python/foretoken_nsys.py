@@ -4,9 +4,9 @@
 """Inspect GPU activity in an Nsight SQLite export."""
 
 import json
-from pathlib import Path
 import sqlite3
 import sys
+from pathlib import Path
 
 
 def has_gpu_activity(database: Path) -> bool:

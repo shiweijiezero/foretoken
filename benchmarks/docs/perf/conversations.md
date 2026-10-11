@@ -14,6 +14,10 @@ This sends three requests: one single-turn conversation and one two-turn convers
 
 By default, later requests use the dataset's recorded assistant answers as history (`--conversation-history dataset`). Each request still generates a new response for performance measurement. Add `--conversation-history generated` to put those generated responses into subsequent history instead.
 
+A turn with a non-empty text reference answer automatically requests the same number of output tokens, counted with the request model's tokenizer without added special tokens. Tokenization happens before measurement. The service must support `min_tokens` and `ignore_eos`; target and actual output lengths appear in the request results.
+
+A row's `output_length` takes precedence, followed by an explicit `--min-output-length`/`--max-output-length` range, then the reference answer length. Turns without a usable text answer stop naturally under `--max-tokens`. The tokenizer comes from the request model; use `--tokenizer-path` when the service uses an alias or its tokenizer is stored separately.
+
 `--num-prompts` limits the total HTTP requests across conversations. To run only the first user turn of each conversation:
 
 ```bash

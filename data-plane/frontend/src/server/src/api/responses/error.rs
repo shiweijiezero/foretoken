@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::runtime::GenerationError;
 
 /// A protocol error returned before generation or represented in a failed response.
-pub(super) struct ApiError {
+pub(crate) struct ApiError {
     pub status: StatusCode,
     pub body: Value,
 }
@@ -30,8 +30,13 @@ impl ApiError {
         let (status, code) = match error {
             GenerationError::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request_error"),
             GenerationError::ModelNotFound => (StatusCode::NOT_FOUND, "model_not_found"),
-            GenerationError::Unavailable => {
+            GenerationError::Unavailable | GenerationError::BackendBusy => {
                 (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable")
+            }
+            GenerationError::Overloaded => (StatusCode::SERVICE_UNAVAILABLE, "overloaded"),
+            GenerationError::QueueTimeout => (StatusCode::SERVICE_UNAVAILABLE, "queue_timeout"),
+            GenerationError::AdmissionCapacityExceeded => {
+                (StatusCode::BAD_REQUEST, "concurrency_limit_exceeded")
             }
             GenerationError::DeadlineExceeded => (StatusCode::GATEWAY_TIMEOUT, "request_timeout"),
             GenerationError::BackendRejected => (StatusCode::BAD_GATEWAY, "backend_rejected"),

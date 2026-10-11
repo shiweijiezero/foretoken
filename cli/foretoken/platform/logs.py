@@ -123,19 +123,19 @@ def collector_values(
     target = urlsplit(endpoint)
     port = target.port or (443 if target.scheme == "https" else 80)
     uri = target.path.rstrip("/") + "/loki/api/v1/push"
-    labels = ",".join((
-        "job=foretoken",
-        "namespace=$kubernetes['namespace_name']",
-        "pod=$kubernetes['pod_name']",
-        "pod_uid=$kubernetes['pod_id']",
-        "container=$kubernetes['container_name']",
-        "node=$kubernetes['host']",
-        "stream=$stream",
-        "model_group=$kubernetes['labels']['inference.foretoken.io/model-group']",
-        "model_role=$kubernetes['labels']['inference.foretoken.io/model-role']",
-        "frontend_service=$kubernetes['labels']['inference.foretoken.io/frontend-service']",
-        "kv_group=$kubernetes['labels']['inference.foretoken.io/kv-group']",
-    ))
+    labels = (
+        "job=foretoken,"
+        "namespace=$kubernetes['namespace_name'],"
+        "pod=$kubernetes['pod_name'],"
+        "pod_uid=$kubernetes['pod_id'],"
+        "container=$kubernetes['container_name'],"
+        "node=$kubernetes['host'],"
+        "stream=$stream,"
+        "model_group=$kubernetes['labels']['inference.foretoken.io/model-group'],"
+        "model_role=$kubernetes['labels']['inference.foretoken.io/model-role'],"
+        "frontend_service=$kubernetes['labels']['inference.foretoken.io/frontend-service'],"
+        "kv_group=$kubernetes['labels']['inference.foretoken.io/kv-group']"
+    )
     return {
         "kind": "DaemonSet",
         "testFramework": {"enabled": False},

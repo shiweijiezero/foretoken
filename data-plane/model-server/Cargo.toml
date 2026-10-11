@@ -19,6 +19,7 @@ blake3.workspace = true
 bytes.workspace = true
 foretoken-artifacts.workspace = true
 foretoken-model-protocol.workspace = true
+foretoken-request-ledger = { path = "../request-ledger" }
 futures.workspace = true
 reqwest.workspace = true
 rmp-serde.workspace = true

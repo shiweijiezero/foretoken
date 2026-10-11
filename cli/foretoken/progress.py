@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Self
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
@@ -26,9 +26,18 @@ _WORKLOAD_LABELS = (
 )
 
 
-def _line(text: str) -> str:
-    """Remove terminal controls from a Kubernetes status message before printing it."""
-    return " ".join("".join(c for c in _ANSI.sub("", text) if c.isprintable()).split())
+def _message(text: str) -> str:
+    """Remove terminal controls while retaining diagnostic line breaks and indentation."""
+    return "".join(c for c in _ANSI.sub("", text) if c.isprintable() or c in "\n\t")
+
+
+def _termination_detail(state: dict[str, Any]) -> str:
+    """Present kubelet's container exit metadata and original termination message."""
+    metadata = f"reason={state.get('reason', '')} exit={state.get('exitCode')}"
+    if state.get("signal"):
+        metadata += f" signal={state['signal']}"
+    message = state.get("message", "")
+    return metadata + ("\n" + message if message else "")
 
 
 class StartupProgress:
@@ -48,7 +57,7 @@ class StartupProgress:
         self._logs: dict[tuple[str, str, str], subprocess.Popen] = {}
         self._unavailable = ""
 
-    def __enter__(self) -> StartupProgress:
+    def __enter__(self) -> Self:
         """Scope all log readers to the calling deployment wait or status watch."""
         return self
 
@@ -153,10 +162,13 @@ class StartupProgress:
                 cache[uid] = value
             obj = cache[uid]
 
-    def poll(self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0) -> None:
+    def poll(
+        self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0,
+        *, follow_logs: bool = True, force: bool = False,
+    ) -> None:
         """Discover container attempts and report Pod changes without deciding service readiness."""
         now = time.monotonic()
-        if now < self._next_poll or budget <= 0:
+        if (not force and now < self._next_poll) or budget <= 0:
             return
         self._next_poll = now + 5.0
         deadline = now + min(budget, 5.0)
@@ -189,13 +201,19 @@ class StartupProgress:
                     for container in containers:
                         state = container.get("state", {})
                         last = container.get("lastState", {}).get("terminated", {})
-                        previous_exit = f"previous exit={last.get('exitCode')} {last.get('reason', '')}" if last else ""
+                        if last:
+                            self._report(pod, container, service, elapsed, "PreviousTerminated",
+                                         _termination_detail(last), alive)
+                        if not follow_logs and not last and not ("waiting" in state or "terminated" in state):
+                            continue
                         if meta.get("deletionTimestamp"):
                             self._report(pod, container, service, elapsed, "Terminating", "", alive)
                         elif "waiting" in state:
                             waiting = state["waiting"]
                             self._report(pod, container, service, elapsed,
                                          waiting.get("reason", "Waiting"), waiting.get("message", ""), alive)
+                            if not follow_logs:
+                                continue
                             if namespace not in events:
                                 event_args = ["get", "events"]
                                 if namespace:
@@ -211,13 +229,12 @@ class StartupProgress:
                         elif "terminated" in state:
                             end = state["terminated"]
                             self._report(pod, container, service, elapsed,
-                                         end.get("reason", "Terminated"),
-                                         f"exit={end.get('exitCode')} {end.get('message', '')}", alive)
+                                         "Terminated", _termination_detail(end), alive)
                         elif container.get("ready"):
-                            self._report(pod, container, service, elapsed, "ContainerReady", previous_exit, alive)
+                            self._report(pod, container, service, elapsed, "ContainerReady", "", alive)
                         else:
-                            self._report(pod, container, service, elapsed, "Running", previous_exit, alive)
-                        if "running" in state or "terminated" in state or container.get("lastState", {}).get("terminated"):
+                            self._report(pod, container, service, elapsed, "Running", "", alive)
+                        if follow_logs and ("running" in state or "terminated" in state or last):
                             failure = self._follow(pod, container, live_readers)
                             if failure:
                                 self._report(pod, container, service, elapsed,
@@ -232,7 +249,7 @@ class StartupProgress:
                 self._unavailable = ""
         except DeploymentError as exc:
             # Observability permissions or a disappearing Pod must not redefine service readiness.
-            message = _line(str(exc))
+            message = _message(str(exc))
             if message != self._unavailable:
                 self.emit(f"[{elapsed:6.1f}s] Startup observations unavailable — {message}")
                 self._unavailable = message
@@ -247,10 +264,12 @@ class StartupProgress:
         key = (meta["uid"], container["name"], attempt)
         alive.add(key)
         node = pod.get("spec", {}).get("nodeName", "unassigned")
-        text = f"{service.display_name} / {meta['name']}/{container['name']} node={node} restart={attempt} {stage} {_line(detail)}".rstrip()
+        text = f"{service.display_name} / {meta['name']}/{container['name']} node={node} restart={attempt} {stage}"
+        if detail:
+            text += "\n" + _message(detail)
         observations = self._previous.setdefault(key, {})
-        channel = "logs" if stage == "LogsUnavailable" else "event" if stage == "Event" else "pod"
+        channel = stage if stage in {"LogsUnavailable", "Event", "PreviousTerminated"} else "pod"
         previous = observations.get(channel)
-        if previous is None or previous[0] != text or (channel != "logs" and time.monotonic() - previous[1] >= 30):
+        if previous is None or previous[0] != text or (channel != "LogsUnavailable" and time.monotonic() - previous[1] >= 30):
             self.emit(f"[{elapsed:6.1f}s] {text}")
             observations[channel] = (text, time.monotonic())

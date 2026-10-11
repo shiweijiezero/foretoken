@@ -14,7 +14,7 @@ length or a transport-buffer identity.
 ## One request
 
 1. Open Target `POST /generate` with `token_ids` and `max_tokens`, optionally
-   `stop` strings, `stop_token_ids`, `min_tokens`, `ignore_eos` and `sampling`.
+   `stop` strings, `stop_token_ids`, `min_tokens`, `ignore_eos`, `priority` and `sampling`.
    `sampling` contains `temperature`, `top_p`, `top_k` and optional Target `seed`.
    Read its NDJSON response. The first `opened` event supplies a
    `session_id`. Each `committed` event carries a token delta, text delta,
@@ -24,7 +24,7 @@ length or a transport-buffer identity.
    The caller may then select another Target.
 2. After the first nonterminal commit, open Draft `POST /sessions` with the
    original prompt plus confirmed tokens, the Target's `version`, and the same
-   `sampling` settings. Draft uses independent random draws, ignoring the Target
+   `sampling` and `priority` settings. Draft uses independent random draws, ignoring the Target
    seed. Read the
    `opened` event and **keep this response stream open** throughout the session.
    A draining Draft instead returns `{"event":"admission_closed"}` and closes
@@ -195,6 +195,18 @@ readiness probes; the workflow rechecks live status before opening sessions.
 
 ## Controller lifecycle
 
+Managed roles expose the Rust model-server ingress, which owns instance admission,
+controller-projected limit updates, RequestLedger execution ownership and session
+permits. Python listens on loopback behind that ingress. `/generate` and
+`/resume.generation` carry the Target reservation; the Rust ingress consumes it
+before forwarding the request. Draft session creation has no Target reservation.
+Both session types carry native engine `priority`. Accepted sessions retain their
+instance permit through completion or cancellation.
+
+`GET /v1/internal/admission` and `/v1/internal/admission/ready` report the applied
+instance configuration and its readiness. Standalone Python launches do not
+provide controller-managed admission or a shared request ledger.
+
 `GET /healthz` and `GET /readyz` check engine health and remain healthy during
 drain. This preserves the Kubernetes Service endpoint for existing multi-round
 sessions. Admission and discovery independently exclude new bindings.
@@ -272,7 +284,8 @@ refreshes; use `collected_at_unix_ms` when judging its freshness.
 
 - `running_requests` includes resident requests waiting for remote candidates.
   `ready_requests` excludes those waiters; `remote_waiting_requests` counts them.
-- `waiting_requests` counts the native waiting and skipped-waiting queues.
+- `waiting_requests` counts the native waiting queues (including KV-holding waiters on NVIDIA
+  and skipped waiters on the pinned MetaX core).
   `waiting_tokens` and `ready_tokens` count known uncomputed tokens, including
   ready candidates. They do not predict future output or subtract possible cache hits.
 - `max_num_seqs` is native scheduling capacity. `kv_used_blocks` counts pinned

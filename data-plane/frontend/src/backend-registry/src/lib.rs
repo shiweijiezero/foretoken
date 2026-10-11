@@ -12,7 +12,7 @@ mod snapshot_projection;
 pub use foretoken_artifacts::ModelSource;
 pub use registry::BackendRegistry;
 pub use snapshot::{
-    ModelIdentity, ServingSnapshot, SnapshotDtComponent, SnapshotEpdComponent,
+    ModelIdentity, ServingSettings, ServingSnapshot, SnapshotDtComponent, SnapshotEpdComponent,
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotParallelism,
     SnapshotPdComponent, SnapshotPdPipelineScope,
 };

@@ -9,27 +9,48 @@ import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v
 
 const servingSnapshotKey = "serving.json"
 
+// servingSettings groups process-local rules that share the snapshot publication boundary.
+type servingSettings struct {
+	RouterPipeline        inferencev1alpha1.RouterPipeline `json:"router_pipeline"`
+	RequestTimeoutSeconds int64                            `json:"request_timeout_seconds"`
+	StreamIdleSeconds     int64                            `json:"stream_idle_seconds"`
+	LogLevel              string                           `json:"log_level"`
+}
+
 type servingSnapshot struct {
-	DTComponents      []servingSnapshotDTComponent      `json:"dt_components,omitempty"`
-	Version           uint64                            `json:"version"`
-	Models            []servingSnapshotModel            `json:"models"`
-	Groups            []servingSnapshotGroup            `json:"groups"`
-	PDComponents      []servingSnapshotPDComponent      `json:"pd_components,omitempty"`
-	PDPipelineScopes  []servingSnapshotPDPipelineScope  `json:"pd_pipeline_scopes,omitempty"`
-	EPDComponents     []servingSnapshotEPDComponent     `json:"epd_components,omitempty"`
-	EPDPipelineScopes []servingSnapshotEPDPipelineScope `json:"epd_pipeline_scopes,omitempty"`
+	DTComponents      []servingSnapshotDTComponent        `json:"dt_components,omitempty"`
+	Settings          servingSettings                     `json:"settings"`
+	Version           uint64                              `json:"version"`
+	FrontendInstances []string                            `json:"frontend_instances"`
+	BackendInstances  []string                            `json:"backend_instances"`
+	Models            []servingSnapshotModel              `json:"models"`
+	Admission         map[string]servingSnapshotAdmission `json:"admission"`
+	Groups            []servingSnapshotGroup              `json:"groups"`
+	PDComponents      []servingSnapshotPDComponent        `json:"pd_components,omitempty"`
+	PDPipelineScopes  []servingSnapshotPDPipelineScope    `json:"pd_pipeline_scopes,omitempty"`
+	EPDComponents     []servingSnapshotEPDComponent       `json:"epd_components,omitempty"`
+	EPDPipelineScopes []servingSnapshotEPDPipelineScope   `json:"epd_pipeline_scopes,omitempty"`
+}
+
+// servingSnapshotAdmission contains the effective per-model settings consumed by the frontend.
+type servingSnapshotAdmission struct {
+	MaxWaitingRequests *uint32                      `json:"maxWaitingRequests,omitempty"`
+	QueueTimeout       inferencev1alpha1.Duration   `json:"queueTimeout,omitempty"`
+	RoleRules          []inferencev1alpha1.RoleRule `json:"roleRules,omitempty"`
 }
 
 type servingSnapshotModel struct {
-	ServiceUID          string                           `json:"service_uid"`
-	Model               string                           `json:"model"`
-	Source              inferencev1alpha1.ModelSource    `json:"source"`
-	Revision            string                           `json:"revision"`
-	Tokenizer           string                           `json:"tokenizer"`
-	TokenizerRevision   string                           `json:"tokenizer_revision"`
-	MaxInputTokens      *int32                           `json:"max_input_tokens,omitempty"`
-	Capabilities        []string                         `json:"capabilities,omitempty"`
-	AdmissionTargetSets [][]servingSnapshotScalingTarget `json:"admission_target_sets"`
+	ServiceGeneration     int64                                   `json:"service_generation"`
+	ServiceUID            string                                  `json:"service_uid"`
+	Model                 string                                  `json:"model"`
+	Source                inferencev1alpha1.ModelSource           `json:"source"`
+	Revision              string                                  `json:"revision"`
+	Tokenizer             string                                  `json:"tokenizer"`
+	TokenizerRevision     string                                  `json:"tokenizer_revision"`
+	SelectedPoolRevisions []inferencev1alpha1.ServingPoolRevision `json:"selected_pool_revisions,omitempty"`
+	Topology              string                                  `json:"topology"`
+	Capabilities          []string                                `json:"capabilities,omitempty"`
+	AdmissionTargetSets   [][]servingSnapshotScalingTarget        `json:"admission_target_sets"`
 }
 
 type servingSnapshotScalingTarget struct {

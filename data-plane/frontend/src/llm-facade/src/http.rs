@@ -9,6 +9,7 @@ use std::time::Duration;
 use foretoken_model_protocol::{
     AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
 };
+use foretoken_request_ledger::ReservationRef;
 use futures::StreamExt;
 use serde::Deserialize;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
@@ -51,10 +52,19 @@ impl HttpFacade {
     /// incremental decoding until terminal output or cancellation; response-start failures return first.
     pub(crate) async fn generate(
         &self,
-        request: GenerateRequest,
+        mut request: GenerateRequest,
+        reservation: Option<ReservationRef>,
+        role_priority: Option<i32>,
     ) -> Result<TokenStream, LlmFacadeError> {
-        let body = rmp_serde::to_vec_named(&GenerateInput::from(request))
-            .map_err(|_| LlmFacadeError::RequestFailed)?;
+        // Role priorities increase with urgency; vLLM orders smaller values first.
+        // Complement reverses the complete i32 range without collapsing its extremes.
+        // Without role rules, preserve the client's existing native priority convention.
+        if let Some(priority) = role_priority {
+            request.priority = !priority;
+        }
+        let mut input = GenerateInput::from(request);
+        input.reservation = reservation;
+        let body = rmp_serde::to_vec_named(&input).map_err(|_| LlmFacadeError::RequestFailed)?;
         let response = tokio::time::timeout(
             self.request_start_timeout,
             self.client
@@ -67,7 +77,7 @@ impl HttpFacade {
         .map_err(|_| LlmFacadeError::Unavailable)?
         .map_err(classify_reqwest)?;
         if !response.status().is_success() {
-            return Err(classify_status(response.status()));
+            return Err(classify_response_failure(response).await);
         }
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
             return Err(LlmFacadeError::Protocol);
@@ -107,8 +117,13 @@ impl HttpFacade {
 
 #[async_trait::async_trait]
 impl LlmFacade for HttpFacade {
-    async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError> {
-        self.generate(request).await
+    async fn generate(
+        &self,
+        request: GenerateRequest,
+        reservation: Option<ReservationRef>,
+        role_priority: Option<i32>,
+    ) -> Result<TokenStream, LlmFacadeError> {
+        self.generate(request, reservation, role_priority).await
     }
 
     async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError> {
@@ -146,6 +161,27 @@ pub(crate) fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
         LlmFacadeError::Protocol
     }
 }
+/// Classifies explicit pre-submission refusal from the shared model-server ingress.
+/// Both native and DT transports use these codes; generic failures remain non-replayable.
+pub(crate) async fn classify_response_failure(response: reqwest::Response) -> LlmFacadeError {
+    let status = response.status();
+    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        let error = response.json::<serde_json::Value>().await;
+        if matches!(
+            error
+                .ok()
+                .as_ref()
+                .and_then(|body| body.get("error"))
+                .and_then(|error| error.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("admission_busy" | "admission_unavailable")
+        ) {
+            return LlmFacadeError::Busy;
+        }
+    }
+    classify_status(status)
+}
+
 pub(crate) fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
     value.and_then(|v| v.to_str().ok()).is_some_and(|v| {
         v.split(';')

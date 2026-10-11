@@ -4,6 +4,8 @@
 
 用 `foretoken perf` 测量服务延迟和吞吐量，用 `foretoken eval` 评估回答质量，通过性能剖析定位执行瓶颈。
 
+[实验命令示例](docs/recipes_zh.md)
+
 ## 开始使用
 
 使用 Python 3.11 或更高版本安装 Foretoken：
@@ -15,7 +17,7 @@ pip install foretoken
 # pip install -e .
 ```
 
-以下示例在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行，将结果保存到本地和 W&B。首次使用 W&B 前，执行一次 `wandb login`。
+在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行以下示例。首次使用 W&B 前，执行 `wandb login`。随机负载会优先复用本地模型或缓存中的 tokenizer；需要指定 Hugging Face endpoint 时，设置 `FORETOKEN_HF_ENDPOINT`。
 
 传入 Kustomize 目录即可使用其中的模型服务。单模型部署自动选择模型，多模型部署通过 `--model` 指定。评测已有端点时，将目录换成 `--url`，并提供服务的模型名。
 
@@ -30,7 +32,9 @@ foretoken perf examples/quickstart \
 
 汇总结果包括请求成功率、延迟和吞吐量。流式请求还报告首 token 耗时（TTFT）和每输出 token 耗时（TPOT）。
 
-[性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](metrics_zh.md)。
+`perf` 的 `--duration`、`--timeout`、`--trace-start` 和 `--trace-duration` 可带时间单位，例如 `500ms`、`30s`、`8min`（或 `8m`）、`1.5h`、`1d`，不带单位时按秒解释。扫描文件中，带单位的值写成字符串，例如 `"duration": ["30s", "2min"]`。
+
+[性能评测示例](docs/perf/README_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。定义与单位见[性能指标](docs/metrics_zh.md)。
 
 ## 评测模型质量
 
@@ -56,14 +60,28 @@ foretoken eval examples/quickstart \
 | `local` | 打印结果并保存本地文件 |
 | `wandb` | 打印结果并上传 W&B |
 | `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
+| `experiment` | 按实验迭代组织结果，并保存本次运行的源码和命令信息 |
+| `raw` | 性能评测额外保存实际请求和响应内容，并保留本地结果 |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
+
+使用 `--output local,raw`，将请求输入和响应内容（包括 reasoning 和工具调用）保存到 `responses.jsonl`。预热响应保存在 `warmup_responses.jsonl`。
 
 `quiet` 将准备和执行日志保存到 `run.log`，不打印进度，错误仍会显示。选择 W&B 时，该日志也作为附件上传。
 
 每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
 
+使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
+
+```bash
+foretoken perf examples/quickstart --num-prompts 20 \
+  --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
+  --iteration baseline
+```
+
+`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[实验记录手册](../agent-playbooks/experiment-records_zh.md)。
+
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-已有结果可用 `foretoken plot RESULT_DIR` 重新绘图；`RESULT_DIR` 是运行时打印的结果目录。`--columns 2` 使用双栏宽度。多方法与参数扫描见[参数扫描](docs/perf/sweep_zh.md)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果。指标选择、图宽和输出位置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)。

@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-request-ledger = { path = "../../../request-ledger" }
 async-stream.workspace = true
 async-trait.workspace = true
 foretoken-model-protocol = { path = "../../../model-protocol" }

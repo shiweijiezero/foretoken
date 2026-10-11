@@ -3,8 +3,11 @@
 
 //! OpenAI and Anthropic HTTP adapters over Foretoken's shared generation pipeline.
 
+mod admission;
 mod api;
 pub mod draft_target;
+
+pub use admission::AdmissionOrigin;
 mod http;
 mod runtime;
 mod video;
@@ -15,6 +18,6 @@ pub use video::VideoRequest;
 pub use http::router;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
-    ModelRuntime, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl, RuntimeDiagnostics,
-    RuntimeGeneration, RuntimeState, Tokenization,
+    ModelRuntime, RequestSnapshot, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl,
+    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization,
 };

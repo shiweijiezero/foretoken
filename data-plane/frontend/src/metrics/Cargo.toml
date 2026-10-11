@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-admission = { path = "../admission" }
 axum.workspace = true
 foretoken-router = { path = "../router" }
 serde.workspace = true

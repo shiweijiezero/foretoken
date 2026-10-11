@@ -4,11 +4,26 @@
 # Deploys the control-plane manager and initializes its CRDs.
 
 {{- include "foretoken.validateValues" . }}
+{{- $sourceMode := and .Values.development .Values.development.enabled | default false }}
+{{- $application := .Values.controller.applicationURL }}
+{{- $frontendApplication := .Values.frontend.applicationURL }}
+{{- $modelApplication := .Values.runtime.vllm.applicationURL }}
+{{- if .Values.applicationFiles.releaseURL }}
+{{- $origin := include "foretoken.applicationFilesOrigin" . }}
+{{- $revision := default .Chart.AppVersion .Values.applicationFiles.revision }}
+{{- $application = default (printf "%s/control-plane/%s" $origin $revision) $application }}
+{{- $frontendApplication = default (printf "%s/frontend/%s" $origin $revision) $frontendApplication }}
+{{- $modelApplication = default (printf "%s/model-server/%s" $origin $revision) $modelApplication }}
+{{- end }}
+{{- $applicationMount := include "foretoken.applicationMount" . }}
+{{- $applicationClient := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "foretoken.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    foretoken.io/install-source: {{ ternary "source" "release" $sourceMode | quote }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 spec:
@@ -20,8 +35,14 @@ spec:
     metadata:
       annotations:
         inference.foretoken.io/chart-version: {{ .Chart.Version | quote }}
+        {{- with $application }}
+        inference.foretoken.io/application-url: {{ . | quote }}
+        {{- end }}
       labels:
         {{- include "foretoken.labels" . | nindent 8 }}
+        {{- if $application }}
+        foretoken.io/application-files: consumer
+        {{- end }}
     spec:
       serviceAccountName: {{ include "foretoken.fullname" . }}
       automountServiceAccountToken: true
@@ -37,11 +58,40 @@ spec:
           type: RuntimeDefault
       # Establish the APIs before controller-runtime starts discovery and caches.
       initContainers:
+        {{- if $application }}
+        - name: application-files
+          image: {{ $applicationClient | quote }}
+          command:
+            - python
+            - -c
+            - {{ .Files.Get "files/application-download.py" | quote }}
+            - {{ $application | quote }}
+            - {{ $applicationMount | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: application
+              mountPath: {{ $applicationMount }}
+        {{- end }}
         - name: crd-apply
           image: {{ include "foretoken.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
+            {{- if $application }}
+            - {{ printf "%s/current/bin/crd-apply" $applicationMount }}
+            - {{ printf "--crds-dir=%s/current/crds" $applicationMount }}
+            {{- else }}
             - /crd-apply
+            {{- end }}
+          {{- if $application }}
+          volumeMounts:
+            - name: application
+              mountPath: {{ $applicationMount }}
+              readOnly: true
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -53,12 +103,32 @@ spec:
           image: {{ include "foretoken.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /manager
+            - {{ ternary (printf "%s/current/bin/manager" $applicationMount) "/manager" (not (empty $application)) }}
+          volumeMounts:
+            - name: controller-configuration
+              mountPath: /etc/foretoken/controller
+              readOnly: true
+            {{- if $application }}
+            - name: application
+              mountPath: {{ $applicationMount }}
+              readOnly: true
+            {{- end }}
           args:
+            {{- if or $sourceMode $application $frontendApplication $modelApplication }}
+            - {{ printf "--application-files=%s" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "image" $applicationClient "mountPath" $applicationMount "script" (.Files.Get "files/application-download.py") | toJson) | quote }}
+            {{- end }}
+            {{- with $application }}
+            - {{ printf "--video-worker-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $frontendApplication }}
+            - {{ printf "--frontend-application-url=%s" . | quote }}
+            {{- end }}
+            {{- with $modelApplication }}
+            - {{ printf "--model-server-application-url=%s" . | quote }}
+            {{- end }}
             - --leader-elect=true
-            - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
-            - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
-            - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
+            - {{ printf "--source-mode=%t" $sourceMode | quote }}
+            - --autoscaling-telemetry-config=/etc/foretoken/controller/autoscaling-telemetry.json
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - --metrics-bind-address=:8080
             - {{ printf "--observability-prometheus=%s" .Values.observability.prometheus | quote }}
@@ -70,6 +140,10 @@ spec:
             - {{ printf "--log-storage-statefulset=%s" .Values.observability.logs.managedStatefulSet | quote }}
             - {{ printf "--log-storage-max-size=%s" .Values.observability.logs.maxSize | quote }}
             {{- end }}
+            {{- with .Values.admissionStore.externalURLSecret.name }}
+            - {{ printf "--admission-store-url-secret-name=%s" . | quote }}
+            - {{ printf "--admission-store-url-secret-key=%s" $.Values.admissionStore.externalURLSecret.key | quote }}
+            {{- end }}
             - --health-probe-bind-address=:8081
             - {{ printf "--video-worker-image=%s" (include "foretoken.image" .) | quote }}
             {{- range .Values.workload.imagePullSecrets }}
@@ -77,8 +151,8 @@ spec:
             {{- end }}
             {{- with .Values.workload.cache.claimName }}
             - {{ printf "--cache-claim=%s" . | quote }}
-            - {{ printf "--cache-mount-path=%s" $.Values.workload.cache.mountPath | quote }}
             {{- end }}
+            - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
             {{- if .Values.modelDistribution.modelexpress.enabled }}
             - --model-distribution-modelexpress=true
             {{- end }}
@@ -148,6 +222,10 @@ spec:
             {{- end }}
             {{- end }}
           env:
+            {{- if not .Values.admissionStore.externalURLSecret.name }}
+            - name: FORETOKEN_ADMISSION_STORE_URL
+              value: {{ include "foretoken.admissionStoreURL" . | quote }}
+            {{- end }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -171,8 +249,7 @@ spec:
             httpGet:
               path: /readyz
               port: healthz
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 2
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -183,4 +260,12 @@ spec:
             capabilities:
               drop:
                 - ALL
+      volumes:
+        - name: controller-configuration
+          configMap:
+            name: {{ include "foretoken.fullname" . }}
+        {{- if $application }}
+        - name: application
+          emptyDir: {}
+        {{- end }}
       terminationGracePeriodSeconds: 10

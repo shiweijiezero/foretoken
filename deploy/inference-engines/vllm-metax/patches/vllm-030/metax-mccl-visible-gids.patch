@@ -1,0 +1,62 @@
+--- a/vllm_metax/utils/mccl.py
++++ b/vllm_metax/utils/mccl.py
+@@ -1,5 +1,9 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # 2026 - Modified by MetaX Integrated Circuits (Shanghai) Co., Ltd. All Rights Reserved.
++import errno
++import os
++from pathlib import Path
++
+ import torch
+ from vllm.utils.nccl import logger
+ from vllm_metax import envs as mx_envs
+@@ -26,3 +30,37 @@
+             raise ValueError("MCCL only supports MACA backends.")
+         logger.info_once("Found mccl from library %s", so_file)
+     return so_file
++
++
++def configure_mccl_visible_hcas() -> None:
++    """Exclude RoCE ports without a usable GID in the worker's network namespace.
++
++    Called by platform configuration before Torch or PyNccl creates communicators.
++    Explicit HCA selection and ordinary InfiniBand selection remain unchanged.
++    """
++    if "MCCL_IB_HCA" in os.environ:
++        return
++    excluded = []
++    for device in sorted(Path("/sys/class/infiniband").glob("*")):
++        for port in sorted((device / "ports").glob("*")):
++            if (port / "link_layer").read_text().strip() != "Ethernet":
++                continue
++            for gid in (port / "gids").iterdir():
++                try:
++                    address = gid.read_text().strip()
++                    kind = (port / "gid_attrs/types" / gid.name).read_text().strip()
++                except OSError as error:
++                    if error.errno in (errno.EINVAL, errno.ENOENT):
++                        continue
++                    raise
++                if int(address.replace(":", ""), 16) and kind in (
++                    "IB/RoCE v1",
++                    "RoCE v1",
++                    "RoCE v2",
++                ):
++                    break
++            else:
++                excluded.append(f"{device.name}:{port.name}")
++    if excluded:
++        os.environ["MCCL_IB_HCA"] = "^=" + ",".join(excluded)
++        logger.info("Excluding RoCE ports without namespace-visible GIDs: %s", excluded)
+--- a/vllm_metax/platform.py
++++ b/vllm_metax/platform.py
+@@ -299,6 +299,9 @@
+ 
+     @classmethod
+     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
++        from vllm_metax.utils.mccl import configure_mccl_visible_hcas
++
++        configure_mccl_visible_hcas()
+         # Config Override
+         parallel_config = vllm_config.parallel_config
+         compilation_config = vllm_config.compilation_config

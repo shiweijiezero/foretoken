@@ -9,7 +9,7 @@ foretoken perf examples/quickstart \
   --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \
-  --slo-params '[{"p99_latency":"<=2"}]' \
+  --slo-search --slo-params '[{"p99_latency":"<=2s"}]' \
   --slo-upper-bound 32 \
   --num-runs 1 \
   --output local,wandb
@@ -19,19 +19,39 @@ This starts at concurrency limit 2 and searches up to 32, requiring p99 request 
 
 The search stops at the SLO boundary or configured upper bound, or earlier if a higher limit produces no increase in simultaneous requests. For example, a four-request budget may reach a peak of four at limits 4 and 8; the result then reports peak 4 at limit 4.
 
-For traces, set the initial limit with `--trace-max-concurrency` instead of `--max-concurrency`; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
+For traces, use `--max-concurrency` for the in-flight request limit; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
 
-## Set criteria
+## Measure attainment at fixed conversation rates
+
+The [conversation rate configuration](../../scripts/common/conversation-rate.jsonl) scans a starting range of 2, 4, 8, and 16 conversations/s. Replace the URL and model below with your service's Chat Completions endpoint and model:
+
+```bash
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+  --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
+  --sweep benchmarks/scripts/common/conversation-rate.jsonl \
+  --temperature 0 --random-seed 0 --max-concurrency -1 \
+  --num-prompts 100 --warmup-requests 0 \
+  --slo-params '[{"ttft":"<=250ms","tpot":"<=100ms"}]' \
+  --num-runs 1 --experiment-name sharegpt-rate --output local,wandb,plot
+```
+
+The rate controls when conversations start, while the SLO measures each HTTP turn's TTFT and TPOT. The 100-request budget counts turns, so the last conversation may stop when the budget is reached. Turns with text reference answers generate matching token counts; see [conversation output lengths](conversations.md) for overrides. `--slo-params` scores this fixed workload; `--slo-search` enables concurrency search.
+
+Fixed-load measurement accepts one criteria object using `latency`, `ttft`, `tpot`, or `itl`. Timing thresholds use `s` or `ms`, such as `<=2s` or `<=100ms`; unitless values use seconds. Every condition must hold for a request to meet its SLO. Failed requests and requests missing a required metric count as not meeting it. `itl` checks each request's maximum observed chunk interval.
+
+Compare attainment, goodput (throughput of requests or tokens meeting the SLO), and latency across rates. Choose the highest tested conversation rate meeting your attainment target, such as 90% or 99%, then extend or refine the rate list to locate the boundary. With repeated runs, attainment is the mean of per-run fractions, not a fraction pooled across all requests. [One-second SLO windows](../metrics.md#slo-results) show how attainment changes during a run. To vary thresholds as well as rates, use the [threshold sweep](sweep.md#compare-slo-thresholds-and-request-rates).
+
+## Set search criteria
 
 `--slo-params` accepts a JSON array. Conditions in one object must all hold; separate objects run independent searches.
 
 | JSON value | Search result |
 | --- | --- |
-| `[{"avg_ttft":"<=0.05", "avg_tpot":"<=0.02"}]` | Highest observed request peak meeting both timing targets |
-| `[{"p99_ttft":"<0.05"}, {"p99_tpot":"<0.01"}]` | One result for the TTFT target and another for TPOT |
-| `[{"avg_ttft":"<=0.05", "avg_tpot":"<=0.02"}, {"p99_latency":"<=5"}]` | One result meeting both mean timing targets and another for p99 latency |
+| `[{"avg_ttft":"<=50ms", "avg_tpot":"<=20ms"}]` | Highest observed request peak meeting both timing targets |
+| `[{"p99_ttft":"<50ms"}, {"p99_tpot":"<10ms"}]` | One result for the TTFT target and another for TPOT |
+| `[{"avg_ttft":"<=50ms", "avg_tpot":"<=20ms"}, {"p99_latency":"<=5s"}]` | One result meeting both mean timing targets and another for p99 latency |
 
-Timing thresholds use seconds. Supported metrics are:
+Supported search metrics are:
 
 | Metric | Names |
 | --- | --- |

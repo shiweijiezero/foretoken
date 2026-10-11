@@ -31,32 +31,43 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
+Choose the deployment path before running the common steps:
+
+| Situation | Guide |
+|---|---|
+| Single-host local deployment | [k3d deployment](docs/k3d-deployment.md) · [kind deployment](docs/kind-deployment.md) |
+| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
+| MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
+
+The steps below use k3d as the example.
 
 ### 1. Get the examples and install the command-line tool
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install foretoken
+pip install -e .
 
-# From a source checkout:
-# pip install -e .
+# For the published CLI instead:
+# pip install foretoken
 ```
 
 ### 2. Install the Kubernetes platform
 
-```bash
-# Use release images from GHCR:
-foretoken install
+Create a local k3d cluster named `foretoken-dev` and install Foretoken:
 
-# Build and install from a source checkout:
-# foretoken install -e .
+```bash
+# Use GPU index 0 from nvidia-smi. To use two GPUs, pass --gpus 0,1.
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+
+# Build from the current source checkout:
+foretoken install -e .
+
+# Use the published platform instead:
+# foretoken install
 ```
 
-For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
-
-See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
+The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
 
@@ -64,7 +75,7 @@ See the [source deployment guide](docs/custom-deployment.md) for build tools and
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica, requesting one GPU, 8 CPU, and 52 GiB memory. More deployments are available in [`examples/`](examples/).
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
 ### 4. Send a test request
 
@@ -76,6 +87,10 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
+
+### Iterate on source
+
+After a source installation, edit the checkout and rerun the deploy command to update the service. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
 
 ### 5. Evaluate and profile the service
 
@@ -158,12 +173,6 @@ foretoken uninstall
 ```
 
 The uninstall command preserves Foretoken CRDs, log storage, and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
-
-## Deployment Guides
-
-- [Source builds and private registries](docs/custom-deployment.md)
-- [Single-machine GPU clusters with k3d](docs/k3d-deployment.md)
-- [MetaX GPUs](docs/metax-deployment.md)
 
 ## Related Projects
 

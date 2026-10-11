@@ -7,8 +7,6 @@
 !LICENSE
 !deploy/
 !deploy/inference-engines/
-!deploy/inference-engines/vllm-cuda/
-!deploy/inference-engines/vllm-cuda/**
 !deploy/inference-engines/vllm-metax/
 !deploy/inference-engines/vllm-metax/**
 !deploy/mooncake/

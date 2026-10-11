@@ -4,6 +4,7 @@
 //! Environment boundary for the controller-owned typed launch plan.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use crate::launch::LaunchPlanV1;
 
@@ -19,6 +20,8 @@ pub struct RuntimeConfig {
     pub member: Option<MemberContext>,
     /// Pod address advertised by the DT worker for Mooncake control handshakes.
     pub dt_rdma_address: Option<std::net::IpAddr>,
+    pub instance_admission_path: Option<PathBuf>,
+    pub startup_admission_limit: Option<u32>,
 }
 
 /// Pod-local identity supplied by Kubernetes and LeaderWorkerSet for distributed startup.
@@ -82,11 +85,38 @@ impl RuntimeConfig {
         } else {
             None
         };
+        let instance_admission_path = match std::env::var("FORETOKEN_INSTANCE_ADMISSION_CONFIG") {
+            Ok(value) if !value.is_empty() => Some(PathBuf::from(value)),
+            Ok(_) => return Err("FORETOKEN_INSTANCE_ADMISSION_CONFIG must not be empty".into()),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => {
+                return Err("FORETOKEN_INSTANCE_ADMISSION_CONFIG must be valid Unicode".into());
+            }
+        };
+        let startup_admission_limit = if instance_admission_path.is_none() {
+            match std::env::var("FORETOKEN_MAX_ACCEPTED_REQUESTS") {
+                Ok(value) => Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|limit| *limit > 0)
+                        .ok_or("FORETOKEN_MAX_ACCEPTED_REQUESTS must be a positive integer")?,
+                ),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(_) => {
+                    return Err("FORETOKEN_MAX_ACCEPTED_REQUESTS must be valid Unicode".into());
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             launch,
             listen_address,
             member,
             dt_rdma_address,
+            instance_admission_path,
+            startup_admission_limit,
         })
     }
 }

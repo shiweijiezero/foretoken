@@ -25,6 +25,7 @@ const ROUTE_TARGET_STATS_WINDOW: Duration = Duration::from_secs(60);
 /// Router implementation that runs one Filter-Scorer-Picker pipeline per selection round.
 pub struct PipelineRouter<C: Send + 'static = ()> {
     inventory: Arc<dyn RouteInventory>,
+    snapshot_version: u64,
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
@@ -44,12 +45,20 @@ impl<C: Send + 'static> PipelineRouter<C> {
         ));
         Self {
             inventory,
+            snapshot_version: 0,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline,
             routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
             metrics,
         }
+    }
+
+    /// Associates this inventory with its serving-snapshot version for shared algorithm state.
+    /// RuntimeBuilder supplies the version; sessions retain it with their original inventory.
+    pub fn with_snapshot_version(mut self, version: u64) -> Self {
+        self.snapshot_version = version;
+        self
     }
 
     /// Shares frontend-owned request load across runtime generations built by RuntimeBuilder.
@@ -83,7 +92,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         placement: Option<&crate::DraftTargetPlacement>,
     ) -> Vec<RouteCandidate> {
         let retained_target = placement.and_then(|placement| placement.required_target.as_ref());
-        self.inventory
+        let mut candidates: Vec<_> = self
+            .inventory
             .model_routes()
             .candidates(request, retained_target.map(|bound| &bound.route_target_id))
             .into_iter()
@@ -119,6 +129,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .flat_map(|route| {
                 let draft_target_format =
                     self.inventory.draft_target_format(&route.route_target_id);
+                let draft_target_context =
+                    self.inventory.draft_target_context(&route.route_target_id);
                 // Read the group's aggregate and rank-local gauges once, then share the immutable
                 // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
@@ -134,10 +146,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     revision: route.revision.clone(),
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     draft_target_format,
+                    draft_target_context: draft_target_context.clone(),
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                    stage_eligible: false,
                 })
             })
             .filter(|candidate| {
@@ -156,18 +170,34 @@ impl<C: Send + 'static> PipelineRouter<C> {
                             .is_some_and(|request| request.sampling_params.temperature == 0.0)
                 })
             })
-            .collect()
+            .collect();
+        // Session ownership survives discovery removal. Preserve its proven Target metadata,
+        // while every new Draft binding is selected from the current inventory.
+        if let Some(retained) = placement.and_then(|placement| placement.retained_target.as_ref()) {
+            candidates.retain(|candidate| candidate.route_target_id != retained.route_target_id);
+            let mut retained = retained.clone();
+            retained.route_target_stats = self
+                .route_target_stats_reader
+                .stats(&retained.route_target_id, ROUTE_TARGET_STATS_WINDOW)
+                .map(Arc::new);
+            retained.local_load = reservations.snapshot(&(
+                retained.route_target_id.clone(),
+                retained.data_parallel_rank,
+            ));
+            candidates.push(retained);
+        }
+        candidates
     }
 
     // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
-    // delaying stage-specific eligibility until every candidate has been scored.
+    // computing stage eligibility before scoring; only eligible candidates reach Picker.
     fn select(
         &self,
         requests: &[RouterRequest],
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
         placement: Option<&crate::DraftTargetPlacement>,
-        eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
+        eligible: impl Fn(&RouteCandidate, &[RouteCandidate]) -> bool,
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         let request = &requests[0];
@@ -178,8 +208,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         // Keep every early return inside the round so failed candidate discovery or invalid
         // algorithm output is counted as well as successful selections.
         let result = (|| {
-            // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
-            // eligibility are applied after scoring and before Picker.
+            // Filter sees the complete compatible, healthy snapshot. Scorer sees all filtered
+            // candidates with stage and connector eligibility marked; Picker sees only eligible ones.
             // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
             let mut reservations = self
                 .routing_load
@@ -196,6 +226,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 });
             }
             metrics.candidates(&request.model, round, "available", candidates.len());
+            if !candidates
+                .iter()
+                .any(|candidate| eligible(candidate, &candidates))
+            {
+                return Err(error);
+            }
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
                 request,
@@ -212,7 +248,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 stage_started.elapsed(),
             );
             let mut seen_indexes = BTreeSet::new();
-            let filtered = filtered_indexes
+            let mut filtered = filtered_indexes
                 .into_iter()
                 .map(|index| {
                     if !seen_indexes.insert(index) {
@@ -224,6 +260,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let eligibility = filtered
+                .iter()
+                .map(|candidate| eligible(candidate, &filtered))
+                .collect::<Vec<_>>();
+            for (candidate, eligible) in filtered.iter_mut().zip(eligibility) {
+                candidate.stage_eligible = eligible;
+            }
             metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
             let crate::algorithm::ScoringOutcome {
@@ -256,12 +299,19 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .collect::<Vec<_>>();
             let selectable = scored
                 .iter()
-                .filter(|candidate| eligible(&candidate.candidate, &scored))
+                .filter(|candidate| {
+                    candidate.candidate.stage_eligible
+                        && (round != RoutingStage::Initial
+                            || !request.busy_targets.contains(&(
+                                candidate.candidate.route_target_id.clone(),
+                                candidate.candidate.data_parallel_rank,
+                            )))
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             metrics.candidates(&request.model, round, "selectable", selectable.len());
             if selectable.is_empty() {
-                return Err(error);
+                return Err(RouteError::Busy);
             }
             let stage_started = Instant::now();
             let picked = self.pipeline.picker.pick(
@@ -314,13 +364,14 @@ impl<C: Send + 'static> PipelineRouter<C> {
         result
     }
 
-    fn future_stages_available(candidate: &RouteCandidate, scored: &[ScoredCandidate]) -> bool {
+    fn future_stages_available(candidate: &RouteCandidate, candidates: &[RouteCandidate]) -> bool {
         candidate.future_stages().iter().all(|role| {
-            scored.iter().any(|other| {
-                other.candidate.role == *role
-                    && other.candidate.pipeline_scope_id == candidate.pipeline_scope_id
+            candidates.iter().any(|other| {
+                other.role == *role
+                    && other.pipeline_scope_id == candidate.pipeline_scope_id
                     && (*role != ModelServerRole::Draft
-                        || other.candidate.draft_target_format == candidate.draft_target_format)
+                        || (other.draft_target_format == candidate.draft_target_format
+                            && other.draft_target_context == candidate.draft_target_context))
             })
         })
     }
@@ -347,7 +398,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             routing_progress,
             context,
             None,
-            |candidate, scored| match candidate.role {
+            |candidate, candidates| match candidate.role {
                 ModelServerRole::Aggregate => true,
                 ModelServerRole::Prefill => {
                     candidate
@@ -355,20 +406,20 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .as_ref()
                         .is_some_and(|pipeline_scope_id| {
                             !self.pipeline_scope_has_encoder(request, pipeline_scope_id)
-                                && Self::future_stages_available(candidate, scored)
+                                && Self::future_stages_available(candidate, candidates)
                         })
                 }
                 ModelServerRole::Encoder => {
                     candidate.pipeline_scope_id.is_some()
-                        && Self::future_stages_available(candidate, scored)
+                        && Self::future_stages_available(candidate, candidates)
                 }
                 ModelServerRole::Target => {
                     candidate.pipeline_scope_id.is_some()
-                        && Self::future_stages_available(candidate, scored)
+                        && Self::future_stages_available(candidate, candidates)
                 }
                 ModelServerRole::Decode | ModelServerRole::Draft => false,
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: request.model.clone(),
             },
         )
@@ -388,12 +439,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
             routing_progress,
             context,
             None,
-            |candidate, scored| {
+            |candidate, candidates| {
                 candidate.role == ModelServerRole::Prefill
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
-                    && Self::future_stages_available(candidate, scored)
+                    && Self::future_stages_available(candidate, candidates)
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: request.model.clone(),
             },
         )
@@ -488,6 +539,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
 
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Initial,
             completed_stages: &[],
             pipeline_scope_id: None,
@@ -529,6 +581,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             return Err(RouteError::PrefillBeforeEncoder);
         };
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Prefill,
             completed_stages: &[ModelServerRole::Encoder],
             pipeline_scope_id: Some(pipeline_scope_id),
@@ -566,6 +619,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &[ModelServerRole::Prefill]
         };
         let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
             current_stage: RoutingStage::Decode,
             completed_stages,
             pipeline_scope_id: Some(pipeline_scope_id),
@@ -606,27 +660,29 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
         let target = self.select(
             requests,
             &RoutingProgress {
+                snapshot_version: self.snapshot_version,
                 current_stage: RoutingStage::Initial,
                 completed_stages: &[],
                 pipeline_scope_id: None,
             },
             &mut context,
             Some(placement),
-            |candidate, scored| {
+            |candidate, candidates| {
                 candidate.role == ModelServerRole::Target
                     && required_target.is_none_or(|bound| candidate.decision() == *bound)
                     && candidate.pipeline_scope_id.is_some()
-                    && Self::future_stages_available(candidate, scored)
+                    && Self::future_stages_available(candidate, candidates)
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: first.model.clone(),
             },
         )?;
         let mut route =
-            crate::DraftTargetRoundRoute::new(target.decision(), ids, self.routing_load.clone());
+            crate::DraftTargetRoundRoute::new(target.clone(), ids, self.routing_load.clone());
         let draft = self.select(
             requests,
             &RoutingProgress {
+                snapshot_version: self.snapshot_version,
                 current_stage: RoutingStage::Draft,
                 completed_stages: &[],
                 pipeline_scope_id: target.pipeline_scope_id.as_deref(),
@@ -637,8 +693,9 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 candidate.role == ModelServerRole::Draft
                     && candidate.pipeline_scope_id == target.pipeline_scope_id
                     && candidate.draft_target_format == target.draft_target_format
+                    && candidate.draft_target_context == target.draft_target_context
             },
-            RouteError::NoMatchingRouteTarget {
+            RouteError::NoCompatibleTarget {
                 model: first.model.clone(),
             },
         )?;
@@ -685,6 +742,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
         Box::new(Session {
             router: Self {
                 inventory: self.inventory.clone(),
+                snapshot_version: self.snapshot_version,
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),

@@ -9,14 +9,16 @@ mod responses;
 mod stream;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::Router;
 use foretoken_chat::{ChatRequest, ParserSelection};
 use foretoken_text::Prompt;
 use uuid::Uuid;
 
-use crate::runtime::{GeneratedChat, Generation, GenerationError, GenerationRequest};
+use crate::runtime::{
+    GeneratedChat, Generation, GenerationError, GenerationRequest, RequestSnapshot,
+};
 use crate::video_task::VideoTaskClient;
 
 /// Immutable frontend services shared by inference and diagnostic handlers.
@@ -24,11 +26,10 @@ use crate::video_task::VideoTaskClient;
 pub(crate) struct ApiState {
     pub generation: Arc<dyn Generation>,
     pub models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-    pub stream_idle: Duration,
     pub video_tasks: Option<Arc<VideoTaskClient>>,
 }
 
-impl ApiState {
+impl RequestSnapshot {
     /// Dispatches a lowered chat request with the original HTTP timing and parser intent.
     /// The caller owns the returned stream; the generation service owns routing and cancellation.
     async fn generate_chat(
@@ -39,6 +40,7 @@ impl ApiState {
         timing: RequestTiming,
     ) -> Result<GeneratedChat, GenerationError> {
         let request = GenerationRequest {
+            admission: None,
             model,
             request_id: chat.request_id.clone(),
             prompt: Prompt::Text(String::new()),
@@ -65,13 +67,14 @@ impl ApiState {
 }
 
 /// The common timing origin captured before protocol conversion or completion fan-out.
-struct RequestTiming {
-    started_at: Instant,
+#[derive(Clone, Copy)]
+pub(crate) struct RequestTiming {
+    pub(crate) started_at: Instant,
     arrival_time: Option<f64>,
 }
 
 impl RequestTiming {
-    fn now() -> Self {
+    pub(crate) fn now() -> Self {
         Self {
             started_at: Instant::now(),
             arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
@@ -84,6 +87,18 @@ pub(crate) fn router() -> Router<ApiState> {
     openai::router()
         .merge(messages::router())
         .merge(responses::router())
+}
+
+/// Maps intake errors through the same protocol adapters as generation failures.
+pub(crate) fn generation_error(path: &str, error: GenerationError) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if path.starts_with("/v1/messages") {
+        messages::error::AnthropicApiError::from(error).into_response()
+    } else if path == "/v1/responses" {
+        responses::error::ApiError::generation(error).into_response()
+    } else {
+        openai::openai_error(error)
+    }
 }
 
 /// Creates the request identity used by the backend and the corresponding API response.

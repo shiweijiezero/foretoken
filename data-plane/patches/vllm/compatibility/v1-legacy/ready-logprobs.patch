@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -80,6 +80,7 @@
+     vllm_version: str
+     world_size: int
+     data_parallel_size: int
++    max_logprobs: int | None = None
+     # KV cache capacity (None for encoder-only/attention-free models).
+     kv_cache_size_tokens: int | None = None
+     kv_cache_max_concurrency: float | None = None
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1630,6 +1630,7 @@
+                 vllm_version=VLLM_VERSION,
+                 world_size=self.vllm_config.parallel_config.world_size,
+                 data_parallel_size=self.vllm_config.parallel_config.data_parallel_size,
++                max_logprobs=self.vllm_config.model_config.max_logprobs,
+                 kv_cache_size_tokens=(
+                     self.vllm_config.cache_config.kv_cache_size_tokens
+                 ),

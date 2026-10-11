@@ -60,12 +60,19 @@ func projectServiceDTComponents(service *inferencev1alpha1.ModelService, pools [
 		if artifacts.Source != inferencev1alpha1.ModelSourceLocal {
 			revision = &artifacts.ModelRevision
 		}
+		var poolForGroup *inferencev1alpha1.ModelPool
+		for _, pool := range pools {
+			if string(pool.UID) == group.Spec.ModelPoolRef.UID {
+				poolForGroup = pool
+				break
+			}
+		}
 		components = append(components, servingSnapshotDTComponent{
 			ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID,
-			PoolName: routingPoolName(pools, group), RouteTargetID: string(group.UID),
+			PoolName: poolForGroup.Spec.PoolName, RouteTargetID: string(group.UID),
 			PipelineScopeID: "dt:" + string(service.UID), Role: group.Spec.SpeculationRole,
 			Model: reference.Model, EngineModel: artifacts.Model, EngineRevision: revision,
-			MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens),
+			MaxInputTokens: copyOptionalInt32(poolForGroup.Spec.MaxInputTokens),
 			Endpoint:       modelGroupEndpoint(group, group.Spec.Runtime.Port),
 		})
 	}

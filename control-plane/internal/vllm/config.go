@@ -49,8 +49,9 @@ type LaunchPlanV1 struct {
 
 // LaunchDTPlan selects the independently installed DT role application.
 type LaunchDTPlan struct {
-	Role inferencev1alpha1.SpeculationRole `json:"role"`
-	RDMA bool                              `json:"rdma"`
+	Role           inferencev1alpha1.SpeculationRole `json:"role"`
+	RDMA           bool                              `json:"rdma"`
+	DraftArtifacts *LaunchArtifacts                  `json:"draftArtifacts,omitempty"`
 }
 
 type LaunchArtifacts struct {
@@ -155,13 +156,29 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 		if template.KVCache != nil || template.ECProfile != "" || template.Profiling != nil || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
 			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, profiling, multimodal or structured output")
 		}
-		for _, option := range []string{"speculative-config", "worker-extension-cls"} {
+		for _, option := range []string{"worker-extension-cls", "scheduler-cls"} {
 			if _, exists := args[option]; exists {
 				return EffectiveConfig{}, fmt.Errorf("DT owns %s", option)
 			}
 		}
 	}
 	return effective, nil
+}
+
+// RequiresRDMA tells the Pool resolver whether the active all-to-all backend needs NICs.
+// TP-only EP uses local collectives without activating an all-to-all manager.
+func (config EffectiveConfig) RequiresRDMA() bool {
+	p := config.Parallelism
+	if p.EP == nil || (p.DP == 1 && p.PCP == 1) {
+		return false
+	}
+	// These DeepEP transports initialize GPU-initiated networking even on one node.
+	switch p.EP.Backend {
+	case "deepep_low_latency", "deepep_v2":
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildLaunchPlan projects a verified ModelGroupSpec into the private launch wire contract.
@@ -201,6 +218,23 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	var dt *LaunchDTPlan
 	if group.SpeculationRole != "" {
 		dt = &LaunchDTPlan{Role: group.SpeculationRole, RDMA: group.RDMA != nil}
+
+		if profile, exists := group.Runtime.EngineArgs["speculative-config"]; exists {
+			var config struct {
+				Model    string `json:"model"`
+				Revision string `json:"revision"`
+			}
+			if err := json.Unmarshal(profile.Raw, &config); err != nil {
+				return LaunchPlanV1{}, fmt.Errorf("decode neural Draft profile: %w", err)
+			}
+			if config.Model != "" {
+				revision := config.Revision
+				if revision == "" {
+					revision = group.Artifacts.ModelRevision
+				}
+				dt.DraftArtifacts = &LaunchArtifacts{Model: config.Model, Source: group.Artifacts.Source, Revision: revision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}
+			}
+		}
 		kv.Events = false
 	}
 	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil

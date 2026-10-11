@@ -1,0 +1,62 @@
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -58,6 +58,9 @@
+
+
+ class BaseSpeculator(ABC):
++    # Whether runtime DP dummy batches must also propose for cross-DP collectives.
++    requires_dp_dummy_proposal: bool = True
++
+     @abstractmethod
+     def init_cudagraph_manager(self, cudagraph_mode: CUDAGraphMode) -> None:
+         pass
+--- a/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+@@ -44,6 +44,9 @@
+                 prefill_context_parallel_size=1,
+             )
+         super().__init__(vllm_config, device)
++
++        # Dense drafts use DP-local TP groups and reuse the target DP agreement.
++        self.requires_dp_dummy_proposal = self.draft_model_config.is_moe
+
+         self.hidden_states = torch.zeros(
+             self.max_num_tokens, self.hidden_size, dtype=self.dtype, device=device
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -773,8 +773,10 @@
+         skip_eplb: bool = False,
+         is_profile: bool = False,
+         valid_dummy_state_slots: bool = False,
++        is_dp_dummy: bool = False,
+         **kwargs,
+     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
++        """Return hidden states from a warmup or runtime DP dummy batch."""
+         if skip_attn and not is_profile:
+             raise ValueError(
+                 "skip_attn must only be True for initial memory profiling."
+@@ -849,8 +851,11 @@
+
+         self.step_timing.forward_end()
+
+-        # dummy run the eagle speculator's propose to ensure DP/EP sync.
+-        if self.speculator is not None:
++        # Profiling and capture retain all draft work. Runtime DP dummy batches
++        # only need proposals that participate in cross-DP collectives.
++        if self.speculator is not None and (
++            not is_dp_dummy or self.speculator.requires_dp_dummy_proposal
++        ):
+             assert self.sampler is not None
+             self.step_timing.drafter_start()
+             mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1324,2 +1324,6 @@
+-        num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
+-        self.model_runner._dummy_run(num_tokens, uniform_decode=True)
++        num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
++        if self.use_v2_model_runner:
++            model_runner = cast("GPUModelRunnerV2", self.model_runner)
++            model_runner._dummy_run(num_tokens, uniform_decode=True, is_dp_dummy=True)
++        else:
++            self.model_runner._dummy_run(num_tokens, uniform_decode=True)

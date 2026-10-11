@@ -45,6 +45,16 @@ Add `"stream": true` and `curl --no-buffer` to receive output as it is generated
 
 Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools, but not server-hosted tools or background execution. Forced tool choice and strict tool schemas require structured-output support in the model.
 
+Some tool parsers use a structural-tag grammar to constrain forced or strict tool calls. If the model's parser and grammar backend support it, add `structuralTag` to the ModelService's existing structured-output formats:
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+For configurations with `spec.modelPools`, declare this capability in each applicable pool's `features.structuredOutputs` instead of the top-level `features`.
+
 Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls.
 
 ## Generate video
@@ -105,6 +115,90 @@ The response contains a task `id`, `status_url`, and `content_url`. Use the same
 
 Cancellation and deletion continue after the HTTP `202` response. The configuration above retains results for one day after a task ends, then removes them automatically. Original reference files are retained.
 
+## Configure admission rules
+
+To limit waiting text requests, add `admission` under `spec` in the deployment's `frontend.yaml`:
+
+```yaml
+spec:
+  admission:
+    maxWaitingRequests: 128
+    queueTimeout: 30s
+```
+
+The waiting limit is shared across all FrontendService replicas, separately for each model, and includes input preparation. `queueTimeout` bounds waiting and preparation before backend acceptance. Batched prompts and `best_of` count each generated sequence. These rules do not apply to video APIs.
+
+Apply the YAML through [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting.
+
+For limits on accepted work at each model instance, see [Instance concurrency](../../docs/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
+
+### Caller limits and priorities
+
+To give callers different limits, add `roleRules` alongside the waiting limit:
+
+```yaml
+spec:
+  roleRules:
+    - role: role1
+      priority: 10
+      perCaller:
+        maxWaitingRequests: 8
+        maxConcurrentRequests: 4
+    - role: role2
+      priority: 0
+      perCaller:
+        maxWaitingRequests: 32
+        maxConcurrentRequests: 8
+```
+
+Each caller has separate waiting and concurrency allowances shared across frontend replicas. `maxConcurrentRequests` counts dispatched work until execution ends, including cancelled requests still finishing. Tokenization, token counting, and detokenization use waiting capacity only.
+
+Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
+
+Configure the trusted gateway to overwrite these headers for every text request with the authenticated role and a stable caller identifier:
+
+```http
+x-role: role1
+x-caller-id: caller-a
+```
+
+Requests without a caller identifier or matching role are rejected. Authentication, authorization, and RPM/token quotas belong at the gateway; restrict frontend access to that gateway.
+
+### Override one model
+
+`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. Set both `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
+
+A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
+
+## Update serving settings
+
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/frontend.yaml`:
+
+```yaml
+spec:
+  logLevel: debug
+  timeouts:
+    request: 15m
+    streamIdle: 5m
+```
+
+Apply the Quick Start configuration:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.
+
+| Setting | Purpose |
+| --- | --- |
+| `timeouts.request` | Total request duration |
+| `timeouts.streamIdle` | Maximum gap between response chunks; must not exceed `request` |
+| `timeouts.drain` | Shutdown wait for accepted requests, default `10m`; changing it replaces frontend Pods |
+| `logLevel` | `trace`, `debug`, `info` (default), `warn`, `error`, or `off` |
+
+Timeout changes apply to new requests. To limit prompt length, set `ModelService.spec.maxInputTokens`, or the corresponding `spec.modelPools[].maxInputTokens`, and redeploy. This setting updates online and is separate from the engine's combined input/output context limit.
+
 ## Operations
 
 Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.
@@ -112,8 +206,10 @@ Use `foretoken status` to inspect a deployment and `foretoken delete` to remove 
 | Endpoint | Purpose |
 | --- | --- |
 | `/healthz` | Process liveness |
-| `/readyz` | Service readiness |
+| `/readyz` | HTTP readiness after a valid routing configuration is loaded |
 | `/statusz` | Serving and cache-index status |
 | `/metrics` | Prometheus metrics |
+
+The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.

@@ -100,6 +100,14 @@ class ExternalAsyncLLM(AsyncLLM):
                         "dt_forget_observation", internal_id
                     )
 
+    async def abort(self, request_id, internal=False) -> None:
+        """Confirm native cancellation and GPU completion before releasing session capacity."""
+        with CancelScope(shield=True):
+            await super().abort(request_id, internal)
+            # Both messages use the same EngineCore socket and ordered input queue.
+            # Native abort alone returns after sending, before the scheduler handles it.
+            await self.collective_rpc("dt_wait_execution")
+
     async def workload(self):
         """Read native ready/waiting queues and KV capacity for online placement."""
         return await self.engine_core.call_utility_async("dt_workload")

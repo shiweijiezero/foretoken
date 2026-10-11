@@ -18,6 +18,12 @@ type FrontendTimeouts struct {
 
 	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
+
+	// Drain bounds process shutdown independently of live request budgets.
+	// +optional
+	// +kubebuilder:default="10m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Drain Duration `json:"drain,omitempty"`
 }
 
 // RouterAlgorithm names one compiled routing algorithm.
@@ -67,6 +73,10 @@ type VideoTaskStorage struct {
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
+	// DeploymentRevision requests current platform applications on an explicit deployment.
+	// +optional
+	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
@@ -75,9 +85,26 @@ type FrontendServiceSpec struct {
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
+	// LogLevel controls frontend diagnostics without replacing the process.
+	// +optional
+	// +kubebuilder:default=info
+	// +kubebuilder:validation:Enum=trace;debug;info;warn;error;off
+	LogLevel string `json:"logLevel,omitempty"`
+
 	// Observability selects frontend-scoped alerts, including shared HTTP failures.
 	// +optional
 	Observability *FrontendObservability `json:"observability,omitempty"`
+
+	// Admission supplies per-model defaults shared across frontend replicas.
+	// A ModelService admission block replaces these defaults; omission is unrestricted.
+	// +optional
+	Admission *AdmissionConfig `json:"admission,omitempty"`
+
+	// RoleRules supplies per-model caller rules unless the ModelService replaces the list.
+	// +optional
+	// +listType=map
+	// +listMapKey=role
+	RoleRules *[]RoleRule `json:"roleRules,omitempty"`
 
 	// +optional
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
@@ -96,6 +123,14 @@ type FrontendServiceSpec struct {
 
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
+	// ServingConfigVersion is the configuration protocol of the selected frontend application.
+	// +optional
+	ServingConfigVersion uint32 `json:"servingConfigVersion,omitempty"`
+
+	// Application retains the selected frontend environment and files across workload recovery.
+	// +optional
+	Application *ApplicationSelection `json:"application,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -104,6 +139,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
+
+	// AppliedServingSnapshotVersion is the last version confirmed by every observed workload replica.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	AppliedServingSnapshotVersion uint64 `json:"appliedServingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

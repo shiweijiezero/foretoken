@@ -1,0 +1,12 @@
+diff --git a/vllm/distributed/device_communicators/shm_broadcast.py b/vllm/distributed/device_communicators/shm_broadcast.py
+--- a/vllm/distributed/device_communicators/shm_broadcast.py
++++ b/vllm/distributed/device_communicators/shm_broadcast.py
+@@ -776,7 +776,7 @@
+                     written_flag = metadata_buffer[0]
+                     return not (not written_flag or read_flag)
+
+-                if SPINLOOP_EXT_ENABLED and not check():
++                if SPINLOOP_EXT_ENABLED and timeout != 0 and not check():
+                     spinloop(
+                         metadata_buffer[0 : self.local_reader_rank + 1],
+                         check,

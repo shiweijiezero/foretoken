@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Ready-request batching for one public model in an immutable runtime generation.
+//! Ready-request batching that retains Target sessions while refreshing Draft inventory.
 
-use std::{collections::BTreeMap, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
 use foretoken_router::{RouteDecision, Router};
@@ -17,12 +21,31 @@ use crate::GenerationError;
 /// Runtime-owned ready queue; each response retains its own cancellation and backpressure.
 pub struct DraftTargetScheduler {
     incoming: mpsc::Sender<Entry>,
-    // Worker refreshes notify waiters; true permanently retires fresh admission to this runtime.
-    updates: watch::Sender<bool>,
+    updates: watch::Sender<Workers>,
+}
+
+#[derive(Clone)]
+struct Workers {
+    router: Arc<dyn Router>,
+    resolver: Arc<dyn LlmFacadeResolver>,
+    retired: bool,
+}
+
+pub(super) type FirstRoute =
+    Arc<Mutex<Option<oneshot::Sender<Result<Option<RouteDecision>, GenerationError>>>>>;
+
+/// Resolves admission exactly once, at remote Target acceptance or before execution fails.
+pub(super) fn send_first_route(
+    first: &FirstRoute,
+    result: Result<Option<RouteDecision>, GenerationError>,
+) {
+    if let Some(first) = first.lock().expect("DT first route lock poisoned").take() {
+        let _ = first.send(result);
+    }
 }
 
 struct Destination {
-    first_route: Option<oneshot::Sender<Result<Option<RouteDecision>, GenerationError>>>,
+    first_route: FirstRoute,
     output: mpsc::Sender<Result<vllm_llm::GenerateOutput, LlmFacadeError>>,
 }
 
@@ -47,8 +70,12 @@ impl DraftTargetScheduler {
         resolver: Arc<dyn LlmFacadeResolver>,
     ) -> Self {
         let (incoming, receiver) = mpsc::channel(1);
-        let (updates, changed) = watch::channel(false);
-        tokio::spawn(run(model, router, resolver, receiver, changed));
+        let (updates, changed) = watch::channel(Workers {
+            router,
+            resolver,
+            retired: false,
+        });
+        tokio::spawn(run(model, receiver, changed));
         Self { incoming, updates }
     }
 
@@ -58,8 +85,17 @@ impl DraftTargetScheduler {
     }
 
     /// Returns unadmitted queued requests to the HTTP owner for the newly published runtime.
-    pub(crate) fn retire(&self) {
-        self.updates.send_replace(true);
+    pub(crate) fn retire(
+        &self,
+        replacement: Option<(Arc<dyn Router>, Arc<dyn LlmFacadeResolver>)>,
+    ) {
+        self.updates.send_modify(|workers| {
+            workers.retired = true;
+            if let Some((router, resolver)) = replacement {
+                workers.router = router;
+                workers.resolver = resolver;
+            }
+        });
     }
 
     /// Enqueues normalized input and returns its first actual Target route and output stream.
@@ -68,23 +104,41 @@ impl DraftTargetScheduler {
     pub async fn generate(
         &self,
         request: vllm_llm::GenerateRequest,
+        admission: Arc<foretoken_admission::AdmissionPermit>,
+        rules: foretoken_admission::DispatchRules,
     ) -> Result<Option<(RouteDecision, TokenStream)>, GenerationError> {
         let cancellation = CancellationToken::new();
         let guard = cancellation.clone().drop_guard();
-        let state = DraftTargetRequestState::new(request, cancellation)?;
+        let mut state = DraftTargetRequestState::new(request, cancellation)?;
+        state.input.reservation = admission.reference().map(|mut reference| {
+            reference.final_stage = true;
+            reference
+        });
+        state.input.priority = rules
+            .priority
+            .map_or(state.input.priority, |priority| !priority);
+        state.allowed_pools = rules.allowed_pools;
+        state.admission = Some(admission.clone());
         let (output, mut receiver) = mpsc::channel(1);
         let (first_route, selected) = oneshot::channel();
+        let first_route = Arc::new(Mutex::new(Some(first_route)));
+        state.first_route = Some(first_route.clone());
         self.incoming
             .send(Entry {
                 state,
                 destination: Destination {
-                    first_route: Some(first_route),
+                    first_route,
                     output,
                 },
             })
             .await
             .map_err(|_| GenerationError::Unavailable)?;
-        let Some(decision) = selected.await.map_err(|_| GenerationError::Internal)?? else {
+        let Some(decision) =
+            crate::runtime::before_waiting_deadline(admission.waiting_deadline(), async {
+                selected.await.map_err(|_| GenerationError::Internal)?
+            })
+            .await?
+        else {
             return Ok(None);
         };
         let stream = Box::pin(async_stream::stream! {
@@ -100,10 +154,8 @@ impl DraftTargetScheduler {
 /// Dispatches ready members without waiting for pending prefills or slow output consumers.
 async fn run(
     model: String,
-    router: Arc<dyn Router>,
-    resolver: Arc<dyn LlmFacadeResolver>,
     mut incoming: mpsc::Receiver<Entry>,
-    mut updates: watch::Receiver<bool>,
+    mut updates: watch::Receiver<Workers>,
 ) {
     let mut executing = SelectAll::<ReadyStream>::new();
     let mut ready = Vec::new();
@@ -122,21 +174,19 @@ async fn run(
             }
         }
         waiting.retain(|entry| !entry.state.cancellation.is_cancelled());
-        if *updates.borrow() {
+        if updates.borrow().retired {
             ready.extend(waiting.extract_if(.., |entry| entry.state.target_location().is_none()));
         }
         if let Ok(entry) = incoming.try_recv() {
             ready.push(entry);
         }
         let mut groups = BTreeMap::<_, Vec<_>>::new();
-        for mut entry in ready.drain(..) {
+        for entry in ready.drain(..) {
             if entry.state.cancellation.is_cancelled() {
                 continue;
             }
-            if *updates.borrow() && entry.state.target_location().is_none() {
-                if let Some(first) = entry.destination.first_route.take() {
-                    let _ = first.send(Ok(None));
-                }
+            if updates.borrow().retired && entry.state.target_location().is_none() {
+                send_first_route(&entry.destination.first_route, Ok(None));
                 continue;
             }
             let requirement = DraftTargetRound::required_target(std::slice::from_ref(&entry.state))
@@ -146,15 +196,21 @@ async fn run(
             // greedy requests that may only have token-only workers available.
             let random = entry.state.input.sampling.temperature != 0.0;
             groups
-                .entry((requirement, random, entry.state.closed_workers.clone()))
+                .entry((
+                    requirement,
+                    random,
+                    entry.state.closed_workers.clone(),
+                    entry.state.allowed_pools.clone(),
+                ))
                 .or_default()
                 .push(entry);
         }
+        let workers = updates.borrow().clone();
         for entries in groups.into_values() {
             executing.push(execute_batch(
                 model.clone(),
-                router.clone(),
-                resolver.clone(),
+                workers.router.clone(),
+                workers.resolver.clone(),
                 entries,
             ));
         }
@@ -223,14 +279,22 @@ fn execute_batch(
                 }
             }
             Ok(None) => {
-                yield QueueEvent::Waiting(members.into_iter().map(|state| {
+                let mut waiting = Vec::new();
+                for state in members {
                     let destination = destinations.remove(state.request_id()).expect("queued member");
-                    Entry { state, destination }
-                }).collect());
+                    if state.target_location().is_none() {
+                        // Initial nonacceptance returns the grant to Admission. Established
+                        // Target sessions instead wait here for a compatible Draft refresh.
+                        deliveries.push(deliver(destination, Err(GenerationError::BackendBusy), None));
+                    } else {
+                        waiting.push(Entry { state, destination });
+                    }
+                }
+                yield QueueEvent::Waiting(waiting);
             }
             Ok(Some(round)) => {
-                let target = round.route.as_ref().expect("router-selected round").decisions().1.clone();
                 let mut results = round.execute();
+                let mut progressed = false;
                 // Delivery futures run beside verification; one stalled client cannot hold
                 // another member's result or the native scheduler's active slots.
                 loop {
@@ -240,12 +304,20 @@ fn execute_batch(
                         }
                         result = results.next() => match result {
                             Some(Ok(event)) => {
-                                let mut destination = destinations.remove(&event.request_id).expect("round member");
-                                // Refusal never fixes the public response to an unadmitted Target.
-                                if event.output.is_some() && let Some(first) = destination.first_route.take() {
-                                    let _ = first.send(Ok(Some(target.clone())));
+                                let destination = destinations.remove(&event.request_id).expect("round member");
+                                progressed |= event.output.is_some();
+                                if event.observation.outcome == "busy" && event.continuation.as_ref().is_some_and(|state| state.target_location().is_some()) {
+                                    if let Some(state) = event.continuation {
+                                        yield QueueEvent::Waiting(vec![Entry { state, destination }]);
+                                    }
+                                    continue;
                                 }
-                                deliveries.push(deliver(destination, Ok(event.output), event.continuation));
+                                if event.output.is_none() && event.continuation.as_ref()
+                                    .is_some_and(|state| state.target_location().is_none()) {
+                                    deliveries.push(deliver(destination, Err(GenerationError::BackendBusy), None));
+                                } else {
+                                    deliveries.push(deliver(destination, Ok(event.output), event.continuation));
+                                }
                             }
                             Some(Err(error)) => {
                                 for destination in std::mem::take(&mut destinations).into_values() {
@@ -257,7 +329,7 @@ fn execute_batch(
                         }
                     }
                 }
-                yield QueueEvent::Finished;
+                if progressed { yield QueueEvent::Finished; }
             }
         }
         while let Some(entry) = deliveries.next().await {
@@ -274,7 +346,7 @@ fn execute_batch(
 
 /// Applies per-request output backpressure before making its continuation schedulable again.
 async fn deliver(
-    mut destination: Destination,
+    destination: Destination,
     output: Result<Option<vllm_llm::GenerateOutput>, GenerationError>,
     continuation: Option<DraftTargetRequestState>,
 ) -> Option<Entry> {
@@ -283,8 +355,13 @@ async fn deliver(
         Ok(None) => return continuation.map(|state| Entry { state, destination }),
         Ok(Some(output)) => Ok(output),
         Err(error) => {
-            if let Some(first) = destination.first_route.take() {
-                let _ = first.send(Err(error));
+            let unadmitted = destination
+                .first_route
+                .lock()
+                .expect("DT first route lock poisoned")
+                .is_some();
+            if unadmitted {
+                send_first_route(&destination.first_route, Err(error));
                 return None;
             }
             Err(match error {

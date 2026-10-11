@@ -7,6 +7,8 @@ pub mod api;
 pub mod backend;
 mod backend_telemetry;
 pub mod config;
+pub mod dt_ingress;
+pub mod instance_admission;
 pub mod kv_event_adapter;
 pub mod launch;
 pub mod managed_engine;

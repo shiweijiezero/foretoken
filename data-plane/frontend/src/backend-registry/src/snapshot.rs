@@ -11,7 +11,14 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingSnapshot {
+    pub settings: ServingSettings,
+    /// Effective rules for the configured public model catalog.
+    pub admission: BTreeMap<String, foretoken_admission::AdmissionConfig>,
     pub version: u64,
+    /// Live frontend Pod identities, published by the same controller as the model directory.
+    pub frontend_instances: Vec<String>,
+    /// Nonterminal model-server Pod identities, including draining execution groups.
+    pub backend_instances: Vec<String>,
     pub models: Vec<SnapshotModel>,
     pub groups: Vec<SnapshotGroup>,
     #[serde(default)]
@@ -42,6 +49,14 @@ pub struct SnapshotDtComponent {
     pub engine_model: String,
     pub engine_revision: Option<String>,
     pub endpoint: String,
+}
+/// Frontend rules published with discovery and applied at one generation boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServingSettings {
+    pub router_pipeline: foretoken_router::RouterPipelineConfig,
+    pub request_timeout_seconds: u64,
+    pub stream_idle_seconds: u64,
+    pub log_level: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +191,18 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    /// Compares the backend inventory independently of frontend rules and publication version.
+    /// Runtime builders reuse clients and cached observations when this inventory is unchanged.
+    pub fn same_discovery(&self, other: &Self) -> bool {
+        self.models == other.models
+            && self.groups == other.groups
+            && self.pd_components == other.pd_components
+            && self.pd_pipeline_scopes == other.pd_pipeline_scopes
+            && self.epd_components == other.epd_components
+            && self.epd_pipeline_scopes == other.epd_pipeline_scopes
+            && self.dt_components == other.dt_components
+    }
+
     /// Returns each model's deterministically ordered, controller-owned admission target sets.
     ///
     /// Registry projection consumes these sets to attribute request admission; malformed or conflicting ownership is rejected.
@@ -186,7 +213,6 @@ impl ServingSnapshot {
         for model in &self.models {
             if model.service_uid.is_empty()
                 || model.model.is_empty()
-                || model.admission_target_sets.is_empty()
                 || model.admission_target_sets.iter().any(|targets| {
                     targets.targets().is_empty()
                         || targets.targets().iter().any(|target| {

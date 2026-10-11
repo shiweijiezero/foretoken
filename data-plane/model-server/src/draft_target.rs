@@ -1,157 +1,193 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Supervises the installed DT role application with the normal model-server process owner.
+//! Supervises a private Python DT role behind the shared Rust admission owner.
 
+use std::future::IntoFuture;
 use std::io;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use foretoken_model_server::{
-    config::RuntimeConfig, launch::PYTHON_MODULE_PATH, managed_engine::ManagedEngine, preparation,
-    runtime_cache,
+    api::RuntimeHealth, config::RuntimeConfig, dt_ingress,
+    instance_admission::InstanceAdmissionWatcher, managed_engine::ManagedEngine, runtime_cache,
 };
+use foretoken_request_ledger::RequestLedger;
+use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::warn;
+use vllm_managed_engine::allocate_handshake_port;
 
-/// Starts one role and drains its sessions before terminating the managed engine process group.
+/// Starts one role with shared admission and drains its sessions before stopping the process group.
 pub(super) async fn run(
     config: &RuntimeConfig,
     cache: Option<&runtime_cache::Config>,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
     cache_shutdown: Arc<Notify>,
+    ledger: Option<Arc<RequestLedger>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mode = runtime_cache::Mode::Persistent;
-    let mut environment = if let Some(cache) = cache {
-        cache.set_mode(mode);
-        cache.prepare(mode)?;
-        cache.engine_environment(mode)
-    } else {
-        Vec::new()
-    };
-    let model_root = cache
-        .map(|cache| cache.model_root(mode))
-        .or_else(foretoken_artifacts::model_root)
-        .unwrap_or_else(|| PathBuf::from(super::TEMPORARY_MODEL_SOURCE_ROOT));
-    let artifacts = &config.launch.artifacts;
-    let mut model = artifacts.model.clone();
-    let mut arguments = config.launch.render_vllm_args(None)?;
-    let mut prepared_tokenizer = None;
-    let scope = std::env::var(preparation::PREPARATION_SCOPE_ENV).ok();
-    let legacy_modelscope =
-        scope.is_none() && artifacts.source == foretoken_artifacts::ModelSource::ModelScope;
-    environment.push(("VLLM_USE_MODELSCOPE".into(), legacy_modelscope.to_string()));
-    if legacy_modelscope {
-        environment.push((
-            foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
-            foretoken_artifacts::modelscope_cache_root(&model_root)
-                .display()
-                .to_string(),
-        ));
-    }
-    let tokenizer = if artifacts.source == foretoken_artifacts::ModelSource::Local {
-        model = super::local_artifact_path(&artifacts.model)?;
-        Some(super::local_artifact_path(&artifacts.tokenizer)?)
-    } else if let Some(scope) = scope {
-        let prepared = tokio::time::timeout(
-            config.launch.startup_timeout(),
-            preparation::prepare(&config.launch, &model_root, &scope, true, None),
-        )
-        .await??;
-        model = prepared.model.display().to_string();
-        let binding = cache
-            .filter(|cache| prepared.tokenizer.starts_with(cache.model_root(mode)))
-            .and_then(|_| std::env::var(foretoken_artifacts::RUNTIME_CACHE_BINDING_ENV).ok());
-        prepared_tokenizer = Some(prepared.tokenizer_metadata(&scope, binding));
-        Some(prepared.tokenizer.display().to_string())
+    let health = Arc::new(RuntimeHealth::new());
+    health.set_startup_admission_limit(config.startup_admission_limit);
+    let watcher = config
+        .instance_admission_path
+        .clone()
+        .map(|path| InstanceAdmissionWatcher::load(path, health.clone()))
+        .transpose()?;
+    // Port ownership must precede backend epoch recovery, as on the ordinary engine path.
+    let listener = TcpListener::bind(config.listen_address).await?;
+    let execution_store = if let Some(ledger) = ledger {
+        let pod_uid = super::required_env("FORETOKEN_POD_UID")?;
+        let epoch = ledger.register_backend(&pod_uid).await?;
+        Some((ledger, pod_uid, epoch))
     } else {
         None
     };
-    if let Some(tokenizer) = tokenizer {
-        arguments.retain(|arg| {
-            !arg.starts_with("--revision=") && !arg.starts_with("--tokenizer-revision=")
-        });
-        for argument in &mut arguments {
-            if argument.starts_with("--tokenizer=") {
-                *argument = format!("--tokenizer={tokenizer}");
-            }
-        }
-    }
-    // Engine paths are materialized snapshots; discovery retains the configured source identity.
-    environment.push(("FORETOKEN_DT_MODEL_METADATA".into(), serde_json::json!({
-        "model": artifacts.model,
-        "revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.revision),
-        "tokenizer": artifacts.tokenizer,
-        "tokenizer_revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.tokenizer_revision),
-        "prepared_tokenizer": prepared_tokenizer,
-    }).to_string()));
-    let mut paths = vec![PathBuf::from(PYTHON_MODULE_PATH)];
-    if let Some(existing) = std::env::var_os("PYTHONPATH") {
-        paths.extend(std::env::split_paths(&existing));
-    }
-    let mut command = Command::new(config.launch.python_executable());
-    command
-        .envs(environment)
-        .env("PYTHONPATH", std::env::join_paths(paths)?)
-        .env("VLLM_USE_V2_MODEL_RUNNER", "1")
-        .args([
-            "-m",
-            "foretoken_dt.serve",
-            "--role",
-            config
-                .launch
-                .dt
-                .as_ref()
-                .expect("DT launch selected")
-                .role
-                .as_str(),
-        ])
-        .arg(format!("--model={model}"))
-        .arg(format!("--host={}", config.listen_address.ip()))
-        .arg(format!("--port={}", config.listen_address.port()))
-        .args(arguments);
-    if let Some(address) = config.dt_rdma_address {
-        command.arg(format!("--rdma-host={address}"));
-    }
-    let engine = ManagedEngine::spawn(command, None).await?;
+    let port = allocate_handshake_port("127.0.0.1")?;
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let app = dt_ingress::router(
+        endpoint.clone(),
+        health.clone(),
+        execution_store,
+        config.launch.internal_generate_request_body_limit_bytes,
+    )?;
+    let (engine, mode) = super::start_with_cache_fallback(config, async |mode, deadline| {
+        start_role(config, cache, cache_server, mode, deadline, port, &endpoint).await
+    })
+    .await?;
+    health.set_process_alive(true);
+    health.set_client_healthy(true);
+    health.set_accepting(true);
+    let shutdown = Arc::new(Notify::new());
+    let server_shutdown = shutdown.clone();
+    let mut server = Box::pin(
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .into_future(),
+    );
+    let mut server_finished = false;
     let failure = tokio::select! {
+        biased;
+        never = async {
+            match watcher { Some(watcher) => watcher.run().await,
+                None => std::future::pending::<std::convert::Infallible>().await }
+        } => match never {},
         () = super::shutdown_signal() => None,
+        () = health.execution_failed() => Some("DT request termination could not be confirmed".into()),
         status = engine.wait_for_exit() => Some(format!("DT role exited: {status}")),
         reason = super::wait_cache_server(cache_server) => Some(reason),
         error = super::wait_cache_write_failure(cache, mode) => Some(error.to_string()),
+        result = &mut server => { server_finished = true; Some(format!("DT ingress stopped: {result:?}")) },
     };
-    // Kubernetes normally closes admission first. Also honor direct process termination,
-    // without delivering SIGTERM to EngineCore while it still owns active generation.
+    health.set_accepting(false);
     let deadline = tokio::time::Instant::now() + config.launch.drain_timeout();
     if failure.is_none() {
-        let address = if config.listen_address.ip().is_unspecified() {
-            format!("127.0.0.1:{}", config.listen_address.port())
-        } else {
-            config.listen_address.to_string()
+        // Keep the listener polling while admitted streams, verification and DMA ACKs drain.
+        let drain = async {
+            drain(&endpoint).await?;
+            health.wait_drained().await;
+            Ok::<_, reqwest::Error>(())
         };
-        let endpoint = format!("http://{address}");
-        let drain = drain(&endpoint);
-        match tokio::time::timeout_at(deadline, drain).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => warn!(%error, "DT admission drain failed"),
-            Err(_) => warn!("DT sessions did not drain before deadline"),
+        tokio::select! {
+            result = tokio::time::timeout_at(deadline, drain) => match result {
+                Ok(Ok(())) => {},
+                Ok(Err(error)) => warn!(%error, "DT admission drain failed"),
+                Err(_) => warn!("DT sessions did not drain before deadline"),
+            },
+            _ = &mut server => { server_finished = true; },
+            _ = engine.wait_for_exit() => {},
         }
     }
     cache_shutdown.notify_waiters();
     engine
         .shutdown_application(deadline.saturating_duration_since(tokio::time::Instant::now()))
         .await?;
+    health.set_process_alive(false);
+    health.set_client_healthy(false);
+    shutdown.notify_waiters();
+    // Request tasks can now persist termination evidence without retaining a live engine slot.
+    if !server_finished {
+        let _ = tokio::time::timeout_at(deadline, &mut server).await;
+    }
     match failure {
         Some(reason) => Err(io::Error::other(reason).into()),
         None => Ok(()),
     }
 }
 
-// The role owns sessions and transfer storage; shutdown must wait for both.
+// Startup uses the same cache/artifact preparation and deadline as the native EngineCore path.
+async fn start_role(
+    config: &RuntimeConfig,
+    cache: Option<&runtime_cache::Config>,
+    cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
+    mode: runtime_cache::Mode,
+    deadline: Instant,
+    port: u16,
+    endpoint: &str,
+) -> Result<ManagedEngine, super::EngineStartupFailure> {
+    let prepared = super::prepare_engine_launch(config, cache, None, mode, deadline).await?;
+    let artifacts = &config.launch.artifacts;
+    let draft = config
+        .launch
+        .dt
+        .as_ref()
+        .and_then(|dt| dt.draft_artifacts.as_ref());
+    let mut command = Command::new(config.launch.python_executable());
+    command.envs(prepared.environment)
+        .env("VLLM_USE_V2_MODEL_RUNNER", "1")
+        .env("FORETOKEN_DT_MODEL_METADATA", serde_json::json!({
+            "model": artifacts.model,
+            "revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.revision),
+            "tokenizer": artifacts.tokenizer,
+            "tokenizer_revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.tokenizer_revision),
+            "prepared_tokenizer": prepared.prepared_tokenizer,
+            "draft_model": draft.map_or(&artifacts.model, |draft| &draft.model),
+            "draft_revision": draft.map_or(&artifacts.revision, |draft| &draft.revision),
+        }).to_string())
+        .args(["-m", "foretoken_dt.serve", "--role", config.launch.dt.as_ref().expect("DT launch selected").role.as_str()])
+        .arg(format!("--model={}", prepared.model))
+        .args(["--host=127.0.0.1".to_owned(), format!("--port={port}")])
+        .args(prepared.arguments);
+    if let Some(address) = config.dt_rdma_address {
+        command.arg(format!("--rdma-host={address}"));
+    }
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
+    let engine = ManagedEngine::spawn(command, None)
+        .await
+        .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
+    let readiness = async {
+        loop {
+            if client
+                .get(format!("{endpoint}/status?observations=false"))
+                .send()
+                .await
+                .is_ok_and(|response| response.status().is_success())
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    let failure = tokio::select! {
+        () = readiness => return Ok(engine),
+        () = tokio::time::sleep_until(deadline.into()) => super::classify_engine_startup_failure(cache, mode, "DT role startup deadline elapsed".into()),
+        status = engine.wait_for_exit() => super::classify_engine_startup_failure(cache, mode, format!("DT role exited during startup: {status}")),
+        reason = super::wait_cache_server(cache_server) => super::EngineStartupFailure::Other(io::Error::other(reason)),
+        error = super::wait_cache_write_failure(cache, mode) => super::cache_mode_failure(mode, "DT RuntimeCache write failed", error),
+    };
+    engine
+        .shutdown_application(config.launch.drain_timeout())
+        .await
+        .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
+    Err(failure)
+}
+
+// The role owns sessions and transfer storage; shutdown waits for both before terminating workers.
 async fn drain(endpoint: &str) -> Result<(), reqwest::Error> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().no_proxy().build()?;
     client
         .post(format!("{endpoint}/v1/internal/admission/close"))
         .send()

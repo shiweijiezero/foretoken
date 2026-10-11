@@ -109,8 +109,12 @@ Requests from different earlier batches can join the same later round.
 
 Router reuses Filter–Scorer–Picker with the first member's placement preference,
 checking compatibility for every member. It sees current confirmed prefixes and
-remaining output budgets. Reservations cover the current round and are released
-before each member returns; they do not measure idle sessions or KV occupancy.
+remaining output budgets. Router load reservations cover the current round and are released before each
+member returns; they do not measure idle sessions or KV occupancy. RequestLedger
+capacity is separate: the Target ingress accepts the request reservation when its
+session opens and retains it until completion or cancellation. Draft sessions use
+their instance admission limit without accepting the Target reservation. Request
+priority is forwarded to each engine; configured role priority takes precedence.
 
 `DraftTargetRequestState::target_location()` reports the current session/KV location.
 `DraftTargetRound::required_target()` derives the current execution constraint;
@@ -201,7 +205,7 @@ normalized adapter.
 Sampling forwards `temperature`, `top_p`, `top_k` and Target `seed`. Random
 sampling requires both roles to advertise `token_ids_log_probs`; `min_p` is not
 supported by the native speculative sampler. Non-default penalties, logprobs, structured output,
-multimodal features, LoRA, KV/EC transfer arguments, cache salt, priority, tracing
+multimodal features, LoRA, KV/EC transfer arguments, cache salt, tracing
 headers and nonzero DP ranks are rejected before role admission. These are current
 implementation limits, not ignored options. The lower-level role API still
 supports direct token requests and optional Python-side stop strings.

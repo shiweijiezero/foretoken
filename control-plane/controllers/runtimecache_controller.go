@@ -175,6 +175,9 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 	}
 	if cache.Spec.Directory != "" {
 		pvc.Annotations[runtimeCacheDirectoryAnnotation] = cache.Spec.Directory
+		if owner := cache.Annotations[directoryOwnerAnnotation]; owner != "" {
+			pvc.Annotations[directoryOwnerAnnotation] = owner
+		}
 		storageClassName := ""
 		pvc.Spec.StorageClassName = &storageClassName
 		pvc.Spec.VolumeName = runtimeCacheDirectoryPVName(cache)
@@ -221,6 +224,22 @@ func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cach
 			return nil, false, err
 		}
 		current.Annotations[runtimeCacheRetentionAnnotation] = desired.Annotations[runtimeCacheRetentionAnnotation]
+		if err := reconciler.Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return nil, false, err
+		}
+	}
+	// Retained claims carry the directory identity for read-only capture viewers
+	// even after the RuntimeCache resource itself has been deleted.
+	if current.Annotations[directoryOwnerAnnotation] != desired.Annotations[directoryOwnerAnnotation] {
+		base := current.DeepCopy()
+		if current.Annotations == nil {
+			current.Annotations = make(map[string]string)
+		}
+		if owner := desired.Annotations[directoryOwnerAnnotation]; owner != "" {
+			current.Annotations[directoryOwnerAnnotation] = owner
+		} else {
+			delete(current.Annotations, directoryOwnerAnnotation)
+		}
 		if err := reconciler.Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			return nil, false, err
 		}

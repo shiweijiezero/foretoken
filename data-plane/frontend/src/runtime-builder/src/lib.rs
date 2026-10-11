@@ -4,16 +4,17 @@
 //! Builds complete runtime generations from immutable serving snapshots.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use foretoken_admission::PreparedAdmissions;
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ModelIdentity, ServingSnapshot,
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_router::{
-    PipelineRouter, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
+    PipelineRouter, RouteInventory, Router, RouterPipeline, RouterPipelineConfigError,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -29,8 +30,28 @@ pub enum KvIndexCredential {
     Degraded(KvIndexDegradedReason),
 }
 
+struct CachedModelBundle {
+    identity: ModelIdentity,
+    max_model_len: u32,
+    max_logprobs: Option<i32>,
+    dtype: Option<String>,
+    prepared_tokenizer: Option<String>,
+    bundle: Arc<RuntimeBundle>,
+}
+
+struct CachedBackends {
+    snapshot: ServingSnapshot,
+    registry: Arc<BackendRegistry>,
+    kv_indexer: Arc<KvIndexer>,
+    models: BTreeMap<String, Arc<CachedModelBundle>>,
+    video_models: BTreeSet<String>,
+    video_client: Option<reqwest::Client>,
+}
+
 pub struct RuntimeBuilder {
-    router_pipeline: Result<Arc<RouterPipeline>, RouterPipelineConfigError>,
+    logging: Arc<foretoken_tracing::LogControl>,
+    backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
+    router_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
 }
@@ -38,11 +59,15 @@ pub struct RuntimeBuilder {
 impl RuntimeBuilder {
     /// Creates the snapshot builder retained by the frontend watcher for successive updates.
     ///
-    /// The watcher reuses the returned builder to parse and prepare generations with this routing
-    /// pipeline and KV credential for its lifetime.
-    pub fn new(router_pipeline: RouterPipelineConfig, kv_credential: KvIndexCredential) -> Self {
+    /// Successive candidates reuse published algorithm state, load counters and model processors.
+    pub fn new(
+        kv_credential: KvIndexCredential,
+        logging: Arc<foretoken_tracing::LogControl>,
+    ) -> Self {
         Self {
-            router_pipeline: router_pipeline.build().map(Arc::new),
+            logging,
+            backends: Arc::default(),
+            router_pipeline: Arc::default(),
             kv_credential,
             routing_load: Default::default(),
         }
@@ -55,26 +80,132 @@ impl RuntimeBuilder {
 
     /// Prepares one publishable runtime generation from a decoded snapshot.
     ///
-    /// The snapshot watcher calls this before publication. It returns a fully probed runtime whose
-    /// ownership transfers to [`PreparedRuntime::publish`], or an error while the active runtime
-    /// remains unchanged.
-    // Build one publishable generation in stages: validate projection, construct routing and
-    // KV state, probe backends, load per-model processors, re-probe, then seal PreparedRuntime.
+    /// The snapshot watcher calls this before publication. It returns a complete runtime candidate
+    /// whose ownership transfers to [`PreparedRuntime::publish`], or an error while the active
+    /// runtime and published artifact caches remain unchanged.
+    // Validate settings and model contracts, reuse or prepare backend artifacts, then compose
+    // the generation. Only publication commits settings and caches to the long-lived owners.
     pub async fn build(
         &self,
         snapshot: ServingSnapshot,
     ) -> Result<PreparedRuntime, RuntimeBuildError> {
         let version = snapshot.version;
+        let settings = &snapshot.settings;
+        let log_level = self
+            .logging
+            .prepare(&settings.log_level)
+            .map_err(RuntimeBuildError::InvalidSnapshot)?;
+        if settings.request_timeout_seconds == 0
+            || settings.stream_idle_seconds == 0
+            || settings.stream_idle_seconds > settings.request_timeout_seconds
+        {
+            return Err(RuntimeBuildError::InvalidSnapshot(
+                "invalid request timeouts".into(),
+            ));
+        }
+        let request_timeout = std::time::Duration::from_secs(settings.request_timeout_seconds);
+        let stream_idle = std::time::Duration::from_secs(settings.stream_idle_seconds);
+        let pipeline = Arc::new({
+            let published = self
+                .router_pipeline
+                .lock()
+                .expect("router pipeline lock poisoned");
+            match published.as_deref() {
+                Some(previous) => settings.router_pipeline.rebuild(previous)?,
+                None => settings.router_pipeline.build()?,
+            }
+        });
+        let identities = snapshot
+            .model_identities()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        if identities.keys().ne(snapshot.admission.keys()) {
+            return Err(RuntimeBuildError::InvalidSnapshot(
+                "model catalog and admission rules differ".into(),
+            ));
+        }
+        let admission = PreparedAdmissions::new(
+            &snapshot.admission,
+            &snapshot.frontend_instances,
+            &snapshot.backend_instances,
+        )
+        .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        let preparation_targets = snapshot
+            .admission_target_sets()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        let backends = self.prepare_backends(snapshot, identities).await?;
+        let registry = backends.registry.clone();
+        let kv_indexer = backends.kv_indexer.clone();
+        let control = Arc::new(RegistryRuntimeControl {
+            logging: self.logging.clone(),
+            log_level,
+            backends: backends.clone(),
+            published_backends: self.backends.clone(),
+            pipeline: pipeline.clone(),
+            published_pipeline: self.router_pipeline.clone(),
+        });
+        let models = backends
+            .models
+            .iter()
+            .map(|(model, cached)| (model.clone(), ModelRuntime::new(cached.bundle.clone())))
+            .collect();
+        let router: Arc<dyn Router> = Arc::new(
+            PipelineRouter::with_pipeline(registry.clone(), pipeline)
+                .with_snapshot_version(version)
+                .with_load_state(self.routing_load.clone())
+                .with_kv_prefix_indexer(kv_indexer)
+                .with_route_target_stats_reader(registry.clone()),
+        );
+        let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
+        let resolver: Arc<dyn LlmFacadeResolver> = registry;
+        let dt_models = backends
+            .snapshot
+            .dt_components
+            .iter()
+            .map(|role| role.model.clone())
+            .collect();
+        let mut state = RuntimeState::new(models, router, resolver, request_timeout, stream_idle)
+            .with_draft_target_models(dt_models);
+        if let Some(client) = &backends.video_client {
+            state = state.with_video_backend(
+                backends.video_models.clone(),
+                video_inventory,
+                client.clone(),
+            );
+        }
+        for (model, candidates) in preparation_targets {
+            state = state.with_preparation_targets(model, candidates);
+        }
+        Ok(PreparedRuntime {
+            version,
+            state: Arc::new(state),
+            control,
+            admission,
+        })
+    }
+
+    /// Reuses published backend artifacts or prepares an independent discovery replacement.
+    /// Settings-only updates do not depend on current backend health. New discovery is probed
+    /// before and after model loading; failures never mutate the published model-bundle cache.
+    async fn prepare_backends(
+        &self,
+        snapshot: ServingSnapshot,
+        identities: BTreeMap<String, ModelIdentity>,
+    ) -> Result<Arc<CachedBackends>, RuntimeBuildError> {
+        let published = self
+            .backends
+            .lock()
+            .expect("backend cache lock poisoned")
+            .clone();
+        if let Some(cached) = &published
+            && cached.snapshot.same_discovery(&snapshot)
+        {
+            return Ok(cached.clone());
+        }
+
         let has_physical_backends = !snapshot.groups.is_empty()
             || !snapshot.pd_components.is_empty()
             || !snapshot.epd_components.is_empty()
             || !snapshot.dt_components.is_empty();
-        let identities = snapshot
-            .model_identities()
-            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
-        let admission_targets = snapshot
-            .admission_target_sets()
-            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
         let BackendRegistryBuild {
             registry,
             kv_runtime_config,
@@ -91,18 +222,21 @@ impl RuntimeBuilder {
                 .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
             KvIndexCredential::Degraded(reason) => KvIndexer::degraded(kv_runtime_config, reason),
         });
-        let control = Arc::new(RegistryRuntimeControl {
-            registry: registry.clone(),
-            kv_indexer: kv_indexer.clone(),
-        });
-        control.refresh_backend_readiness().await;
-        if has_physical_backends && !registry.is_ready() {
-            return Err(RuntimeBuildError::BackendUnavailable);
-        }
+        let (_, _) = tokio::join!(registry.refresh_backend_readiness(), kv_indexer.refresh());
         let healthy_models = registry
             .healthy_models()
             .into_iter()
             .collect::<BTreeSet<_>>();
+        // A published discovery cache must contain processors for every routed model;
+        // health refresh cannot prepare a missing processor when its backend recovers.
+        if registry
+            .model_routes()
+            .routes()
+            .iter()
+            .any(|route| !healthy_models.contains(&route.model))
+        {
+            return Err(RuntimeBuildError::BackendUnavailable);
+        }
         let video_models = identities
             .iter()
             .filter(|(model, identity)| {
@@ -111,27 +245,33 @@ impl RuntimeBuilder {
             .map(|(model, _)| model.clone())
             .collect::<BTreeSet<_>>();
         let models = if has_physical_backends {
-            let identities = identities
-                .into_iter()
-                .filter(|(model, _)| {
-                    healthy_models.contains(model) && !video_models.contains(model)
-                })
-                .collect();
-            // Tokenizer construction performs substantial synchronous CPU work. Keep it
-            // off the async worker so HTTP connections and readiness probes keep progressing.
-            let registry = registry.clone();
-            let runtime = tokio::runtime::Handle::current();
-            tokio::task::spawn_blocking(move || {
-                runtime.block_on(model_runtimes(identities, &registry))
-            })
-            .await
-            .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))??
+            model_bundles(
+                identities
+                    .into_iter()
+                    .filter(|(model, _)| {
+                        healthy_models.contains(model) && !video_models.contains(model)
+                    })
+                    .collect(),
+                &registry,
+                published.as_ref().map(|cached| &cached.models),
+            )
+            .await?
         } else {
             BTreeMap::new()
         };
+        let video_client = if video_models.is_empty() {
+            None
+        } else {
+            Some(
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?,
+            )
+        };
 
-        // Preparation may be slow. Probe again so only a fully ready physical candidate is published.
-        control.refresh_backend_readiness().await;
+        // Model preparation can be slow; discovery replacements must still be healthy when sealed.
+        let (_, _) = tokio::join!(registry.refresh_backend_readiness(), kv_indexer.refresh());
         if has_physical_backends {
             let healthy_models = registry
                 .healthy_models()
@@ -145,42 +285,14 @@ impl RuntimeBuilder {
                 return Err(RuntimeBuildError::BackendBecameUnavailable);
             }
         }
-        let router: Arc<dyn Router> = Arc::new(
-            PipelineRouter::with_pipeline(
-                registry.clone(),
-                self.router_pipeline
-                    .as_ref()
-                    .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?
-                    .clone(),
-            )
-            .with_load_state(self.routing_load.clone())
-            .with_kv_prefix_indexer(kv_indexer)
-            .with_route_target_stats_reader(registry.clone()),
-        );
-        let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
-        let resolver: Arc<dyn LlmFacadeResolver> = registry;
-        let dt_models = snapshot
-            .dt_components
-            .iter()
-            .map(|component| component.model.clone())
-            .collect();
-        let mut state =
-            RuntimeState::new(models, router, resolver).with_draft_target_models(dt_models);
-        if !video_models.is_empty() {
-            let client = reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;
-            state = state.with_video_backend(video_models, video_inventory, client);
-        }
-        for (model, candidates) in admission_targets {
-            state = state.with_admission_targets(model, candidates);
-        }
-        Ok(PreparedRuntime {
-            version,
-            state: Arc::new(state),
-            control,
-        })
+        Ok(Arc::new(CachedBackends {
+            snapshot,
+            registry,
+            kv_indexer,
+            models,
+            video_models,
+            video_client,
+        }))
     }
 }
 
@@ -188,6 +300,7 @@ pub struct PreparedRuntime {
     version: u64,
     state: Arc<RuntimeState>,
     control: Arc<dyn RuntimeControl>,
+    admission: PreparedAdmissions,
 }
 
 impl PreparedRuntime {
@@ -196,16 +309,16 @@ impl PreparedRuntime {
     /// Snapshot watchers consume the candidate exactly once. Returns whether its version replaced
     /// the active state; stale candidates are dropped without affecting request handling.
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
-        generation.replace_state(self.version, self.state, self.control)
+        generation.replace_state(self.version, self.state, self.control, self.admission)
     }
 }
 
 #[derive(Debug, Error)]
 pub enum RuntimeBuildError {
+    #[error("invalid routing configuration: {0}")]
+    Router(#[from] RouterPipelineConfigError),
     #[error("could not parse serving snapshot: {0}")]
     Parse(#[from] serde_json::Error),
-    #[error("could not build configured Router pipeline: {0}")]
-    RouterPipeline(String),
     #[error("could not validate serving snapshot: {0}")]
     InvalidSnapshot(String),
     #[error("model-server backend is not ready")]
@@ -217,33 +330,50 @@ pub enum RuntimeBuildError {
 }
 
 struct RegistryRuntimeControl {
-    registry: Arc<BackendRegistry>,
-    kv_indexer: Arc<KvIndexer>,
+    logging: Arc<foretoken_tracing::LogControl>,
+    log_level: tracing::level_filters::LevelFilter,
+    pipeline: Arc<RouterPipeline>,
+    published_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
+    backends: Arc<CachedBackends>,
+    published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }
 
 #[async_trait]
 impl RuntimeControl for RegistryRuntimeControl {
+    fn activate(&self, version: u64) {
+        self.pipeline.activate(version);
+        self.logging.apply(self.log_level);
+        *self
+            .published_backends
+            .lock()
+            .expect("backend cache lock poisoned") = Some(self.backends.clone());
+        *self
+            .published_pipeline
+            .lock()
+            .expect("router pipeline lock poisoned") = Some(self.pipeline.clone());
+    }
+
     async fn refresh_backend_readiness(&self) {
         let (_, _) = tokio::join!(
-            self.registry.refresh_backend_readiness(),
-            self.kv_indexer.refresh(),
+            self.backends.registry.refresh_backend_readiness(),
+            self.backends.kv_indexer.refresh(),
         );
     }
 
     fn configured_models(&self) -> Vec<String> {
-        self.registry.configured_models()
+        self.backends.registry.configured_models()
     }
 
     fn is_ready(&self) -> bool {
-        self.registry.is_configured()
+        self.backends.registry.is_configured()
     }
 
-    fn model_ready(&self, model: &str) -> bool {
-        self.registry.is_model_ready(model)
+    fn model_ready(&self, model: &str, allowed_pools: &[String]) -> bool {
+        self.backends.registry.is_model_ready(model, allowed_pools)
     }
 
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
-        let status = self.kv_indexer.status();
+        let status = self.backends.kv_indexer.status();
         KvIndexDiagnostics {
             state: status.state.as_str().into(),
             reason: status.reason.map(|reason| reason.as_str().into()),
@@ -253,11 +383,14 @@ impl RuntimeControl for RegistryRuntimeControl {
     }
 }
 
-async fn model_runtimes(
+/// Prepares model processors from the new registry, reusing matching published bundles read-only.
+/// The returned map belongs to the candidate backend cache until successful runtime publication.
+async fn model_bundles(
     identities: BTreeMap<String, ModelIdentity>,
     registry: &BackendRegistry,
-) -> Result<BTreeMap<String, ModelRuntime>, RuntimeBuildError> {
-    let mut runtimes = BTreeMap::new();
+    cached_bundles: Option<&BTreeMap<String, Arc<CachedModelBundle>>>,
+) -> Result<BTreeMap<String, Arc<CachedModelBundle>>, RuntimeBuildError> {
+    let mut bundles = BTreeMap::new();
     for (model, identity) in identities {
         let max_model_len = registry.effective_max_model_len(&model).ok_or_else(|| {
             RuntimeBuildError::ModelRuntime(format!(
@@ -267,9 +400,30 @@ async fn model_runtimes(
         let model_dtype = registry
             .effective_model_dtype(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let max_logprobs = registry.effective_max_logprobs(
+            &model,
+            foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
+        );
+        let dtype_key = model_dtype.map(|dtype| dtype.as_str().to_owned());
         let prepared_tokenizer = registry
             .prepared_tokenizer(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let prepared_key = prepared_tokenizer
+            .as_ref()
+            .map(|prepared| format!("{prepared:?}"));
+        if let Some(cached) = cached_bundles
+            .and_then(|bundles| bundles.get(&model))
+            .filter(|cached| {
+                cached.identity == identity
+                    && cached.max_model_len == max_model_len
+                    && cached.max_logprobs == max_logprobs
+                    && cached.dtype == dtype_key
+                    && cached.prepared_tokenizer == prepared_key
+            })
+        {
+            bundles.insert(model, cached.clone());
+            continue;
+        }
         let SnapshotRuntime {
             text_processor,
             tokenizer,
@@ -280,10 +434,7 @@ async fn model_runtimes(
             &identity.tokenizer,
             &identity.tokenizer_revision,
             max_model_len,
-            registry.effective_max_logprobs(
-                &model,
-                foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
-            ),
+            max_logprobs,
             model_dtype,
             prepared_tokenizer.as_ref(),
         )
@@ -306,16 +457,24 @@ async fn model_runtimes(
                 "model {model} declares multimodal routing capabilities but its frontend processor does not support image input"
             )));
         }
-        runtimes.insert(
+        let bundle = Arc::new(RuntimeBundle::new(
+            text_processor,
+            tokenizer,
+            chat_processor,
+        ));
+        bundles.insert(
             model,
-            ModelRuntime::new(Arc::new(RuntimeBundle::new(
-                text_processor,
-                tokenizer,
-                chat_processor,
-            ))),
+            Arc::new(CachedModelBundle {
+                identity,
+                max_model_len,
+                max_logprobs,
+                dtype: dtype_key,
+                prepared_tokenizer: prepared_key,
+                bundle,
+            }),
         );
     }
-    Ok(runtimes)
+    Ok(bundles)
 }
 
 fn unsupported_media_capabilities(capabilities: &BTreeSet<String>) -> Vec<&str> {

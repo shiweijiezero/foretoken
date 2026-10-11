@@ -20,7 +20,7 @@ foretoken perf examples/quickstart \
   --output local,wandb
 ```
 
-With `--request-rate -1 --max-concurrency -1`, the entire request budget starts as fast as possible. Add `--duration SECONDS` to stop admissions at a wall-clock deadline; omit `--num-prompts` for a duration-bounded workload. Multi-turn data uses the same HTTP request budget and limits conversations in progress.
+With `--request-rate -1 --max-concurrency -1`, the entire request budget starts as fast as possible. Add `--duration 5min` to stop sending new requests after five minutes; omit `--num-prompts` for a duration-bounded workload. Multi-turn data uses the same HTTP request budget and limits conversations in progress.
 
 To use fixed or Gamma arrivals:
 
@@ -33,6 +33,10 @@ foretoken perf examples/quickstart \
   --prompt Hello --request-rate 5 --arrival-pattern gamma \
   --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local,wandb
 ```
+
+## Warmup
+
+Use `--warmup-requests 2` to send two additional HTTP requests before timing and profiling begin. Warmup results are saved separately. The measured requests and their count remain unchanged, while service-side caches retain their warmed state.
 
 ## Example output
 

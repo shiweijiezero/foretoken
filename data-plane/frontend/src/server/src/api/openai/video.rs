@@ -3,18 +3,22 @@
 
 //! Resolves multipart video identity while keeping media bodies out of frontend memory.
 
-use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Request, State};
+use axum::Extension;
+use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 
-use super::{ApiState, openai_error, resolve_model, server_request_id};
-use crate::runtime::GenerationError;
+use super::{openai_error, resolve_model, server_request_id};
+use crate::runtime::{GenerationError, RequestSnapshot};
 
 /// Stages a request until its model is known, then transfers the file to backend dispatch.
-pub(super) async fn generate(State(state): State<ApiState>, request: Request) -> Response {
+pub(super) async fn generate(
+    Extension(state): Extension<RequestSnapshot>,
+    request: Request,
+) -> Response {
     let (parts, incoming) = request.into_parts();
     let headers = parts.headers.clone();
     // An anonymous file preserves the multipart bytes regardless of field order. Its handles

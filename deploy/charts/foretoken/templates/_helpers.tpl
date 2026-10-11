@@ -15,6 +15,27 @@
 {{- include "foretoken.compactName" (printf "%s-control-plane" .Release.Name) -}}
 {{- end }}
 
+{{/* Application paths are shared with controller-generated Pod templates through startup configuration. */}}
+{{- define "foretoken.applicationFilesName" -}}
+{{- include "foretoken.compactName" (printf "%s-application-files" .Release.Name) -}}
+{{- end }}
+
+{{- define "foretoken.applicationFilesOrigin" -}}
+{{- printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace -}}
+{{- end }}
+
+{{- define "foretoken.applicationMount" -}}
+/opt/foretoken/application
+{{- end }}
+
+{{- define "foretoken.admissionStoreName" -}}
+{{- include "foretoken.compactName" (printf "%s-admission-store" .Release.Name) -}}
+{{- end }}
+
+{{- define "foretoken.admissionStoreURL" -}}
+{{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.admissionStoreName" .) .Release.Namespace) .Values.admissionStore.externalURL -}}
+{{- end }}
+
 {{- define "foretoken.clusterName" -}}
 {{- include "foretoken.compactName" (printf "%s-%s-control-plane" .Release.Namespace .Release.Name) -}}
 {{- end }}
@@ -107,10 +128,12 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- $image := trim .Values.runtime.vllm.image -}}
 {{- if eq $image "auto" -}}
 {{- $tag := .Chart.AppVersion -}}
+{{- $backend := "nvidia" -}}
 {{- if or (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu") -}}
 {{- $tag = printf "%s-metax" $tag -}}
+{{- $backend = "metax" -}}
 {{- end -}}
-{{- printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag -}}
+{{- default (printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag) (index .Values.runtime.vllm.environmentImages $backend) -}}
 {{- else -}}
 {{- $image -}}
 {{- end -}}
@@ -126,6 +149,12 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{- define "foretoken.validateValues" -}}
+{{- if and .Values.admissionStore.externalURL .Values.admissionStore.externalURLSecret.name -}}
+{{- fail "admissionStore.externalURL and externalURLSecret are mutually exclusive" -}}
+{{- end -}}
+{{- if contains "@" .Values.admissionStore.externalURL -}}
+{{- fail "admission store credentials require admissionStore.externalURLSecret" -}}
+{{- end -}}
 {{- if and .Values.rdma.managed .Values.rdma.resourceName -}}
 {{- fail "rdma.managed and an external rdma.resourceName are mutually exclusive" -}}
 {{- end -}}

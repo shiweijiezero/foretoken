@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -87,6 +87,7 @@
+     max_num_seqs: int
+     max_num_batched_tokens: int
+     instance_id: str
++    max_logprobs: int | None = None
+     # KV cache capacity (None for encoder-only/attention-free models).
+     kv_cache_size_tokens: int | None = None
+     kv_cache_max_concurrency: float | None = None
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1637,6 +1637,7 @@
+                 max_num_seqs=self.vllm_config.scheduler_config.max_num_seqs,
+                 max_num_batched_tokens=self.vllm_config.scheduler_config.max_num_batched_tokens,
+                 instance_id=self.vllm_config.instance_id,
++                max_logprobs=self.vllm_config.model_config.max_logprobs,
+                 kv_cache_size_tokens=(
+                     self.vllm_config.cache_config.kv_cache_size_tokens
+                 ),

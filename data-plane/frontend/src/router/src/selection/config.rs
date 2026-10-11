@@ -167,6 +167,7 @@ pub type PickerStage = AlgorithmStage<PickerAlgorithm>;
 
 /// Configured algorithms selected for each Router pipeline stage.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouterPipelineConfig {
     /// Filter used before scoring.
     #[serde(default)]
@@ -180,45 +181,107 @@ pub struct RouterPipelineConfig {
 }
 
 impl RouterPipelineConfig {
-    /// Builds the selected Filter, Scorer, and Picker implementations compiled into this binary.
+    /// Builds the selected target-selection algorithms compiled into this binary.
     pub fn build(&self) -> Result<RouterPipeline, RouterPipelineConfigError> {
+        self.build_from(None)
+    }
+
+    /// Prepares an immutable replacement, reusing unchanged stages and useful scorer history.
+    /// RuntimeBuilder supplies the last published pipeline. Preparation does not commit shared
+    /// settings; the runtime publisher must activate the accepted replacement before exposing it.
+    pub fn rebuild(
+        &self,
+        previous: &RouterPipeline,
+    ) -> Result<RouterPipeline, RouterPipelineConfigError> {
+        self.build_from(Some(previous))
+    }
+
+    /// Constructs or reuses each stage after checking the complete algorithm combination.
+    fn build_from(
+        &self,
+        previous: Option<&RouterPipeline>,
+    ) -> Result<RouterPipeline, RouterPipelineConfigError> {
         validate_descriptors()?;
         let filter = filter_descriptor(self.filter.algorithm.as_str())?;
         let scorer = scorer_descriptor(self.scorer.algorithm.as_str())?;
         let picker = picker_descriptor(self.picker.algorithm.as_str())?;
-        let mut configured_filter = (filter.factory)();
-        Arc::get_mut(&mut configured_filter)
-            .expect("filter factory returns a new instance")
-            .configure(serde_json::Value::Object(self.filter.parameters.clone()))
-            .map_err(|message| RouterPipelineConfigError::InvalidParameters {
-                name: self.filter.algorithm.to_string(),
-                message,
-            })?;
-        let mut configured_scorer = (scorer.factory)();
-        Arc::get_mut(&mut configured_scorer)
-            .expect("scorer factory returns a new instance")
-            .configure(serde_json::Value::Object(self.scorer.parameters.clone()))
-            .map_err(|message| RouterPipelineConfigError::InvalidParameters {
-                name: self.scorer.algorithm.to_string(),
-                message,
-            })?;
-        let mut configured_picker = (picker.factory)();
-        Arc::get_mut(&mut configured_picker)
-            .expect("picker factory returns a new instance")
-            .configure(serde_json::Value::Object(self.picker.parameters.clone()))
-            .map_err(|message| RouterPipelineConfigError::InvalidParameters {
-                name: self.picker.algorithm.to_string(),
-                message,
-            })?;
+        if scorer.name == "two_tier" && picker.name != "max" {
+            return Err(RouterPipelineConfigError::InvalidParameters {
+                name: scorer.name.into(),
+                message: "two_tier requires picker.algorithm: max".into(),
+            });
+        }
+        let configured_filter = if let Some(previous) = previous.filter(|previous| {
+            previous
+                .config
+                .as_ref()
+                .is_some_and(|config| config.filter == self.filter)
+        }) {
+            previous.filter.clone()
+        } else {
+            let mut configured = (filter.factory)();
+            Arc::get_mut(&mut configured)
+                .expect("filter factory returns a new instance")
+                .configure(serde_json::Value::Object(self.filter.parameters.clone()))
+                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
+                    name: self.filter.algorithm.to_string(),
+                    message,
+                })?;
+            configured
+        };
+        let configured_scorer = if let Some(previous) = previous.filter(|previous| {
+            previous
+                .config
+                .as_ref()
+                .is_some_and(|config| config.scorer == self.scorer)
+        }) {
+            previous.scorer.clone()
+        } else {
+            let parameters = serde_json::Value::Object(self.scorer.parameters.clone());
+            let retained = previous
+                .filter(|previous| {
+                    previous
+                        .config
+                        .as_ref()
+                        .is_some_and(|config| config.scorer.algorithm == self.scorer.algorithm)
+                })
+                .and_then(|previous| previous.scorer.reconfigure(parameters.clone()));
+            retained
+                .unwrap_or_else(|| {
+                    let mut configured = (scorer.factory)();
+                    Arc::get_mut(&mut configured)
+                        .expect("scorer factory returns a new instance")
+                        .configure(parameters)?;
+                    Ok(configured)
+                })
+                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
+                    name: self.scorer.algorithm.to_string(),
+                    message,
+                })?
+        };
+        let configured_picker = if let Some(previous) = previous.filter(|previous| {
+            previous
+                .config
+                .as_ref()
+                .is_some_and(|config| config.picker == self.picker)
+        }) {
+            previous.picker.clone()
+        } else {
+            let mut configured = (picker.factory)();
+            Arc::get_mut(&mut configured)
+                .expect("picker factory returns a new instance")
+                .configure(serde_json::Value::Object(self.picker.parameters.clone()))
+                .map_err(|message| RouterPipelineConfigError::InvalidParameters {
+                    name: self.picker.algorithm.to_string(),
+                    message,
+                })?;
+            configured
+        };
         let mut pipeline =
             RouterPipeline::new(configured_filter, configured_scorer, configured_picker);
         pipeline.algorithm_names = [filter.name, scorer.name, picker.name];
+        pipeline.config = Some(self.clone());
         Ok(pipeline)
-    }
-
-    /// Validates all compiled descriptors and configured names before serving begins.
-    pub fn validate(&self) -> Result<(), RouterPipelineConfigError> {
-        self.build().map(|_| ())
     }
 }
 
@@ -297,8 +360,8 @@ fn validate_descriptor_names<'a>(
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
-    /// The selected scorer rejected its parameters.
-    #[error("invalid parameters for scorer {name:?}: {message}")]
+    /// The selected router algorithm rejected its parameters.
+    #[error("invalid parameters for router algorithm {name:?}: {message}")]
     InvalidParameters { name: String, message: String },
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]

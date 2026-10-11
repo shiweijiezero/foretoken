@@ -125,6 +125,19 @@
 
  # --------------------------------------------------------------
  # Note: use Maca's merge_attn_states to get cuda kernel invoked
+@@ -793,10 +795,8 @@
+             split_prefill_seq_lens = common_attn_metadata.seq_lens[
+                 split_decode_num_reqs:num_reqs
+             ]
+-            split_prefill_seq_lens_cpu = common_attn_metadata.seq_lens_cpu[
+-                split_decode_num_reqs:num_reqs
+-            ]
+-            split_prefill_max_seq_len = int(split_prefill_seq_lens_cpu.max().item())
++            # GPU lengths determine offsets; the batch bound sizes the launch.
++            split_prefill_max_seq_len = max_seq_len
+             split_prefill_block_table = common_attn_metadata.block_table_tensor[
+                 split_decode_num_reqs:num_reqs
+             ]
 --- a/vllm_metax/v1/attention/backends/flashinfer.py
 +++ b/vllm_metax/v1/attention/backends/flashinfer.py
 @@ -71,8 +71,10 @@

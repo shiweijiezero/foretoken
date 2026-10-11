@@ -7,11 +7,17 @@ use std::sync::Arc;
 
 use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixUnavailableReason};
 
-/// Request information available to every routing algorithm stage.
+/// Preprocessed request information available to the target-selection stages.
 #[derive(Clone)]
 pub struct RouterRequest {
     /// Requested logical model name.
     pub model: String,
+    /// Original client prompt length, excluding confirmed output appended between DT rounds.
+    pub input_tokens: usize,
+    /// Role-resolved logical Pool names; empty retains the normal compatible range.
+    pub allowed_pools: Vec<String>,
+    /// Initial-stage candidates with explicit busy responses in the current dispatch round.
+    pub busy_targets: Vec<(crate::RouteTargetId, u32)>,
     /// Tokenized vLLM request, including prompt tokens, sampling, multimodal, LoRA, and priority.
     pub generate_request: Option<Arc<vllm_llm::GenerateRequest>>,
     video_request_id: Option<String>,
@@ -22,6 +28,9 @@ impl RouterRequest {
     pub fn new(model: impl Into<String>, generate_request: Arc<vllm_llm::GenerateRequest>) -> Self {
         Self {
             model: model.into(),
+            input_tokens: generate_request.prompt_token_ids.len(),
+            allowed_pools: Vec::new(),
+            busy_targets: Vec::new(),
             generate_request: Some(generate_request),
             video_request_id: None,
         }
@@ -31,6 +40,9 @@ impl RouterRequest {
     pub fn video(model: impl Into<String>, request_id: String) -> Self {
         Self {
             model: model.into(),
+            input_tokens: 0,
+            allowed_pools: Vec::new(),
+            busy_targets: Vec::new(),
             generate_request: None,
             video_request_id: Some(request_id),
         }
@@ -82,7 +94,7 @@ impl RouterRequest {
         })
     }
 
-    /// Returns the prompt length used for route target input-limit matching.
+    /// Returns the current context length used by routing cost and reservation calculations.
     pub fn token_count(&self) -> usize {
         self.prompt_token_ids().len()
     }

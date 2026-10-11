@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Project platform collection settings without changing the controller workload.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "foretoken.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+data:
+  autoscaling-telemetry.json: {{ .Values.controller.autoscalingTelemetry | toJson | quote }}

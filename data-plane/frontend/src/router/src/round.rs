@@ -4,7 +4,7 @@
 //! One round's selected DT workers and per-member reservation ownership.
 
 use crate::routing_load::RoutingReservations;
-use crate::{RouteDecision, RouteTargetId};
+use crate::{RouteCandidate, RouteDecision, RouteTargetId};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 pub struct DraftTargetPlacement {
     /// Target that already owns the members' sessions/KV, if any.
     pub required_target: Option<RouteDecision>,
+    /// Original Target metadata for a live session, even after discovery removes its route.
+    pub retained_target: Option<RouteCandidate>,
     /// Workers that explicitly refused a member's new session during drain.
     pub closed_workers: BTreeSet<RouteTargetId>,
 }
@@ -20,6 +22,7 @@ pub struct DraftTargetPlacement {
 /// DT placement retained until each member returns to the caller or the round drops.
 pub struct DraftTargetRoundRoute {
     target: RouteDecision,
+    target_candidate: RouteCandidate,
     draft: Option<RouteDecision>,
     members: BTreeSet<String>,
     load: Arc<Mutex<RoutingReservations>>,
@@ -28,12 +31,13 @@ pub struct DraftTargetRoundRoute {
 impl DraftTargetRoundRoute {
     /// Retains Target reservations while Draft selection is still fallible.
     pub(crate) fn new(
-        target: RouteDecision,
+        target_candidate: RouteCandidate,
         members: BTreeSet<String>,
         load: Arc<Mutex<RoutingReservations>>,
     ) -> Self {
         Self {
-            target,
+            target: target_candidate.decision(),
+            target_candidate,
             draft: None,
             members,
             load,
@@ -43,6 +47,11 @@ impl DraftTargetRoundRoute {
     /// Transfers the selected Draft reservations into the same round owner.
     pub(crate) fn set_draft(&mut self, draft: RouteDecision) {
         self.draft = Some(draft);
+    }
+
+    /// Retains Target compatibility metadata across inventory replacement for an owned session.
+    pub fn target_candidate(&self) -> &RouteCandidate {
+        &self.target_candidate
     }
 
     /// Returns the workers selected for this round.

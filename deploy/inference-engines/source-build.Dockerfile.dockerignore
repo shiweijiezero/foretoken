@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+**
+!engine/
+!engine/**
+!deploy/
+!deploy/inference-engines/
+!deploy/inference-engines/source-build.py
+!deploy/inference-engines/vllm-metax/
+!deploy/inference-engines/vllm-metax/source-environment.json
+!deploy/inference-engines/vllm-metax/sdk_audio.py
+!deploy/inference-engines/vllm-metax/patches/
+!deploy/inference-engines/vllm-metax/patches/**
+!data-plane/
+!data-plane/patches/
+!data-plane/patches/vllm/
+!data-plane/patches/vllm/**

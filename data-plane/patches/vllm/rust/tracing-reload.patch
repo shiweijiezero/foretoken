@@ -1,0 +1,51 @@
+diff --git a/rust/src/tracing/src/lib.rs b/rust/src/tracing/src/lib.rs
+--- a/rust/src/tracing/src/lib.rs
++++ b/rust/src/tracing/src/lib.rs
+@@ -15,8 +15,9 @@
+ use tracing_subscriber::fmt::time::FormatTime;
+ use tracing_subscriber::fmt::{FmtContext, FormattedFields};
+ use tracing_subscriber::layer::SubscriberExt as _;
+-use tracing_subscriber::registry::LookupSpan;
+-use tracing_subscriber::util::SubscriberInitExt as _;
++use tracing_subscriber::registry::{LookupSpan, Registry};
++use tracing_subscriber::reload;
++use tracing_subscriber::util::{SubscriberInitExt as _, TryInitError};
+
+ const CYAN: &str = "\x1b[0;36m";
+ const GREY: &str = "\x1b[90m";
+@@ -30,20 +31,32 @@
+
+ /// Install the process-wide vLLM-style tracing subscriber.
+ pub fn init_tracing(process_label: &str) {
++    let _ = init_tracing_with_reload(process_label);
++}
++
++/// Install the process-wide vLLM formatter and return its live target-filter handle.
++///
++/// Process owners retain the handle to update logging without rebuilding formatting.
++/// Returns an error if a subscriber is already installed or installation fails.
++pub fn init_tracing_with_reload(
++    process_label: &str,
++) -> Result<reload::Handle<Targets, Registry>, TryInitError> {
+     let filter = build_targets_filter(
+         env::var("VLLM_LOGGING_LEVEL").ok().as_deref(),
+         env::var("RUST_LOG").ok().as_deref(),
+     );
+     let formatter = VllmEventFormatter::new(process_label);
+-
+-    let _ = tracing_subscriber::registry()
++    let (filter, handle) = reload::Layer::new(filter);
++
++    tracing_subscriber::registry()
+         .with(
+             tracing_subscriber::fmt::layer()
+                 .event_format(formatter)
+                 .with_writer(std::io::stderr)
+                 .with_filter(filter),
+         )
+-        .try_init();
++        .try_init()?;
++    Ok(handle)
+ }
+
+ /// Build the CLI log filter by merging the vLLM-style default level with

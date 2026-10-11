@@ -4,12 +4,15 @@
 """External candidate admission layered on vLLM's scheduling and KV lifecycle."""
 
 import time
+from importlib.metadata import version
 
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.engine import EngineCoreOutputs
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request
+
+from . import METAX_VLLM_VERSION
 
 
 class ObservedScheduler(Scheduler):
@@ -18,6 +21,13 @@ class ObservedScheduler(Scheduler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dt_observations = {}
+        # MetaX retains the 0.30 core; 0.31 splits blocked requests from KV holders.
+        self.dt_waiting_queues = (
+            self.waiting,
+            self.skipped_waiting
+            if version("vllm") == METAX_VLLM_VERSION
+            else self.kv_holding_waiting,
+        )
 
     def add_request(self, request: Request) -> None:
         """Start timing at native admission, independently of HTTP session lifetime."""
@@ -137,7 +147,7 @@ class ObservedScheduler(Scheduler):
 
     def dt_workload(self):
         """Read one native scheduler/KV snapshot for online placement, without Prometheus."""
-        waiting = list(self.waiting) + list(self.skipped_waiting)
+        waiting = [request for queue in self.dt_waiting_queues for request in queue]
         remote = [
             r for r in self.running if getattr(r, "waiting_for_external_draft", False)
         ]
@@ -270,8 +280,7 @@ class ExternalScheduler(ObservedScheduler):
     def has_schedulable_requests(self) -> bool:
         """Let EngineCore sleep when only live remote waiters remain."""
         return bool(
-            self.waiting
-            or self.skipped_waiting
+            any(self.dt_waiting_queues)
             or self.has_finished_requests()
             or any(not request.waiting_for_external_draft for request in self.running)
         )

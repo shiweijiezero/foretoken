@@ -7,14 +7,14 @@ The Mooncake trace dataset records request lengths and shared prefix blocks, not
 ```bash
 foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
-  --trace-start 57 --trace-duration 5 \
+  --trace-start 57s --trace-duration 8min \
   --dataset random \
   --random-seed 0 --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 --max-tokens 64 \
-  --output local,wandb
+  --max-concurrency 16 --max-tokens 64 \
+  --output local,wandb,plot
 ```
 
-Inputs reuse the trace's 512-token blocks. Server-side tokenization may change those boundaries; inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.
+Inputs reuse the trace's 512-token blocks and are sent as token IDs through Completions. Inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.
 
 Omit `--trace-synthetic-prefix-reuse` to generate random inputs from the recorded lengths without shared-block reconstruction. When a trace row has positive integer `output_length`, the request targets that exact output count, whether the payload comes from random generation, reconstructed prefixes, or a separate dataset. The recorded target and actual count appear in raw results. General trace-window and concurrency rules are described in [StudyChat replay](studychat.md).
 

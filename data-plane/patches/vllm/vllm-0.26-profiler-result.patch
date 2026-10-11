@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1257,2 +1257,4 @@
+         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
+         self.model_runner._dummy_run(num_tokens, uniform_decode=True)

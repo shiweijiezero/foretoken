@@ -74,7 +74,6 @@ fn normalize(request: &vllm_llm::GenerateRequest) -> Result<DraftTargetRequest, 
         || request.lora_request.is_some()
         || request.reasoning_parser_kwargs.is_some()
         || request.cache_salt.is_some()
-        || request.priority != 0
         || request.data_parallel_rank.is_some_and(|rank| rank != 0)
         || request.trace_headers.is_some()
     {
@@ -88,6 +87,8 @@ fn normalize(request: &vllm_llm::GenerateRequest) -> Result<DraftTargetRequest, 
     stop_tokens.sort_unstable();
     stop_tokens.dedup();
     Ok(DraftTargetRequest {
+        reservation: None,
+        priority: request.priority,
         token_ids: request.prompt_token_ids.clone(),
         max_tokens: sampling.max_tokens,
         min_tokens: sampling.min_tokens,

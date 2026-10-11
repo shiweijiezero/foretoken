@@ -4,6 +4,7 @@
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
 use std::collections::BTreeMap;
+use std::process::Command;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use foretoken_model_protocol::{
 use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
-const DEFAULT_VLLM_PYTHON: &str = "python";
+const DEFAULT_VLLM_PYTHON: &str = "python3";
 
 /// Python adapters bundled with the model-server image for its managed engine.
 pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
@@ -53,6 +54,8 @@ pub struct DraftTargetPlan {
     pub role: DraftTargetRole,
     #[serde(default)]
     pub rdma: bool,
+    #[serde(default, rename = "draftArtifacts")]
+    pub draft_artifacts: Option<Artifacts>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,14 +301,19 @@ impl LaunchPlanV1 {
         if self.node_count == 0 {
             return Err("launch plan requires a positive node count".into());
         }
-        for (name, value) in [
-            ("model", &self.artifacts.model),
-            ("revision", &self.artifacts.revision),
-            ("tokenizer", &self.artifacts.tokenizer),
-            ("tokenizerRevision", &self.artifacts.tokenizer_revision),
-        ] {
-            if value.is_empty() {
-                return Err(format!("launch plan artifacts.{name} must be nonempty"));
+        let draft = self.dt.as_ref().and_then(|dt| dt.draft_artifacts.as_ref());
+        for (field, artifacts) in std::iter::once(("artifacts", &self.artifacts))
+            .chain(draft.map(|artifacts| ("dt.draftArtifacts", artifacts)))
+        {
+            for (name, value) in [
+                ("model", &artifacts.model),
+                ("revision", &artifacts.revision),
+                ("tokenizer", &artifacts.tokenizer),
+                ("tokenizerRevision", &artifacts.tokenizer_revision),
+            ] {
+                if value.is_empty() {
+                    return Err(format!("launch plan {field}.{name} must be nonempty"));
+                }
             }
         }
         let p = &self.parallelism;
@@ -405,6 +413,36 @@ impl LaunchPlanV1 {
             ]);
         }
         Ok(config)
+    }
+
+    /// Builds the startup command, including network calibration for distributed members.
+    ///
+    /// The launcher execs the original engine, so its probes share the managed process group.
+    pub fn engine_command(
+        &self,
+        engine: &ManagedEngineConfig,
+        member: Option<&crate::config::MemberContext>,
+        startup_remaining: Duration,
+    ) -> Command {
+        let command = engine.to_command();
+        let Some(member) = member else {
+            return command;
+        };
+        let mut launcher = Command::new(command.get_program());
+        launcher
+            .args(["-m", "foretoken_mccl", "launch"])
+            .arg(
+                json!({
+                    "member_index": member.index,
+                    "member_count": self.node_count,
+                    "leader": member.leader_address,
+                    "port": 29600,
+                    "startup_seconds": startup_remaining.as_secs_f64(),
+                })
+                .to_string(),
+            )
+            .args(command.get_args());
+        launcher
     }
 
     /// Renders the owned vLLM arguments consumed by the managed-engine child process.

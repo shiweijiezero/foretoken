@@ -13,7 +13,7 @@ Use Grafana to inspect serving performance, query persistent logs, and investiga
 
 Open Grafana through your cluster's monitoring entry point. The CLI-managed Grafana Service is `foretoken-prometheus-grafana` in `foretoken-platform`, on port 80. It defaults to `ClusterIP`; access from outside the cluster requires an entry point configured by the cluster administrator. Reused Grafana installations keep their existing access settings.
 
-Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model, then use the instance, execution-role, and engine-rank filters to inspect individual backends. Whole-model total curves remain a reference across all instances; detail curves follow those filters.
+Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model for inference and admission metrics, and a frontend for HTTP traffic. Instance, execution-role, and engine-rank filters narrow backend details; whole-model totals remain visible.
 
 The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
 
@@ -21,13 +21,14 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | --- | --- |
 | Is the model keeping up with demand? | Prompt/output token rates, completed requests, and running/waiting queues. |
 | Where is latency increasing? | First-token and end-to-end latency, output-token intervals, and queue/prefill/decode durations. |
-| Is speculative decoding helping? | For models using it, compare draft acceptance and accepted tokens per draft with output throughput and latency. |
+| Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
+| Why are requests waiting or being rejected? | Per-model dispatch results, waiting duration, and shared waiting and unfinished occupancy. |
 
-TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When observations are sparse, read p50/p95/p99 latency quantiles alongside the observation rate and these means. Panel descriptions provide the detailed measurement definitions.
+TTFT is first-token latency; E2EL is completion latency. TPOT is the average output-token interval per request; ITL measures individual intervals. Units are shown on each panel.
 
-Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
+In Admission, select a model and frontend service to inspect shared waiting and unfinished-request occupancy. Select a frontend Pod for its request results and capacity-store availability. Occupancy is unavailable when the store cannot be read.
 
 ## Query logs
 
@@ -43,22 +44,13 @@ Collection includes model servers and their inference engines, frontends, KV ser
 
 ## Alerts
 
-Choose rules in the owning `ModelService` or `FrontendService`. For example, enable scrape-failure alerts under `spec`:
+Select rules in a `ModelService` or `FrontendService` and redeploy its configuration. The [alert reference](runbooks/alerts.md) covers available rules, thresholds, and response actions; the [service observability example](../examples/observability/README.md) provides a runnable deployment.
 
-```yaml
-observability:
-  alerts:
-    rules:
-      - ForetokenMetricsTargetDown
-```
-
-Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, and redeploy to disable alerts while keeping metrics. The [service observability example](../examples/observability/README.md) provides a runnable configuration and deployment commands.
-
-Use the [alert reference](runbooks/alerts.md) to choose rules, thresholds, and the appropriate service type. For notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
+To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
 
 ## Platform settings
 
-The following `foretoken install` commands also update an existing installation. For a source-installed platform, retain `-e .` and run from the source root. Rerun the original install command after upgrading Foretoken to update dashboards and telemetry together.
+Reapply the original `foretoken install` command to update dashboards and collection settings. For source installations, run from the checkout root and retain `-e .`, registry settings, and any `--engine-source` bindings.
 
 ### Grafana login
 
@@ -82,7 +74,7 @@ If the password has been changed in Grafana, use the updated password.
 
 ### Log storage
 
-Managed logs retain 14 days of data and start with a 5 GiB volume from the default StorageClass. For 30-day retention and automatic growth up to 50 GiB, save this in `platform-values.yaml`:
+Managed logs retain 14 days of data and start with a 5 GiB volume from the default StorageClass. For 30-day retention and automatic growth up to 50 GiB, save this in `deploy/platform-values.yaml`:
 
 ```yaml
 observability:
@@ -94,7 +86,7 @@ observability:
 Apply the file again whenever its settings change:
 
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
 
 Setting `maxSize` enables expansion at 80% usage, doubling the requested capacity up to the limit. The storage driver must support online expansion and per-volume usage statistics.

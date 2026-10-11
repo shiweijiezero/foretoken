@@ -21,6 +21,72 @@ spec:
 
 值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
 
+## 模型环境变量
+
+通过 `spec.env` 为单个模型的运行进程设置环境变量：
+
+```yaml
+spec:
+  env:
+    OMP_NUM_THREADS: 8
+    VLLM_LOGGING_LEVEL: DEBUG
+    TOKENIZERS_PARALLELISM: false
+```
+
+值可以填写字符串、数字或布尔值，传给进程时统一转为字符串。保留 `"001"` 这样的文本时使用引号。`$(NAME)` 可以引用其他变量，无需调整声明顺序，但不能循环引用。
+
+各 Pool 默认继承所属模型的 `spec.env`。填写 `modelPools[].env` 会整体替换该 Pool 的映射，`env: {}` 清空继承的自定义变量，省略或填写 `null` 则继续继承。
+
+凭据使用 Secret 引用，不直接填写明文值：
+
+```yaml
+spec:
+  env:
+    AWS_ACCESS_KEY_ID:
+      valueFrom:
+        secretKeyRef:
+          name: model-storage
+          key: access-key-id
+```
+
+`valueFrom` 支持 Kubernetes 的 Secret、ConfigMap、Pod 字段和容器资源引用。上例需在模型所在命名空间创建 Secret `model-storage`，并提供 `access-key-id` 键。直接填写的值会随部署和实验配置保存。
+
+变量按模型隔离，多节点副本的所有成员均生效。构建和独立模型下载仍使用各自的配置；启动、拓扑和缓存等平台管理的变量由 Foretoken 设置。
+
+修改后执行 `foretoken deploy <配置目录>`，替换环境发生变化的模型实例。仅更新 Secret 或 ConfigMap 内容，要等新容器启动才生效；如需立即切换，改用新的引用并重新部署。
+
+## 选择模型服务节点
+
+通过 Kubernetes 节点 label，将整个服务或某个 Pool 固定到指定机器组。为组内每台节点设置相同的 key/value：
+
+```bash
+kubectl label node <node-a> workload-group=group-a --overwrite
+kubectl label node <node-b> workload-group=group-a --overwrite
+kubectl get nodes -L workload-group
+```
+
+然后在模型 YAML 中使用同一组 key/value：
+
+```yaml
+spec:
+  nodeSelector:
+    workload-group: group-a
+```
+
+`ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
+
+## 实例并发上限
+
+要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：
+
+```yaml
+spec:
+  instanceAdmission:
+    maxConcurrentRequests: 32
+```
+
+修改后，用 `foretoken deploy` 重新部署模型所在的配置目录。限额在线生效，已接收的工作继续执行；满额时停止接收新工作，直到占用降到上限以下。省略 `instanceAdmission` 表示不限流。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |
@@ -48,7 +114,7 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 填写 `modelPools[].engineArgs` 时，它会整体替换该 Pool 继承的服务级原生参数。服务副本数与引擎内部的数据并行度分别配置。
 
-开启 EP 后，attention 可以按 TP × DP 执行，路由专家则分布在对应的 EP 组中。共享专家不会让 attention 的 KV Cache 在 DP ranks 之间共享。
+开启专家并行（EP）后，各 DP rank 的 KV Cache 仍独立。单节点 EP 仅在实际通信后端需要时申请 RDMA 设备。
 
 ## 推测解码
 

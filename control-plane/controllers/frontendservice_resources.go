@@ -6,7 +6,6 @@
 package controllers
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -44,9 +43,9 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		return nil, nil, nil, fmt.Errorf("parse frontend request timeout: %w", err)
 	}
 	requestTimeout := gatewayv1.Duration(fmt.Sprintf("%ds", requestTimeoutSeconds))
-	streamIdleSeconds, err := durationSeconds(frontend.Spec.Timeouts.StreamIdle)
+	drainSeconds, err := durationSeconds(frontend.Spec.Timeouts.Drain)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("parse frontend stream idle timeout: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse frontend drain timeout: %w", err)
 	}
 	labels := map[string]string{frontendServiceLabel: frontend.Name}
 	replicas := int32(1)
@@ -59,16 +58,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
-	terminationGracePeriodSeconds := requestTimeoutSeconds + 5
+	terminationGracePeriodSeconds := drainSeconds + 5
 	servingConfigMap := frontendServingConfigMapName(frontend)
 	if frontend.Spec.RouterPipeline.Filter.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Scorer.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Picker.Algorithm == "" {
 		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
-	}
-	routerPipeline, err := json.Marshal(frontend.Spec.RouterPipeline)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("encode router pipeline: %w", err)
 	}
 	cacheMountPath := "/var/cache/foretoken"
 	if profile.RuntimeCache != nil {
@@ -78,13 +73,21 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
+		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "HF_HOME", Value: modelRoot},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
-		{Name: "FORETOKEN_REQUEST_TIMEOUT_SECONDS", Value: strconv.FormatInt(requestTimeoutSeconds, 10)},
-		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
+		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
-		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
+	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontendServingConfigVersion)}
+	if profile.ApplicationURL != "" {
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
+	}
+	if profile.SourceRevision != "" {
+		annotations[runtimeconfig.SourceRevisionAnnotation] = profile.SourceRevision
+	}
+	frontendEnv = append(frontendEnv, runtimeconfig.AdmissionStoreEnv(profile.AdmissionStore)...)
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
@@ -137,7 +140,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels)},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels), Annotations: annotations},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            serviceAccountName,
 					AutomountServiceAccountToken:  &automountToken,
@@ -170,6 +173,12 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
+	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
+		securityContext := deployment.Spec.Template.Spec.SecurityContext
+		securityContext.RunAsUser = &cache.DirectoryOwner.UID
+		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
+	}
+	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

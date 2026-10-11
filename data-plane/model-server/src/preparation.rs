@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::launch::{Artifacts, LaunchPlanV1};
+use crate::launch::{Artifacts, LaunchPlanV1, PYTHON_MODULE_PATH};
 
 /// Controller-owned publication scope shared by replicas of one Pool revision.
 pub const PREPARATION_SCOPE_ENV: &str = "FORETOKEN_MODEL_PREPARATION_SCOPE";
@@ -31,6 +31,8 @@ struct ResolvedArtifacts {
     artifacts: Artifacts,
     model_revision: String,
     tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    draft: Option<Box<ResolvedArtifacts>>,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +48,8 @@ pub struct PreparedArtifacts {
     source: ResolvedArtifacts,
     pub model: PathBuf,
     pub tokenizer: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<Box<PreparedArtifacts>>,
     model_files: Vec<String>,
     tokenizer_files: Vec<String>,
 }
@@ -87,24 +91,37 @@ impl PreparedArtifacts {
     }
 
     fn files_available(&self) -> bool {
-        self.model_files
-            .iter()
-            .all(|file| self.model.join(file).is_file())
+        self.model.is_dir()
+            && self.tokenizer.is_dir()
+            && self
+                .model_files
+                .iter()
+                .all(|file| self.model.join(file).is_file())
             && self
                 .tokenizer_files
                 .iter()
                 .all(|file| self.tokenizer.join(file).is_file())
+            && self.draft.as_deref().map(|draft| &draft.source) == self.source.draft.as_deref()
+            && self.draft.as_deref().is_none_or(Self::files_available)
     }
 }
 
 // The mounted record and ConfigMap carry source identity, never container-local paths.
-fn decode_source(bytes: &[u8], artifacts: &Artifacts) -> io::Result<ResolvedArtifacts> {
+fn decode_source(bytes: &[u8], plan: &LaunchPlanV1) -> io::Result<ResolvedArtifacts> {
     let source: ResolvedArtifacts = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-    if source.version != 1
-        || &source.artifacts != artifacts
-        || source.model_revision.is_empty()
-        || source.tokenizer_revision.is_empty()
-    {
+    let valid = |source: &ResolvedArtifacts, artifacts: &Artifacts| {
+        source.version == 1
+            && &source.artifacts == artifacts
+            && !source.model_revision.is_empty()
+            && !source.tokenizer_revision.is_empty()
+    };
+    let draft = plan.dt.as_ref().and_then(|dt| dt.draft_artifacts.as_ref());
+    let draft_matches = match (source.draft.as_deref(), draft) {
+        (Some(source), Some(artifacts)) => valid(source, artifacts) && source.draft.is_none(),
+        (None, None) => true,
+        _ => false,
+    };
+    if !valid(&source, &plan.artifacts) || !draft_matches {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "model source publication does not match the launch plan",
@@ -113,9 +130,9 @@ fn decode_source(bytes: &[u8], artifacts: &Artifacts) -> io::Result<ResolvedArti
     Ok(source)
 }
 
-fn read_source(path: &Path, artifacts: &Artifacts) -> io::Result<Option<ResolvedArtifacts>> {
+fn read_source(path: &Path, plan: &LaunchPlanV1) -> io::Result<Option<ResolvedArtifacts>> {
     match fs::read(path) {
-        Ok(bytes) => decode_source(&bytes, artifacts).map(Some),
+        Ok(bytes) => decode_source(&bytes, plan).map(Some),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -141,8 +158,12 @@ fn load_result(
 }
 
 // Provider imports happen in a child so transfer tuning does not affect the serving engine.
-fn provider_command(plan: &LaunchPlanV1, model_root: &Path) -> io::Result<Command> {
-    let (source, performance_setting, default) = match plan.artifacts.source {
+fn provider_command(
+    plan: &LaunchPlanV1,
+    artifacts: &Artifacts,
+    model_root: &Path,
+) -> io::Result<Command> {
+    let (source, performance_setting, default) = match artifacts.source {
         ModelSource::Hf => ("hf", "HF_XET_HIGH_PERFORMANCE", "1"),
         ModelSource::ModelScope => ("modelscope", "MODELSCOPE_DOWNLOAD_PARALLELS", "16"),
         ModelSource::Local => {
@@ -152,16 +173,20 @@ fn provider_command(plan: &LaunchPlanV1, model_root: &Path) -> io::Result<Comman
             ));
         }
     };
+    let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
+        .map(|directory| PathBuf::from(directory).join("python"))
+        .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
+    let script = fs::read_to_string(directory.join("foretoken_prepare.py"))?;
     let mut command = Command::new(plan.python_executable());
     command
-        .args(["-c", include_str!("../python/foretoken_prepare.py")])
+        .args(["-c", &script])
         .env(
             performance_setting,
             std::env::var_os(performance_setting).unwrap_or_else(|| default.into()),
         )
         .env("FORETOKEN_PREPARE_SOURCE", source)
-        .env("FORETOKEN_PREPARE_MODEL", &plan.artifacts.model)
-        .env("FORETOKEN_PREPARE_TOKENIZER", &plan.artifacts.tokenizer)
+        .env("FORETOKEN_PREPARE_MODEL", &artifacts.model)
+        .env("FORETOKEN_PREPARE_TOKENIZER", &artifacts.tokenizer)
         .env(foretoken_artifacts::MODEL_ROOT_ENV, model_root)
         .env("HF_HUB_CACHE", model_root.join("hub"))
         .env("HF_XET_CACHE", model_root.join("xet"))
@@ -189,29 +214,59 @@ async fn run_provider<T: serde::de::DeserializeOwned>(command: &mut Command) -> 
     serde_json::from_slice(&output.stdout).map_err(io::Error::other)
 }
 
+// Resolve both model identities before publishing the one immutable Pool source record.
 async fn resolve_revisions(
     plan: &LaunchPlanV1,
     model_root: &Path,
 ) -> io::Result<ResolvedArtifacts> {
-    let mut command = provider_command(plan, model_root)?;
-    command
-        .env("FORETOKEN_PREPARE_ACTION", "resolve")
-        .env("FORETOKEN_PREPARE_MODEL_REVISION", &plan.artifacts.revision)
-        .env(
-            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
-            &plan.artifacts.tokenizer_revision,
-        );
-    let revisions: ResolvedRevisions = run_provider(&mut command).await?;
-    let source = ResolvedArtifacts {
-        version: 1,
-        artifacts: plan.artifacts.clone(),
-        model_revision: revisions.model_revision,
-        tokenizer_revision: revisions.tokenizer_revision,
-    };
+    let mut source = resolve_artifacts(plan, &plan.artifacts, model_root, None).await?;
+    if let Some(artifacts) = plan.dt.as_ref().and_then(|dt| dt.draft_artifacts.as_ref()) {
+        source.draft = Some(Box::new(
+            resolve_artifacts(
+                plan,
+                artifacts,
+                model_root,
+                Some(&source.tokenizer_revision),
+            )
+            .await?,
+        ));
+    }
     decode_source(
         &serde_json::to_vec(&source).map_err(io::Error::other)?,
-        &plan.artifacts,
+        plan,
     )
+}
+
+// Provider-owned resolution is shared by the primary model and neural proposal weights.
+async fn resolve_artifacts(
+    plan: &LaunchPlanV1,
+    artifacts: &Artifacts,
+    model_root: &Path,
+    tokenizer_revision: Option<&str>,
+) -> io::Result<ResolvedArtifacts> {
+    let revisions = if artifacts.source == ModelSource::Local {
+        ResolvedRevisions {
+            model_revision: artifacts.revision.clone(),
+            tokenizer_revision: artifacts.tokenizer_revision.clone(),
+        }
+    } else {
+        let mut command = provider_command(plan, artifacts, model_root)?;
+        command
+            .env("FORETOKEN_PREPARE_ACTION", "resolve")
+            .env("FORETOKEN_PREPARE_MODEL_REVISION", &artifacts.revision)
+            .env(
+                "FORETOKEN_PREPARE_TOKENIZER_REVISION",
+                tokenizer_revision.unwrap_or(&artifacts.tokenizer_revision),
+            );
+        run_provider(&mut command).await?
+    };
+    Ok(ResolvedArtifacts {
+        version: 1,
+        artifacts: artifacts.clone(),
+        model_revision: revisions.model_revision,
+        tokenizer_revision: revisions.tokenizer_revision,
+        draft: None,
+    })
 }
 
 // ConfigMap resourceVersion makes the first successful publication authoritative across Jobs.
@@ -257,7 +312,7 @@ async fn publish_source(
             .as_str()
             .filter(|record| !record.is_empty())
         {
-            return decode_source(record.as_bytes(), &plan.artifacts);
+            return decode_source(record.as_bytes(), plan);
         }
         let resource_version =
             current["metadata"]["resourceVersion"]
@@ -307,16 +362,14 @@ pub async fn prepare(
     let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
         Some(publish_source(plan, model_root, &name).await?)
     } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
-        Some(
-            read_source(Path::new(&path), &plan.artifacts)?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "mounted model source publication is missing",
-                )
-            })?,
-        )
+        Some(read_source(Path::new(&path), plan)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "mounted model source publication is missing",
+            )
+        })?)
     } else {
-        read_source(&directory.join(SOURCE_KEY), &plan.artifacts)?
+        read_source(&directory.join(SOURCE_KEY), plan)?
     };
     if let Some(source) = &source {
         // Compile-cache write failure does not invalidate readable model snapshots.
@@ -351,7 +404,7 @@ pub async fn prepare(
     .map_err(io::Error::other)??;
     let source = match source {
         Some(source) => source,
-        None => match read_source(&directory.join(SOURCE_KEY), &plan.artifacts)? {
+        None => match read_source(&directory.join(SOURCE_KEY), plan)? {
             Some(source) => source,
             None => {
                 let source = resolve_revisions(plan, model_root).await?;
@@ -363,24 +416,57 @@ pub async fn prepare(
     if let Some(result) = load_result(&directory, &source)? {
         return Ok(result);
     }
-    let mut command = provider_command(plan, model_root)?;
-    command
-        .env("FORETOKEN_PREPARE_ACTION", "download")
-        .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
-        .env(
-            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
-            &source.tokenizer_revision,
-        );
-    let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
-    let result = PreparedArtifacts {
-        source,
+    // One lock and one disposable path index cover every weight source in this cohort.
+    let mut result = materialize_artifacts(plan, &source, model_root).await?;
+    if let Some(draft) = source.draft.as_deref() {
+        result.draft = Some(Box::new(
+            materialize_artifacts(plan, draft, model_root).await?,
+        ));
+    }
+    publish_json(&directory, "result.json", &result)?;
+    Ok(result)
+}
+
+// Materializes a published source with the same provider and cache paths for either role.
+async fn materialize_artifacts(
+    plan: &LaunchPlanV1,
+    source: &ResolvedArtifacts,
+    model_root: &Path,
+) -> io::Result<PreparedArtifacts> {
+    let downloaded = if source.artifacts.source == ModelSource::Local {
+        let resolve = |identifier: &str| {
+            foretoken_artifacts::resolve_directory(Some(model_root), identifier)?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("local artifact {identifier:?} was not found"),
+                )
+            })
+        };
+        DownloadedArtifacts {
+            model: resolve(&source.artifacts.model)?,
+            tokenizer: resolve(&source.artifacts.tokenizer)?,
+            model_files: Vec::new(),
+            tokenizer_files: Vec::new(),
+        }
+    } else {
+        let mut command = provider_command(plan, &source.artifacts, model_root)?;
+        command
+            .env("FORETOKEN_PREPARE_ACTION", "download")
+            .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
+            .env(
+                "FORETOKEN_PREPARE_TOKENIZER_REVISION",
+                &source.tokenizer_revision,
+            );
+        run_provider(&mut command).await?
+    };
+    Ok(PreparedArtifacts {
+        source: source.clone(),
         model: downloaded.model,
         tokenizer: downloaded.tokenizer,
         model_files: downloaded.model_files,
         tokenizer_files: downloaded.tokenizer_files,
-    };
-    publish_json(&directory, "result.json", &result)?;
-    Ok(result)
+        draft: None,
+    })
 }
 
 fn publish_json(directory: &Path, name: &str, value: &impl Serialize) -> io::Result<()> {

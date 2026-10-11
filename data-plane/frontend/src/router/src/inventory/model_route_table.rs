@@ -43,9 +43,11 @@ impl ModelRouteTable {
                     || (route.role == foretoken_model_protocol::ModelServerRole::Target
                         && retained_target == Some(&route.route_target_id)))
                     && route.model == request.model
+                    && (request.allowed_pools.is_empty()
+                        || request.allowed_pools.contains(&route.target.name))
                     && route
                         .max_input_tokens
-                        .is_none_or(|limit| request.token_count() <= limit)
+                        .is_none_or(|limit| request.input_tokens <= limit)
             })
             .collect()
     }
@@ -66,7 +68,6 @@ pub(crate) fn supports_request(
         return false;
     }
     (text.lora_request.is_none() || capabilities.contains("lora"))
-        && (text.reasoning_parser_kwargs.is_none() || capabilities.contains("reasoning"))
         && supports_structured_output(capabilities, request)
         && (!requires_encoder || supports_multimodal(capabilities, request))
 }

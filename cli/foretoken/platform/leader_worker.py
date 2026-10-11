@@ -12,7 +12,6 @@ from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform.helm import Helm
 from foretoken.platform.types import ReleaseRef
 
-
 _API_GROUP = "leaderworkerset.x-k8s.io"
 _RESOURCE = f"leaderworkersets.{_API_GROUP}"
 

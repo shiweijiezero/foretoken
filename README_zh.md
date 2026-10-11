@@ -31,32 +31,43 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-准备好支持 GPU 的 Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
+先根据集群情况选择部署路径：
+
+| 使用场景 | 指南 |
+|---|---|
+| 本地单机集群部署 | [k3d 部署指南](docs/k3d-deployment_zh.md) · [kind 部署指南](docs/kind-deployment_zh.md) |
+| 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md) |
+| 沐曦 GPU 集群部署 | [沐曦部署指南](docs/metax-deployment_zh.md) |
+
+下面以 k3d 部署为例。
 
 ### 1. 获取示例并安装命令行工具
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install foretoken
+pip install -e .
 
-# 从源码目录安装：
-# pip install -e .
+# 使用发布的 CLI：
+# pip install foretoken
 ```
 
 ### 2. 安装 Kubernetes 平台
 
-```bash
-# 使用 GHCR 发布的镜像：
-foretoken install
+创建名为 `foretoken-dev` 的本地 k3d 集群并安装 Foretoken：
 
-# 从源码目录构建并安装：
-# foretoken install -e .
+```bash
+# 使用 nvidia-smi 显示的 GPU 编号 0。若使用两张 GPU，传入 --gpus 0,1。
+foretoken cluster create k3d --name foretoken-dev --gpus 0
+
+# 从当前源码构建：
+foretoken install -e .
+
+# 使用已发布的平台：
+# foretoken install
 ```
 
-沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
-
-构建工具和远程集群部署见[源码部署指南](docs/custom-deployment_zh.md)。
+宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例
 
@@ -64,7 +75,7 @@ foretoken install
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本，请求 1 张 GPU、8 个 CPU 和 52 GiB 内存。更多部署配置见 [`examples/`](examples/)。
+该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
 ### 4. 发送测试请求
 
@@ -76,6 +87,10 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
+
+### 快速迭代源码
+
+源码安装后，修改代码并重新执行部署命令即可更新服务。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
 ### 5. 评测与性能剖析
 
@@ -158,12 +173,6 @@ foretoken uninstall
 ```
 
 卸载时会保留 Foretoken CRD、日志存储和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
-
-## 部署指南
-
-- [源码构建与私有镜像仓库](docs/custom-deployment_zh.md)
-- [使用 k3d 创建单机 GPU 集群](docs/k3d-deployment_zh.md)
-- [沐曦 GPU](docs/metax-deployment_zh.md)
 
 ## 相关项目
 

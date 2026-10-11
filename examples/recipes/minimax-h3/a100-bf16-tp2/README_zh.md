@@ -9,39 +9,10 @@
 本配方部署一个前端服务和一个 BF16 模型副本，将模型以张量并行方式分布到两张 GPU 上（TP=2）。
 模型申请两张 A100 80 GB、32 个 CPU 核和 256 GiB 主机内存；还需为平台预留资源。
 
-## 构建和安装
+## 部署前
 
-准备可用的 GPU Kubernetes 集群，以及[源码部署指南](../../../../docs/custom-deployment_zh.md)
-列出的工具。本地集群可按 [k3d 指南](../../../../docs/k3d-deployment_zh.md)搭建。
-在 Foretoken 仓库根目录执行：
-
-```bash
-make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
-make image-model-server-omni \
-  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
-  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
-```
-
-使用 k3d 时，将模型服务镜像导入 `CLUSTER` 指定的集群：
-
-```bash
-k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
-```
-
-远程集群需要将该镜像打标签并推送到节点可访问的镜像仓库，再将下方的镜像地址替换为推送后的地址。
-把以下配置保存为 `platform-values.yaml`：
-
-```yaml
-runtime:
-  vllmOmni:
-    image: foretoken-omni-model-server:latest
-```
-
-安装或更新平台。远程集群还需按源码部署指南添加 `--registry`。
-
-```bash
-foretoken install -e . --values platform-values.yaml
-```
+平台需使用 [vLLM-Omni 运行时](../../../../docs/custom-deployment_zh.md#vllm-omni-运行时)。
+下方配方命令均从 Foretoken 仓库根目录执行。
 
 ## 部署
 
@@ -120,7 +91,7 @@ spec:
   source: modelscope
 ```
 
-使用 Hugging Face 兼容镜像站时，将地址加入 `platform-values.yaml`，
+使用 Hugging Face 兼容镜像站时，将地址加入 `deploy/platform-values.yaml`，
 在部署模型前重新执行平台安装命令：
 
 ```yaml

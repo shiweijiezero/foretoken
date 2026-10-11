@@ -17,7 +17,7 @@ docker build -f examples/encoder-prefill-decode/runtime.Dockerfile -t foretoken-
 
 集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备；不具备该条件时，可按下文选择 TCP。
 
-将镜像选择和共享编码缓存设置保存为 `platform-values.yaml`：
+将镜像选择和共享编码缓存设置保存为 `deploy/platform-values.yaml`：
 
 ```yaml
 runtime:
@@ -41,7 +41,7 @@ TCP 不需要 RDMA 设备，GPU KV 数据会经过主机内存暂存。
 从当前源码安装平台：
 
 ```bash
-foretoken install -e . --values platform-values.yaml
+foretoken install -e . --values deploy/platform-values.yaml
 ```
 
 远程集群还需通过 `--registry REGISTRY` 指定节点能够访问的容器仓库。其他安装选项见 [CLI 指南](../../cli/README_zh.md#当前源码)。

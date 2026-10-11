@@ -30,13 +30,13 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/ti2v
 ```
 
-评测会在终端打印汇总结果，在本地保存生成视频和运行元数据，并在 W&B 中记录逐请求指标。添加 `--warmup-requests N` 可在测量前完成前 N 条数据集请求；添加 `--duration SECONDS` 可在到达截止时间后停止新的请求准入，并等待已经准入的请求完成。使用 `--sweep benchmarks/examples/video-sweep.jsonl` 可比较视频生成参数和负载设置。通用输出设置见 [W&B 输出](wandb_zh.md)。
+生成的视频保存在 `--output-dir` 指定的目录中。用 `--warmup-requests N` 在测量前预热 N 个请求，或用 `--duration 5min` 将发送请求的时长设为五分钟，已发送的请求会继续等待完成。比较生成参数和负载设置时，添加 `--sweep benchmarks/examples/video-sweep.jsonl`。
 
 ![TI2V 评测汇总结果](../imgs/video-ti2v-benchmark-summary.png)
 
@@ -60,13 +60,11 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/tv2v
 ```
-
-结果目录结构和 W&B 上报方式与 TI2V 相同：
 
 ![TV2V 评测汇总结果](../imgs/video-tv2v-benchmark-summary.png)
 

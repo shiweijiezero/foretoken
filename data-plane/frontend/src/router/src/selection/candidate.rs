@@ -35,6 +35,8 @@ pub struct RouteCandidate {
     pub pipeline_scope_id: Option<String>,
     /// Observed DT format used to match peers before selection.
     pub draft_target_format: Option<foretoken_model_protocol::DraftTargetCandidateFormat>,
+    /// Hidden-state context required or emitted by a DT role; None denotes token-only drafting.
+    pub draft_target_context: Option<serde_json::Value>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
     /// Latest route-target gauges and available windowed statistics for this routing round.
@@ -42,6 +44,8 @@ pub struct RouteCandidate {
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
     /// Requests reserved by this frontend for the exact target and DP rank.
     pub local_load: crate::RoutingLoadSnapshot,
+    /// Router-owned stage eligibility for this scoring round.
+    pub stage_eligible: bool,
 }
 
 impl RouteCandidate {
@@ -65,7 +69,7 @@ impl RouteCandidate {
     }
 
     /// Converts this internal scored candidate into the execution decision exposed by Router.
-    pub(crate) fn decision(&self) -> crate::RouteDecision {
+    pub fn decision(&self) -> crate::RouteDecision {
         crate::RouteDecision {
             route_target_id: self.route_target_id.clone(),
             admission_targets: self.admission_targets.clone(),

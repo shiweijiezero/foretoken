@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-<!-- 普通修复保留概要和验证；新增设计型功能将“概要”改为“目标”，并保留设计和接口。
+<!-- 必须保留概要、目的和验证。
 其余章节按需保留，删除不适用的部分。英文模板：PULL_REQUEST_TEMPLATE.md -->
 
 ## 概要

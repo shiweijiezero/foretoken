@@ -18,6 +18,10 @@ class ExternalRunnerMixin:
         with replace_binding(model_runner, "GPUModelRunner", GPUModelRunner):
             return super().init_device()
 
+    def dt_wait_execution(self) -> None:
+        """Acknowledge work preceding the serialized abort utility before session release."""
+        self.model_runner.main_stream.synchronize()
+
     def compile_or_warm_up_model(self):
         """Warm native execution with the sampling path used by real DT requests."""
         self.model_runner.warming_up = True

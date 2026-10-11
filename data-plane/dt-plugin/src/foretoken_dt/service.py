@@ -61,6 +61,7 @@ class OpenDraft(Message):
     token_ids: list[StrictInt] = Field(min_length=1)
     version: StrictInt = Field(ge=0)
     sampling: Sampling = Field(default_factory=Sampling)
+    priority: StrictInt = 0
 
 
 class ContextSource(Message):
@@ -96,6 +97,7 @@ class Generate(Message):
     min_tokens: StrictInt = Field(default=0, ge=0)
     ignore_eos: bool = False
     sampling: Sampling = Field(default_factory=Sampling)
+    priority: StrictInt = 0
 
 
 class TensorPayload(Message):
@@ -191,6 +193,7 @@ class DraftSession:
     token_ids: list[int]
     version: int
     sampling: Sampling
+    priority: int
     artifacts: set[str] = field(default_factory=set)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     active_request: str | None = None
@@ -224,6 +227,7 @@ class RoleService:
         self.migration_enabled = engine.vllm_config.kv_transfer_config is not None
         self.accepting = True
         self.drafts: dict[str, DraftSession] = {}
+        self.closing: dict[str, asyncio.Task[None]] = {}
         self.targets: dict[str, ExternalDraftRequest | None] = {}
         self.context_profile = None
         if engine.vllm_config.additional_config.get("foretoken_dt_context_role"):
@@ -236,8 +240,10 @@ class RoleService:
                 "target_revision": identity.get(
                     "revision", engine.model_config.revision
                 ),
-                "draft": spec.draft_model_config.model,
-                "draft_revision": spec.draft_model_config.revision,
+                "draft": identity.get("draft_model", spec.draft_model_config.model),
+                "draft_revision": identity.get(
+                    "draft_revision", spec.draft_model_config.revision
+                ),
             }
 
     async def worker(self, method: str, *args):
@@ -278,26 +284,37 @@ class RoleService:
             raise HTTPException(422, "token IDs are outside this model's vocabulary")
 
     async def close_session(self, session_id: str) -> None:
-        """Remove one session and abort its model work, including during drain."""
-        # StreamingResponse cancels an AnyIO scope on disconnect. Cleanup must
-        # reach EngineCore even inside that cancelled scope.
+        """Join the session's single close owner, including concurrent DELETE and stream cleanup."""
         with CancelScope(shield=True):
-            session = self.drafts.pop(session_id, None)
-            if session is not None:
-                session.closed.set()
-                if session.active_request is not None:
-                    await self.engine.abort(session.active_request)
-                for artifact_id in tuple(session.artifacts):
-                    await self.worker("dt_release", artifact_id)
-            if session_id in self.targets:
-                del self.targets[session_id]
-                for artifact_id in self.target_exports.pop(session_id, set()):
-                    await self.worker("dt_release", artifact_id)
-                self.transfer_observations.pop(session_id, None)
-                await self.engine.abort(session_id)
-                artifact_id = self.target_artifacts.pop(session_id, None)
-                if artifact_id is not None:
-                    await self.worker("dt_release", artifact_id)
+            task = self.closing.get(session_id)
+            if task is None:
+                task = asyncio.create_task(self._close_session(session_id))
+                self.closing[session_id] = task
+            try:
+                await asyncio.shield(task)
+            finally:
+                # A failed close must remain failed for every later DELETE or stream cleanup.
+                if task.done() and not task.cancelled() and task.exception() is None:
+                    self.closing.pop(session_id, None)
+
+    async def _close_session(self, session_id: str) -> None:
+        """Revoke one session and acknowledge native execution and artifact cleanup once."""
+        session = self.drafts.pop(session_id, None)
+        if session is not None:
+            session.closed.set()
+            if session.active_request is not None:
+                await self.engine.abort(session.active_request)
+            for artifact_id in tuple(session.artifacts):
+                await self.worker("dt_release", artifact_id)
+        if session_id in self.targets:
+            del self.targets[session_id]
+            await self.engine.abort(session_id)
+            for artifact_id in self.target_exports.pop(session_id, set()):
+                await self.worker("dt_release", artifact_id)
+            self.transfer_observations.pop(session_id, None)
+            artifact_id = self.target_artifacts.pop(session_id, None)
+            if artifact_id is not None:
+                await self.worker("dt_release", artifact_id)
 
     async def open_draft(self, request: OpenDraft):
         """Keep the owning control stream open; disconnect closes the Draft session."""
@@ -309,7 +326,7 @@ class RoleService:
         self.require_accepting()
         session_id = uuid4().hex
         session = DraftSession(
-            list(request.token_ids), request.version, request.sampling
+            list(request.token_ids), request.version, request.sampling, request.priority
         )
         self.drafts[session_id] = session
         try:
@@ -376,6 +393,7 @@ class RoleService:
                     TokensPrompt(prompt_token_ids=prompt),
                     params,
                     request_id,
+                    priority=session.priority,
                 )
             ) as outputs:
                 async for output in outputs:
@@ -499,7 +517,10 @@ class RoleService:
                 return
             async with aclosing(
                 self.engine.generate(
-                    TokensPrompt(prompt_token_ids=request.token_ids), params, session_id
+                    TokensPrompt(prompt_token_ids=request.token_ids),
+                    params,
+                    session_id,
+                    priority=request.priority,
                 )
             ) as outputs:
                 async for output in outputs:
@@ -811,7 +832,9 @@ def create_app(
         finally:
             service.accepting = False
             try:
-                for session_id in list(service.drafts) + list(service.targets):
+                for session_id in (
+                    list(service.drafts) + list(service.targets) + list(service.closing)
+                ):
                     await service.close_session(session_id)
                 if connector_initialized:
                     await service.drain_transfers()
@@ -843,7 +866,9 @@ def create_app(
             "prepared_tokenizer": metadata.get("prepared_tokenizer"),
             "max_model_len": service.engine.model_config.max_model_len,
             "accepting": service.accepting,
-            "active_sessions": len(service.drafts) + len(service.targets),
+            "active_sessions": len(
+                service.drafts.keys() | service.targets.keys() | service.closing.keys()
+            ),
             "candidate_format": "token_ids_log_probs"
             if service.rdma
             else "greedy_token_ids",

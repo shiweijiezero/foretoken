@@ -7,14 +7,6 @@ name: Control plane
 
 on:
   pull_request:
-    paths:
-      - control-plane/**
-      - deploy/charts/foretoken/**
-      - deploy/observability/**
-      - deploy/platform-values.example.yaml
-      - .dockerignore
-      - LICENSE
-      - .github/workflows/control-plane.yaml
   push:
     branches:
       - main
@@ -32,22 +24,48 @@ permissions:
 
 jobs:
   verify:
+    name: Control plane
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+      # Report a check on every PR without running unrelated builds.
+      - name: Select relevant changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          elif git diff --quiet HEAD^1 HEAD -- control-plane/ deploy/charts/foretoken/ \
+            deploy/observability/ deploy/platform-values.example.yaml .dockerignore \
+            LICENSE .github/workflows/control-plane.yaml; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'No control-plane changes; verification not needed.'
+          else
+            status=$?
+            test "$status" -eq 1 || exit "$status"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@v7.0.0
+        if: steps.changes.outputs.run == 'true'
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
       - uses: azure/setup-helm@v5.0.1
+        if: steps.changes.outputs.run == 'true'
         with:
           version: v4.2.3
       - name: Verify control plane
+        if: steps.changes.outputs.run == 'true'
         run: make -C control-plane verify
       - name: Validate operator image
+        if: steps.changes.outputs.run == 'true'
         run: docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
       - name: Validate Prometheus rules
+        if: steps.changes.outputs.run == 'true'
         run: |
           docker run --rm \
             --volume "${PWD}:/workspace:ro" \
@@ -62,11 +80,13 @@ jobs:
             quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
             check rules control-plane/internal/observability/rules.yaml
       - name: Create test cluster
+        if: steps.changes.outputs.run == 'true'
         uses: helm/kind-action@v1.14.0
         with:
           version: v0.32.0
           cluster_name: foretoken
       - name: Validate Helm chart
+        if: steps.changes.outputs.run == 'true'
         run: |
           helm lint deploy/charts/foretoken --kube-version 1.36.3
           helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
@@ -104,6 +124,7 @@ jobs:
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "3"
           test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "1"
       - name: Validate operator lifecycle
+        if: steps.changes.outputs.run == 'true'
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken
           helm upgrade --install foretoken deploy/charts/foretoken \
@@ -163,4 +184,5 @@ jobs:
           kubectl get crd/modelgroups.inference.foretoken.io
           ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
       - name: Check generated files
+        if: steps.changes.outputs.run == 'true'
         run: git diff --exit-code

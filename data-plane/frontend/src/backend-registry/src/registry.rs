@@ -40,6 +40,7 @@ pub struct BackendRegistry {
 struct BackendMetadata {
     runtime: RuntimeMetadataResponse,
     candidate_format: Option<DraftTargetCandidateFormat>,
+    context_profile: Option<serde_json::Value>,
 }
 pub(crate) enum Component {
     DraftTarget {
@@ -93,7 +94,11 @@ impl BackendRegistry {
     ///
     /// Startup retains the registry for routing, readiness refresh, and facade resolution; the input snapshot is consumed.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
-        let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
+        let configured_models = snapshot
+            .models
+            .iter()
+            .map(|model| model.model.clone())
+            .collect();
         let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()
@@ -239,20 +244,33 @@ impl BackendRegistry {
         Ok(selected)
     }
 
-    /// Reports whether one logical model currently has an executable backend path.
-    pub fn is_model_ready(&self, model: &str) -> bool {
-        self.healthy_models().iter().any(|healthy| healthy == model)
+    /// Reports whether a model has a healthy complete execution path in the allowed Pools.
+    /// Runtime readiness uses this before dispatch, including scale-from-zero waiting.
+    pub fn is_model_ready(&self, model: &str, allowed_pools: &[String]) -> bool {
+        self.healthy_models_in_pools(allowed_pools)
+            .iter()
+            .any(|healthy| healthy == model)
     }
 
     /// Lists models with a currently executable aggregate route or complete split pipeline.
     pub fn healthy_models(&self) -> Vec<String> {
+        self.healthy_models_in_pools(&[])
+    }
+
+    /// Resolves complete healthy execution paths within the allowed logical Pool range.
+    fn healthy_models_in_pools(&self, allowed_pools: &[String]) -> Vec<String> {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
-        let mut dt_scopes =
-            BTreeMap::<(String, String, DraftTargetCandidateFormat), (bool, bool)>::new();
+        let mut dt_scopes = BTreeMap::<
+            (String, String, DraftTargetCandidateFormat, Option<String>),
+            (bool, bool),
+        >::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
+            if !allowed_pools.is_empty() && !allowed_pools.contains(&route.target.name) {
+                continue;
+            }
             if route.role == ModelServerRole::Aggregate
                 && self.is_route_target_healthy(&route.route_target_id)
             {
@@ -267,7 +285,13 @@ impl BackendRegistry {
                     continue;
                 };
                 let roles = dt_scopes
-                    .entry((route.model.clone(), pipeline_scope_id.clone(), format))
+                    .entry((
+                        route.model.clone(),
+                        pipeline_scope_id.clone(),
+                        format,
+                        self.draft_target_context(&route.route_target_id)
+                            .map(|context| context.to_string()),
+                    ))
                     .or_default();
                 if self.is_route_target_healthy(&route.route_target_id) {
                     if route.role == ModelServerRole::Draft {
@@ -302,7 +326,7 @@ impl BackendRegistry {
                 models.insert(model);
             }
         }
-        for ((model, _, _), (draft, target)) in dt_scopes {
+        for ((model, _, _, _), (draft, target)) in dt_scopes {
             if draft && target {
                 models.insert(model);
             }
@@ -350,6 +374,7 @@ impl BackendRegistry {
                     .expect("component has a route");
                 let metadata = status.map(|status| BackendMetadata {
                     candidate_format: Some(status.candidate_format),
+                    context_profile: status.context_profile,
                     runtime: RuntimeMetadataResponse {
                         version: 1,
                         model: foretoken_model_protocol::RuntimeModelIdentity {
@@ -388,6 +413,7 @@ impl BackendRegistry {
                 metadata.filter(|_| healthy).map(|runtime| BackendMetadata {
                     runtime,
                     candidate_format: None,
+                    context_profile: None,
                 }),
                 stats,
             )
@@ -480,6 +506,15 @@ impl RouteInventory for BackendRegistry {
             .expect("metadata mutex")
             .get(id)?
             .candidate_format
+    }
+
+    fn draft_target_context(&self, id: &RouteTargetId) -> Option<serde_json::Value> {
+        self.metadata
+            .lock()
+            .expect("metadata mutex")
+            .get(id)?
+            .context_profile
+            .clone()
     }
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
+Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate comparisons](distribution-comparison.md): teacher-forced probabilities or greedy generated token sequences.
 
 ## lm-evaluation-harness
 
@@ -43,6 +43,19 @@ The tokenizer is inferred from the deployment, or from `--model` for an existing
 
 Candidate scoring uses raw text by default. Add `--apply_chat_template` when the task requires an instruction-model template. Perplexity uses the original corpus without a chat template.
 
+## Compare task scores across deployments
+
+After preparing the [quantized-model examples](../../../examples/quantized-model/README.md), pass their Kustomize directories before the task options to score the same task on each service:
+
+```bash
+foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+  --tasks piqa --limit 100 --output local,wandb,plot
+```
+
+The deployments are evaluated in turn. Compare task scores and available standard errors in `evaluation_comparison.csv`; detailed evaluator reports are saved with each run.
+
+For [reference/candidate distribution or greedy sequence comparisons](distribution-comparison.md), provide `--reference` explicitly with multiple candidate deployment paths.
+
 ## EvalScope
 
 ```bash
@@ -53,7 +66,7 @@ foretoken eval examples/quickstart \
   --output local,wandb
 ```
 
-The summary reports task scores and how many samples were scored. Category and subset scores remain in the saved reports and W&B. Use [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), including `--dataset-args` and `--generation-config`, to configure the task.
+The summary reports task scores and sample counts; saved reports provide category and subset scores. Use [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), including `--dataset-args` and `--generation-config`, to configure the task.
 
 For both frameworks, omit `--limit` to run the complete selected task. The evaluator and task define prompting and scoring. Run `foretoken eval --evaluator lm-eval --help` or `foretoken eval --evaluator evalscope --help` for the corresponding options.
 
@@ -74,7 +87,7 @@ This mode uses no Kubernetes resources. Add `--api-key` when authentication is r
 
 ## Resume an evaluation
 
-Keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
+For a single-deployment evaluation, keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
 
 ```bash
 foretoken eval examples/quickstart \
@@ -88,7 +101,7 @@ The resumed invocation writes a new result directory, reuses completed work, and
 | --- | --- |
 | lm-evaluation-harness | Completed text generations, including repeated sampling, and completed likelihood-scoring windows for candidate answers and perplexity |
 | EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
-| Distribution comparison | Complete scoring windows; see [resuming a comparison](distribution-comparison.md#resume-a-comparison) |
+| Distribution comparison | Complete scoring windows; see [resuming a distribution comparison](distribution-comparison.md#resume-a-distribution-comparison) |
 
 Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow.
 
@@ -102,6 +115,6 @@ Open the result directory printed by the command:
 | `native/` | The framework's reports and any generated sample records |
 | `evaluator.log` | The evaluator's execution log |
 
-W&B provides task metrics, a score table, and native reports as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
+See [output settings](../../README.md#read-and-save-results) to choose where results are saved.
 
 Compare scores using the same evaluator, task configuration, and sample selection.

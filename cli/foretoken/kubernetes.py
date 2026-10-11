@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import time
 from collections.abc import Callable, Iterable
@@ -22,6 +21,7 @@ from foretoken.manifest import (
     deployment_path,
     parse_deployment,
 )
+from foretoken.tools import resolve_tool
 
 _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
 _METRICS_SCRAPER_OWNER_ANNOTATION = (
@@ -60,15 +60,12 @@ class Kubectl:
 
     def __init__(self, context: str | None = None) -> None:
         self.context = context
-        if shutil.which("kubectl") is None:
-            raise DeploymentError(
-                "kubectl is required to deploy or inspect Foretoken services"
-            )
+        self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
         context = ["--context", self.context] if self.context is not None else []
-        return ["kubectl", *context, *args]
+        return [self.executable, *context, *args]
 
     def run(
         self,
@@ -103,6 +100,30 @@ class Kubectl:
             ["get", f"--request-timeout={request_timeout}", "--raw", path]
         ).stdout
 
+    def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
+        """Read a raw endpoint and return None only for the API server's NotFound response."""
+        command = self.command(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        )
+        try:
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds(request_timeout),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DeploymentError(
+                f"{' '.join(command)} timed out after {request_timeout}"
+            ) from exc
+        if completed.returncode == 0:
+            return completed.stdout
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if detail.startswith("Error from server (NotFound):"):
+            return None
+        raise DeploymentError(f"{' '.join(command)} failed: {detail}")
+
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
         return self.run(["kustomize", str(path)]).stdout
@@ -126,6 +147,22 @@ class Kubectl:
             ],
             input_text=rendered,
         )
+
+    def wait_deleted(
+        self, resource: str, metadata: dict[str, Any], timeout: str
+    ) -> None:
+        """Wait for one owned UID to disappear without waiting on a reused resource name."""
+        name, namespace, uid = metadata["name"], metadata["namespace"], metadata["uid"]
+        deadline = time.monotonic() + timeout_seconds(timeout)
+        while True:
+            current = self.get_if_exists(resource, name, namespace)
+            if current is None or current["metadata"]["uid"] != uid:
+                return
+            if time.monotonic() >= deadline:
+                raise DeploymentError(
+                    f"{resource}/{name} in {namespace} was not deleted within {timeout}"
+                )
+            time.sleep(1)
 
     def rollout_status(self, resource: ResourceRef, timeout: str) -> None:
         """Wait for one namespaced workload to become ready."""
@@ -272,9 +309,9 @@ class Kubectl:
         )
 
     def list_resources(
-        self, kinds: Iterable[str], namespace: str
+        self, kinds: Iterable[str], namespace: str, *, label_selector: str = ""
     ) -> tuple[dict[str, Any], ...]:
-        """Return the selected resource kinds in one namespace."""
+        """Return selected namespaced resources, optionally filtered by labels."""
         args = [
             "get",
             ",".join(kinds),
@@ -283,6 +320,8 @@ class Kubectl:
             "-o",
             "json",
         ]
+        if label_selector:
+            args.extend(["--selector", label_selector])
         return _decode_resource_list(self.run(args).stdout)
 
     def list_cluster_resources(
@@ -303,11 +342,12 @@ class Kubectl:
             args.extend(["--selector", label_selector])
         return _decode_resource_list(self.run(args).stdout)
 
-    def api_resource_names(self, group: str) -> tuple[str, ...]:
-        """Return resource names currently served for one Kubernetes API group."""
-        output = self.run(
-            ["api-resources", "--api-group", group, "-o", "name"]
-        ).stdout
+    def api_resource_names(self, group: str | None = None) -> tuple[str, ...]:
+        """Discover served resources, optionally selecting one API group; empty selects core."""
+        args = ["api-resources", "-o", "name"]
+        if group is not None:
+            args.extend(["--api-group", group])
+        output = self.run(args).stdout
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
     def current_context(self) -> str:
@@ -410,21 +450,36 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
 
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
-    """Return user-owned services that require the Foretoken control plane."""
-    supported = set(kubectl.api_resource_names("inference.foretoken.io"))
-    top_level_kinds = tuple(
+    """Find services and remaining serving workloads before their platform is removed."""
+    supported = set(kubectl.api_resource_names())
+    kinds = tuple(
         name
         for name in (
             "frontendservices.inference.foretoken.io",
             "modelservices.inference.foretoken.io",
             "kvservices.inference.foretoken.io",
+            "modelpools.inference.foretoken.io",
+            "modelgroups.inference.foretoken.io",
         )
         if name in supported
     )
-    if not top_level_kinds:
-        return ()
-
-    return _resource_refs(kubectl.list_all_resources(top_level_kinds))
+    objects = list(kubectl.list_all_resources(kinds)) if kinds else []
+    workloads = ("pods", "jobs", "replicasets", "deployments", "statefulsets")
+    if "leaderworkersets.leaderworkerset.x-k8s.io" in supported:
+        workloads += ("leaderworkersets.leaderworkerset.x-k8s.io",)
+    # Deleting a service does not synchronously terminate its descendants.
+    for label in (
+        "inference.foretoken.io/frontend-service",
+        "inference.foretoken.io/model-group",
+        "inference.foretoken.io/model-preparation-group",
+    ):
+        objects.extend(
+            kubectl.list_all_resources(
+                workloads,
+                label_selector=label,
+            )
+        )
+    return tuple(dict.fromkeys(_resource_refs(objects)))
 
 
 def timeout_seconds(value: str) -> float:
@@ -439,7 +494,7 @@ def timeout_seconds(value: str) -> float:
 
 
 def resource_progress(
-    resource: ResourceRef, value: dict[str, Any]
+    resource: ResourceRef, value: dict[str, Any], *, expected_revision: str | None = None
 ) -> ResourceProgress:
     """Interpret current serving and explicitly selected alert readiness without accepting stale generations."""
     metadata = value.get("metadata") or {}
@@ -447,6 +502,12 @@ def resource_progress(
     if metadata.get("deletionTimestamp"):
         return ResourceProgress(
             resource, "Terminating", "Deleting", "Resource is being deleted", False
+        )
+
+    if expected_revision is not None and (value.get("spec") or {}).get("deploymentRevision") != expected_revision:
+        return ResourceProgress(
+            resource, "Failed", "DeploymentSuperseded",
+            "A newer deployment replaced this operation's target", False,
         )
 
     generation = int(metadata.get("generation") or 0)
@@ -496,6 +557,13 @@ def resource_progress(
         )
 
     condition_status = str(ready_condition.get("status") or "Unknown")
+    if resource.kind == "ModelService":
+        target = next((item for item in conditions if item.get("type") == "TargetReady"), None)
+        if target is not None and int(target.get("observedGeneration") or 0) == generation and target.get("status") == "False":
+            message = str(target["message"])
+            if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
+                message += "\nThe previous generation remains available."
+            return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
     if condition_status == "True":
         if (
             resource.kind == "ModelService"
@@ -518,7 +586,12 @@ def resource_progress(
                 "Waiting for the selected service alerts", False,
             )
         return ResourceProgress(resource, "Ready", reason, message, True)
-    if condition_status == "False" and reason == "InvalidIntent":
+    if condition_status == "False" and reason in {
+        "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
+    }:
+        compiled = next((item for item in conditions if item.get("type") == "IntentCompiled"), None)
+        if compiled is not None and int(compiled.get("observedGeneration") or 0) == generation and compiled.get("status") == "False":
+            message = str(compiled["message"])
         return ResourceProgress(resource, "Failed", reason, message, False)
     return ResourceProgress(resource, "Progressing", reason, message, False)
 
@@ -543,7 +616,8 @@ def namespace_progress(
 
 
 def read_progress(
-    resources: Iterable[ResourceRef], kubectl: Kubectl
+    resources: Iterable[ResourceRef], kubectl: Kubectl,
+    *, expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Read named service readiness with one Kubernetes request."""
     selected = tuple(resources)
@@ -555,7 +629,10 @@ def read_progress(
     }
     try:
         return tuple(
-            resource_progress(resource, by_identity[(resource.kind, resource.name)])
+            resource_progress(
+                resource, by_identity[(resource.kind, resource.name)],
+                expected_revision=(expected_revisions or {}).get(resource),
+            )
             for resource in selected
         )
     except KeyError as exc:
@@ -569,6 +646,7 @@ def wait_for_resources(
     *,
     report: Callable[[float, ResourceProgress], None] | None = None,
     observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
+    expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Wait until every service reports Ready for its current generation."""
     timeout_value = timeout_seconds(timeout)
@@ -578,7 +656,7 @@ def wait_for_resources(
     latest: tuple[ResourceProgress, ...] = ()
 
     while True:
-        latest = read_progress(resources, kubectl)
+        latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
         elapsed = time.monotonic() - started
         if report is not None:
             for progress in latest:

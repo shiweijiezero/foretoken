@@ -25,6 +25,7 @@ class NvidiaMetrics:
 
     exporter: ExporterMonitor | None
     node_selector: tuple[str, str] | None
+    visible_devices: str | None
 
 
 class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
@@ -87,7 +88,9 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
                     f"exporter: {names}"
                 )
             return NvidiaMetrics(
-                None, self.managed_node_selector(nodes, gpu_nodes)
+                None,
+                self.managed_node_selector(nodes, gpu_nodes),
+                self._visible_devices(gpu_nodes),
             )
 
         monitor = self.find_monitor(set(gpu_nodes))
@@ -98,7 +101,30 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
                 if monitor is not None
                 else self.managed_node_selector(nodes, gpu_nodes)
             ),
+            self._visible_devices(gpu_nodes) if monitor is None else None,
         )
+
+    def _visible_devices(self, gpu_nodes: tuple[str, ...]) -> str | None:
+        """Reuse a standard device plugin's literal visibility for managed DCGM placement."""
+        # Nested nodes can lack driver mounts for GPUs outside the plugin's selection.
+        plugins = [
+            daemonset
+            for daemonset in self._exporters.daemonsets
+            if object_name(daemonset) == "nvidia-device-plugin-daemonset"
+            and self._exporters.daemonset_pods_on_nodes(daemonset, set(gpu_nodes))
+        ]
+        if len(plugins) != 1:
+            return None
+        for container in plugins[0]["spec"]["template"]["spec"]["containers"]:
+            if container["name"] != "nvidia-device-plugin-ctr":
+                continue
+            for entry in container.get("env", []):
+                if entry["name"] == "NVIDIA_VISIBLE_DEVICES":
+                    value = entry.get("value")
+                    # References use the plugin container's environment, not the exporter's.
+                    return value if value is not None and "$(" not in value else None
+            return "all"
+        return None
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""

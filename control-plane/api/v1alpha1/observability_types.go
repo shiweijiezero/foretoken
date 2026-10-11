@@ -12,11 +12,70 @@ type FrontendObservability struct {
 }
 
 // FrontendAlerts selects only frontend-scoped rules; omitted rules remain disabled.
+// +kubebuilder:validation:XValidation:rule="!has(self.rules) || !self.rules.exists(r, r == 'ForetokenAdmissionCapacityRejectionRatioHigh') || (has(self.thresholds) && has(self.thresholds.admission) && has(self.thresholds.admission.capacityRejectionRatio) && has(self.thresholds.admission.minResultRate))",message="the capacity rejection alert requires capacityRejectionRatio and minResultRate"
+// +kubebuilder:validation:XValidation:rule="!has(self.rules) || !self.rules.exists(r, r == 'ForetokenAdmissionTimeoutRatioHigh') || (has(self.thresholds) && has(self.thresholds.admission) && has(self.thresholds.admission.timeoutRatio) && has(self.thresholds.admission.minResultRate))",message="the timeout alert requires timeoutRatio and minResultRate"
+// +kubebuilder:validation:XValidation:rule="!has(self.rules) || !self.rules.exists(r, r == 'ForetokenAdmissionAdmittedQueueP95High') || (has(self.thresholds) && has(self.thresholds.admission) && has(self.thresholds.admission.admittedQueueP95Seconds) && has(self.thresholds.admission.minQueuedAdmissionRate))",message="the queue latency alert requires admittedQueueP95Seconds and minQueuedAdmissionRate"
 type FrontendAlerts struct {
 	// +optional
 	// +listType=set
-	// +kubebuilder:validation:items:Enum=ForetokenMetricsTargetDown;ForetokenFrontendHTTPResponseStart5xxRatioHigh
+	// +kubebuilder:validation:MaxItems=6
+	// +kubebuilder:validation:items:Enum=ForetokenMetricsTargetDown;ForetokenFrontendHTTPResponseStart5xxRatioHigh;ForetokenAdmissionCapacityRejectionRatioHigh;ForetokenAdmissionTimeoutRatioHigh;ForetokenAdmissionAdmittedQueueP95High;ForetokenAdmissionTelemetryMissing
 	Rules []string `json:"rules,omitempty"`
+
+	// +optional
+	// +kubebuilder:default={}
+	Thresholds *FrontendAlertThresholds `json:"thresholds,omitempty"`
+}
+
+// FrontendAlertThresholds configures selected frontend rules without enabling them.
+type FrontendAlertThresholds struct {
+	// +optional
+	// +kubebuilder:default={}
+	Admission *AdmissionAlertThresholds `json:"admission,omitempty"`
+}
+
+// AdmissionAlertThresholds sets HTTP admission alert tolerances for one service or each Pod.
+// Business thresholds have no defaults; operation defaults are applied by API admission.
+type AdmissionAlertThresholds struct {
+	// +optional
+	// +kubebuilder:default=service
+	// +kubebuilder:validation:Enum=service;pod
+	Scope string `json:"scope,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="1m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Window Duration `json:"window,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="5m"
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	For Duration `json:"for,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
+	CapacityRejectionRatio *float64 `json:"capacityRejectionRatio,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
+	TimeoutRatio *float64 `json:"timeoutRatio,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	AdmittedQueueP95Seconds *float64 `json:"admittedQueueP95Seconds,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	MinResultRate *float64 `json:"minResultRate,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	MinQueuedAdmissionRate *float64 `json:"minQueuedAdmissionRate,omitempty"`
 }
 
 // ModelObservability selects observations owned by one ModelService.

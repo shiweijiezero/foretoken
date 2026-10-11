@@ -6,6 +6,7 @@
     "image",
     "imagePullSecrets",
     "controller",
+    "admissionStore",
     "workload",
     "modelDistribution",
     "loadBalancer",
@@ -15,6 +16,64 @@
     "runtime"
   ],
   "properties": {
+    "admissionStore": {
+      "type": "object",
+      "required": ["image", "storageClass", "storageSize", "externalURL", "externalURLSecret"],
+      "properties": {
+        "image": {"type": "string", "minLength": 1},
+        "storageClass": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1},
+        "externalURL": {
+          "type": "string",
+          "description": "Credential-free endpoint; authenticated URLs use externalURLSecret."
+        },
+        "externalURLSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "development": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "build": {
+          "type": "object",
+          "properties": {
+            "image": {"type": "string", "minLength": 1},
+            "storageClassName": {"type": "string"},
+            "storageSize": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "applicationFiles": {
+      "type": "object",
+      "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
+      "properties": {
+        "releaseURL": {"type": "string"},
+        "revision": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "description": "Application version used as one URL-safe directory name."
+        },
+        "credentialsSecret": {"type": "string"},
+        "serverImage": {"type": "string", "minLength": 1},
+        "clientImage": {"type": "string", "minLength": 1},
+        "storageClassName": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "profiling": {
       "type": "object",
       "additionalProperties": false,
@@ -103,6 +162,7 @@
         "autoscalingTelemetry"
       ],
       "properties": {
+        "applicationURL": {"type": "string"},
         "replicas": {
           "type": "integer",
           "minimum": 1
@@ -252,6 +312,7 @@
         "image": {
           "type": "string"
         },
+        "applicationURL": {"type": "string"},
         "port": {
           "type": "integer",
           "minimum": 1,
@@ -403,6 +464,12 @@
           "properties": {
             "image": {
               "type": "string"
+            },
+            "applicationURL": {"type": "string"},
+            "environmentImages": {
+              "type": "object",
+              "properties": {"nvidia": {"type": "string"}, "metax": {"type": "string"}},
+              "additionalProperties": false
             },
             "nsightImage": {
               "type": "string"

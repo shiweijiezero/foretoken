@@ -27,6 +27,9 @@ use super::{OutputAdapter, normalize};
 /// callers retaining an idle cancelled state must drop it to release its sessions.
 pub struct DraftTargetRequestState {
     request: vllm_llm::GenerateRequest,
+    pub(super) admission: Option<Arc<foretoken_admission::AdmissionPermit>>,
+    pub(super) allowed_pools: Vec<String>,
+    pub(super) first_route: Option<super::scheduler::FirstRoute>,
     pub(super) input: DraftTargetRequest,
     prefix: Vec<u32>,
     remaining: u32,
@@ -45,6 +48,7 @@ struct TargetBinding {
     client: RoleClient,
     session: RoleSession,
     location: Option<RouteDecision>,
+    candidate: Option<foretoken_router::RouteCandidate>,
 }
 
 struct DraftBinding {
@@ -67,6 +71,9 @@ impl DraftTargetRequestState {
             input,
             output: OutputAdapter::new(request.clone()),
             request,
+            admission: None,
+            allowed_pools: Vec::new(),
+            first_route: None,
             cancellation,
             version: None,
             target: None,
@@ -231,6 +238,7 @@ impl DraftTargetRequestState {
                     client: target,
                     session,
                     location: Some(destination),
+                    candidate: None,
                 });
                 // Target generation is local to its session; rebind Draft at the new generation.
                 self.draft = None;
@@ -243,26 +251,39 @@ impl DraftTargetRequestState {
     async fn receive(
         mut self,
         target: RoleClient,
-        selected_target: Option<RouteDecision>,
+        selected_target: Option<foretoken_router::RouteCandidate>,
     ) -> Result<DraftTargetRoundOutput, LlmFacadeError> {
         let cancellation = self.cancellation.clone();
         if self.target.is_none() {
             let session = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => return Ok(self.cancelled()),
-                result = target.generate(&self.input) => result?,
+                result = target.generate(&self.input) => match result {
+                    Err(LlmFacadeError::Busy) => return Ok(self.requeue(None)),
+                    result => result?,
+                },
             };
             let Some(session) = session else {
                 let worker = selected_target
                     .ok_or(LlmFacadeError::Unavailable)?
                     .route_target_id;
-                return Ok(self.requeue(worker));
+                return Ok(self.requeue(Some(worker)));
             };
+            if let Some(admission) = &self.admission {
+                admission.accepted().await;
+            }
+            let location = selected_target
+                .as_ref()
+                .map(foretoken_router::RouteCandidate::decision);
+            if let Some(first) = self.first_route.take() {
+                super::scheduler::send_first_route(&first, Ok(location.clone()));
+            }
             // Publish location only after the worker owns a live session.
             self.target = Some(TargetBinding {
                 client: target,
                 session,
-                location: selected_target,
+                location,
+                candidate: selected_target,
             });
         }
         let commit = tokio::select! {
@@ -328,13 +349,18 @@ impl DraftTargetRequestState {
     }
 
     /// Returns an unexecuted member for new placement without advancing its Target or prefix.
-    fn requeue(mut self, worker: RouteTargetId) -> DraftTargetRoundOutput {
-        self.closed_workers.insert(worker);
+    fn requeue(mut self, worker: Option<RouteTargetId>) -> DraftTargetRoundOutput {
+        let outcome = if let Some(worker) = worker {
+            self.closed_workers.insert(worker);
+            "admission_closed"
+        } else {
+            "busy"
+        };
         let observation = self
             .observation
             .take()
             .expect("executing round")
-            .finish("admission_closed");
+            .finish(outcome);
         self.ready_at = Instant::now();
         DraftTargetRoundOutput {
             request_id: self.request_id().to_owned(),
@@ -368,7 +394,13 @@ impl DraftTargetRequestState {
             bound.prefix_len = self.prefix.len();
         } else {
             let Some(session) = draft
-                .bind(&self.prefix, version, &self.input.sampling)
+                .bind(
+                    &self.prefix,
+                    version,
+                    &self.input.sampling,
+                    None,
+                    self.input.priority,
+                )
                 .await?
             else {
                 return Ok(None);
@@ -436,6 +468,9 @@ pub async fn select_draft_target_round(
 ) -> Result<Option<DraftTargetRound>, crate::GenerationError> {
     let placement = DraftTargetPlacement {
         required_target: DraftTargetRound::required_target(members)?,
+        retained_target: members
+            .iter()
+            .find_map(|member| member.target.as_ref()?.candidate.clone()),
         closed_workers: members
             .iter()
             .flat_map(|member| member.closed_workers.iter().cloned())
@@ -447,12 +482,18 @@ pub async fn select_draft_target_round(
             let mut request = member.request.clone();
             request.prompt_token_ids = member.prefix.clone();
             request.sampling_params.max_tokens = member.remaining;
-            RouterRequest::new(model, Arc::new(request))
+            let mut context = RouterRequest::new(model, Arc::new(request));
+            context.allowed_pools = member.allowed_pools.clone();
+            context.input_tokens = member.request.prompt_token_ids.len();
+            context
         })
         .collect::<Vec<_>>();
     let route = match router.route_draft_target_round(&requests, &placement).await {
         Ok(route) => route,
-        Err(foretoken_router::RouteError::NoMatchingRouteTarget { .. }) => return Ok(None),
+        Err(
+            foretoken_router::RouteError::NoCompatibleTarget { .. }
+            | foretoken_router::RouteError::Busy,
+        ) => return Ok(None),
         Err(foretoken_router::RouteError::InvalidBatch) => {
             return Err(crate::GenerationError::InvalidRequest);
         }
@@ -462,8 +503,10 @@ pub async fn select_draft_target_round(
     let draft = resolver
         .resolve_draft_target(draft)
         .ok_or(crate::GenerationError::Internal)?;
-    let target = resolver
-        .resolve_draft_target(target)
+    let target = members
+        .iter()
+        .find_map(|member| member.target.as_ref().map(|bound| bound.client.clone()))
+        .or_else(|| resolver.resolve_draft_target(target))
         .ok_or(crate::GenerationError::Internal)?;
     Ok(Some(
         DraftTargetRound::prepare(draft, target, std::mem::take(members), Some(route)).await?,
@@ -573,7 +616,7 @@ impl DraftTargetRound {
         let (fresh, ready): (Vec<_>, Vec<_>) = members
             .into_iter()
             .partition(|member| member.target.is_none());
-        let selected_target = route.as_ref().map(|route| route.decisions().1.clone());
+        let selected_target = route.as_ref().map(|route| route.target_candidate().clone());
         let selected_draft = route
             .as_ref()
             .map(|route| route.decisions().0.route_target_id.clone());
@@ -632,19 +675,24 @@ fn verify(
                 }
                 Some(result) = proposals.next() => result,
             };
-            let proposal = match result.transpose()? {
+            let proposal = match result {
+                Some(Err(LlmFacadeError::Busy)) => {
+                    yield member.requeue(None);
+                    continue;
+                }
+                Some(Err(error)) => Err(error)?,
                 None => {
                     yield member.cancelled();
                     continue;
                 }
-                Some(None) => {
+                Some(Ok(None)) => {
                     // Only an explicit pre-binding refusal is safe to place again. A direct
                     // fixed-pair caller has no alternative inventory and reports unavailable.
                     let draft_id = selected_draft.clone().ok_or(LlmFacadeError::Unavailable)?;
-                    yield member.requeue(draft_id);
+                    yield member.requeue(Some(draft_id));
                     continue;
                 }
-                Some(Some(proposal)) => proposal,
+                Some(Ok(Some(proposal))) => proposal,
             };
             let observation = member.observation.as_mut().expect("executing round");
             observation.value.draft_seconds = Some(observation.started.elapsed().as_secs_f64());

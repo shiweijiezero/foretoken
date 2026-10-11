@@ -5,8 +5,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # MRV2 integration contract
 
-The DT role service targets native vLLM `0.30.1rc1.dev194+g3b4566c5c`
-(commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`) on NVIDIA. MetaX uses the
+The DT role service targets native vLLM `0.31.0`
+(tag commit `db9527a46873454610df6dbedf79a36d6bf1a7f6`) on NVIDIA. MetaX uses the
 core/plugin pair and ordered patches in
 [`source-environment.json`](../../../deploy/inference-engines/vllm-metax/source-environment.json).
 Its FlashAttention metadata builder uses MRV2's maximum sequence-length bound;
@@ -27,20 +27,17 @@ boundaries are version-sensitive, so role startup rejects other vLLM versions.
 
 ## Image ownership
 
-The [NVIDIA runtime build](../../../deploy/inference-engines/vllm-cuda/Dockerfile)
-installs pinned upstream wheels. Normal source builds use it unless an engine
-image is explicitly supplied; MetaX retains its own runtime build. The
-[model-server image](../../model-server/Dockerfile) installs the DT distribution
-with its `vllm.general_plugins` entry point in the engine's Python environment.
-The DT launcher extends an inherited plugin allowlist before creating subprocesses.
-No validation-directory mounts or source overlays are needed at runtime.
+The normal [engine environment](../../../deploy/inference-engines/vllm/source-environment.json)
+uses the official vLLM image. Its CUDA runtime and Foretoken's Mooncake dependency
+preparation supply the NVIDIA transport environment. MetaX retains its own runtime
+build. The [model-server image](../../model-server/Dockerfile) installs the DT
+distribution and its `vllm.general_plugins` entry point in the engine's Python
+environment. The launcher extends inherited plugin allowlists before spawning
+EngineCore. Source delivery carries the same package; no runtime source mount is
+required.
 
-The model-server image still applies Foretoken's existing profiling, ready-metadata
-and offload-identity backports. The native 3b4566c5c engine uses the matching
-ready-metadata patch because its required LoRA fields precede optional fields.
-These ordinary engine-integration backports are separate from the DT runtime
-adapter; the standalone original-wheel hash check does not describe this patched
-model-server image. Rust build sources remain pinned independently.
+Ordinary Foretoken engine backports use the shared version-selected patch series.
+DT does not maintain an additional engine image or ready-metadata patch.
 
 ## Engine boundary
 
@@ -121,8 +118,7 @@ Features use the existing artifact claim/read/ACK lifecycle. Each round currentl
 copies the full computed prefix, including when Draft APC skips its first rows.
 This is a correctness baseline with potentially substantial repeated transfer cost.
 The adapter enables DFlashDraftModel, Qwen3DSparkModel, EAGLE/EAGLE3 and
-single-module MTP. GPU validation covers DFlash/EAGLE3/DSpark with Qwen3-8B
-and MiMo-7B-Base MTP; EAGLE has not had a separate checkpoint validation. Multi-module MTP, HC residuals and
+single-module MTP. Multi-module MTP, HC residuals and
 Target-shared sparse indices remain excluded. Gemma4 needs Target KV sharing.
 Other DFlash and DSpark architectures require separate integration.
 DSpark reuses the native anchor layout, Markov sampling and reduced-vocabulary
@@ -131,7 +127,17 @@ mapping. Export reads the native `draft_logits` cache after Markov bias and any
 preceding sampled candidates. Remote roles reject `enable_adaptive_verification`:
 its confidence feedback and verifier cost scheduling are not part of this path.
 
+The NVIDIA scheduler uses vLLM 0.31's ordinary waiting and KV-holding waiting
+queues. The pinned MetaX core uses its waiting and skipped-waiting queues. Workload
+observations and schedulable-work checks read the corresponding native queues;
+remote waits continue to use running requests with decode eligibility deferred.
+
 ## Frontend and role ownership
+
+Managed role services run behind the existing Rust model-server admission owner.
+It loads projected instance limits, accepts Target request reservations and holds
+permits across the session stream. Python owns engine sessions and transport
+artifacts; it does not duplicate the platform admission store or limit watcher.
 
 Target owns a request session across rounds. Target prefill emits the first
 confirmed token; the caller then forms each batch, selects DT, and executes:
@@ -152,6 +158,10 @@ The caller owns returned request state; dropping it closes both role sessions.
 Dropping an executing round closes members still owned by that round. Draining rejects new
 bindings while allowing existing rounds to finish. Engine health/readiness stays
 available during drain so Service routing does not interrupt existing sessions.
+Session close waits for native abort followed by an ordered worker utility that
+synchronizes the MRV2 compute stream. The Rust ingress retains admission capacity
+until that acknowledgement and artifact cleanup complete; enqueueing an abort is
+not a termination acknowledgement.
 Frontend or role failure terminates the request. Request state records the current
 Target session/KV location across batches.
 Ordinary rounds reuse that Target. Explicit migration snapshots its native pages

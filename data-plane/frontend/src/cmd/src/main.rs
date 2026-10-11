@@ -17,12 +17,12 @@ use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    foretoken_tracing::init_tracing("ForetokenFrontend");
+    foretoken_artifacts::source::activate("foretoken-frontend")?;
+    let logging = Arc::new(foretoken_tracing::LogControl::new("ForetokenFrontend")?);
 
     // Establish the long-lived generation owner before starting background refreshes.
     // Snapshot updates publish atomically, so an invalid update cannot replace active routing.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
-    let generation = Arc::new(RuntimeGeneration::new(config.request_timeout));
 
     // KV locality is optional routing input. Credential failures degrade its score instead
     // of preventing otherwise healthy model routes from serving requests.
@@ -41,10 +41,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
+    // Capacity is shared by service identity; opening the store remains lazy so an
+    // unrestricted service does not depend on its availability. Never log the store URL.
+    let ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
+    let admission = Arc::new(foretoken_admission::AdmissionRegistry::new(
+        config.frontend_uid,
+        config.pod_uid,
+        ledger,
+    ));
+    let builder = Arc::new(RuntimeBuilder::new(kv_credential, logging));
+    let generation = Arc::new(RuntimeGeneration::new(admission));
 
     // Bind the HTTP listener before launching the refresh loops. The process can remain
-    // live while readiness stays false until a complete serving generation is available.
+    // live while readiness stays false until a valid routing snapshot is published.
     let listener = tokio::net::TcpListener::bind(config.listen_address).await?;
     tokio::spawn(refresh_active_generation(generation.clone()));
     tokio::spawn(watch_serving_snapshot(
@@ -55,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
-    let app = router(generation.clone(), models, config.stream_idle)?;
+    let app = router(generation.clone(), models)?;
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let server_shutdown = shutdown.clone();
     let mut server = Box::pin(
@@ -75,12 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Reject new requests before stopping the HTTP server, then allow accepted streams
-    // to finish within the same request budget used by the serving runtime.
+    // to finish within the process drain budget, independently of live request settings.
     generation.close_admission();
     shutdown.notify_waiters();
-    match tokio::time::timeout(config.request_timeout, server.as_mut()).await {
+    match tokio::time::timeout(config.drain, server.as_mut()).await {
         Ok(result) => result?,
-        Err(_) => tracing::warn!("frontend requests did not drain before the request timeout"),
+        Err(_) => tracing::warn!("frontend requests did not drain before the shutdown deadline"),
     }
     Ok(())
 }

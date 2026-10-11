@@ -10,16 +10,16 @@ from dataclasses import dataclass
 from foretoken.arguments import InstallCommand
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
-from foretoken.platform.helm import Helm
-from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
 from foretoken.platform.gateway_resources import (
-    _gateway_classes_for_controller,
     _discover_gateway_class,
+    _gateway_classes_for_controller,
     _other_controller_gateway_classes,
     _require_no_external_platform_gateways,
     _validate_reused_gateway,
     _wait_foretoken_gateway_class,
 )
+from foretoken.platform.helm import Helm
+from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
 
 
 @dataclass(frozen=True)

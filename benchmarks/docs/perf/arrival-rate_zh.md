@@ -20,7 +20,7 @@ foretoken perf examples/quickstart \
   --output local,wandb
 ```
 
-`--request-rate -1 --max-concurrency -1` 会尽快启动请求预算内的请求。添加 `--duration SECONDS` 可按墙上时钟停止新的请求准入；省略 `--num-prompts` 时使用时长作为工作负载边界。多轮数据共享 HTTP 请求预算，`--max-concurrency` 限制同时执行的对话数。
+`--request-rate -1 --max-concurrency -1` 会尽快启动请求预算内的请求。添加 `--duration 5min` 可在五分钟后停止发送新请求；省略 `--num-prompts` 时使用时长作为工作负载边界。多轮数据共享 HTTP 请求预算，`--max-concurrency` 限制同时执行的对话数。
 
 使用固定间隔或 Gamma 到达：
 
@@ -33,6 +33,10 @@ foretoken perf examples/quickstart \
   --prompt "你好" --request-rate 5 --arrival-pattern gamma \
   --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local,wandb
 ```
+
+## 预热
+
+使用 `--warmup-requests 2` 在正式测量前额外发送两个 HTTP 请求，完成后开始计时和性能剖析。预热结果单独保存，正式请求的内容和数量保持不变，服务端缓存保留预热后的状态。
 
 ## 输出示例
 

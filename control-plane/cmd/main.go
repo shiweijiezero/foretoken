@@ -44,10 +44,15 @@ func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
+	var sourceMode bool
 	var frontendEnabled bool
 	var frontendMode string
 	var frontendImage string
+	var frontendApplicationURL string
+	var modelServerApplicationURL string
 	var videoWorkerImage string
+	var videoWorkerApplicationURL string
+	var applicationFilesJSON string
 	var frontendPort int
 	var frontendGatewayName string
 	var frontendGatewayNamespace string
@@ -78,12 +83,12 @@ func main() {
 	var vllmMooncakeStoreConfigMapName string
 	var vllmMooncakeStoreConfigMapKey string
 	var vllmMooncakeStorePythonHashSeed string
-	var autoscalingTelemetryCollectionTimeout time.Duration
-	var autoscalingTelemetryRequestTimeout time.Duration
-	var autoscalingTelemetryConcurrency int
+	var autoscalingTelemetryConfigurationPath string
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
+	var admissionStoreURLSecretName string
+	var admissionStoreURLSecretKey string
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
@@ -98,17 +103,20 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from the platform application origin.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
 	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
 	flag.StringVar(&logStorageMaxSize, "log-storage-max-size", "", "Maximum capacity of each managed log volume.")
-	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
-	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
-	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
+	flag.StringVar(&autoscalingTelemetryConfigurationPath, "autoscaling-telemetry-config", "", "Platform configuration file supplying autoscaling telemetry collection budgets.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
-	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform image containing the video-worker executable.")
+	flag.StringVar(&frontendApplicationURL, "frontend-application-url", "", "Trusted platform frontend publication selected on deployment.")
+	flag.StringVar(&modelServerApplicationURL, "model-server-application-url", "", "Trusted platform model-server publication selected on deployment.")
+	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform runtime image for video workers.")
+	flag.StringVar(&videoWorkerApplicationURL, "video-worker-application-url", "", "Published application directory containing the video worker.")
+	flag.StringVar(&applicationFilesJSON, "application-files", "{}", "JSON configuration for platform application download tools.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
 	flag.StringVar(&frontendGatewayNamespace, "frontend-gateway-namespace", "", "Platform Gateway namespace; defaults to the FrontendService namespace.")
@@ -122,6 +130,8 @@ func main() {
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
+	flag.StringVar(&admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
+	flag.StringVar(&admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
@@ -165,6 +175,26 @@ func main() {
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
+	admissionStore := &inferencev1alpha1.AdmissionStoreConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
+	if admissionStoreURLSecretName != "" || admissionStoreURLSecretKey != "" {
+		admissionStore.URLSecretRef = &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: admissionStoreURLSecretName},
+			Key:                  admissionStoreURLSecretKey,
+		}
+	}
+	if err := runtimeconfig.ValidateAdmissionStore(admissionStore); err != nil {
+		ctrl.Log.Error(err, "invalid admission store configuration")
+		os.Exit(1)
+	}
+	var applicationFiles runtimeconfig.ApplicationFiles
+	if err := json.Unmarshal([]byte(applicationFilesJSON), &applicationFiles); err != nil {
+		ctrl.Log.Error(err, "invalid application file configuration")
+		os.Exit(1)
+	}
+	if (sourceMode || videoWorkerApplicationURL != "" || frontendApplicationURL != "" || modelServerApplicationURL != "") && (applicationFiles.Image == "" || applicationFiles.Script == "" || applicationFiles.MountPath == "" || (sourceMode && applicationFiles.Origin == "")) {
+		ctrl.Log.Error(errors.New("source-mode and video-worker-application-url require application-files; source-mode also requires its origin"), "invalid application file configuration")
+		os.Exit(1)
+	}
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
 		os.Exit(1)
@@ -183,10 +213,6 @@ func main() {
 	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
-		os.Exit(1)
-	}
-	if autoscalingTelemetryCollectionTimeout <= 0 || autoscalingTelemetryRequestTimeout <= 0 || autoscalingTelemetryConcurrency < 1 {
-		ctrl.Log.Error(errors.New("autoscaling telemetry timeouts and concurrency must be positive"), "invalid autoscaling telemetry settings")
 		os.Exit(1)
 	}
 	if frontendMode != frontendModeLocal && frontendMode != frontendModeGateway {
@@ -292,6 +318,8 @@ func main() {
 		HealthProbeBindAddress: probeAddress,
 		LeaderElection:         leaderElection,
 		LeaderElectionID:       "inference.foretoken.io",
+		// Main exits when the manager stops, so a normal shutdown can release the lease.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "unable to create manager")
@@ -340,7 +368,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
@@ -363,11 +391,15 @@ func main() {
 			CacheProfile: cacheProfile,
 			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
+				SourceMode:        sourceMode,
+				ApplicationFiles:  applicationFiles,
 				Image:             frontendImage,
+				ApplicationURL:    frontendApplicationURL,
 				WorkerImage:       videoWorkerImage,
 				Port:              int32(frontendPort),
 				ImagePullSecrets:  workloadImagePullSecrets,
 				HuggingFaceAccess: huggingFaceAccessProfile.Access(),
+				AdmissionStore:    admissionStore,
 				Gateway:           gateway,
 			},
 		}
@@ -376,16 +408,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	metricsProvider, err := controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
+	if err != nil {
+		ctrl.Log.Error(err, "invalid autoscaling telemetry configuration")
+		os.Exit(1)
+	}
 	if err := (&controllers.ModelServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
+		SourceMode:               sourceMode,
+		RuntimeProfile:           resolver.RuntimeProfile{Image: inferenceEngineImage, OmniImage: omniInferenceEngineImage, NsightImage: nsightImage, AdmissionStore: admissionStore},
+		ApplicationFiles:         applicationFiles,
+		ApplicationURL:           modelServerApplicationURL,
 		HuggingFaceAccessProfile: huggingFaceAccessProfile,
 		Alerts:                   serviceAlerts,
-		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
-			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
-			RequestTimeout:    autoscalingTelemetryRequestTimeout,
-			Concurrency:       autoscalingTelemetryConcurrency,
-		}),
+		MetricsProvider:          metricsProvider,
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
@@ -423,7 +460,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}
