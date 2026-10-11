@@ -11,7 +11,9 @@ use std::time::Duration;
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::draft_target::{RoleClient, RoleStatus};
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse};
+use foretoken_model_protocol::{
+    DraftTargetCandidateFormat, PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse,
+};
 
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
@@ -30,8 +32,14 @@ pub struct BackendRegistry {
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
     stats: Mutex<BTreeMap<RouteTargetId, RouteTargetStatsHistory>>,
-    metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
+    metadata: Mutex<BTreeMap<RouteTargetId, BackendMetadata>>,
     health_client: reqwest::Client,
+}
+
+/// One validated probe's runtime metadata, including a DT role finishing owned sessions.
+struct BackendMetadata {
+    runtime: RuntimeMetadataResponse,
+    candidate_format: Option<DraftTargetCandidateFormat>,
 }
 pub(crate) enum Component {
     DraftTarget {
@@ -115,7 +123,11 @@ impl BackendRegistry {
     }
 
     fn metadata(&self, id: &RouteTargetId) -> Option<RuntimeMetadataResponse> {
-        self.metadata.lock().ok()?.get(id).cloned()
+        self.metadata
+            .lock()
+            .ok()?
+            .get(id)
+            .map(|metadata| metadata.runtime.clone())
     }
 
     /// Reports whether any configured model currently has an executable backend path.
@@ -237,7 +249,8 @@ impl BackendRegistry {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
-        let mut dt_scopes = BTreeMap::<(String, String), (bool, bool)>::new();
+        let mut dt_scopes =
+            BTreeMap::<(String, String, DraftTargetCandidateFormat), (bool, bool)>::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
             if route.role == ModelServerRole::Aggregate
@@ -250,8 +263,11 @@ impl BackendRegistry {
                 continue;
             };
             if matches!(route.role, ModelServerRole::Draft | ModelServerRole::Target) {
+                let Some(format) = self.draft_target_format(&route.route_target_id) else {
+                    continue;
+                };
                 let roles = dt_scopes
-                    .entry((route.model.clone(), pipeline_scope_id.clone()))
+                    .entry((route.model.clone(), pipeline_scope_id.clone(), format))
                     .or_default();
                 if self.is_route_target_healthy(&route.route_target_id) {
                     if route.role == ModelServerRole::Draft {
@@ -286,7 +302,7 @@ impl BackendRegistry {
                 models.insert(model);
             }
         }
-        for ((model, _), (draft, target)) in dt_scopes {
+        for ((model, _, _), (draft, target)) in dt_scopes {
             if draft && target {
                 models.insert(model);
             }
@@ -295,8 +311,8 @@ impl BackendRegistry {
     }
     /// Health, runtime metadata, and telemetry are per physical component.
     pub async fn refresh_backend_readiness(&self) {
-        // Probe components concurrently, but retain metadata and telemetry only for components
-        // proven healthy in this pass so replaced backends cannot leave stale routing signals.
+        // Validate each probe anew. A draining DT role remains compatible with its owned
+        // sessions even though it no longer admits new bindings.
         let probes = self.components.iter().map(|(id, c)| async move {
             if let Component::DraftTarget {
                 role,
@@ -307,15 +323,13 @@ impl BackendRegistry {
                 ..
             } = c
             {
-                let status = role_status(&self.health_client, c.endpoint()).await;
-                let healthy = status.as_ref().is_some_and(|status| {
-                    status.accepting
-                        && status.token_budget > 0
+                let (status, stats) = tokio::join!(
+                    role_status(&self.health_client, c.endpoint()),
+                    telemetry(&self.health_client, c.endpoint()),
+                );
+                let status = status.filter(|status| {
+                    status.token_budget > 0
                         && status.max_model_len > 0
-                        && matches!(
-                            status.candidate_format.as_str(),
-                            "greedy_token_ids" | "token_ids_log_probs"
-                        )
                         && status.role
                             == if *role == ModelServerRole::Draft {
                                 "draft"
@@ -327,26 +341,30 @@ impl BackendRegistry {
                         && status.tokenizer == *tokenizer
                         && status.tokenizer_revision == *tokenizer_revision
                 });
+                let healthy = status.as_ref().is_some_and(|status| status.accepting);
                 let route = self
                     .model_routes
                     .routes()
                     .iter()
                     .find(|route| route.route_target_id == *id)
                     .expect("component has a route");
-                let metadata = status.map(|status| RuntimeMetadataResponse {
-                    version: 1,
-                    model: foretoken_model_protocol::RuntimeModelIdentity {
-                        model: route.model.clone(),
-                        revision: route.revision.clone(),
+                let metadata = status.map(|status| BackendMetadata {
+                    candidate_format: Some(status.candidate_format),
+                    runtime: RuntimeMetadataResponse {
+                        version: 1,
+                        model: foretoken_model_protocol::RuntimeModelIdentity {
+                            model: route.model.clone(),
+                            revision: route.revision.clone(),
+                        },
+                        model_dtype: None,
+                        effective_max_model_len: status.max_model_len,
+                        prepared_tokenizer: status.prepared_tokenizer,
+                        max_logprobs: Some(0),
+                        ec_transfer: None,
+                        capabilities: BTreeSet::new(),
                     },
-                    model_dtype: None,
-                    effective_max_model_len: status.max_model_len,
-                    prepared_tokenizer: status.prepared_tokenizer,
-                    max_logprobs: Some(0),
-                    ec_transfer: None,
-                    capabilities: BTreeSet::new(),
                 });
-                return (id.clone(), healthy, metadata, None);
+                return (id.clone(), healthy, metadata, stats);
             }
             let ready = ready(&self.health_client, c.endpoint()).await;
             let metadata = metadata(&self.health_client, c.endpoint()).await;
@@ -363,10 +381,14 @@ impl BackendRegistry {
             };
             let stats = telemetry(&self.health_client, c.endpoint()).await;
             let accepting = stats.as_ref().is_some_and(|stats| stats.accepting);
+            let healthy = ready && bootstrap && metadata_matches && accepting;
             (
                 id.clone(),
-                ready && bootstrap && metadata_matches && accepting,
-                metadata,
+                healthy,
+                metadata.filter(|_| healthy).map(|runtime| BackendMetadata {
+                    runtime,
+                    candidate_format: None,
+                }),
                 stats,
             )
         });
@@ -378,7 +400,7 @@ impl BackendRegistry {
                 .get(&id)
                 .expect("component health")
                 .store(healthy, Ordering::Release);
-            if healthy {
+            if let Some(metadata) = metadata {
                 if let Some(stats) = stats {
                     histories
                         .entry(id.clone())
@@ -389,7 +411,7 @@ impl BackendRegistry {
                 } else {
                     histories.remove(&id);
                 }
-                next_metadata.insert(id, metadata.expect("validated above"));
+                next_metadata.insert(id, metadata);
             } else {
                 histories.remove(&id);
             }
@@ -452,6 +474,14 @@ impl RouteInventory for BackendRegistry {
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
 
+    fn draft_target_format(&self, id: &RouteTargetId) -> Option<DraftTargetCandidateFormat> {
+        self.metadata
+            .lock()
+            .expect("metadata mutex")
+            .get(id)?
+            .candidate_format
+    }
+
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
             .model_routes
@@ -474,7 +504,7 @@ impl RouteInventory for BackendRegistry {
             .iter()
             .filter(|capability| {
                 !requires_runtime_observation(capability)
-                    || observed.capabilities.contains(*capability)
+                    || observed.runtime.capabilities.contains(*capability)
             })
             .cloned()
             .collect()
@@ -529,7 +559,10 @@ async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
 // bounded probe client; generation clients retain the caller-owned streaming deadline.
 async fn role_status(client: &reqwest::Client, endpoint: &str) -> Option<RoleStatus> {
     let response = client
-        .get(format!("{}/status", endpoint.trim_end_matches('/')))
+        .get(format!(
+            "{}/status?observations=false",
+            endpoint.trim_end_matches('/')
+        ))
         .send()
         .await
         .ok()?;

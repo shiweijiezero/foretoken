@@ -8,7 +8,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 English | [简体中文](README_zh.md)
 
 Run independently selected Draft and Target models on separate GPUs or hosts.
-The frontend selects a pair, coordinates proposal and verification rounds, and
+The frontend selects workers each round, coordinates proposals and verification, and
 streams only Target-confirmed output. Mooncake transfers the Draft's full proposal
 distributions between GPU workers; candidate IDs and tensor descriptors use HTTP.
 Each engine owns its own scheduler and KV cache.
@@ -23,6 +23,31 @@ engine and installs this plugin, including its vLLM subprocess entry point.
 CUDA 13; an explicit `INFERENCE_ENGINE_IMAGE` override must provide the compatible
 engine and Mooncake environment described below. MetaX uses its separate runtime
 build and the compatibility requirements below.
+
+## Per-round batch execution
+
+Public text/chat requests enter a per-model ready queue. The scheduler groups ready
+requests and selects compatible DT workers each round. The
+[batch frontend example](docs/frontend-workflow.md#run-per-round-batches-through-router)
+also exposes the round API for custom scheduling. A request
+can switch Draft workers using its confirmed prefix. Requests record their current
+Target location. Ordinary rounds reuse that Target; an explicit round-boundary
+operation can move its KV to another compatible Target. vLLM owns local GPU batching.
+Requests return to the ready queue independently, including while other requests
+await prefill. Output backpressure and cancellation are per request. The baseline
+dispatches available work immediately; it has no SLO or migration cost policy.
+
+## Observe DT execution
+
+The batch example prints per-round timing, proposed/accepted/committed token
+counts and transfer measurements. Role `/status` reports native ready, waiting
+and remote-waiting work plus KV capacity. Schedulers can query each request's
+current Target location and KV allocation. These are inputs for placement decisions.
+Explicit migrations report checkpoint export time, transferred bytes and receiver
+read time. A migration cost estimator is not implemented.
+See [measurement definitions and APIs](docs/role-protocol.md#observations).
+Frontend `/metrics` also exports DT round aggregates; detailed request/worker
+identities remain in traces and returned round records.
 
 ## Start two roles
 
@@ -86,6 +111,10 @@ scheduling. Requests waiting for remote proposals do not block other requests.
 The role launcher includes `foretoken_dt` in an inherited `VLLM_PLUGINS` allowlist
 so spawned engine processes load the required hooks. On MetaX it also includes
 the platform's `metax` plugin.
+On NVIDIA, the role runs native sampling JIT warmup before reporting ready.
+Draft warmup also covers the sampling path that exports proposal probabilities.
+A cold compilation can make startup take longer; unexercised kernel variants
+can still compile during inference.
 The role accepts native vLLM model, memory and batching options.
 `--draft-token-budget` sets the maximum candidates per round (default 3).
 `--port` changes the HTTP port (default 19100); `--rdma-nic` optionally selects
@@ -115,19 +144,104 @@ To run without RDMA, omit `--rdma-host` on both roles. This supports
 `temperature: 0` only and advertises `greedy_token_ids`; candidates use HTTP.
 A random-sampling request is rejected before admission in this configuration.
 
+## Run a neural Draft pair on NVIDIA
+
+Use the NVIDIA runtime above and a compatible unquantized text Target. For DFlash,
+choose a `DFlashDraftModel` checkpoint. Both roles receive the same native
+speculative configuration. For example, set `TARGET_MODEL=Qwen/Qwen3-8B` and
+`TOKENIZER=Qwen/Qwen3-8B`, then set this on both hosts:
+
+```bash
+SPEC_CONFIG='{"method":"dflash","model":"z-lab/Qwen3-8B-DFlash-b16","num_speculative_tokens":15}'
+```
+
+On the Draft host:
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role draft \
+  --model "$TARGET_MODEL" --tokenizer "$TOKENIZER" \
+  --speculative-config "$SPEC_CONFIG" \
+  --host 0.0.0.0 --rdma-host "$DRAFT_IP"
+```
+
+On the Target host:
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role target \
+  --model "$TARGET_MODEL" --tokenizer "$TOKENIZER" \
+  --speculative-config "$SPEC_CONFIG" \
+  --host 0.0.0.0 --rdma-host "$TARGET_IP"
+```
+
+Select separate GPUs and different HTTP ports when both processes share a host.
+The candidate budget comes from `num_speculative_tokens`. The Draft host needs
+access to the Target checkpoint for shared embedding/output weights; it does not
+load the Target backbone into GPU memory. Target retains hidden states and Draft
+pulls the confirmed feature prefix through Mooncake before local admission.
+The existing Rust frontend handles this exchange automatically. Both `/status`
+responses must advertise the same `context_profile`; local checkpoint paths must
+identify the same pair on both hosts.
+
+The same role commands accept EAGLE/EAGLE3 and single-module MTP profiles. For
+EAGLE3 with the same Qwen3-8B Target, use:
+
+```bash
+SPEC_CONFIG='{"method":"eagle3","model":"AngelSlim/Qwen3-8B_eagle3","num_speculative_tokens":3}'
+```
+
+For Qwen3 DSpark with the same Target, use:
+
+```bash
+SPEC_CONFIG='{"method":"dspark","model":"deepseek-ai/dspark_qwen3_8b_block7","num_speculative_tokens":7}'
+```
+
+DSpark uses native Markov sampling and transfers its conditional proposal
+probabilities in Target vocabulary order. Use a `Qwen3DSparkModel` checkpoint
+and fixed-length verification (`enable_adaptive_verification=false`, the native
+default). Confidence-based adaptive verification is not enabled for remote drafts.
+
+For MiMo MTP, set both `TARGET_MODEL` and `TOKENIZER` to `XiaomiMiMo/MiMo-7B-Base`,
+add `--trust-remote-code` to both role commands for its configuration class, and use:
+
+```bash
+SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":3}'
+```
+
+This path supports greedy and random sampling, native chunked prefill and rebinding
+Draft between rounds. Target prefix caching is disabled because a KV hit omits the
+features needed by Draft. DFlash and DSpark retain local Draft prefix caching; EAGLE/MTP
+Draft caching is disabled because their KV also depends on the next token, which
+can lie outside the hashed prompt. Every proposal transfers the full computed
+feature prefix, so long contexts incur repeated transfer and prefill cost.
+
+GPU validation covers Qwen3-8B with DFlash/EAGLE3/DSpark and MiMo-7B-Base MTP. EAGLE uses
+the same autoregressive adapter but has not had a separate checkpoint validation.
+Multi-module MTP, Gemma4 Target KV sharing, HC residuals, Target-shared sparse
+attention indices, DFlash2, LiLiCorr, MetaX neural drafting and Target
+migration with features are not enabled. Correct generation does not establish a
+speedup.
+
 ## Stop and scope
 
 `POST /drain` closes admission while existing sessions finish. Stop the frontend
 streams to cancel active requests. Before graceful process shutdown, wait for
 both `active_sessions` and `retained_artifacts` in `/status` to reach zero.
-GPU buffers are reused by exact shape and remain registered until shutdown, so
-GPU memory can stay at its per-shape concurrency peak after sessions finish.
-Unacknowledged publications or uncertain DMA completion can retain registered
+GPU buffers remain registered until shutdown. Feature buffers reuse geometric row
+capacities; other buffers reuse exact shapes. Memory can remain at the corresponding
+concurrency peaks after sessions finish.
+Cancelling a Draft session reclaims publications that Target has not claimed.
+Claimed, unacknowledged publications or uncertain DMA completion can retain registered
 memory until process termination; there is no transparent peer-failure recovery.
+Update the frontend and both roles together for the internal artifact-claim protocol.
 
-This implementation handles one Draft and one Target per request, text input,
-and linear candidates. Hidden-state methods, trees, cascaded verification,
-multimodal input, P/D composition and KV transfer/offload are not implemented.
+This implementation handles one Draft and one Target per inference round, text
+input, and linear candidates. For explicit Target migration, start both NVIDIA
+Targets with RDMA and `--enable-kv-migration`, then use the
+[batch example](docs/frontend-workflow.md#move-a-request-between-targets).
+Migration currently requires greedy sampling, matching model/tokenizer identities
+and compatible full-attention KV layouts. The public scheduler keeps the current
+Target; it does not automatically migrate requests. Trees,
+cascaded verification, multimodal input, P/D composition and KV offload are not implemented.
 Neither transfer diagnostics nor successful generation establish a speedup or
 complete Kubernetes/autoscaling acceptance.
 

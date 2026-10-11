@@ -36,7 +36,7 @@ pub struct RoutingProgress<'a> {
 }
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
-/// P/D and E/P/D select sequential stages; DT retains Target while selecting a compatible Draft.
+/// P/D and E/P/D select sequential stages. DT uses independently reserved batch rounds.
 pub trait RouteSession: Send {
     /// Releases prompt-token load when the first response reaches the frontend.
     fn response_started(&mut self) {}
@@ -52,11 +52,6 @@ pub trait RouteSession: Send {
 
     /// Selects one Decode model-server route from a fresh snapshot after Prefill completes.
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError>;
-
-    /// Selects a compatible Draft without completing Target; both reservations live together.
-    fn select_draft(&mut self) -> Result<RouteDecision, RouteError> {
-        Err(RouteError::DraftBeforeTarget)
-    }
 }
 
 /// Creates isolated request-local routing state for tokenized generation requests.
@@ -64,11 +59,30 @@ pub trait RouteSession: Send {
 pub trait Router: Send + Sync {
     /// Prepares required observations and starts isolated routing state for one generation request.
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
+
+    /// Selects compatible DT workers for one round and reserves its members.
+    /// The baseline uses the first member's placement preference, with compatibility checked
+    /// for every member. The executor supplies Target affinity and known closed workers;
+    /// Router does not infer migration support or replay failed work.
+    /// The returned owner releases reservations as members return or the round drops.
+    async fn route_draft_target_round(
+        &self,
+        _requests: &[RouterRequest],
+        _placement: &crate::DraftTargetPlacement,
+    ) -> Result<crate::DraftTargetRoundRoute, RouteError> {
+        Err(RouteError::BatchRoutingUnsupported)
+    }
 }
 
 /// Failure returned while selecting one model-server routing stage.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouteError {
+    /// A batch must contain distinct generation requests for one logical model.
+    #[error("DT batch requires distinct generation requests for one model")]
+    InvalidBatch,
+    /// This router has no batch placement implementation.
+    #[error("this router does not support DT batch placement")]
+    BatchRoutingUnsupported,
     /// No ready Aggregate or Prefill model-server route matches the request.
     #[error("no ready model server route matches model {model}")]
     NoMatchingRouteTarget {
@@ -102,7 +116,4 @@ pub enum RouteError {
     /// Decode selection was requested before a Prefill model-server route was selected.
     #[error("decode selection requires a selected prefill model server route")]
     DecodeBeforePrefill,
-    /// Draft selection requires a Target selected in this routing session.
-    #[error("draft selection requires a selected target model server route")]
-    DraftBeforeTarget,
 }

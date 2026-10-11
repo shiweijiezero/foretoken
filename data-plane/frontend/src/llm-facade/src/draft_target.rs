@@ -50,32 +50,46 @@ impl Default for DraftTargetSampling {
     }
 }
 
-/// Descriptor for registered GPU storage; the frontend never reads tensor contents.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TensorPayload {
-    pub publication_id: String,
-    pub segment: String,
-    pub address: u64,
-    pub nbytes: u64,
-    pub dtype: String,
-    pub shape: Vec<u64>,
-}
-
-/// One immutable Draft distribution; the Target acknowledges its completed read directly.
+/// Draft artifact handle; Target must claim it before obtaining the GPU descriptor.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalArtifact {
     pub artifact_id: String,
-    pub payload: TensorPayload,
 }
 
-/// Candidates and their optional RDMA distribution descriptor for one confirmed prefix.
+/// Source-session-owned KV copy. The destination claims its artifact before reading.
+#[derive(Serialize, Deserialize)]
+pub struct KvCheckpoint {
+    artifact_id: String,
+    pub token_ids: Vec<u32>,
+    pub computed_tokens: usize,
+    layout: Vec<KvLayer>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct KvLayer {
+    layer: String,
+    shape: Vec<usize>,
+    dtype: String,
+}
+
+/// Candidates and their optional distribution handle for one confirmed prefix.
 #[derive(Deserialize)]
 pub struct DraftProposal {
     pub version: u64,
     pub token_ids: Vec<u32>,
     pub artifact: Option<ProposalArtifact>,
+    pub observation: foretoken_model_protocol::DraftTargetEngineObservation,
+}
+
+/// One member's ready candidates, passed to the selected Target with its sibling members.
+#[derive(Serialize)]
+pub struct DraftVerification {
+    session_id: String,
+    version: u64,
+    token_ids: Vec<u32>,
+    artifact: Option<ProposalArtifact>,
+    source_endpoint: String,
 }
 
 /// Confirmed Target output and the next engine generation, never a Draft guess.
@@ -88,6 +102,8 @@ pub struct TargetCommit {
     pub finish_reason: Option<String>,
     pub stop_reason: Option<TargetStopReason>,
     pub cached_token_count: usize,
+    pub observation: foretoken_model_protocol::DraftTargetEngineObservation,
+    pub transfer: Option<foretoken_model_protocol::DraftTargetTransferObservation>,
 }
 
 /// The exact reason Target stopped, retained for the frontend's output processor.
@@ -101,8 +117,9 @@ pub enum TargetStopReason {
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum RoleEvent {
+    AdmissionClosed,
     Opened { session_id: String },
-    Committed(TargetCommit),
+    Committed(Box<TargetCommit>),
 }
 
 type RoleStream = Pin<Box<dyn Stream<Item = Result<RoleEvent, LlmFacadeError>> + Send>>;
@@ -110,8 +127,14 @@ type RoleStream = Pin<Box<dyn Stream<Item = Result<RoleEvent, LlmFacadeError>> +
 /// A role's current admission and candidate capabilities, queried before binding.
 #[derive(Clone, Deserialize)]
 pub struct RoleStatus {
+    /// Identifies Target-dependent proposal inputs; both selected roles must agree.
+    pub context_profile: Option<serde_json::Value>,
+    #[serde(default)]
+    pub kv_migration: bool,
     #[serde(default)]
     pub prepared_tokenizer: Option<foretoken_model_protocol::PreparedTokenizer>,
+    /// Omitted by lightweight readiness probes; full status includes native observations.
+    pub workload: Option<foretoken_model_protocol::DraftTargetWorkload>,
     pub role: String,
     pub model: String,
     pub revision: Option<String>,
@@ -120,7 +143,14 @@ pub struct RoleStatus {
     pub max_model_len: u32,
     pub accepting: bool,
     pub token_budget: u32,
-    pub candidate_format: String,
+    pub candidate_format: foretoken_model_protocol::DraftTargetCandidateFormat,
+}
+
+/// Target session address passed to Draft; the request state retains session ownership.
+#[derive(serde::Serialize)]
+pub struct TargetContextSource {
+    endpoint: String,
+    session_id: String,
 }
 
 /// HTTP adapter for one selected role endpoint. It does not choose peers or order rounds.
@@ -137,6 +167,11 @@ impl RoleClient {
             endpoint: validate_endpoint(endpoint)?,
             client: reqwest::Client::new(),
         })
+    }
+
+    /// Identifies the selected endpoint when a round reuses an existing role session.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     async fn post(
@@ -171,21 +206,57 @@ impl RoleClient {
         response.json().await.map_err(|_| LlmFacadeError::Protocol)
     }
 
-    /// Opens Target generation; the returned session owns cancellation through its response body.
+    /// Opens Target generation; the session owns cancellation through its response body.
+    /// None means explicit refusal before session creation or inference.
     pub async fn generate(
         &self,
         request: &DraftTargetRequest,
-    ) -> Result<RoleSession, LlmFacadeError> {
+    ) -> Result<Option<RoleSession>, LlmFacadeError> {
         RoleSession::open(self.clone(), self.post("/generate", request).await?).await
     }
 
+    /// Opens a destination stream that imports KV before generating its first confirmed token.
+    /// The caller retains the source session until this stream confirms successful execution.
+    pub async fn resume(
+        &self,
+        request: &DraftTargetRequest,
+        source: &RoleClient,
+        checkpoint: &KvCheckpoint,
+    ) -> Result<RoleSession, LlmFacadeError> {
+        RoleSession::open(self.clone(), self.post("/resume", &serde_json::json!({
+            "generation": request, "source_endpoint": source.endpoint, "checkpoint": checkpoint,
+        })).await?).await?.ok_or(LlmFacadeError::Unavailable)
+    }
+
+    /// Submits one ready batch; results correspond to input order, including cancelled members.
+    pub async fn verify_batch(
+        &self,
+        members: &[DraftVerification],
+    ) -> Result<Vec<bool>, LlmFacadeError> {
+        #[derive(Deserialize)]
+        struct Admission {
+            accepted: Vec<bool>,
+        }
+        let result: Admission = self
+            .post("/batch/verify", &serde_json::json!({"members": members}))
+            .await?
+            .json()
+            .await
+            .map_err(|_| LlmFacadeError::Protocol)?;
+        if result.accepted.len() != members.len() {
+            return Err(LlmFacadeError::Protocol);
+        }
+        Ok(result.accepted)
+    }
+
     /// Binds Draft to confirmed tokens and keeps the owning control response open.
+    /// Returns None only when Draft explicitly closed admission before creating a session.
     pub async fn bind(
         &self,
         token_ids: &[u32],
         version: u64,
         sampling: &DraftTargetSampling,
-    ) -> Result<RoleSession, LlmFacadeError> {
+    ) -> Result<Option<RoleSession>, LlmFacadeError> {
         RoleSession::open(
             self.clone(),
             self.post(
@@ -208,7 +279,15 @@ pub struct RoleSession {
 }
 
 impl RoleSession {
-    async fn open(client: RoleClient, response: reqwest::Response) -> Result<Self, LlmFacadeError> {
+    /// Exports the observed paused generation; dropping this session revokes unclaimed copies.
+    pub async fn checkpoint(&mut self, version: u64) -> Result<KvCheckpoint, LlmFacadeError> {
+        self.command("checkpoint", &serde_json::json!({"version": version}))
+            .await
+    }
+    async fn open(
+        client: RoleClient,
+        response: reqwest::Response,
+    ) -> Result<Option<Self>, LlmFacadeError> {
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
             return Err(LlmFacadeError::Protocol);
         }
@@ -218,14 +297,16 @@ impl RoleSession {
                 yield serde_json::from_slice(&line?).map_err(|_| LlmFacadeError::Protocol)?;
             }
         });
-        let Some(RoleEvent::Opened { session_id }) = stream.next().await.transpose()? else {
-            return Err(LlmFacadeError::Protocol);
+        let session_id = match stream.next().await.transpose()? {
+            Some(RoleEvent::Opened { session_id }) => session_id,
+            Some(RoleEvent::AdmissionClosed) => return Ok(None),
+            _ => return Err(LlmFacadeError::Protocol),
         };
-        Ok(Self {
+        Ok(Some(Self {
             client,
             session_id,
             stream,
-        })
+        }))
     }
 
     async fn command<T: DeserializeOwned>(
@@ -241,11 +322,40 @@ impl RoleSession {
             .map_err(|_| LlmFacadeError::Protocol)
     }
 
+    /// Queries the current engine residency for a scheduler considering relocation.
+    /// This snapshot can change immediately through native preemption; it grants no KV lease.
+    pub async fn kv(
+        &self,
+    ) -> Result<foretoken_model_protocol::DraftTargetKvObservation, LlmFacadeError> {
+        let response = self
+            .client
+            .client
+            .get(format!(
+                "{}/sessions/{}/kv",
+                self.client.endpoint, self.session_id
+            ))
+            .send()
+            .await
+            .map_err(classify_reqwest)?;
+        if !response.status().is_success() {
+            return Err(classify_status(response.status()));
+        }
+        response.json().await.map_err(|_| LlmFacadeError::Protocol)
+    }
+
     /// Reads one Target commit; an early EOF cannot masquerade as successful generation.
     pub async fn next_commit(&mut self) -> Result<TargetCommit, LlmFacadeError> {
         match self.stream.next().await.transpose()? {
-            Some(RoleEvent::Committed(commit)) => Ok(commit),
+            Some(RoleEvent::Committed(commit)) => Ok(*commit),
             _ => Err(LlmFacadeError::Protocol),
+        }
+    }
+
+    /// Returns an owned context address for the frontend's next Draft proposal.
+    pub fn context_source(&self) -> TargetContextSource {
+        TargetContextSource {
+            endpoint: self.client.endpoint().to_owned(),
+            session_id: self.session_id.clone(),
         }
     }
 
@@ -254,12 +364,14 @@ impl RoleSession {
         &mut self,
         version: u64,
         max_tokens: u32,
+        context_source: TargetContextSource,
     ) -> Result<DraftProposal, LlmFacadeError> {
         let candidate: DraftProposal = self
             .command(
                 "propose",
                 &serde_json::json!({
-                    "version": version, "max_tokens": max_tokens
+                    "version": version, "max_tokens": max_tokens,
+                    "context_source": context_source,
                 }),
             )
             .await?;
@@ -294,29 +406,14 @@ impl RoleSession {
         Ok(())
     }
 
-    /// Submits candidates once; a rejected generation ends this non-replaying workflow.
-    pub async fn verify(
-        &mut self,
-        version: u64,
-        proposal: &DraftProposal,
-        source: &RoleClient,
-    ) -> Result<(), LlmFacadeError> {
-        #[derive(Deserialize)]
-        struct Admission {
-            accepted: bool,
+    /// Identifies this member's proposal without transferring the owning session stream.
+    pub fn verification(&self, proposal: DraftProposal, source: &RoleClient) -> DraftVerification {
+        DraftVerification {
+            session_id: self.session_id.clone(),
+            version: proposal.version,
+            token_ids: proposal.token_ids,
+            artifact: proposal.artifact,
+            source_endpoint: source.endpoint.clone(),
         }
-        let admission: Admission = self
-            .command(
-                "verify",
-                &serde_json::json!({
-                    "version": version, "token_ids": proposal.token_ids,
-                    "artifact": proposal.artifact, "source_endpoint": source.endpoint
-                }),
-            )
-            .await?;
-        if !admission.accepted {
-            return Err(LlmFacadeError::Rejected);
-        }
-        Ok(())
     }
 }

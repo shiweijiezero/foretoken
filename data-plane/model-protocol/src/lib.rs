@@ -3,7 +3,10 @@
 
 //! Versioned internal HTTP contract for already-tokenized vLLM requests.
 
+mod draft_target;
 mod kv_hash;
+pub use draft_target::*;
+
 pub use kv_hash::normalized_kv_block_hash;
 
 use std::collections::BTreeMap;
@@ -28,6 +31,14 @@ pub enum ModelServerRole {
     Decode,
     Draft,
     Target,
+}
+
+/// Candidate representation shared by a Draft and Target in one execution path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftTargetCandidateFormat {
+    GreedyTokenIds,
+    TokenIdsLogProbs,
 }
 
 /// Request accepted by the single model-server ingress owned by one routable ModelGroup.
@@ -204,6 +215,9 @@ pub struct TelemetryResponse {
     /// Rank-local gauges from the same observation as the group totals.
     #[serde(default)]
     pub data_parallel_ranks: Vec<DataParallelTelemetry>,
+    /// DT-specific native work split, absent for other engines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_target_workload: Option<DraftTargetWorkload>,
     pub running_requests: u64,
     /// Sum of engine-reported scheduler capacities, or `None` when any capacity is unknown.
     pub max_concurrent_requests: Option<u64>,

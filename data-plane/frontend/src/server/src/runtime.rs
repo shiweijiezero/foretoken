@@ -316,6 +316,7 @@ struct VideoBackendContext {
 pub struct RuntimeState {
     models: BTreeMap<String, ModelRuntime>,
     video: Option<VideoBackendContext>,
+    draft_target: BTreeMap<String, crate::draft_target::DraftTargetScheduler>,
     admission_targets: BTreeMap<String, AdmissionTargets>,
     router: Arc<dyn Router>,
     resolver: Arc<dyn LlmFacadeResolver>,
@@ -334,10 +335,27 @@ impl RuntimeState {
         Self {
             models,
             video: None,
+            draft_target: BTreeMap::new(),
             admission_targets: BTreeMap::new(),
             router,
             resolver,
         }
+    }
+
+    /// Attaches per-model DT ready queues using this generation's Router and role clients.
+    /// RuntimeBuilder calls this only for snapshot models with a DT topology.
+    pub fn with_draft_target_models(mut self, models: BTreeSet<String>) -> Self {
+        for model in models {
+            self.draft_target.insert(
+                model.clone(),
+                crate::draft_target::DraftTargetScheduler::new(
+                    model,
+                    self.router.clone(),
+                    self.resolver.clone(),
+                ),
+            );
+        }
+        self
     }
 
     /// Registers video models whose engine owns preprocessing, using the same route inventory.
@@ -398,10 +416,10 @@ struct RuntimeSlot {
     control: Arc<dyn RuntimeControl>,
 }
 
-/// Real adapter: each request loads one immutable runtime state before lowering and routing.
+/// Publishes immutable runtimes; unadmitted DT work can reprepare after a snapshot update.
 pub struct RuntimeGeneration {
     slot: ArcSwapOption<RuntimeSlot>,
-    publication: Mutex<()>,
+    publication: Mutex<Vec<std::sync::Weak<RuntimeSlot>>>,
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: AtomicBool,
     request_timeout: Duration,
@@ -416,7 +434,7 @@ impl RuntimeGeneration {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: ArcSwapOption::empty(),
-            publication: Mutex::new(()),
+            publication: Mutex::new(Vec::new()),
             publication_updates,
             accepting: AtomicBool::new(true),
             request_timeout,
@@ -430,7 +448,7 @@ impl RuntimeGeneration {
         state: Arc<RuntimeState>,
         control: Arc<dyn RuntimeControl>,
     ) -> bool {
-        let _publication = self
+        let mut generations = self
             .publication
             .lock()
             .expect("runtime publication lock poisoned");
@@ -441,11 +459,18 @@ impl RuntimeGeneration {
         {
             return false;
         }
-        self.slot.store(Some(Arc::new(RuntimeSlot {
+        let slot = Arc::new(RuntimeSlot {
             version,
             state,
             control,
-        })));
+        });
+        generations.retain(|generation| generation.strong_count() > 0);
+        generations.push(Arc::downgrade(&slot));
+        if let Some(previous) = self.slot.swap(Some(slot)) {
+            for scheduler in previous.state.draft_target.values() {
+                scheduler.retire();
+            }
+        }
         self.publication_updates.send_replace(version);
         true
     }
@@ -468,12 +493,25 @@ impl RuntimeGeneration {
         self.slot.load_full().map(|slot| slot.version)
     }
 
-    /// Refreshes readiness for the currently loaded runtime slot and wakes queued admission checks.
+    /// Refreshes active and request-retained generations, then wakes their placement queues.
+    /// Weak leases stop old inventories being polled after their last response is dropped.
     pub async fn refresh_backend_readiness(&self) {
-        if let Some(slot) = self.slot.load_full() {
+        let generations = self
+            .publication
+            .lock()
+            .expect("runtime publication lock poisoned")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect::<Vec<_>>();
+        futures::future::join_all(generations.into_iter().map(|slot| async move {
             slot.control.refresh_backend_readiness().await;
-            self.publication_updates.send_replace(slot.version);
-        }
+            for scheduler in slot.state.draft_target.values() {
+                scheduler.refresh();
+            }
+        }))
+        .await;
+        self.publication_updates
+            .send_replace(self.active_version().unwrap_or(0));
     }
 
     /// Returns an owned model list for the currently loaded runtime slot, or an empty list before publication.
@@ -527,13 +565,15 @@ impl RuntimeGeneration {
         }
     }
 
+    /// Prepares and dispatches one runtime attempt. None returns unexecuted DT work for
+    /// preparation against a newer snapshot; admitted inference is never replayed.
     async fn dispatch(
         &self,
         slot: Arc<RuntimeSlot>,
         runtime: &ModelRuntime,
-        request: GenerationRequest,
+        request: &GenerationRequest,
         text_request: TextRequest,
-    ) -> Result<Generated, GenerationError> {
+    ) -> Result<Option<Generated>, GenerationError> {
         let bundle = &runtime.bundle;
         let decode_options = text_request.decode_options.clone();
         let prepared = bundle
@@ -551,6 +591,33 @@ impl RuntimeGeneration {
             return Err(GenerationError::DeadlineExceeded);
         }
         let generate_request = prepared.generate_request;
+        if let Some(scheduler) = slot.state.draft_target.get(&request.model) {
+            let _queue = slot
+                .state
+                .select_admission_targets(&request.model)
+                .map(|targets| foretoken_metrics::QueueGuard::backend_dispatch(&targets));
+            let Some((decision, stream)) = scheduler.generate(generate_request.clone()).await?
+            else {
+                return Ok(None);
+            };
+            // Keep this generation's observations and queues alive throughout all DT rounds.
+            let stream = Box::pin(async_stream::stream! {
+                let _generation = slot;
+                let mut stream = stream;
+                while let Some(item) = futures::StreamExt::next(&mut stream).await { yield item; }
+            });
+            return Ok(Some(Generated {
+                routed: RoutedGenerate {
+                    routed_request: RoutedRequest {
+                        decision,
+                        request: generate_request,
+                    },
+                    stream,
+                },
+                tokenizer: bundle.tokenizer.clone(),
+                decode_options,
+            }));
+        }
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
         let mut session = slot.state.router.start(context).await;
         let initial = session
@@ -588,11 +655,11 @@ impl RuntimeGeneration {
             },
             stream,
         };
-        Ok(Generated {
+        Ok(Some(Generated {
             routed,
             tokenizer: bundle.tokenizer.clone(),
             decode_options,
-        })
+        }))
     }
 }
 
@@ -693,26 +760,32 @@ impl Generation for RuntimeGeneration {
     async fn generate(&self, request: GenerationRequest) -> Result<Generated, GenerationError> {
         let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
         let mut generated = before_deadline(deadline, async {
-            let slot = self.generation_slot(&request.model).await?;
-            let runtime = slot.state.model(&request.model)?;
-            let text_request = TextRequest {
-                request_id: request.request_id.clone(),
-                prompt: request.prompt.clone(),
-                mm_features: None,
-                sampling_params: request.sampling_params.clone(),
-                decode_options: request.decode_options.clone(),
-                intermediate: request.intermediate,
-                priority: request.priority,
-                cache_salt: request.cache_salt.clone(),
-                add_special_tokens: false,
-                data_parallel_rank: None,
-                session_id: request.session_id.clone(),
-                reasoning_parser_kwargs: None,
-                lora_request: None,
-                arrival_time: request.arrival_time,
-            };
-            self.dispatch(slot.clone(), runtime, request, text_request)
-                .await
+            loop {
+                let slot = self.generation_slot(&request.model).await?;
+                let runtime = slot.state.model(&request.model)?;
+                let text_request = TextRequest {
+                    request_id: request.request_id.clone(),
+                    prompt: request.prompt.clone(),
+                    mm_features: None,
+                    sampling_params: request.sampling_params.clone(),
+                    decode_options: request.decode_options.clone(),
+                    intermediate: request.intermediate,
+                    priority: request.priority,
+                    cache_salt: request.cache_salt.clone(),
+                    add_special_tokens: false,
+                    data_parallel_rank: None,
+                    session_id: request.session_id.clone(),
+                    reasoning_parser_kwargs: None,
+                    lora_request: None,
+                    arrival_time: request.arrival_time,
+                };
+                if let Some(generated) = self
+                    .dispatch(slot.clone(), runtime, &request, text_request)
+                    .await?
+                {
+                    break Ok(generated);
+                }
+            }
         })
         .await?;
         generated.routed.stream = deadline_stream(generated.routed.stream, deadline);
@@ -727,37 +800,42 @@ impl Generation for RuntimeGeneration {
     ) -> Result<GeneratedChat, GenerationError> {
         let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
         let mut chat = before_deadline(deadline, async {
-            let slot = self.generation_slot(&request.model).await?;
-            let runtime = slot.state.model(&request.model)?;
-            let (mut text_request, output_processor) = runtime
-                .bundle
-                .chat_processor
-                .prepare_with_options(
-                    chat,
-                    NewChatOutputProcessorOptions {
-                        tool_call_parser: &request.tool_call_parser,
-                        reasoning_parser: &request.reasoning_parser,
-                    },
-                )
-                .await
-                .map_err(|error| {
-                    if error.is_request_validation_error() {
-                        GenerationError::InvalidRequest
-                    } else {
-                        GenerationError::Internal
-                    }
-                })?;
-            // The chat renderer stamps its own entry time after runtime admission. Preserve the
-            // HTTP handler's earlier origin so chat and text requests include the same wait.
-            text_request.arrival_time = request.arrival_time.or(text_request.arrival_time);
-            let generated = self
-                .dispatch(slot.clone(), runtime, request, text_request)
-                .await?;
-            Ok(GeneratedChat {
-                generated,
-                output_processor,
-                include_reasoning,
-            })
+            loop {
+                let slot = self.generation_slot(&request.model).await?;
+                let runtime = slot.state.model(&request.model)?;
+                let (mut text_request, output_processor) = runtime
+                    .bundle
+                    .chat_processor
+                    .prepare_with_options(
+                        chat.clone(),
+                        NewChatOutputProcessorOptions {
+                            tool_call_parser: &request.tool_call_parser,
+                            reasoning_parser: &request.reasoning_parser,
+                        },
+                    )
+                    .await
+                    .map_err(|error| {
+                        if error.is_request_validation_error() {
+                            GenerationError::InvalidRequest
+                        } else {
+                            GenerationError::Internal
+                        }
+                    })?;
+                // The chat renderer stamps its own entry time after runtime admission. Preserve the
+                // HTTP handler's earlier origin so chat and text requests include the same wait.
+                text_request.arrival_time = request.arrival_time.or(text_request.arrival_time);
+                let Some(generated) = self
+                    .dispatch(slot.clone(), runtime, &request, text_request)
+                    .await?
+                else {
+                    continue;
+                };
+                break Ok(GeneratedChat {
+                    generated,
+                    output_processor,
+                    include_reasoning,
+                });
+            }
         })
         .await?;
         chat.generated.routed.stream = deadline_stream(chat.generated.routed.stream, deadline);

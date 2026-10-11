@@ -159,7 +159,13 @@ impl RuntimeBuilder {
         );
         let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
-        let mut state = RuntimeState::new(models, router, resolver);
+        let dt_models = snapshot
+            .dt_components
+            .iter()
+            .map(|component| component.model.clone())
+            .collect();
+        let mut state =
+            RuntimeState::new(models, router, resolver).with_draft_target_models(dt_models);
         if !video_models.is_empty() {
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))

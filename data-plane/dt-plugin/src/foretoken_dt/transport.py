@@ -102,30 +102,36 @@ class RegisteredTensor:
         self.closed = False
 
     async def publish(
-        self, *, ready_event: torch.cuda.Event | None = None
+        self, *, ready_event: torch.cuda.Event | None = None, rows: int | None = None
     ) -> PayloadRef:
-        """Fence producer writes and lend storage to one reader until its ACK.
+        """Fence producer writes and publish storage until explicit source release.
 
         ready_event must already be recorded after every local use of this
         buffer. Without an event, the entire device is synchronized.
+        rows publishes only the leading rows while retaining the full registration.
         """
         self.owner.require_accepting()
         self._require_idle()
         await self._wait_device(ready_event)
         self.owner.require_accepting()
         self._require_idle()
+        tensor = self.tensor
+        if rows is not None:
+            if not tensor.ndim or not 0 < rows <= tensor.shape[0]:
+                raise ValueError("publication rows exceed registered capacity")
+            tensor = tensor[:rows]
         self.publication = PayloadRef(
             uuid4().hex,
             self.owner.segment,
-            self.tensor.data_ptr(),
-            self.tensor.numel() * self.tensor.element_size(),
-            str(self.tensor.dtype).removeprefix("torch."),
-            tuple(self.tensor.shape),
+            tensor.data_ptr(),
+            tensor.numel() * tensor.element_size(),
+            str(tensor.dtype).removeprefix("torch."),
+            tuple(tensor.shape),
         )
         return self.publication
 
     def release_source(self, publication_id: str) -> None:
-        """Accept the reader's completed-read acknowledgement, not a timeout."""
+        """Release with proof of no future read: reader ACK or unclaimed revocation."""
         if (
             self.publication is None
             or self.publication.publication_id != publication_id
@@ -143,16 +149,18 @@ class RegisteredTensor:
         that result; cancellation never releases the producer automatically.
         ready_event fences previous destination use before the RDMA overwrite;
         omit it to synchronize the device. Await read before launching consumers.
+        The destination may have spare row capacity; only source.nbytes is written.
         """
         self.owner.require_accepting()
         self._require_idle()
         nbytes = self.tensor.numel() * self.tensor.element_size()
         if (
-            source.nbytes != nbytes
+            source.nbytes > nbytes
             or _TENSOR_DTYPES[source.dtype] != self.tensor.dtype
-            or source.shape != tuple(self.tensor.shape)
+            or len(source.shape) != self.tensor.ndim
+            or source.shape[1:] != tuple(self.tensor.shape[1:])
         ):
-            raise ValueError("source and destination tensor layouts must match")
+            raise ValueError("source layout must fit the destination's row capacity")
         self.transfer = asyncio.create_task(self._read(source, ready_event))
         await asyncio.shield(self.transfer)
 

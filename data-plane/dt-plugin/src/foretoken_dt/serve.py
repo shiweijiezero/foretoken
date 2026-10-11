@@ -39,24 +39,52 @@ def main() -> None:
     parser.add_argument("--draft-token-budget", type=int, default=3)
     parser.add_argument("--rdma-host", help="local routable address for Mooncake")
     parser.add_argument("--rdma-nic", default="", help="local RDMA device selection")
+    parser.add_argument(
+        "--enable-kv-migration",
+        action="store_true",
+        help="enable round-boundary Target KV checkpoints (NVIDIA, full attention)",
+    )
     args = parser.parse_args()
     if args.draft_token_budget <= 0:
         parser.error("--draft-token-budget must be positive")
     engine_args = ExternalEngineArgs.from_cli_args(args)
+    neural = engine_args.speculative_config is not None
     if any(
         value is not None
         for value in (
-            engine_args.speculative_config,
             engine_args.spec_method,
             engine_args.spec_model,
             engine_args.spec_tokens,
         )
     ):
-        parser.error("the role owns speculative_config; use --draft-token-budget")
+        parser.error(
+            "DT neural drafts use --speculative-config; independent drafts use --draft-token-budget"
+        )
+    if neural:
+        if not args.rdma_host or is_metax:
+            parser.error("neural Draft context requires NVIDIA and --rdma-host")
+        engine_args.additional_config = {
+            **(engine_args.additional_config or {}),
+            "foretoken_dt_context_role": args.role,
+        }
+        config = engine_args.speculative_config
+        config["draft_sample_method"] = "probabilistic"
     if engine_args.worker_cls != "auto" or engine_args.scheduler_cls is not None:
         parser.error("DT roles own --worker-cls and --scheduler-cls")
     if args.rdma_nic and not args.rdma_host:
         parser.error("--rdma-nic requires --rdma-host")
+    if args.enable_kv_migration:
+        from vllm.config import KVTransferConfig
+
+        if args.role != "target" or not args.rdma_host or is_metax:
+            parser.error("KV migration requires an NVIDIA Target with RDMA")
+        if engine_args.kv_transfer_config is not None:
+            parser.error("DT migration owns the KV connector")
+        engine_args.kv_transfer_config = KVTransferConfig(
+            kv_connector="DraftTargetKvConnector",
+            kv_role="kv_both",
+            kv_connector_module_path="foretoken_dt.vllm.migration",
+        )
     engine_args.enforce_eager = True
     engine_args.async_scheduling = False
     register()
@@ -66,7 +94,7 @@ def main() -> None:
         engine_args.worker_extension_cls = (
             "foretoken_dt.worker.DraftTargetWorkerExtension"
         )
-    if args.role == "target":
+    if args.role == "target" and not neural:
         # Native rejection sampling verifies candidates from the remote Draft.
         engine_args.speculative_config = {
             "method": "external",

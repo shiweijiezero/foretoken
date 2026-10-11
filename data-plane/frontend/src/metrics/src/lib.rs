@@ -17,6 +17,9 @@ use serde::Serialize;
 
 pub use vllm_metrics::*;
 
+mod draft_target;
+pub use draft_target::record_draft_target_round;
+
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Routes served to the platform rather than to inference clients. They are not counted as
 /// requests and receive no request span, so scrapes and probes do not appear in request logs.
@@ -174,12 +177,17 @@ pub async fn scrape_with_kv_index(
 
 // Combines upstream, Router, admission, and optional KV-index families under one OpenMetrics EOF marker.
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
-    match (METRICS.render(), foretoken_router::render_metrics()) {
-        (Ok(mut body), Ok(router)) => {
+    match (
+        METRICS.render(),
+        foretoken_router::render_metrics(),
+        draft_target::render(),
+    ) {
+        (Ok(mut body), Ok(router), Ok(dt)) => {
             if let Some(without_eof) = body.strip_suffix("# EOF\n") {
                 body = without_eof.to_owned();
             }
             body.push_str(router.strip_suffix("# EOF\n").unwrap_or(&router));
+            body.push_str(dt.strip_suffix("# EOF\n").unwrap_or(&dt));
             body.push_str(&render_admission_metrics());
             if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
                 body.push_str(&format!("# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n", usize::from(!matches!(state, "disabled" | "unavailable")), escape_label(reason.unwrap_or("none")), usize::from(state == "degraded"), sources_healthy, sources_total));
@@ -194,7 +202,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
             )
                 .into_response()
         }
-        (Err(_), _) | (_, Err(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

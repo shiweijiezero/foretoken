@@ -43,13 +43,21 @@ curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
 tokenizer。需要选择 token ID 含义兼容的模型，不能只根据名称判断。
 当前 `source: local` 部署要求模型、tokenizer 使用 Pod 内可见的绝对路径。
 
-分别修改各 Pool 的 `replicas` 后重新部署，即可独立调整副本数。新请求各选择一个
-Draft 和 Target。缩容先关闭准入，再撤销路由，等待已有会话结束；model-server 还会在关闭时限内
-等待持有的传输产物释放。
+分别修改各 Pool 的 `replicas` 后重新部署，即可独立调整副本数。frontend 每轮将
+ready request 组 batch，再选择 DT worker。Draft 可以跨轮切换；公开 scheduler
+让已有 Target session 继续使用原 worker。显式 Target migration 可通过独立的
+[batch example](../../data-plane/dt-plugin/docs/frontend-workflow.md#move-a-request-between-targets)运行。新 request 和尚未建立 Target session 的排队 request 使用更新后的 worker inventory，
+已有 Target session 的 request 保留原 runtime generation。缩容先关闭准入，再撤销路由，等待已有
+session 结束；model-server 还会在关闭时限内等待持有的传输产物释放。
+选中的 worker 若在新 session 建立前关闭准入，request 会返回 ready queue，
+后续 placement 排除这个 worker，保留已有 Target session 和 confirmed prefix。
+暂时没有兼容且可接收的 worker 时，request 等待 worker 状态更新或容量释放，
+直到能够执行、超时或被取消。仍接受任务的 worker 不必完全空闲，vLLM 也会负责本地排队。
+网络故障或已开始的推理操作失败时，不会重放。
 多个 Draft 副本提供更多容量，当前不会共同生成候选树。
 
 当前限制：文本输入、线性候选、每个角色实例一张 GPU、eager 执行、本地同步调度。
-不支持 P/D 组合、多模态、KV offload/传输、结构化输出、profiling 或 `min_p`。
+不支持 P/D 组合、多模态、KV offload、自动 Target migration、结构化输出、profiling 或 `min_p`。
 HTTP 传候选 ID 和描述符；完整提议分布由 Mooncake 在 GPU Worker 间传输。
 Draft 随机数独立于 Target seed。Kubernetes RDMA 网络、依赖指标的自动扩缩容、
 随机采样质量评估和公开 API 性能基准尚未验证。没有空闲 GPU 容量时，

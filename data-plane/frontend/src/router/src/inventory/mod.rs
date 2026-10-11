@@ -21,6 +21,14 @@ pub trait RouteInventory: Send + Sync {
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
 
+    /// Returns the live DT candidate format; absent observations cannot form a DT pair.
+    fn draft_target_format(
+        &self,
+        _route_target_id: &RouteTargetId,
+    ) -> Option<foretoken_model_protocol::DraftTargetCandidateFormat> {
+        None
+    }
+
     /// Resolves the HTTP endpoint of a selected aggregate route; selection stays with the Router.
     fn http_endpoint(&self, _decision: &RouteDecision) -> Option<String> {
         None

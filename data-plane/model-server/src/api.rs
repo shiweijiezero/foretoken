@@ -306,6 +306,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
         version: 2,
+        draft_target_workload: None,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

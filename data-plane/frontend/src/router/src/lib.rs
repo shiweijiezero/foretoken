@@ -8,6 +8,7 @@ mod cache;
 mod inventory;
 mod metrics;
 mod request;
+mod round;
 mod route_target_stats;
 mod routing_load;
 pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
@@ -23,6 +24,7 @@ pub use inventory::{
 };
 pub use metrics::render_metrics;
 pub use request::RouterRequest;
+pub use round::{DraftTargetPlacement, DraftTargetRoundRoute};
 pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage, PickerAlgorithm,

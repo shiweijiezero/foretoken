@@ -21,9 +21,9 @@ or require a separate engine branch.
 Native `worker_cls` and `scheduler_cls` select plugin subclasses. Platform
 configuration selects its Worker first; DT then wraps that class, preserving
 MetaX's optional precision-debug Worker. The
-`vllm.general_plugins` entry point installs two process-local EngineCore hooks:
-candidate submission through the existing utility queue, and readiness while
-requests wait for remote candidates. Worker initialization temporarily replaces
+`vllm.general_plugins` entry point installs process-local EngineCore hooks for candidate admission,
+readiness while requests wait for remote candidates, and direct observations
+through the existing utility queue. Worker initialization temporarily replaces
 the Runner, speculator and sampler factories, restoring each binding afterward.
 No upstream scheduling or model-execution method body is copied. These internal
 boundaries are version-sensitive, so role startup rejects other vLLM versions.
@@ -48,9 +48,11 @@ model-server image. Rust build sources remain pinned independently.
 ## Engine boundary
 
 The plugin configures `method="external"` and exposes
-`ExternalAsyncLLM.submit_external_draft_tokens(ticket, token_ids)`. A nonterminal
+`ExternalAsyncLLM.submit_external_draft_batch([(ticket, token_ids), ...])`.
+All entries reach the scheduler in one utility call, returning one admission result
+per entry; native scheduling still chooses physical GPU batches. A nonterminal
 `RequestOutput.external_draft_request` carries an immutable request/generation
-ticket after normal output stop handling. Submission returns whether the ticket
+ticket after normal output stop handling. Each result reports whether its ticket
 was admitted, not whether verification accepted the candidates. Stale or consumed
 tickets return false; an empty candidate list requests a Target-only step.
 
@@ -63,7 +65,7 @@ tickets return false; an empty candidate list requests a Target-only step.
 | Foretoken frontend | Select role instances, order rounds, retain session lifetimes, stream confirmed output |
 | Role service | Translate session/version messages to engine requests and tickets; abort owned work on disconnect |
 
-No local Draft model or speculator is constructed by the Target engine. Updating
+No local Draft model is constructed by the Target engine. Updating
 Scheduler's CPU candidates alone is insufficient: MRV2 input preparation reads
 `req_states.draft_tokens`, so the plugin fills that state after request-slot
 updates. EngineCore distinguishes lifecycle ownership from schedulable work to
@@ -80,7 +82,9 @@ and output interval one. `draft_sample_method="probabilistic"` consumes external
 proposal distributions; the token-only mode requires greedy sampling. RDMA Draft
 also uses the plugin sampler's processed-logit export. Remote waits are per request;
 other requests can still execute. Distributed model execution, CUDA graphs,
-multimodal input and KV/EC transfer are not enabled by this adapter.
+multimodal input and EC transfer are not enabled by this adapter. The optional
+NVIDIA Target migration connector supports one full-attention KV group; other KV
+connectors remain unsupported.
 
 The role CLI defaults `VLLM_BATCH_INVARIANT` to `1` for NVIDIA and `0` for MACA
 before importing vLLM, unless the process environment already specifies a value.
@@ -90,27 +94,72 @@ runs must use the same setting. Model/backend support and hardware restrictions
 still apply, and independent Draft randomness prevents a general seeded-sequence
 equality claim. See the [role startup requirements](../README.md#start-two-roles).
 
+## Neural Draft context
+
+With a neural Draft profile, Target retains a position-indexed history of final and
+auxiliary hidden states through a non-model speculator. Export runs on the
+EngineCore scheduler thread and selects only the confirmed computed prefix,
+excluding the last correction/bonus token. Rejected suffixes are discarded;
+request completion, abort and native request removal release the retained history.
+Target APC is disabled so a cache hit cannot leave gaps in that history.
+
+The frontend passes the current Target session address with each proposal.
+Draft claims and reads the context before admitting a normal native request
+whose prompt excludes the anchor token. Its loader keeps the Target backbone on
+the meta device and materializes shared embedding/output weights. Native MRV2
+loads the selected native speculator and allocates its own KV pages. The feature
+forward gathers staged rows for the locally scheduled prefill chunk; sampling supplies
+the confirmed anchor. Native speculator execution and request postprocessing
+remain unchanged. The adapter defers output copying until the native proposal
+exists, returning that chain as the terminal result of the ordinary request.
+Partial prefill chunks return no tokens. DFlash/DSpark's full immutable Draft prefix pages
+remain eligible for native APC. EAGLE/MTP KV at position t also consumes token t+1;
+a page's final row can therefore depend on an anchor outside its hashed prompt.
+These methods disable Draft APC. No Target page index crosses the role boundary.
+Native profiling and warmup use synthetic features without remote artifact bindings;
+output normalization weights are materialized for Targets that apply normalization
+inside `compute_logits`.
+
+Features use the existing artifact claim/read/ACK lifecycle. Each round currently
+copies the full computed prefix, including when Draft APC skips its first rows.
+This is a correctness baseline with potentially substantial repeated transfer cost.
+The adapter enables DFlashDraftModel, Qwen3DSparkModel, EAGLE/EAGLE3 and
+single-module MTP. GPU validation covers DFlash/EAGLE3/DSpark with Qwen3-8B
+and MiMo-7B-Base MTP; EAGLE has not had a separate checkpoint validation. Multi-module MTP, HC residuals and
+Target-shared sparse indices remain excluded. Gemma4 needs Target KV sharing.
+Other DFlash and DSpark architectures require separate integration.
+DSpark reuses the native anchor layout, Markov sampling and reduced-vocabulary
+mapping. Export reads the native `draft_logits` cache after Markov bias and any
+`dspark_draft_topk` truncation, so each transferred q row is conditioned on the
+preceding sampled candidates. Remote roles reject `enable_adaptive_verification`:
+its confidence feedback and verifier cost scheduling are not part of this path.
+
 ## Frontend and role ownership
 
-One request binds one Draft and one Target. Target prefill emits the first
-confirmed token, then the frontend repeats:
+Target owns a request session across rounds. Target prefill emits the first
+confirmed token; the caller then forms each batch, selects DT, and executes:
 
-1. Align Draft with the exact Target-confirmed prefix.
+1. Reuse the selected Draft binding with the confirmed delta, or bind the full
+   confirmed prefix on a newly selected Draft.
 2. Ask Draft for candidates within the remaining output budget.
 3. Submit candidates using the Target's current ticket.
-4. Stream the actual Target delta and stop outcome.
+4. Return the actual Target delta, stop outcome and request state to the caller.
 
 Each engine owns local batching and KV state. Draft rounds are ordinary vLLM
-requests against the confirmed prefix, using native prefix caching. Target owns
-verification and final token commitment. The normal frontend output processor
+requests against the confirmed prefix, using native prefix caching where the method
+permits it. Target owns verification and final token commitment. The normal frontend output processor
 retains text decoding and stop-string handling; it does not reconstruct engine
 token state by re-tokenizing cropped text.
 
-Dropping the frontend stream closes both role sessions. Draining rejects new
+The caller owns returned request state; dropping it closes both role sessions.
+Dropping an executing round closes members still owned by that round. Draining rejects new
 bindings while allowing existing rounds to finish. Engine health/readiness stays
 available during drain so Service routing does not interrupt existing sessions.
-Frontend or role failure terminates the request; transparent migration and replay
-are not implemented. Multiple Draft replicas provide capacity, not collaborative
+Frontend or role failure terminates the request. Request state records the current
+Target session/KV location across batches.
+Ordinary rounds reuse that Target. Explicit migration snapshots its native pages
+and loads them through the destination native block allocator before resuming;
+transparent replay is not implemented. Multiple Draft replicas provide capacity, not collaborative
 candidate trees or intermediate verification.
 
 After admission drain, model-server signals the role launcher first. Its lifespan
@@ -146,3 +195,18 @@ CUDA producer readiness. A completed-read ACK permits source release, not reuse
 of a destination still in use by model execution. Uncertain buffers remain
 retained until process termination. The standalone diagnostic exercises the
 transport separately and does not establish inference correctness or performance.
+
+## Observation ownership
+
+`ObservedScheduler` wraps the native Draft scheduler; `ExternalScheduler` adds
+Target remote-candidate admission. Native queues and page tables remain the only
+load/KV authority. Schedule/output hooks accumulate wall durations and sampler
+acceptance without copying the scheduling algorithm. The one-worker synchronous
+execution constraint makes each scheduled step's completion unambiguous.
+
+`ExternalAsyncLLM` consumes cumulative output observations through EngineCore's
+utility queue, derives interval deltas, and deletes remaining records when its
+generator closes. Native abort notifications have no model step to measure.
+The role adds Worker-measured transfer timing; the frontend owns caller queue,
+proposal-batch wait, round identity, tracing and aggregate metrics. See the
+[measurement contract](role-protocol.md#observations) for boundaries and KV limits.

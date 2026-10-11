@@ -33,6 +33,8 @@ pub struct RouteCandidate {
     pub revision: String,
     /// E/P/D route-set identity, if this routable ModelGroup participates in one.
     pub pipeline_scope_id: Option<String>,
+    /// Observed DT format used to match peers before selection.
+    pub draft_target_format: Option<foretoken_model_protocol::DraftTargetCandidateFormat>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
     /// Latest route-target gauges and available windowed statistics for this routing round.

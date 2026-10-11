@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-将用户指定的 Draft、Target 模型分别运行在不同 GPU 或主机上。前端选择一对实例，
+将用户指定的 Draft、Target 模型分别运行在不同 GPU 或主机上。前端每轮选择 DT worker，
 协调候选生成和验证，只向用户输出 Target 确认的结果。Mooncake 在 GPU Worker 之间
 传输 Draft 的完整提议分布；HTTP 传递候选 token 和张量描述符。两端各自管理调度和 KV。
 
@@ -18,6 +18,29 @@ NVIDIA 源码构建中，`make image-model-server` 会构建固定版本的 CUDA
 包含 vLLM 子进程发现所需的入口。`foretoken install -e .` 默认使用同一运行环境。
 主机需支持 CUDA 13；显式覆盖 `INFERENCE_ENGINE_IMAGE` 时，应提供下述兼容引擎和 Mooncake 环境。
 沐曦沿用独立的运行时构建，兼容要求见下文。
+
+## 每轮组 batch 和选 DT
+
+公开 text/chat request 进入 per-model ready queue。scheduler 每轮将 ready 的
+request 组 batch，再选择兼容的 DT。
+[batch frontend 示例](docs/frontend-workflow.md#run-per-round-batches-through-router)
+也提供 round API，供自定义 scheduler 使用。request 可以携带已确认的
+prefix 切换 Draft。request 记录当前 Target 位置；普通 round 复用该 Target，
+也可以在 round 之间显式调用 migration，将 KV 移到另一个兼容的 Target。
+vLLM 负责本地 GPU batching。每个 request 独立返回 ready queue，不必等其他
+request 的 prefill。output backpressure 和取消也按 request 处理。当前策略立即
+执行 ready 的工作，没有 SLO 或 migration cost 策略。
+
+## 观察 DT 执行
+
+batch example 会输出每轮耗时、proposed/accepted/committed token 数和 transfer
+数据。role `/status` 提供 native ready、waiting、remote-waiting 工作量和 KV 容量。
+上层 scheduler 也可以查询 request 当前的 Target 位置和 KV 占用，作为 placement
+决策的输入。显式 migration 会记录 checkpoint export 耗时、传输字节数和 receiver
+read 耗时；目前没有 migration cost estimator。
+具体字段与统计口径见 [measurement 定义和 API](docs/role-protocol.md#observations)。
+frontend `/metrics` 提供 DT 汇总指标；request、round 和 worker 的对应关系保留在
+trace 和每轮返回的记录中。
 
 ## 启动两个角色
 
@@ -72,7 +95,10 @@ curl http://127.0.0.1:19100/status
 使用两端 HTTP 地址启动前端；角色服务仅提供内部 API，没有公共 OpenAI 接口或鉴权。
 
 每个角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
-对应请求，其他请求仍可执行。命令接受 vLLM 原有的模型、显存及 batch 参数。
+对应请求，其他请求仍可执行。NVIDIA role 在报告 ready 前执行 native sampling JIT
+warmup；Draft 还会预热导出 proposal probabilities 所用的 sampling 路径。
+首次编译可能延长启动时间；未覆盖的 kernel 变体仍可能在推理时编译。
+命令接受 vLLM 原有的模型、显存及 batch 参数。
 `--draft-token-budget` 设置每轮候选上限，默认 3；`--port` 设置 HTTP 端口，默认 19100；
 `--rdma-nic` 可指定 HCA，不设置时由 Mooncake 从可见设备中选择。
 HTTP 端口和 Mooncake 动态分配的握手端口需要互通。
@@ -97,16 +123,92 @@ Draft 使用独立的随机数；固定 Target seed 不保证不同候选轮次�
 不使用 RDMA 时，两端都省略 `--rdma-host`。此时仅支持 `temperature: 0`，
 能力标识为 `greedy_token_ids`，候选通过 HTTP 传递；随机采样请求会在准入前被拒绝。
 
+## 在 NVIDIA 上运行神经 Draft
+
+使用上述 NVIDIA 环境和兼容的未量化文本 Target。以 DFlash 为例，选择 `DFlashDraftModel` checkpoint。
+两端使用相同的原生 speculative 配置。例如，设置 `TARGET_MODEL=Qwen/Qwen3-8B`、
+`TOKENIZER=Qwen/Qwen3-8B`，并在两端设置：
+
+```bash
+SPEC_CONFIG='{"method":"dflash","model":"z-lab/Qwen3-8B-DFlash-b16","num_speculative_tokens":15}'
+```
+
+Draft 主机运行：
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role draft \
+  --model "$TARGET_MODEL" --tokenizer "$TOKENIZER" \
+  --speculative-config "$SPEC_CONFIG" \
+  --host 0.0.0.0 --rdma-host "$DRAFT_IP"
+```
+
+Target 主机运行：
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role target \
+  --model "$TARGET_MODEL" --tokenizer "$TOKENIZER" \
+  --speculative-config "$SPEC_CONFIG" \
+  --host 0.0.0.0 --rdma-host "$TARGET_IP"
+```
+
+同机运行时，两进程应选择不同 GPU 和 HTTP 端口。候选上限来自 `num_speculative_tokens`。
+Draft 主机需要访问 Target checkpoint，以加载共享 embedding/output 权重，但不会把
+Target 主干加载到 GPU。Target 保留 hidden states，Draft 在本地请求入队前通过 Mooncake
+拉取已确认前缀的特征。现有 Rust frontend 自动完成交换。两端 `/status` 的
+`context_profile` 必须一致；使用本地 checkpoint 时，两端路径需标识同一模型对。
+
+相同的角色命令也接受 EAGLE/EAGLE3 和单模块 MTP 配置。同样使用 Qwen3-8B Target 时，
+EAGLE3 配置为：
+
+```bash
+SPEC_CONFIG='{"method":"eagle3","model":"AngelSlim/Qwen3-8B_eagle3","num_speculative_tokens":3}'
+```
+
+同样使用 Qwen3-8B Target 时，DSpark 配置为：
+
+```bash
+SPEC_CONFIG='{"method":"dspark","model":"deepseek-ai/dspark_qwen3_8b_block7","num_speculative_tokens":7}'
+```
+
+DSpark 复用原生 Markov 采样，按 Target 词表顺序传输每个候选的条件概率。
+使用 `Qwen3DSparkModel` checkpoint，并保持固定长度验证
+（`enable_adaptive_verification=false`，原生默认值）。远端 Draft 尚未接入基于
+confidence 的自适应验证。
+
+使用 MiMo MTP 时，把 `TARGET_MODEL` 和 `TOKENIZER` 都设为 `XiaomiMiMo/MiMo-7B-Base`，
+两端角色命令均添加 `--trust-remote-code` 以加载其配置类，并使用：
+
+```bash
+SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":3}'
+```
+
+此路径支持 greedy/random sampling、原生 chunked prefill，以及每轮重新绑定 Draft。
+Target prefix caching 被禁用，因为 KV 命中会跳过 Draft 需要的特征计算。DFlash 和 DSpark 保留
+Draft 本地 prefix caching；EAGLE/MTP Draft 禁用该缓存，因为其 KV 还依赖后一位 token，
+而该 token 可能位于参与哈希的 prompt 之外。每次提议都传输完整的已计算特征前缀，
+长上下文会产生重复传输和 prefill 开销。
+
+GPU 验证覆盖 Qwen3-8B 配 DFlash/EAGLE3/DSpark，以及 MiMo-7B-Base MTP。EAGLE 使用相同的
+自回归适配路径，但尚未单独验证 checkpoint。尚未启用多模块 MTP、Gemma4 Target KV
+共享、HC residual、Target 共享稀疏注意力索引、DFlash2、LiLiCorr、沐曦神经 Draft，
+以及携带特征的 Target migration。生成正确不代表已有加速收益。
+
 ## 停止服务与支持范围
 
 `POST /drain` 关闭新请求准入，允许已有会话完成。关闭前端输出流可取消请求。
 正常停服前，应等待 `/status` 中的 `active_sessions` 和 `retained_artifacts` 都归零。
-GPU 缓冲区按精确形状复用，注册保留到角色关闭，因此会话结束后显存可能仍保持
-各形状的并发高水位。未收到读取确认的发布或完成状态不确定的 DMA 可能保留内存直到进程终止；
+GPU 缓冲区注册保留到角色关闭。特征缓冲区按几何增长的行容量复用，其他缓冲区按精确
+形状复用，因此会话结束后显存可能仍保持对应容量的并发高水位。取消 Draft session 会回收 Target 尚未 claim 的发布。
+已 claim 但未收到 ACK 的发布或完成状态不确定的 DMA 可能保留内存直到进程终止；
 当前不提供透明的对端故障恢复。
+artifact claim 是内部协议变更，需一起更新 frontend 和两端 role。
 
-当前每个请求使用一个 Draft 和一个 Target，处理文本输入及线性候选。
-尚未实现 hidden-state 方法、候选树、串联验证、多模态、P/D 组合、KV 传输或卸载。
+当前每个 inference round 使用一个 Draft 和一个 Target，处理文本输入及线性候选。
+显式 Target migration 需要在两个 NVIDIA Target 启用 RDMA 和 `--enable-kv-migration`，
+再使用 [batch example](docs/frontend-workflow.md#move-a-request-between-targets)。
+migration 目前要求 greedy sampling、相同 model/tokenizer identity，以及兼容的
+full-attention KV layout。公开 scheduler 保留当前 Target，不会自动迁移 request。
+尚未实现候选树、串联验证、多模态、P/D 组合或 KV offload。
 传输诊断或生成成功不代表存在加速收益，也不代表 Kubernetes、自动扩缩容已完成验收。
 
 ## 运行两机校验

@@ -21,6 +21,8 @@ pub struct RouteTargetLatencyStats {
 /// Latest route target gauges and available statistics calculated over `observed_window`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTargetStats {
+    /// DT ready/remote-waiting work and KV capacity from the latest direct role observation.
+    pub draft_target_workload: Option<foretoken_model_protocol::DraftTargetWorkload>,
     /// Rank-local scheduler observations carried by the same route-target snapshot.
     pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
     /// Collection time of the latest cumulative snapshot.

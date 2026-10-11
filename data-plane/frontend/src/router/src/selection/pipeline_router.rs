@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
+//! Compatible stage selection for Aggregate/P/D/E/P/D and independently placed DT rounds.
 
 use crate::routing_load::{ReservationKey, RoutingReservations};
 use std::collections::BTreeSet;
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{DraftTargetCandidateFormat, ModelServerRole};
 
 use crate::inventory::supports_request;
 use crate::route_target_stats::NoopRouteTargetStatsReader;
@@ -80,14 +80,25 @@ impl<C: Send + 'static> PipelineRouter<C> {
         &self,
         request: &RouterRequest,
         reservations: &RoutingReservations,
+        placement: Option<&crate::DraftTargetPlacement>,
     ) -> Vec<RouteCandidate> {
+        let retained_target = placement.and_then(|placement| placement.required_target.as_ref());
         self.inventory
             .model_routes()
-            .candidates(request)
+            .candidates(request, retained_target.map(|bound| &bound.route_target_id))
             .into_iter()
             .filter(|route| {
-                self.inventory
-                    .is_route_target_healthy(&route.route_target_id)
+                !placement.is_some_and(|placement| {
+                    placement.closed_workers.contains(&route.route_target_id)
+                })
+            })
+            .filter(|route| {
+                // A draining Target may finish its owned sessions. New bindings still require
+                // admission readiness at the role API; reusing a session does not move its KV.
+                retained_target.is_some_and(|bound| bound.route_target_id == route.route_target_id)
+                    || self
+                        .inventory
+                        .is_route_target_healthy(&route.route_target_id)
             })
             .filter(|route| {
                 supports_request(
@@ -106,6 +117,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 )
             })
             .flat_map(|route| {
+                let draft_target_format =
+                    self.inventory.draft_target_format(&route.route_target_id);
                 // Read the group's aggregate and rank-local gauges once, then share the immutable
                 // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
@@ -120,10 +133,27 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     model: route.model.clone(),
                     revision: route.revision.clone(),
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
+                    draft_target_format,
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                })
+            })
+            .filter(|candidate| {
+                if !matches!(
+                    candidate.role,
+                    ModelServerRole::Draft | ModelServerRole::Target
+                ) {
+                    return true;
+                }
+                // Token-only peers cannot serve random sampling, even when their scopes match.
+                candidate.draft_target_format.is_some_and(|format| {
+                    format == DraftTargetCandidateFormat::TokenIdsLogProbs
+                        || request
+                            .generate_request
+                            .as_ref()
+                            .is_some_and(|request| request.sampling_params.temperature == 0.0)
                 })
             })
             .collect()
@@ -133,12 +163,14 @@ impl<C: Send + 'static> PipelineRouter<C> {
     // delaying stage-specific eligibility until every candidate has been scored.
     fn select(
         &self,
-        request: &RouterRequest,
+        requests: &[RouterRequest],
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
+        placement: Option<&crate::DraftTargetPlacement>,
         eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
+        let request = &requests[0];
         let started = Instant::now();
         let metrics = &self.metrics;
         let round = routing_progress.current_stage;
@@ -153,7 +185,16 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .routing_load
                 .lock()
                 .expect("routing load lock poisoned");
-            let candidates = self.candidates(request, &reservations);
+            let mut candidates = self.candidates(request, &reservations, placement);
+            for member in &requests[1..] {
+                let compatible = self.candidates(member, &reservations, placement);
+                candidates.retain(|candidate| {
+                    compatible.iter().any(|other| {
+                        other.route_target_id == candidate.route_target_id
+                            && other.data_parallel_rank == candidate.data_parallel_rank
+                    })
+                });
+            }
             metrics.candidates(&request.model, round, "available", candidates.len());
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
@@ -264,7 +305,9 @@ impl<C: Send + 'static> PipelineRouter<C> {
             if let Some(on_selected) = on_selected {
                 on_selected(&candidate);
             }
-            reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
+            for member in requests {
+                reservations.reserve(member, &candidate, self.kv_prefix_indexer.as_ref());
+            }
             Ok(candidate)
         })();
         metrics.selection(&request.model, round, started.elapsed(), result.as_ref());
@@ -276,6 +319,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
             scored.iter().any(|other| {
                 other.candidate.role == *role
                     && other.candidate.pipeline_scope_id == candidate.pipeline_scope_id
+                    && (*role != ModelServerRole::Draft
+                        || other.candidate.draft_target_format == candidate.draft_target_format)
             })
         })
     }
@@ -283,7 +328,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn pipeline_scope_has_encoder(&self, request: &RouterRequest, pipeline_scope_id: &str) -> bool {
         self.inventory
             .model_routes()
-            .candidates(request)
+            .candidates(request, None)
             .into_iter()
             .any(|route| {
                 route.role == ModelServerRole::Encoder
@@ -298,9 +343,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
         context: &mut C,
     ) -> Result<RouteCandidate, RouteError> {
         self.select(
-            request,
+            std::slice::from_ref(request),
             routing_progress,
             context,
+            None,
             |candidate, scored| match candidate.role {
                 ModelServerRole::Aggregate => true,
                 ModelServerRole::Prefill => {
@@ -338,9 +384,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .pipeline_scope_id
             .expect("prefill selection context has a pipeline scope");
         self.select(
-            request,
+            std::slice::from_ref(request),
             routing_progress,
             context,
+            None,
             |candidate, scored| {
                 candidate.role == ModelServerRole::Prefill
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
@@ -362,9 +409,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .pipeline_scope_id
             .expect("decode selection context has a pipeline scope");
         self.select(
-            request,
+            std::slice::from_ref(request),
             routing_progress,
             context,
+            None,
             |candidate, _| {
                 candidate.role == ModelServerRole::Decode
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
@@ -390,9 +438,6 @@ impl PipelineRouter<()> {
 #[derive(Clone)]
 enum SessionStage {
     Initial,
-    Target {
-        pipeline_scope_id: String,
-    },
     Encoder {
         pipeline_scope_id: String,
     },
@@ -467,12 +512,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                 encoder_completed: false,
             },
             ModelServerRole::Aggregate => SessionStage::Complete,
-            ModelServerRole::Target => SessionStage::Target {
-                pipeline_scope_id: candidate
-                    .pipeline_scope_id
-                    .clone()
-                    .expect("eligible target has a pipeline scope"),
-            },
+            ModelServerRole::Target => SessionStage::Complete,
             ModelServerRole::Decode | ModelServerRole::Draft => {
                 unreachable!("role is not an initial stage")
             }
@@ -510,34 +550,6 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         Ok(prefill.decision())
     }
 
-    fn select_draft(&mut self) -> Result<RouteDecision, RouteError> {
-        let SessionStage::Target { pipeline_scope_id } = &self.stage else {
-            return Err(RouteError::DraftBeforeTarget);
-        };
-        let progress = RoutingProgress {
-            current_stage: RoutingStage::Draft,
-            completed_stages: &[],
-            pipeline_scope_id: Some(pipeline_scope_id),
-        };
-        let draft = self.router.select(
-            &self.request,
-            &progress,
-            &mut self.customized_context,
-            |candidate, _| {
-                candidate.role == ModelServerRole::Draft
-                    && candidate.pipeline_scope_id.as_ref() == Some(pipeline_scope_id)
-            },
-            RouteError::NoMatchingRouteTarget {
-                model: self.request.model.clone(),
-            },
-        )?;
-        // Target and Draft execute alternating rounds. Neither has completed at binding time.
-        self.selected
-            .push((draft.route_target_id.clone(), draft.data_parallel_rank));
-        self.stage = SessionStage::Complete;
-        Ok(draft.decision())
-    }
-
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
         // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
         // candidates observed for the earlier Prefill choice.
@@ -571,6 +583,69 @@ impl<C: Send + 'static> RouteSession for Session<C> {
 }
 #[async_trait::async_trait]
 impl<C: Send + 'static> Router for PipelineRouter<C> {
+    async fn route_draft_target_round(
+        &self,
+        requests: &[RouterRequest],
+        placement: &crate::DraftTargetPlacement,
+    ) -> Result<crate::DraftTargetRoundRoute, RouteError> {
+        let required_target = placement.required_target.as_ref();
+        let Some(first) = requests.first() else {
+            return Err(RouteError::InvalidBatch);
+        };
+        let ids: BTreeSet<_> = requests.iter().map(|r| r.request_id().to_owned()).collect();
+        if ids.len() != requests.len()
+            || requests
+                .iter()
+                .any(|r| r.model != first.model || r.generate_request.is_none())
+        {
+            return Err(RouteError::InvalidBatch);
+        }
+        // The first member supplies the baseline placement preference. Every member must
+        // match the selected workers; reserve each real request, never a synthetic prompt.
+        let mut context = (self.pipeline.customized_context_factory)(first);
+        let target = self.select(
+            requests,
+            &RoutingProgress {
+                current_stage: RoutingStage::Initial,
+                completed_stages: &[],
+                pipeline_scope_id: None,
+            },
+            &mut context,
+            Some(placement),
+            |candidate, scored| {
+                candidate.role == ModelServerRole::Target
+                    && required_target.is_none_or(|bound| candidate.decision() == *bound)
+                    && candidate.pipeline_scope_id.is_some()
+                    && Self::future_stages_available(candidate, scored)
+            },
+            RouteError::NoMatchingRouteTarget {
+                model: first.model.clone(),
+            },
+        )?;
+        let mut route =
+            crate::DraftTargetRoundRoute::new(target.decision(), ids, self.routing_load.clone());
+        let draft = self.select(
+            requests,
+            &RoutingProgress {
+                current_stage: RoutingStage::Draft,
+                completed_stages: &[],
+                pipeline_scope_id: target.pipeline_scope_id.as_deref(),
+            },
+            &mut context,
+            Some(placement),
+            |candidate, _| {
+                candidate.role == ModelServerRole::Draft
+                    && candidate.pipeline_scope_id == target.pipeline_scope_id
+                    && candidate.draft_target_format == target.draft_target_format
+            },
+            RouteError::NoMatchingRouteTarget {
+                model: first.model.clone(),
+            },
+        )?;
+        route.set_draft(draft.decision());
+        Ok(route)
+    }
+
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
         let kv_prefix_indexer =
             if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
@@ -579,7 +654,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                         .routing_load
                         .lock()
                         .expect("routing load lock poisoned");
-                    self.candidates(&request, &reservations)
+                    self.candidates(&request, &reservations, None)
                 };
                 let lookups = candidates
                     .iter()

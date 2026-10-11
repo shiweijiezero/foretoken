@@ -52,15 +52,26 @@ model source and tokenizer; by default the tokenizer comes from the main model. 
 IDs, not just similar names. For `source: local`, this initial deployment requires
 absolute model and tokenizer paths visible inside the Pods.
 
-Change each Pool's `replicas` independently and deploy again. New requests choose
-one available Draft and one Target. Scaling down closes admission, withdraws the
-route, and waits for existing sessions; the model-server supervisor also waits
+Change each Pool's `replicas` independently and deploy again. The frontend groups
+ready requests and selects DT workers each round. Draft can change between rounds;
+existing Target sessions stay on their owner under the public scheduler. Explicit
+Target migration is available through the standalone
+[batch example](../../data-plane/dt-plugin/docs/frontend-workflow.md#move-a-request-between-targets).
+New requests and queued requests without a Target session use the updated worker
+inventory; requests with a Target session retain their runtime generation. Scaling down closes admission, withdraws the route, and waits for
+existing sessions; the model-server supervisor also waits
 for retained transfer artifacts within the configured drain deadline.
+If a selected worker closes admission before a new session opens, the request
+returns to the ready queue and excludes that worker from later placement. Existing
+Target sessions and confirmed prefixes remain intact. If no compatible worker is
+selectable, the request waits for worker updates or released capacity until its
+deadline or cancellation. Accepting workers can also queue work in vLLM; they need
+not be idle. Network failures and failed inference operations are not replayed.
 Multiple Draft replicas provide capacity; they do not jointly propose a tree.
 
 Current limits: text input, linear candidates, one GPU per role instance, eager
 execution and synchronous local scheduling. There is no P/D composition,
-multimodal input, KV offload/transfer, structured output, profiling or `min_p`.
+multimodal input, KV offload, automatic Target migration, structured output, profiling or `min_p`.
 Candidate IDs and descriptors use HTTP; full proposal distributions use Mooncake
 between GPU workers. Draft randomness is independent of Target's seed.
 Kubernetes RDMA networking, metric-driven autoscaling, stochastic quality
