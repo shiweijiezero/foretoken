@@ -12,6 +12,9 @@ __pycache__/
 
 # Local environment
 .env.local
+# Machine-specific evaluator paths and setup-managed dependencies
+foretoken-evaluators.yaml
+**/.foretoken/evaluators/
 
 # Manually downloaded upstream references
 reference/

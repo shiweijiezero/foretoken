@@ -1,23 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Run native scoring inside the shared service and result lifecycles."""
+"""Run text and video quality evaluators inside shared result lifecycles."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import subprocess
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
+from benchmarks.integrations.video_evaluator import VideoEvaluator
 from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.evaluation import (
+    EvaluationResultConfig,
     evaluation_comparison_sinks,
     evaluation_sinks,
     read_quality_metrics,
@@ -25,6 +29,59 @@ from benchmarks.results.evaluation import (
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_timestamp
 
 logger = logging.getLogger(__name__)
+
+
+def run_logged_process(
+    command: Sequence[str],
+    log_path: Path,
+    *,
+    quiet: bool,
+    cwd: str | None = None,
+    environment: Mapping[str, str] | None = None,
+    stdin_text: str | None = None,
+    redactions: Sequence[str] = (),
+) -> int:
+    """Stream an evaluator child to a log and reap it before caller cleanup."""
+    child_environment = os.environ.copy()
+    if environment:
+        child_environment.update(environment)
+    with (
+        log_path.open("w", encoding="utf-8") as log,
+        subprocess.Popen(
+            list(command),
+            cwd=cwd,
+            env=child_environment,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        ) as process,
+    ):
+        try:
+            if stdin_text is not None:
+                process.stdin.write(stdin_text)
+                process.stdin.close()
+            for line in process.stdout:
+                for secret in redactions:
+                    if secret:
+                        line = line.replace(secret, "[redacted]")
+                log.write(line)
+                log.flush()
+                if not quiet:
+                    print(line, end="", flush=True)
+            return process.wait()
+        except BaseException:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            raise
 
 
 def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -> int:
@@ -46,39 +103,18 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
         },
     }
     # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
-    with (
-        (directory / "evaluator.log").open("w", encoding="utf-8") as log,
-        subprocess.Popen(
-            [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        ) as process,
-    ):
-        try:
-            process.stdin.write(json.dumps(payload))
-            process.stdin.close()
-            for line in process.stdout:
-                if service.api_key and service.api_key != "EMPTY":
-                    line = line.replace(service.api_key, "[redacted]")
-                log.write(line)
-                log.flush()
-                if not config.outputs.includes("quiet"):
-                    print(line, end="", flush=True)
-            return process.wait()
-        except BaseException:
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-            raise
+    redactions = (
+        (service.api_key,)
+        if service.api_key and service.api_key != "EMPTY"
+        else ()
+    )
+    return run_logged_process(
+        [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
+        directory / "evaluator.log",
+        quiet=config.outputs.includes("quiet"),
+        stdin_text=json.dumps(payload),
+        redactions=redactions,
+    )
 
 
 def run_evaluation(
@@ -124,6 +160,63 @@ def run_evaluation(
                 "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"
             )
         return run
+
+
+def run_video_evaluation(
+    config: EvaluationResultConfig, evaluator: VideoEvaluator
+) -> None:
+    """Execute one video adapter and publish its scores and run metadata."""
+    identity = evaluator.describe()
+    record: dict[str, Any] = {
+        "mode": "evaluation",
+        "evaluator": evaluator.name,
+        "evaluation_mode": identity.evaluation_mode,
+        "model": identity.model,
+        **identity.metadata,
+    }
+    with ResultOutputs(
+        config,
+        None,
+        directory_prefix="eval-video-",
+        sink_factory=lambda directory: evaluation_sinks(config, record, directory),
+    ) as outputs:
+        outputs.open(record)
+        directory = Path(outputs.execution_dir).resolve()
+        native = directory / "native"
+        native.mkdir()
+        invocation = evaluator.prepare(native)
+        evaluator_log = directory / "evaluator.log"
+        logger.info(
+            "Evaluation: %s | model=%s | artifacts=%s",
+            evaluator.name,
+            record["model"],
+            directory,
+        )
+        started = time.monotonic()
+        code = run_logged_process(
+            invocation.arguments,
+            evaluator_log,
+            quiet=config.outputs.includes("quiet"),
+            cwd=invocation.cwd,
+            environment=invocation.environment,
+        )
+        metrics = evaluator.read_metrics(native)
+        if code == 0 and not metrics["scores"]:
+            logger.error("%s produced no scores; see %s", evaluator.name, evaluator_log)
+            code = 1
+        run = BenchmarkRun(
+            record=record,
+            metrics={**metrics, "duration_seconds": time.monotonic() - started},
+            measurements=None,
+            artifacts={"native": native, "log": evaluator_log},
+            exit_code=code,
+        )
+        outputs.publish(run)
+        if code:
+            logger.error(
+                "%s failed (exit %s); see %s", evaluator.name, code, evaluator_log
+            )
+            raise SystemExit(code if code > 0 else 128 - code)
 
 
 def run_evaluation_comparison(config: EvaluationConfig) -> None:

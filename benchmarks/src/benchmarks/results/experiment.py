@@ -23,10 +23,13 @@ from urllib.parse import urlsplit, urlunsplit
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.video import VideoBenchmarkConfig
+from benchmarks.config.video_evaluation import VBenchEvaluationConfig
 from benchmarks.results.console import capture_run_logs
 
 logger = logging.getLogger(__name__)
-_Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)
+_Config = TypeVar(
+    "_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig, VBenchEvaluationConfig
+)
 
 
 def _numbered_directory(parent: Path, prefix: str = "") -> Path:

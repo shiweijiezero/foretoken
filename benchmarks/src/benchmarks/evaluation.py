@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Dispatch answer scoring or distribution comparisons through shared service and result lifecycles."""
+"""Dispatch text scoring, video scoring, or model comparisons through shared result lifecycles."""
 
 from __future__ import annotations
 
@@ -13,14 +13,28 @@ from benchmarks.config.evaluation import (
     native_arguments,
     parse_evaluation_arguments,
 )
+from benchmarks.config.video_evaluation import (
+    VBenchEvaluationConfig,
+    parse_vbench_setup_arguments,
+)
+from benchmarks.integrations.vbench.evaluator import VBenchEvaluator
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
 from benchmarks.results.experiment import experiment_output
-from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
+from benchmarks.runs.evaluation import (
+    run_evaluation,
+    run_evaluation_comparison,
+    run_video_evaluation,
+)
 
 
-def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
+def _run(
+    config: EvaluationConfig | VBenchEvaluationConfig, *, help_requested: bool = False
+) -> None:
     """Execute the selected evaluation adapter after validating its native options."""
+    if isinstance(config, VBenchEvaluationConfig):
+        run_video_evaluation(config, VBenchEvaluator(config))
+        return
     if config.evaluator is None:
         if help_requested:
             return
@@ -80,6 +94,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Select evaluation and retain one experiment record across service preparation and execution."""
     arguments = tuple(sys.argv[1:] if argv is None else argv)
     try:
+        if arguments[:1] == ("setup",):
+            from benchmarks.integrations.vbench.setup import setup_vbench
+
+            setup_vbench(parse_vbench_setup_arguments(arguments[1:]))
+            return
         config, help_requested = parse_evaluation_arguments(arguments)
         if help_requested:
             _run(config, help_requested=True)
