@@ -312,8 +312,7 @@ model-server supervises the DT application using the existing launch argument
 renderer and process owner. Role `/healthz`, `/readyz`, telemetry and admission
 closure endpoints integrate with the existing bounded Group drain. The supervisor
 waits for both active sessions and retained transport artifacts. Existing platform
-RDMA allocation enables the Worker connector; Pod IP supplies its handshake address. See the
-[deployment example](../../../examples/draft-target/).
+RDMA allocation enables the Worker connector; Pod IP supplies its handshake address.
 
 The role reports owned session counts for drain separately from native scheduler
 workload and KV allocation.

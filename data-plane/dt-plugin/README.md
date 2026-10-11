@@ -13,8 +13,7 @@ streams only Target-confirmed output. Mooncake transfers the Draft's full propos
 distributions between GPU workers; candidate IDs and tensor descriptors use HTTP.
 Each engine owns its own scheduler and KV cache.
 
-Use the [Kubernetes example](../../examples/draft-target/) for deployment
-through the existing Controller and Router. The commands below start the role
+The commands below start the role
 services directly for use with the [Rust frontend example](docs/frontend-workflow.md).
 
 For NVIDIA source builds, `make image-model-server` builds the pinned CUDA 13
