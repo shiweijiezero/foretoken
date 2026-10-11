@@ -11,43 +11,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 协调候选生成和验证，只向用户输出 Target 确认的结果。Mooncake 在 GPU Worker 之间
 传输 Draft 的完整提议分布；HTTP 传递候选 token 和张量描述符。两端各自管理调度和 KV。
 
-通过现有 Controller、Router 部署请使用 [Kubernetes 示例](../../examples/draft-target/README_zh.md)。
-下面直接启动两个角色服务，再通过 [Rust 前端示例](docs/frontend-workflow.md)发送请求。
+## 选择使用入口
+
+| 要做什么 | 从哪里开始 |
+| --- | --- |
+| 部署公开 API，通过 curl 或 Python 调用 | [Kubernetes 示例](../../examples/draft-target/README_zh.md) |
+| 独立运行角色服务 | [启动两个角色](#启动两个角色)，再[发送分词后的请求](docs/frontend-workflow.md) |
+| 使用 DFlash、EAGLE/EAGLE3、DSpark 或 MTP | [Neural Draft 模型对](#在-nvidia-上运行神经-draft) |
+| 实验 scheduling、batching 或 Target migration | [Rust batch 示例与 round API](docs/frontend-workflow.md#run-per-round-batches-through-router) |
+
+Kubernetes 示例支持独立的自回归 Draft。Neural Draft 目前使用独立角色命令；
+ModelService 的 DT 配置尚不接受 `speculative-config`。
+
+## 启动两个角色
 
 NVIDIA 源码构建中，`make image-model-server` 会构建固定版本的 CUDA 13 引擎并安装本插件，
 包含 vLLM 子进程发现所需的入口。`foretoken install -e .` 默认使用同一运行环境。
 主机需支持 CUDA 13；显式覆盖 `INFERENCE_ENGINE_IMAGE` 时，应提供下述兼容引擎和 Mooncake 环境。
 沐曦沿用独立的运行时构建，兼容要求见下文。
 
-## 每轮组 batch 和选 DT
-
-公开 text/chat request 进入 per-model ready queue。scheduler 每轮将 ready 的
-request 组 batch，再选择兼容的 DT。
-[batch frontend 示例](docs/frontend-workflow.md#run-per-round-batches-through-router)
-也提供 round API，供自定义 scheduler 使用。request 可以携带已确认的
-prefix 切换 Draft。request 记录当前 Target 位置；普通 round 复用该 Target，
-也可以在 round 之间显式调用 migration，将 KV 移到另一个兼容的 Target。
-vLLM 负责本地 GPU batching。每个 request 独立返回 ready queue，不必等其他
-request 的 prefill。output backpressure 和取消也按 request 处理。当前策略立即
-执行 ready 的工作，没有 SLO 或 migration cost 策略。
-
-## 观察 DT 执行
-
-batch example 会输出每轮耗时、proposed/accepted/committed token 数和 transfer
-数据。role `/status` 提供 native ready、waiting、remote-waiting 工作量和 KV 容量。
-上层 scheduler 也可以查询 request 当前的 Target 位置和 KV 占用，作为 placement
-决策的输入。显式 migration 会记录 checkpoint export 耗时、传输字节数和 receiver
-read 耗时；目前没有 migration cost estimator。
-具体字段与统计口径见 [measurement 定义和 API](docs/role-protocol.md#observations)。
-frontend `/metrics` 提供 DT 汇总指标；request、round 和 worker 的对应关系保留在
-trace 和每轮返回的记录中。
-
-## 启动两个角色
-
 两台主机均需安装原版 vLLM `0.30.1rc1.dev194+g3b4566c5c`，或仓库固定的
 沐曦版本组合（`vllm==0.30.0.dev0`、`vllm-metax==0.29.0.dev0`），
 并准备 Python 3.10+、兼容的 PyTorch/Mooncake wheel 和可用的 GPU/RDMA 访问。
-环境还需包含 FastAPI、Uvicorn、AnyIO、Pydantic 2 和 HTTPX。
 本包通过原生类选择接口和少量进程内运行时 patch 接入，不修改已安装的 vLLM 文件，
 不依赖独立引擎分支，也不安装 vLLM 或注册 `vllm serve` 模式。
 适配层限定上述引擎版本，详见[集成说明](docs/mrv2-integration.md)。
@@ -63,14 +48,23 @@ RDMA 需要兼容 MACA 的 Mooncake 构建；源码镜像已设置 `MC_MACA_HOST
 否则 Mooncake 默认的 DMA-BUF 路径需要相应驱动支持。容器还需具备 GPU/RDMA 设备访问、
 RDMA 用户态库和足够的锁定内存额度。
 
-将 `DRAFT_MODEL`、`TARGET_MODEL` 设为模型名称或本地路径。两模型必须具有相同的词表
-大小和 token ID 含义。`TOKENIZER` 指向双方共同使用的 tokenizer，通常来自 Target。
+在两端各自的终端中设置模型和共同使用的 tokenizer，例如：
+
+```bash
+export DRAFT_MODEL=Qwen/Qwen3-0.6B
+export TARGET_MODEL=Qwen/Qwen3-4B
+export TOKENIZER=Qwen/Qwen3-4B
+```
+
+换用其他模型名称或本地路径时，词表和 token ID 含义必须兼容。
 `DRAFT_IP`、`TARGET_IP` 分别为两台主机的本地可路由地址，不含端口。
+NVIDIA 上通过 `CUDA_VISIBLE_DEVICES` 为每个进程选择 GPU；同机运行时，
+两端使用不同的 GPU 和 `--port`。
 
 两端都在仓库根目录安装：
 
 ```bash
-python -m pip install --no-deps ./data-plane/dt-plugin
+python -m pip install ./data-plane/dt-plugin
 ```
 
 Draft 主机运行：
@@ -193,6 +187,29 @@ GPU 验证覆盖 Qwen3-8B 配 DFlash/EAGLE3/DSpark，以及 MiMo-7B-Base MTP。E
 共享、HC residual、Target 共享稀疏注意力索引、DFlash2、LiLiCorr、沐曦神经 Draft，
 以及携带特征的 Target migration。生成正确不代表已有加速收益。
 
+## 每轮组 batch 和选 DT
+
+公开 text/chat request 进入 per-model ready queue。scheduler 每轮将 ready 的
+request 组 batch，再选择兼容的 DT。
+[batch frontend 示例](docs/frontend-workflow.md#run-per-round-batches-through-router)
+也提供 round API，供自定义 scheduler 使用。request 可以携带已确认的
+prefix 切换 Draft。request 记录当前 Target 位置；普通 round 复用该 Target，
+也可以在 round 之间显式调用 migration，将 KV 移到另一个兼容的 Target。
+vLLM 负责本地 GPU batching。每个 request 独立返回 ready queue，不必等其他
+request 的 prefill。output backpressure 和取消也按 request 处理。当前策略立即
+执行 ready 的工作，没有 SLO 或 migration cost 策略。
+
+## 观察 DT 执行
+
+batch example 会输出每轮耗时、proposed/accepted/committed token 数和 transfer
+数据。role `/status` 提供 native ready、waiting、remote-waiting 工作量和 KV 容量。
+上层 scheduler 也可以查询 request 当前的 Target 位置和 KV 占用，作为 placement
+决策的输入。显式 migration 会记录 checkpoint export 耗时、传输字节数和 receiver
+read 耗时；目前没有 migration cost estimator。
+具体字段与统计口径见 [measurement 定义和 API](docs/role-protocol.md#observations)。
+frontend `/metrics` 提供 DT 汇总指标；request、round 和 worker 的对应关系保留在
+trace 和每轮返回的记录中。
+
 ## 停止服务与支持范围
 
 `POST /drain` 关闭新请求准入，允许已有会话完成。关闭前端输出流可取消请求。
@@ -223,7 +240,7 @@ A100 跨机验证使用 `mooncake-transfer-engine-cuda13==0.3.13.post1` 和 PyTo
 两台机器都在仓库根目录执行：
 
 ```bash
-python -m pip install --no-deps ./data-plane/dt-plugin
+python -m pip install ./data-plane/dt-plugin
 ```
 
 将 `PRODUCER_IP` 设置为生产端可路由 IP，`CONSUMER_IP` 设置为消费端可路由 IP，

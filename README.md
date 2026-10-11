@@ -25,7 +25,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | [Profiling](benchmarks/docs/profile/README.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
-| Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
+| Distributed inference | Aggregated serving, [Draft/Target disaggregation](examples/draft-target/README.md), Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
 | [Observability](observability/README.md) | Collect metrics and persistent service logs, evaluate alerts, and inspect the system Dashboard | In development |
 

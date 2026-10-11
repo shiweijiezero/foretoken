@@ -13,9 +13,20 @@ streams only Target-confirmed output. Mooncake transfers the Draft's full propos
 distributions between GPU workers; candidate IDs and tensor descriptors use HTTP.
 Each engine owns its own scheduler and KV cache.
 
-Use the [Kubernetes example](../../examples/draft-target/README.md) for deployment
-through the existing Controller and Router. The commands below start the role
-services directly for use with the [Rust frontend example](docs/frontend-workflow.md).
+## Choose an entry point
+
+| Task | Start here |
+| --- | --- |
+| Deploy a public API and use curl or Python | [Kubernetes example](../../examples/draft-target/README.md) |
+| Run independent role services | [Start two roles](#start-two-roles), then [send a tokenized request](docs/frontend-workflow.md) |
+| Run DFlash, EAGLE/EAGLE3, DSpark or MTP | [Neural Draft pair](#run-a-neural-draft-pair-on-nvidia) |
+| Experiment with scheduling, batching or Target migration | [Rust batch example and round API](docs/frontend-workflow.md#run-per-round-batches-through-router) |
+
+The Kubernetes example supports independent autoregressive Draft models. Neural
+Draft profiles currently use the standalone role commands; the ModelService DT
+configuration does not accept `speculative-config`.
+
+## Start two roles
 
 For NVIDIA source builds, `make image-model-server` builds the pinned CUDA 13
 engine and installs this plugin, including its vLLM subprocess entry point.
@@ -24,37 +35,9 @@ CUDA 13; an explicit `INFERENCE_ENGINE_IMAGE` override must provide the compatib
 engine and Mooncake environment described below. MetaX uses its separate runtime
 build and the compatibility requirements below.
 
-## Per-round batch execution
-
-Public text/chat requests enter a per-model ready queue. The scheduler groups ready
-requests and selects compatible DT workers each round. The
-[batch frontend example](docs/frontend-workflow.md#run-per-round-batches-through-router)
-also exposes the round API for custom scheduling. A request
-can switch Draft workers using its confirmed prefix. Requests record their current
-Target location. Ordinary rounds reuse that Target; an explicit round-boundary
-operation can move its KV to another compatible Target. vLLM owns local GPU batching.
-Requests return to the ready queue independently, including while other requests
-await prefill. Output backpressure and cancellation are per request. The baseline
-dispatches available work immediately; it has no SLO or migration cost policy.
-
-## Observe DT execution
-
-The batch example prints per-round timing, proposed/accepted/committed token
-counts and transfer measurements. Role `/status` reports native ready, waiting
-and remote-waiting work plus KV capacity. Schedulers can query each request's
-current Target location and KV allocation. These are inputs for placement decisions.
-Explicit migrations report checkpoint export time, transferred bytes and receiver
-read time. A migration cost estimator is not implemented.
-See [measurement definitions and APIs](docs/role-protocol.md#observations).
-Frontend `/metrics` also exports DT round aggregates; detailed request/worker
-identities remain in traces and returned round records.
-
-## Start two roles
-
 Both hosts need native vLLM `0.30.1rc1.dev194+g3b4566c5c`, or the repository's
 MetaX source pair (`vllm==0.30.0.dev0`, `vllm-metax==0.29.0.dev0`),
 Python 3.10+, compatible PyTorch and Mooncake wheels, and working GPU/RDMA access.
-Install FastAPI, Uvicorn, AnyIO, Pydantic 2 and HTTPX in that environment.
 The package uses native class-selection interfaces and small process-local runtime
 patches; it does not edit installed vLLM files or require a separate engine branch.
 It does not install vLLM or register a `vllm serve` mode. The adapter is tied to
@@ -73,15 +56,23 @@ On systems using the loaded `nvidia-peermem` kernel module, set
 DMA-BUF path requires corresponding driver support. Containers also need GPU and
 RDMA device access, the RDMA userspace libraries, and sufficient locked memory.
 
-Choose model names or local paths for `DRAFT_MODEL` and `TARGET_MODEL`. Both
-models must have the same vocabulary size and token-ID meanings. Set `TOKENIZER`
-to their shared tokenizer, normally the Target tokenizer. Set `DRAFT_IP` and
-`TARGET_IP` to each host's routable local address, without a port.
+In each role terminal, choose the models and a shared tokenizer. For example:
+
+```bash
+export DRAFT_MODEL=Qwen/Qwen3-0.6B
+export TARGET_MODEL=Qwen/Qwen3-4B
+export TOKENIZER=Qwen/Qwen3-4B
+```
+
+Other model names or local paths must have compatible vocabulary and token-ID
+meanings. Set `DRAFT_IP` and `TARGET_IP` to each host's routable local address,
+without a port. Select a GPU for each process with `CUDA_VISIBLE_DEVICES` on
+NVIDIA; when sharing a host, use different GPUs and `--port` values.
 
 On each host, install the package from the repository root:
 
 ```bash
-python -m pip install --no-deps ./data-plane/dt-plugin
+python -m pip install ./data-plane/dt-plugin
 ```
 
 On the Draft host:
@@ -221,6 +212,31 @@ attention indices, DFlash2, LiLiCorr, MetaX neural drafting and Target
 migration with features are not enabled. Correct generation does not establish a
 speedup.
 
+## Per-round batch execution
+
+Public text/chat requests enter a per-model ready queue. The scheduler groups ready
+requests and selects compatible DT workers each round. The
+[batch frontend example](docs/frontend-workflow.md#run-per-round-batches-through-router)
+also exposes the round API for custom scheduling. A request
+can switch Draft workers using its confirmed prefix. Requests record their current
+Target location. Ordinary rounds reuse that Target; an explicit round-boundary
+operation can move its KV to another compatible Target. vLLM owns local GPU batching.
+Requests return to the ready queue independently, including while other requests
+await prefill. Output backpressure and cancellation are per request. The baseline
+dispatches available work immediately; it has no SLO or migration cost policy.
+
+## Observe DT execution
+
+The batch example prints per-round timing, proposed/accepted/committed token
+counts and transfer measurements. Role `/status` reports native ready, waiting
+and remote-waiting work plus KV capacity. Schedulers can query each request's
+current Target location and KV allocation. These are inputs for placement decisions.
+Explicit migrations report checkpoint export time, transferred bytes and receiver
+read time. A migration cost estimator is not implemented.
+See [measurement definitions and APIs](docs/role-protocol.md#observations).
+Frontend `/metrics` also exports DT round aggregates; detailed request/worker
+identities remain in traces and returned round records.
+
 ## Stop and scope
 
 `POST /drain` closes admission while existing sessions finish. Stop the frontend
@@ -260,7 +276,7 @@ with the CUDA 13 wheel.
 On both hosts, from the repository root:
 
 ```bash
-python -m pip install --no-deps ./data-plane/dt-plugin
+python -m pip install ./data-plane/dt-plugin
 ```
 
 Set `PRODUCER_IP` to the producer's routable IP and `CONSUMER_IP` to the consumer's

@@ -22,21 +22,50 @@ cd data-plane
 cargo build --locked -p foretoken-server --example draft_target
 ```
 
-Set `DRAFT_URL` and `TARGET_URL` to the selected services. Supply a JSON file with
-the frontend's normalized `GenerateInput` fields. For example, using token IDs
-from the Target tokenizer:
-
-```json
-{"request_id":"example","prompt_token_ids":[1,2,3],"sampling_params":{"temperature":0,"max_tokens":24}}
-```
-
-Use actual prompt tokens. `_eos_token_id`, `stop_token_ids` and
-`_all_stop_token_ids` must come from the frontend's model-aware normalization;
-the minimal example above has no automatic EOS termination. Run:
+Set `DRAFT_URL` and `TARGET_URL` to the services started with the
+[role commands](../README.md#start-two-roles). Generate the input from text using
+exactly the tokenizer configured on both roles. The following uses the README's
+Qwen3 pair. Use the engine's Python environment, or install the tokenizer-only
+dependencies with `python -m pip install transformers jinja2` on the client:
 
 ```bash
+export DRAFT_URL=http://draft-host:19100
+export TARGET_URL=http://target-host:19100
+export TOKENIZER=Qwen/Qwen3-4B
+
+python - <<'PYTHON' > request.json
+import json
+import os
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(os.environ["TOKENIZER"])
+prompt = tokenizer.apply_chat_template(
+    [{"role": "user", "content": "Explain speculative decoding in two sentences."}],
+    tokenize=True,
+    return_dict=False,
+    add_generation_prompt=True,
+    enable_thinking=False,
+)
+print(json.dumps({
+    "request_id": "example",
+    "prompt_token_ids": prompt,
+    "sampling_params": {
+        "temperature": 0,
+        "max_tokens": 64,
+        "_eos_token_id": tokenizer.eos_token_id,
+    },
+}))
+PYTHON
+
 ./target/debug/examples/draft_target "$DRAFT_URL" "$TARGET_URL" < request.json
 ```
+
+Replace the two hostnames before running. If roles use another tokenizer or a
+pinned revision, use the same identity and revision in `from_pretrained`.
+The input is the frontend's normalized `GenerateInput`: `_eos_token_id` above
+stops at this tokenizer's EOS. For models with additional stopping tokens, also
+supply the normalized `stop_token_ids` and `_all_stop_token_ids`. The public
+frontend performs this model-aware normalization for API callers.
 
 The command prints standard `TokenOutput` NDJSON, including the original request
 ID, one-time prompt metadata, finish/stop reasons and cached-token count. It checks role health, admission state
@@ -47,28 +76,41 @@ request deadline. There is no retry or transparent replay after a role fails.
 
 ## Run per-round batches through Router
 
-Build the batch entry point with `cargo build --locked -p foretoken-server
---example draft_target_batch` from `data-plane`. Supply one JSON object:
-
-```json
-{
-  "model": "example-model",
-  "workers": [
-    {"endpoint": "http://draft-host:19100", "scope": "dt"},
-    {"endpoint": "http://target-host:19100", "scope": "dt"}
-  ],
-  "requests": [
-    {"request_id": "a", "prompt_token_ids": [1,2,3], "sampling_params": {"temperature": 0, "max_tokens": 8}},
-    {"request_id": "b", "prompt_token_ids": [1,2,4], "sampling_params": {"temperature": 0, "max_tokens": 24}}
-  ]
-}
-```
-
-Replace endpoints and prompt tokens, then run:
+From `data-plane`, build the batch entry point and reuse `request.json` from
+above. This creates two requests with different output budgets and the same
+real tokenized prompt:
 
 ```bash
+cargo build --locked -p foretoken-server --example draft_target_batch
+python - <<'PYTHON' > batch.json
+import json
+import os
+from pathlib import Path
+
+request = json.loads(Path("request.json").read_text())
+print(json.dumps({
+    "model": "Qwen/Qwen3-4B",
+    "workers": [
+        {"endpoint": os.environ["DRAFT_URL"], "scope": "dt"},
+        {"endpoint": os.environ["TARGET_URL"], "scope": "dt"},
+    ],
+    "requests": [
+        {
+            **request,
+            "request_id": request_id,
+            "sampling_params": {**request["sampling_params"], "max_tokens": budget},
+        }
+        for request_id, budget in [("a", 8), ("b", 24)]
+    ],
+}))
+PYTHON
 ./target/debug/examples/draft_target_batch < batch.json
 ```
+
+For multiple Drafts and Targets, start additional role processes with their own
+GPU and HTTP endpoint, then add each endpoint to `workers` with the same `scope`.
+Use the public Target model ID in `model`. This example shares a tokenizer and
+model pair within that scope.
 
 The example reads each worker's live status and builds a Router inventory. Workers
 in one scope must use the same tokenizer identity; callers must also ensure their
