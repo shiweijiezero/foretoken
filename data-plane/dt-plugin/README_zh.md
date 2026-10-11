@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 协调候选生成和验证，只向用户输出 Target 确认的结果。Mooncake 在 GPU Worker 之间
 传输 Draft 的完整提议分布；HTTP 传递候选 token 和张量描述符。两端各自管理调度和 KV。
 
-通过现有 Controller、Router 部署请使用 [Kubernetes 示例](../../examples/draft-target/README_zh.md)。
+通过现有 Controller、Router 部署请使用 [Kubernetes 示例](../../examples/draft-target/)。
 下面直接启动两个角色服务，再通过 [Rust 前端示例](docs/frontend-workflow.md)发送请求。
 
 NVIDIA 源码构建中，`make image-model-server` 会构建固定版本的 CUDA 13 引擎并安装本插件，
