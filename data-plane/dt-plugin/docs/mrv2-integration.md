@@ -5,9 +5,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # MRV2 integration contract
 
-The [DT Proposal](../../../docs/proposals/draft-target-disaggregation.md)
-describes the service architecture, role boundaries and acceptance sequence.
-
 The DT role service targets native vLLM `0.30.1rc1.dev194+g3b4566c5c`
 (commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`) on NVIDIA. MetaX uses the
 core/plugin pair and ordered patches in
