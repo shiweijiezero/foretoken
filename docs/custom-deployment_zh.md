@@ -108,11 +108,13 @@ foretoken perf examples/candidate --num-prompts 20 \
 
 结果保存在各自 worktree 中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
-候选结束后，只删除自己的部署：
+候选结束后，删除部署并释放该目录的源码构建资源：
 
 ```bash
-foretoken delete examples/candidate
+foretoken delete examples/candidate --retire-source
 ```
+
+命令先在本地保存已捕获的源码输入，再清理该候选的构建 Pod、编译卷，以及其他部署不再使用的镜像固定引用。worktree、引擎源码目录和共享平台保持不变。从其他目录执行时，添加 `-e ../candidate-a` 选择源码目录。普通 `foretoken delete` 保留源码构建缓存，方便继续开发。
 
 所有候选结束后，再统一卸载平台。
 

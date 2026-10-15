@@ -141,6 +141,7 @@ class EditableDeployment:
                     },
                 )
                 self.state["build"]["binding"] = self.directory.name
+                self.state["build"]["caches"] = []
                 self.state["build"]["borrowed_images"] = True
                 if str(self.root) != self.platform["root"]:
                     self.state["engines"] = {}
@@ -472,11 +473,12 @@ class EditableDeployment:
                 (claim for node, _, claim in local_caches if node == origin.node),
                 "foretoken-application-build-" + node_uid,
             ) + "-" + build["binding"][:12]
-        ensure_build_cache(
+        identity = ensure_build_cache(
             self.kubectl,
             namespace,
             claim,
             build["configuration"],
+            binding=build["binding"],
             owner={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -484,6 +486,9 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
+        if identity is not None and identity not in build.setdefault("caches", []):
+            build["caches"].append(identity)
+            _write_json(self.directory / "install.json", self.state)
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))

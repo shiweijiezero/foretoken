@@ -48,7 +48,12 @@ from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
-from foretoken.source import reconcile_source_images, source_operation
+from foretoken.source import (
+    reconcile_source_images,
+    retire_source_checkout,
+    source_checkout,
+    source_operation,
+)
 from foretoken.storage import DirectoryVolumes
 
 
@@ -258,7 +263,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         elif isinstance(command, DeleteCommand):
             with source_operation(Kubectl(), command.timeout):
+                root = source_checkout(command.editable) if command.retire_source else None
                 _delete(command.kustomize_path, command.timeout)
+                if root is not None:
+                    retire_source_checkout(Kubectl(), root, command.timeout)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

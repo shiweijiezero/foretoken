@@ -65,6 +65,8 @@ class DeleteCommand:
 
     kustomize_path: str
     timeout: str
+    retire_source: bool = False
+    editable: str | None = None
 
 
 @dataclass(frozen=True)
@@ -340,6 +342,14 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Kustomize root whose resources should be deleted",
     )
+    delete.add_argument(
+        "--retire-source", action="store_true",
+        help="archive this checkout's saved source inputs and retire its build caches and unused image pins",
+    )
+    delete.add_argument(
+        "-e", "--editable", metavar="PATH",
+        help="checkout to retire instead of the current checkout (requires --retire-source)",
+    )
     _add_wait_timeout_argument(delete, "resource deletion")
 
     status = subparsers.add_parser(
@@ -492,7 +502,12 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.editable, tuple(parsed_args.engine_source or ()),
         )
     if parsed_args.command == "delete":
-        return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+        if parsed_args.editable is not None and not parsed_args.retire_source:
+            parser.error("delete --editable requires --retire-source")
+        return DeleteCommand(
+            parsed_args.kustomize_path, parsed_args.timeout,
+            parsed_args.retire_source, parsed_args.editable,
+        )
     if parsed_args.command == "profile":
         return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
     if parsed_args.command == "status":
