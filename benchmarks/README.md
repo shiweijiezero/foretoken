@@ -72,6 +72,7 @@ Local results use a separate directory under `results/` for each run; `--output-
 | --- | --- |
 | `metrics.json` | Read the final aggregate results |
 | `run.log` | Inspect preparation, execution, and errors |
+| `environment.json`, `sources/` | Serving provenance and available build-source archives; archives are not uploaded to W&B |
 | `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 

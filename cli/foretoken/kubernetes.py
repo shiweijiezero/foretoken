@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from foretoken.manifest import (
     DeploymentError,
@@ -87,6 +88,7 @@ class Kubectl:
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        output: BinaryIO | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
         command = self.command(args)
@@ -96,7 +98,8 @@ class Kubectl:
                 command,
                 input=input_text,
                 text=True,
-                capture_output=True,
+                stdout=output if output is not None else subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 check=False,
                 timeout=timeout,
             )
@@ -105,7 +108,10 @@ class Kubectl:
                 f"{' '.join(command)} timed out after {timeout:g}s"
             ) from exc
         if completed.returncode:
-            detail = completed.stderr.strip() or completed.stdout.strip()
+            detail = (
+                completed.stderr.strip() or (completed.stdout or "").strip()
+                or f"exit status {completed.returncode}"
+            )
             message = f"{' '.join(command)} failed: {detail}"
             if detail.startswith("Error from server (ServiceUnavailable):"):
                 raise KubernetesServiceUnavailableError(message)
@@ -118,6 +124,23 @@ class Kubectl:
             ["get", f"--request-timeout={request_timeout}", "--raw", path],
             timeout=timeout_seconds(request_timeout) or None,
         ).stdout
+
+    def download_raw(self, path: str, destination: Path, request_timeout: str) -> None:
+        """Save a binary API response atomically without decoding it or exposing partial output."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+            temporary = Path(output.name)
+            try:
+                self.run(
+                    ["get", f"--request-timeout={request_timeout}", "--raw", path],
+                    timeout=timeout_seconds(request_timeout) or None,
+                    output=output,
+                )
+                output.close()
+                temporary.replace(destination)
+            finally:
+                output.close()
+                temporary.unlink(missing_ok=True)
 
     def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
         """Read a raw endpoint and return None only for the API server's NotFound response."""

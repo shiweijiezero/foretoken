@@ -146,6 +146,7 @@ def _score_reference(
     source: ModelServiceSource,
     comparison: DistributionComparisonConfig,
     checkpoint: DistributionComparisonCheckpoint,
+    outputs: ResultOutputs,
 ) -> dict[str, Any]:
     """Prepare fixed corpus windows once and complete their reference probabilities before candidates."""
     from transformers import AutoConfig, AutoTokenizer
@@ -154,6 +155,7 @@ def _score_reference(
     completed = checkpoint.reference_done()
     if len(completed) == comparison.num_windows:
         logger.info("Reusing all %d reference windows", len(completed))
+        outputs.capture_source_evidence(saved["environment"])
         return saved
     with resolve_model_service(source) as reference:
         if saved is None:
@@ -177,6 +179,7 @@ def _score_reference(
             checkpoint.put("reference", saved)
         elif reference.model != saved["model"]:
             raise ValueError("Reference model differs from the saved comparison")
+        outputs.capture_source_evidence(saved["environment"])
         vocabulary_size = saved["protocol"]["model_vocab_size"]
         score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
         logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)
@@ -219,7 +222,7 @@ def run_distribution_comparison(
             with DistributionComparisonCheckpoint(
                 directory, config.resume, comparison.checkpoint_settings(config.service),
             ) as checkpoint:
-                reference = _score_reference(reference_source, comparison, checkpoint)
+                reference = _score_reference(reference_source, comparison, checkpoint, outputs)
                 reference_model = reference["model"]
                 protocol = reference["protocol"]
                 windows = reference["windows"]
@@ -244,6 +247,7 @@ def run_distribution_comparison(
                                 raise ValueError("Candidate model or method differs from the saved comparison")
                             saved = {"metadata": metadata, "environment": serving_environment(service)}
                             checkpoint.put(f"candidate/{candidate_index}", saved)
+                            outputs.capture_source_evidence(saved["environment"])
                             logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
                             with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
                                 for window_index, tokens in enumerate(windows):
@@ -260,6 +264,8 @@ def run_distribution_comparison(
                                         })
                                     checkpoint.save_candidate(candidate_index, window_index, rows)
                                     completed[window_index] = rows
+                    else:
+                        outputs.capture_source_evidence(saved["environment"])
                     metadata = saved["metadata"]
                     if metadata["label"] in labels:
                         raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
@@ -354,6 +360,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                 reference_model = reference.model
                 protocol = {**protocol, "tokenizer": tokenizer_id, "bos_token_id": tokenizer.bos_token_id}
                 environments["reference"] = serving_environment(reference)
+                outputs.capture_source_evidence(environments["reference"])
                 with CompletionComparisonClient(reference, timeout=reference_source.timeout_seconds) as client:
                     reference_samples = []
                     for tokens in prompt_windows:
@@ -370,6 +377,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                         raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
                     labels.add(metadata["label"])
                     environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
+                    outputs.capture_source_evidence(environments["candidates"][-1])
                     with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
                         for index, (tokens, reference_sample) in enumerate(zip(prompt_windows, reference_samples)):
                             if "error" in reference_sample:

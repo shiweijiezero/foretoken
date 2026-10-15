@@ -25,7 +25,7 @@ Rust executables, Python adapters and inference-engine files have separate build
 
 Publish the assembled application before submitting it to a service. Each publication contains all files needed to run; its lifetime does not depend on the build cache or the applications it reused.
 
-Source publications also preserve the synchronized build inputs as a standard tar.gz archive under the application origin's separate `sources/<component>/<revision>.tar.gz` path. The archive retains captured Git state and engine file and deletion lists. Manifest `sources.parts` records the Git provenance and archive URL for each adopted build output; reused parts retain their original sources. Parts from older publications without archives retain only their recorded Git state. Archives are not runtime files and survive compiler-cache and runtime-application cleanup. Reusing a completed application creates no new archive. Source bytes remain at the application origin unless explicitly copied elsewhere.
+The manifest's `sources.parts` links each runtime part to its build-input archive, preserving original sources when files are reused. These archives and their source manifests survive compiler-cache and runtime-file cleanup. Benchmarks record provenance in `environment.json` and retain available archives locally under `sources/`.
 
 ## Serving and cleanup
 

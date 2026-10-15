@@ -120,6 +120,15 @@ def publish(
     archive_url: str = "",
 ) -> Path:
     """Publish a complete application, optionally replacing selected outputs of a completed base."""
+    prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
+    if not release_owned:
+        # The caller stops this binding's previous publisher before starting another.
+        for directory in (
+            destination.parent,
+            destination.parent.parent / "sources" / destination.parent.name,
+        ):
+            for abandoned in directory.glob(prefix + "*"):
+                shutil.rmtree(abandoned)
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -154,10 +163,6 @@ def publish(
             if _application_part(relative) not in parts:
                 inputs[relative] = previous / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
-    prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
-    if not release_owned:
-        for abandoned in destination.parent.glob(prefix + "*"):
-            shutil.rmtree(abandoned)
     with tempfile.TemporaryDirectory(
         prefix=prefix, dir=destination.parent
     ) as temporary:
@@ -248,6 +253,14 @@ def publish(
             )
             + "\n"
         )
+        if sources is not None and workspace is not None:
+            # Keep the same immutable manifest inode as source evidence when
+            # runtime GC removes its application-directory link.
+            evidence = destination.parent.parent / "sources" / destination.parent.name / (destination.name + ".json")
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            pending_evidence = Path(temporary) / "source-manifest.json"
+            os.link(staging / "manifest.json", pending_evidence)
+            pending_evidence.replace(evidence)
         staging.rename(destination)
     return destination
 

@@ -503,7 +503,7 @@ class ResultOutputs:
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
-        self._applications = ApplicationSources()
+        self._applications: ApplicationSources
         self._exit_code = 0
 
     @property
@@ -560,6 +560,7 @@ class ResultOutputs:
             self._temporary_execution_dir = True
             self._execution_dir = mkdtemp(prefix="foretoken-benchmark-")
         self._execution_dir = str(Path(self._execution_dir).resolve())
+        self._applications = ApplicationSources(Path(self.execution_dir))
 
         try:
             os.makedirs(self.execution_dir, exist_ok=True)
@@ -663,6 +664,15 @@ class ResultOutputs:
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
+    def capture_source_evidence(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
+        """Retain provenance and local archives from an already-observed service at a run boundary."""
+        if not self.benchmark.outputs.saves_local:
+            return
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        self._applications.capture(snapshot, deadline=deadline)
+        self._applications.save_archives(deadline=deadline)
+
     def start_observers(self, *, deadline: float | None = None) -> None:
         """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
         outputs = self.benchmark.outputs
@@ -670,7 +680,7 @@ class ResultOutputs:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._environment is not None and self.service is not None:
             self._environment["before"] = serving_environment(self.service, deadline=deadline)
-            self._applications.capture(self._environment["before"], deadline=deadline)
+            self.capture_source_evidence(self._environment["before"], deadline=deadline)
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -877,6 +887,7 @@ class ResultOutputs:
                 )
             if "after" in self._environment:
                 self._applications.capture(self._environment["after"], deadline=deadline)
+            self._applications.save_archives(deadline=deadline)
             if self._applications.records:
                 self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(

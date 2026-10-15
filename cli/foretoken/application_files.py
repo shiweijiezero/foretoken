@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib.resources import files
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -197,9 +197,63 @@ class ApplicationFiles:
         return manifest
 
     def read_sources(self, application_url: str) -> dict[str, Any] | None:
-        """Read published build provenance for a benchmark without starting a publisher."""
+        """Read retained build provenance for a current or retired application without publishing."""
         manifest = self.read_manifest(application_url)
-        return None if manifest is None else manifest.get("sources")
+        if manifest is None:
+            prefix = self.endpoint.rstrip("/") + "/"
+            if not application_url.startswith(prefix):
+                return None
+            relative = PurePosixPath(unquote(application_url.removeprefix(prefix).rstrip("/")))
+            if len(relative.parts) != 2 or relative.is_absolute() or ".." in relative.parts:
+                return None
+            path = (
+                f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+                + quote(relative.as_posix(), safe="/") + ".json"
+            )
+            raw = self.kubectl.get_raw_if_not_found(path, "5s")
+            if raw is None:
+                return None
+            try:
+                manifest = json.loads(raw)
+            except json.JSONDecodeError as error:
+                raise DeploymentError("source evidence manifest returned invalid JSON") from error
+            if not isinstance(manifest, dict):
+                raise DeploymentError("source evidence manifest must be an object")
+        sources = manifest.get("sources")
+        if sources is None:
+            return None
+        if not isinstance(sources, dict):
+            raise DeploymentError("application source provenance must be an object")
+        if "parts" in sources:
+            if not isinstance(sources["parts"], dict):
+                raise DeploymentError("application source parts must be an object")
+            for part in sources["parts"].values():
+                if part is None:
+                    continue
+                if not isinstance(part, dict):
+                    raise DeploymentError("application source part must be an object or null")
+                if "archive" in part and (not isinstance(part["archive"], str) or not part["archive"]):
+                    raise DeploymentError("application source archive must be a nonempty URL")
+        return sources
+
+    def download_source_archive(self, archive_url: str, directory: Path, *, timeout: str) -> Path:
+        """Copy source evidence from this origin into a caller-owned directory without extracting it."""
+        prefix = self.endpoint.rstrip("/") + "/sources/"
+        if not archive_url.startswith(prefix):
+            raise DeploymentError("source archive is outside the installed application origin")
+        relative = PurePosixPath(unquote(archive_url.removeprefix(prefix)))
+        if (
+            not relative.parts or relative.is_absolute() or ".." in relative.parts
+            or any(character in relative.as_posix() for character in ("\\", "\u0000"))
+        ):
+            raise DeploymentError("source archive has an invalid relative path")
+        path = (
+            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+            + quote(relative.as_posix(), safe="/")
+        )
+        destination = directory.joinpath(*relative.parts)
+        self.kubectl.download_raw(path, destination, timeout)
+        return destination
 
     def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
         """Retain environments selected by service intent before controllers publish status."""
