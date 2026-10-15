@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 import math
 import os
@@ -181,11 +182,12 @@ def collect(args: argparse.Namespace) -> None:
 
 
 def read_collector(directory: Path, since: float, until: float) -> tuple[dict, list[dict]]:
-    """Read complete records through the window end, retaining collector diagnostics."""
+    """Read complete records and retain window diagnostics and clock ambiguity."""
     records = []
     end = None
     last_sample = last_success = None
     errors = []
+    clock_windows = []
     with (directory / "samples.jsonl").open() as stream:
         first = stream.readline()
         if not first.endswith("\n"):
@@ -193,6 +195,7 @@ def read_collector(directory: Path, since: float, until: float) -> tuple[dict, l
         metadata = json.loads(first)
         if metadata["event"] != "start":
             raise ValueError(f"Missing collector start record: {directory}")
+        high_water = metadata["timestamp"]
         for line in stream:
             # A live writer may have only appended part of its last record.
             if not line.endswith("\n"):
@@ -200,11 +203,19 @@ def read_collector(directory: Path, since: float, until: float) -> tuple[dict, l
             record = json.loads(line)
             records.append(record)
             stamp = record["timestamp"]
-            if stamp > until:
-                break
+            # A rollback makes repeated wall-clock windows ambiguous in this collector.
+            if stamp < high_water:
+                lower = stamp
+                while clock_windows and clock_windows[-1]["until"] >= lower:
+                    lower = min(lower, clock_windows.pop()["since"])
+                clock_windows.append({"since": lower, "until": high_water})
+            high_water = max(high_water, stamp)
             if record["event"] == "end":
-                end = record
+                end = record if stamp <= until else None
                 break
+            # Later file records can return to the window after a clock rollback.
+            if stamp > until:
+                continue
             last_sample = stamp
             if any(gpu["utilization_percent"] is not None for gpu in record["gpus"]):
                 last_success = stamp
@@ -222,26 +233,37 @@ def read_collector(directory: Path, since: float, until: float) -> tuple[dict, l
         "last_sample_at": last_sample,
         "last_success_at": last_success,
         "errors": errors,
+        "unknown_clock_windows": clock_windows,
     }, records
 
 
 def summarize_gpu(observations: list[tuple], since: float, until: float) -> dict:
-    """Integrate disjoint GPU-seconds; newer observations supersede older readings."""
-    # Equal timestamps prefer the later collector start, lexical path, then row.
-    ordered = sorted(
-        observations, key=lambda item: (item[0], item[3], item[4], item[5])
-    )
-    covered = idle = weighted = 0.0
-    for position, (stamp, stop, usage, _started_at, _output, _sequence) in enumerate(
-        ordered
-    ):
+    """Integrate disjoint GPU-seconds using the newest still-valid numeric reading."""
+    events: dict[float, list[tuple]] = {}
+    for stamp, stop, usage, started_at, output, sequence in observations:
         start = max(since, stamp)
         stop = min(until, stop)
-        if position + 1 < len(ordered):
-            stop = min(stop, ordered[position + 1][0])
-        # An expired or unavailable newer reading never revives an older one.
-        if stop <= start or usage is None:
+        if stop <= start:
             continue
+        # Ties prefer the later collector start, lexical first path, then later row.
+        events.setdefault(start, []).append(
+            (-stamp, -started_at, output, -sequence, stop, usage)
+        )
+        events.setdefault(stop, [])
+
+    # Unavailable readings end only their own collector's previous interval;
+    # another collector's numeric reading remains usable until its own expiry.
+    active: list[tuple] = []
+    covered = idle = weighted = 0.0
+    boundaries = sorted(events)
+    for start, stop in zip(boundaries, boundaries[1:]):
+        for observation in events[start]:
+            heapq.heappush(active, observation)
+        while active and active[0][4] <= start:
+            heapq.heappop(active)
+        if not active:
+            continue
+        usage = active[0][5]
         duration = stop - start
         covered += duration
         weighted += usage * duration
@@ -255,7 +277,7 @@ def summarize_gpu(observations: list[tuple], since: float, until: float) -> dict
     }
 
 
-def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
+def aggregate_usage(items: list[dict], expected_gpu_seconds: float | None) -> dict:
     """Combine GPU summaries by covered time for their node's full-window scope."""
     covered = sum(item["covered_seconds"] for item in items)
     weighted = sum(
@@ -275,31 +297,51 @@ def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
 
 
 def summarize(directories: list[Path], since: float, until: float) -> dict:
-    """Merge retained collectors into one full-window summary per node."""
+    """Merge recorded node/device labels into full-window node summaries."""
     nodes: dict[str, dict] = {}
     for directory in sorted({path.resolve() for path in directories}):
         collector, records = read_collector(directory, since, until)
         node = nodes.setdefault(
             collector.pop("node"),
-            {"collectors": [], "devices": {}, "requested_indices": set()},
+            {
+                "collectors": [],
+                "devices": {},
+                "requested_indices": set(),
+                "scope_known": True,
+            },
         )
         node["collectors"].append(collector)
         backend = collector["backend"]
         node["requested_indices"].update(
             (backend, index) for index in collector["requested_gpu_indices"] or []
         )
+        has_inventory = False
         for sequence, record in enumerate(records):
             stamp = record["timestamp"]
-            if record["event"] == "end" or stamp > until:
+            if record["event"] == "end":
                 break
+            if stamp > until:
+                continue
+            has_inventory = has_inventory or bool(record["gpus"])
             stop = min(until, stamp + collector["interval_seconds"])
             if sequence + 1 < len(records):
                 stop = min(stop, records[sequence + 1]["timestamp"])
+            # Keep reliable time before a rollback, but not readings originating
+            # within the repeated clock window or their extrapolated tails.
+            for clock_window in collector["unknown_clock_windows"]:
+                if clock_window["since"] <= stamp < clock_window["until"]:
+                    stop = stamp
+                    break
+                if stamp < clock_window["since"] < stop:
+                    stop = clock_window["since"]
+                    break
             for gpu in record["gpus"]:
                 device = node["devices"].setdefault(
                     (backend, gpu["id"]), {"indices": set(), "observations": []}
                 )
                 device["indices"].add(gpu["index"])
+                if stop <= max(since, stamp) or gpu["utilization_percent"] is None:
+                    continue
                 device["observations"].append(
                     (
                         stamp,
@@ -310,6 +352,8 @@ def summarize(directories: list[Path], since: float, until: float) -> dict:
                         sequence,
                     )
                 )
+        if collector["requested_gpu_indices"] is None and not has_inventory:
+            node["scope_known"] = False
 
     summaries = []
     window = until - since
@@ -339,7 +383,9 @@ def summarize(directories: list[Path], since: float, until: float) -> dict:
         summaries.append(
             {
                 "node": name,
-                **aggregate_usage(gpus, window * len(gpus)),
+                **aggregate_usage(
+                    gpus, window * len(gpus) if node["scope_known"] else None
+                ),
                 "gpus": gpus,
                 "collectors": node["collectors"],
             }
