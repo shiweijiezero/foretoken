@@ -23,7 +23,7 @@ from build import ProjectBuilder
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-from vllm_patches import apply_patch, engine_patches
+from vllm_patches import apply_patches, engine_patches
 
 PATCH_ROOT = Path("/opt/foretoken-engine-build/patches")
 METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
@@ -32,17 +32,16 @@ METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
 def synchronize_source(
     source: Path, workspace: Path, files: list[str], deleted: list[str]
 ) -> set[str]:
-    """Update the persistent builder checkout from the CLI's authoritative source manifest."""
+    """Synchronize authoritative inputs without changing the last prepared builder checkout."""
     manifest = workspace.parent / f"{workspace.name}-files.json"
     originals = workspace.parent / f"{workspace.name}-inputs"
     previous = set(json.loads(manifest.read_text())) if manifest.exists() else set()
     current = set(files)
     previous.update(deleted)
     for name in previous - current:
-        for directory in (workspace, originals):
-            path = directory / name
-            if path.is_file() or path.is_symlink():
-                path.unlink()
+        path = originals / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
     for name in sorted(current):
         origin, original = source / name, originals / name
         if (
@@ -50,12 +49,10 @@ def synchronize_source(
             or not filecmp.cmp(origin, original, shallow=False)
             or origin.stat().st_mode != original.stat().st_mode
         ):
-            # Compare unpatched inputs, not the checkout modified by upstream generation.
-            for destination in (original, workspace / name):
-                if destination.is_dir():
-                    shutil.rmtree(destination)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(origin, destination)
+            if original.is_dir():
+                shutil.rmtree(original)
+            original.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(origin, original)
     known = previous | current
     manifest.write_text(json.dumps(sorted(known)) + "\n")
     return known - current
@@ -64,39 +61,52 @@ def synchronize_source(
 def prepare_patches(
     core: Path, plugin: Path | None, version: str, metax: bool
 ) -> dict[Path, set[str]]:
-    """Apply engine backports and return their package files for payload export."""
-    patches = []
-    if metax:
-        configuration = json.loads((METAX_ROOT / "source-environment.json").read_text())
-        # SDK backports target the manifest's core version. Custom runtimes
-        # provide their own matching SDK adaptations.
-        if (
-            Version(version).base_version
-            == Version(configuration["core"]["version"]).base_version
-        ):
-            for target, directory in (("core", core), ("metax", plugin)):
-                if directory is not None:
-                    patches.extend(
-                        (directory, METAX_ROOT / name)
-                        for name in configuration["patches"][target]
-                    )
-    patches.extend((core, patch) for patch in engine_patches(core, version, PATCH_ROOT))
-    # A changed input may reset one file of a multi-file patch. Restore all patch
-    # inputs together before applying the ordered series to avoid mixed states.
-    patched_files: dict[Path, set[str]] = {}
-    for directory, patch in patches:
-        originals = directory.parent / f"{directory.name}-inputs"
-        for line in patch.read_text().splitlines():
-            if line.startswith("+++ b/"):
-                name = line.split()[1].removeprefix("b/")
-                patched_files.setdefault(directory, set()).add(name)
-                if (originals / name).is_file():
-                    shutil.copy2(originals / name, directory / name)
-                else:
-                    (directory / name).unlink(missing_ok=True)
-    for directory, patch in patches:
-        apply_patch(directory, patch)
-    return patched_files
+    """Prepare complete engine trees from captured inputs before replacing builder sources."""
+    directories = [core] if plugin is None else [core, plugin]
+    staging = Path(tempfile.mkdtemp(prefix="engine-patches-", dir=core.parent))
+    completed = False
+    try:
+        patches: dict[Path, list[Path]] = {directory: [] for directory in directories}
+        for directory in directories:
+            originals = directory.parent / f"{directory.name}-inputs"
+            shutil.copytree(originals, staging / directory.name)
+        if metax:
+            configuration = json.loads(
+                (METAX_ROOT / "source-environment.json").read_text()
+            )
+            # SDK backports target the manifest's core version. Custom runtimes
+            # provide their own matching SDK adaptations.
+            if (
+                Version(version).base_version
+                == Version(configuration["core"]["version"]).base_version
+            ):
+                for target, directory in (("core", core), ("metax", plugin)):
+                    if directory is not None:
+                        patches[directory].extend(
+                            METAX_ROOT / name
+                            for name in configuration["patches"][target]
+                        )
+        patches[core].extend(engine_patches(staging / core.name, version, PATCH_ROOT))
+        patched_files = {
+            directory: {
+                str(name)
+                for name in apply_patches(staging / directory.name, patches[directory])
+            }
+            for directory in directories
+        }
+        # Only prepared source trees are replaced. Compiler objects and retained
+        # native-install outputs live beside them and survive source reconstruction.
+        for directory in directories:
+            if directory.exists():
+                shutil.rmtree(directory)
+            (staging / directory.name).rename(directory)
+        completed = True
+        return patched_files
+    finally:
+        if completed:
+            shutil.rmtree(staging)
+        else:
+            print(f"engine patch preparation retained at {staging}", file=sys.stderr)
 
 
 def package_directory(name: str) -> Path:

@@ -262,6 +262,9 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
                 name = "data-plane/third_party/vllm/" + os.fsdecode(raw)
                 if (root / name).is_file():
                     files[name] = root / name
+    preparation = upstream / ".foretoken-patches.json"
+    if preparation.is_file():
+        files[str(preparation.relative_to(root))] = preparation
     mooncake = root / "third_party/mooncake"
     if (mooncake / ".git").exists():
         result = subprocess.run(
