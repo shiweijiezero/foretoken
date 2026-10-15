@@ -180,15 +180,12 @@ def collect(args: argparse.Namespace) -> None:
             emit({"event": "end", "timestamp": time.time(), "reason": reason})
 
 
-def summarize_run(directory: Path, since: float, until: float) -> dict:
-    """Integrate one collector's samples, capping each reading at its sampling interval."""
-    devices: dict[str, dict] = {}
-    previous = None
-    errors = []
+def read_collector(directory: Path, since: float, until: float) -> tuple[dict, list[dict]]:
+    """Read complete records through the window end, retaining collector diagnostics."""
+    records = []
     end = None
-    last_sample = None
-    last_success = None
-
+    last_sample = last_success = None
+    errors = []
     with (directory / "samples.jsonl").open() as stream:
         first = stream.readline()
         if not first.endswith("\n"):
@@ -196,87 +193,164 @@ def summarize_run(directory: Path, since: float, until: float) -> dict:
         metadata = json.loads(first)
         if metadata["event"] != "start":
             raise ValueError(f"Missing collector start record: {directory}")
-        interval = metadata["interval_seconds"]
-
-        def integrate(record: dict | None, next_time: float) -> None:
-            if record is None:
-                return
-            start = max(since, record["timestamp"])
-            stop = min(until, next_time, record["timestamp"] + interval)
-            if stop <= start:
-                return
-            for gpu in record["gpus"]:
-                state = devices[gpu["id"]]
-                usage = gpu["utilization_percent"]
-                if usage is not None:
-                    duration = stop - start
-                    state["covered_seconds"] += duration
-                    state["weighted_usage"] += usage * duration
-                    if usage == 0:
-                        state["idle_seconds"] += duration
-
         for line in stream:
             # A live writer may have only appended part of its last record.
             if not line.endswith("\n"):
                 break
             record = json.loads(line)
+            records.append(record)
             stamp = record["timestamp"]
-            integrate(previous, stamp)
             if stamp > until:
-                previous = None
                 break
             if record["event"] == "end":
                 end = record
-                previous = None
                 break
-            previous = record
             last_sample = stamp
-            for gpu in record["gpus"]:
-                devices.setdefault(
-                    gpu["id"],
-                    {
-                        "id": gpu["id"],
-                        "index": gpu["index"],
-                        "covered_seconds": 0.0,
-                        "idle_seconds": 0.0,
-                        "weighted_usage": 0.0,
-                    },
-                )
-            if record["gpus"] and any(
-                gpu["utilization_percent"] is not None for gpu in record["gpus"]
-            ):
+            if any(gpu["utilization_percent"] is not None for gpu in record["gpus"]):
                 last_success = stamp
             if "error" in record and stamp >= since:
                 errors.append({"timestamp": stamp, "message": record["error"]})
-        integrate(previous, until)
-
-    window = until - since
-    covered = sum(device["covered_seconds"] for device in devices.values())
-    weighted = sum(device["weighted_usage"] for device in devices.values())
-    expected_indices = metadata["gpu_indices"]
-    device_count = max(len(devices), len(expected_indices or []))
-    for device in devices.values():
-        duration = device["covered_seconds"]
-        device["mean_utilization_percent"] = (
-            device.pop("weighted_usage") / duration if duration else None
-        )
-        device["coverage_percent"] = 100 * duration / window
     return {
         "node": metadata["node"],
         "pid": metadata["pid"],
         "backend": metadata["backend"],
         "output": str(directory),
         "started_at": metadata["timestamp"],
+        "interval_seconds": metadata["interval_seconds"],
+        "requested_gpu_indices": metadata["gpu_indices"],
         "end": end,
         "last_sample_at": last_sample,
         "last_success_at": last_success,
-        "requested_gpu_indices": expected_indices,
-        "mean_utilization_percent": weighted / covered if covered else None,
-        "coverage_percent": 100 * covered / (window * device_count)
-        if device_count
-        else None,
-        "gpus": list(devices.values()),
         "errors": errors,
+    }, records
+
+
+def summarize_gpu(observations: list[tuple], since: float, until: float) -> dict:
+    """Integrate disjoint GPU-seconds; newer observations supersede older readings."""
+    # Equal timestamps prefer the later collector start, lexical path, then row.
+    ordered = sorted(
+        observations, key=lambda item: (item[0], item[3], item[4], item[5])
+    )
+    covered = idle = weighted = 0.0
+    for position, (stamp, stop, usage, _started_at, _output, _sequence) in enumerate(
+        ordered
+    ):
+        start = max(since, stamp)
+        stop = min(until, stop)
+        if position + 1 < len(ordered):
+            stop = min(stop, ordered[position + 1][0])
+        # An expired or unavailable newer reading never revives an older one.
+        if stop <= start or usage is None:
+            continue
+        duration = stop - start
+        covered += duration
+        weighted += usage * duration
+        if usage == 0:
+            idle += duration
+    return {
+        "covered_seconds": covered,
+        "idle_seconds": idle,
+        "mean_utilization_percent": weighted / covered if covered else None,
+        "coverage_percent": 100 * covered / (until - since),
+    }
+
+
+def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
+    """Combine GPU or node summaries by covered time for the enclosing resource scope."""
+    covered = sum(item["covered_seconds"] for item in items)
+    weighted = sum(
+        item["mean_utilization_percent"] * item["covered_seconds"]
+        for item in items
+        if item["mean_utilization_percent"] is not None
+    )
+    return {
+        "covered_seconds": covered,
+        "idle_seconds": sum(item["idle_seconds"] for item in items),
+        "expected_gpu_seconds": expected_gpu_seconds,
+        "mean_utilization_percent": weighted / covered if covered else None,
+        "coverage_percent": 100 * covered / expected_gpu_seconds
+        if expected_gpu_seconds
+        else None,
+    }
+
+
+def summarize(directories: list[Path], since: float, until: float) -> dict:
+    """Merge retained collectors into one summary per node and one full-window total."""
+    nodes: dict[str, dict] = {}
+    for directory in sorted({path.resolve() for path in directories}):
+        collector, records = read_collector(directory, since, until)
+        node = nodes.setdefault(
+            collector.pop("node"),
+            {"collectors": [], "devices": {}, "requested_indices": set()},
+        )
+        node["collectors"].append(collector)
+        backend = collector["backend"]
+        node["requested_indices"].update(
+            (backend, index) for index in collector["requested_gpu_indices"] or []
+        )
+        for sequence, record in enumerate(records):
+            stamp = record["timestamp"]
+            if record["event"] == "end" or stamp > until:
+                break
+            stop = min(until, stamp + collector["interval_seconds"])
+            if sequence + 1 < len(records):
+                stop = min(stop, records[sequence + 1]["timestamp"])
+            for gpu in record["gpus"]:
+                device = node["devices"].setdefault(
+                    (backend, gpu["id"]), {"indices": set(), "observations": []}
+                )
+                device["indices"].add(gpu["index"])
+                device["observations"].append(
+                    (
+                        stamp,
+                        stop,
+                        gpu["utilization_percent"],
+                        collector["started_at"],
+                        collector["output"],
+                        sequence,
+                    )
+                )
+
+    summaries = []
+    window = until - since
+    for name, node in sorted(nodes.items()):
+        gpus = []
+        observed_indices = set()
+        for (backend, identity), device in sorted(node["devices"].items()):
+            observed_indices.update((backend, index) for index in device["indices"])
+            gpus.append(
+                {
+                    "backend": backend,
+                    "id": identity,
+                    "indices": sorted(device["indices"]),
+                    **summarize_gpu(device["observations"], since, until),
+                }
+            )
+        # Requested devices with no identity still contribute unknown GPU-seconds.
+        for backend, index in sorted(node["requested_indices"] - observed_indices):
+            gpus.append(
+                {
+                    "backend": backend,
+                    "id": None,
+                    "indices": [index],
+                    **summarize_gpu([], since, until),
+                }
+            )
+        summaries.append(
+            {
+                "node": name,
+                **aggregate_usage(gpus, window * len(gpus)),
+                "gpus": gpus,
+                "collectors": node["collectors"],
+            }
+        )
+    return {
+        "since": since,
+        "until": until,
+        **aggregate_usage(
+            summaries, sum(node["expected_gpu_seconds"] for node in summaries)
+        ),
+        "nodes": summaries,
     }
 
 
@@ -335,14 +409,7 @@ def main() -> None:
                 raise ValueError("Summary window must have since < until <= now")
             print(
                 json.dumps(
-                    {
-                        "since": args.since,
-                        "until": until,
-                        "nodes": [
-                            summarize_run(path, args.since, until)
-                            for path in args.directories
-                        ],
-                    },
+                    summarize(args.directories, args.since, until),
                     indent=2,
                     allow_nan=False,
                 )
