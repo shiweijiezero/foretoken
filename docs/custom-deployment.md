@@ -114,7 +114,7 @@ When the candidate is finished, delete its deployment and retire its source-buil
 foretoken delete examples/candidate --retire-source
 ```
 
-This saves the captured source inputs locally, then removes the candidate's builders, compiler volumes and image pins no longer needed by other deployments. It preserves the worktree, engine checkouts and shared platform. From another directory, add `-e ../candidate-a` to select the checkout. Ordinary `foretoken delete` keeps source-build caches for continued development.
+This saves the captured source inputs locally and releases the candidate's unused build resources and application files. It preserves the worktree, engine checkouts and shared platform. From another directory, add `-e ../candidate-a` to select the checkout. Ordinary `foretoken delete` keeps source-build caches for continued development.
 
 Uninstall the platform only after all candidates have finished.
 

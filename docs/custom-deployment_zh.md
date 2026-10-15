@@ -114,7 +114,7 @@ foretoken perf examples/candidate --num-prompts 20 \
 foretoken delete examples/candidate --retire-source
 ```
 
-命令先在本地保存已捕获的源码输入，再清理该候选的构建 Pod、编译卷，以及其他部署不再使用的镜像固定引用。worktree、引擎源码目录和共享平台保持不变。从其他目录执行时，添加 `-e ../candidate-a` 选择源码目录。普通 `foretoken delete` 保留源码构建缓存，方便继续开发。
+命令在本地保存已捕获的源码输入，释放该候选不再使用的构建资源和应用文件，保留 worktree、引擎源码目录和共享平台。从其他目录执行时，添加 `-e ../candidate-a` 选择源码目录。普通 `foretoken delete` 保留源码构建缓存，方便继续开发。
 
 所有候选结束后，再统一卸载平台。
 

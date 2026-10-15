@@ -344,7 +344,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     delete.add_argument(
         "--retire-source", action="store_true",
-        help="archive this checkout's saved source inputs and retire its build caches and unused image pins",
+        help="archive captured source inputs and release this checkout's unused build resources",
     )
     delete.add_argument(
         "-e", "--editable", metavar="PATH",

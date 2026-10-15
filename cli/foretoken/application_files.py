@@ -371,6 +371,23 @@ class ApplicationFiles:
             )
             return json.loads(result.stdout)["revision"]
 
+    def retire_source(self, binding: str, references: set[str], *, timeout: str) -> bool:
+        """Collect a stopped binding's runtime files on the prepared origin; return whether none remain.
+
+        Published source archives and manifests remain available independently of runtime files.
+        """
+        command = [
+            "python", "-c", files("foretoken").joinpath("application_publish.py").read_text(),
+            "--retire-source", self.mount, binding,
+            json.dumps(self._retained_versions(references)),
+        ]
+        with self._publisher(command, binding, timeout) as job:
+            self._wait(job, timeout)
+            result = self.kubectl.run(
+                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
+            )
+            return not json.loads(result.stdout)["retained"]
+
     @contextmanager
     def import_release(
         self,

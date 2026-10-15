@@ -55,7 +55,7 @@ from foretoken.source import (
     local_build_nodes,
     pinned_rust_revision,
     prepare_source_images,
-    reconcile_source_images,
+    reconcile_source_resources,
     snapshot_versions,
     source_checkout,
     validate_build_inputs,
@@ -179,9 +179,9 @@ class EditableDeployment:
             _write_json(path, self.state)
             print(f"Source checkout: {self.root}", flush=True)
             if (self.directory / "build.json").is_file():
-                reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+                reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
             yield
-            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+            reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
     def prepare(self, timeout: str) -> None:
         """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
@@ -322,7 +322,7 @@ class EditableDeployment:
         # Reclaim unused environments before allocating another. Interrupted
         # builds were already reconciled when entering the checkout operation.
         if not (self.directory / "build.json").is_file():
-            reconcile_source_images(self.kubectl, timeout, checkout=self.directory)
+            reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
         settings = dict(self.state["command"])
         settings.update(values=(), timeout=timeout, editable=str(self.root))
         command = InstallCommand(**settings)
@@ -446,7 +446,12 @@ class EditableDeployment:
         }
         snapshot = self.directory / self.state["inputs"]
         helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        # A completed application no longer depends on its partial-publication base.
+        for component in pending - missing:
+            if bundle := self.state["bundles"].get(component):
+                self.state["bundles"][component] = {"revision": bundle["revision"]}
         if not missing:
+            _write_json(self.directory / "install.json", self.state)
             return
 
         origin.prepare(timeout)
@@ -655,7 +660,7 @@ class EditableDeployment:
                 if published_revision == default_revision:
                     self.state["bundles"].pop(component)
                 else:
-                    self.state["bundles"][component]["revision"] = published_revision
+                    self.state["bundles"][component] = {"revision": published_revision}
                 publication = (
                     "reused"
                     if published_revision == previous_revisions[component]

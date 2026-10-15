@@ -49,7 +49,7 @@ from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
 from foretoken.source import (
-    reconcile_source_images,
+    reconcile_source_resources,
     retire_source_checkout,
     source_checkout,
     source_operation,
@@ -186,7 +186,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
     DirectoryVolumes(kubectl).delete(deployment, timeout)
-    reconcile_source_images(kubectl, timeout)
+    reconcile_source_resources(kubectl, timeout)
     print("Foretoken deployment deleted")
 
 

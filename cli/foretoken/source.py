@@ -136,7 +136,7 @@ def source_operation(
                     kubectl, timeout, binding=binding, preserve_ready=True
                 )
             # Protect persisted source outputs before any compiler or workload can need them.
-            reconcile_source_images(kubectl, timeout)
+            reconcile_source_resources(kubectl, timeout)
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -197,7 +197,7 @@ def retire_source_checkout(kubectl: Kubectl, root: Path, timeout: str) -> None:
     """Archive and retire an existing candidate binding under the exclusive source lock.
 
     Platform installation state and user checkouts are not candidate-owned resources.
-    Retired producer records remain until compiler claims and actual image pins are released.
+    Retired producer records remain until compiler claims, runtime files and image pins are released.
     """
     cluster = _state_directory(kubectl)
     retired = cluster / "retired"
@@ -252,9 +252,11 @@ def retire_source_checkout(kubectl: Kubectl, root: Path, timeout: str) -> None:
                 })
         evidence = _source_home().parent / "source-archives" / cluster.name / binding
         evidence.mkdir(parents=True, exist_ok=True)
+        for abandoned in evidence.glob(".staging-*"):
+            abandoned.unlink()
         # Preserve exact captured inputs, not a new scan of a checkout that may have changed.
         archive_path = evidence / (uuid.uuid4().hex + ".tar.gz")
-        with tempfile.NamedTemporaryFile(dir=evidence, delete=False) as stream:
+        with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
             temporary = Path(stream.name)
         try:
             with tarfile.open(temporary, "w:gz") as archive:
@@ -299,13 +301,13 @@ def retire_source_checkout(kubectl: Kubectl, root: Path, timeout: str) -> None:
     if not matched:
         print("No source checkout binding to retire", flush=True)
         return
-    reconcile_source_images(kubectl, timeout)
+    reconcile_source_resources(kubectl, timeout)
     pending = [
         path for path in retired.glob("*/retired.json")
         if json.loads(path.read_text())["root"] == str(root)
     ]
     if pending:
-        print("Source checkout retired; referenced images or compiler volumes remain until their consumers release them", flush=True)
+        print("Source checkout retired; remaining build resources await cleanup or consumer release", flush=True)
     else:
         print("Source checkout build resources retired", flush=True)
 
@@ -313,36 +315,38 @@ def retire_source_checkout(kubectl: Kubectl, root: Path, timeout: str) -> None:
 def _archive_builder_inputs(
     kubectl: Kubectl, builders: list[dict[str, Any]], evidence: Path, timeout: str
 ) -> None:
-    """Recover legacy pending inputs directly from their live compiler before stopping it."""
+    """Preserve legacy compiler source state, including an interrupted delta upload, before retirement."""
     from foretoken.kubernetes import timeout_seconds
 
+    # An interrupted sync can leave its only complete changed files in incoming,
+    # with inputs.next describing the intended workspace rather than its partial copy.
+    script = """set -eu
+cd "$1"
+test -d workspace || test -d incoming
+set --
+for path in workspace incoming inputs.json inputs.next; do
+    if test -e "$path"; then set -- "$@" "$path"; fi
+done
+tar -czf - "$@"
+"""
     for pod in builders:
         container = next(c for c in pod["spec"]["containers"] if c["name"] == "builder")
         arguments = container["args"]
-        workspace = str(Path(arguments[arguments.index("--root") + 1]).parent / "workspace")
-        with tempfile.NamedTemporaryFile(dir=evidence, delete=False) as stream:
+        root = str(Path(arguments[arguments.index("--root") + 1]).parent)
+        with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
             temporary = Path(stream.name)
             try:
-                result = subprocess.run(
-                    kubectl.command([
+                kubectl.run(
+                    [
                         "exec", "-n", pod["metadata"]["namespace"], pod["metadata"]["name"],
-                        "-c", "builder", "--", "tar", "-C", workspace, "-czf", "-", ".",
-                    ]),
-                    stdout=stream, stderr=subprocess.PIPE, check=False,
-                    timeout=timeout_seconds(timeout),
+                        "-c", "builder", "--", "sh", "-c", script, "archive", root,
+                    ],
+                    output=stream, timeout=timeout_seconds(timeout),
                 )
-                if result.returncode:
-                    raise DeploymentError(
-                        "cannot archive interrupted compiler inputs; compiler caches were retained: "
-                        + result.stderr.decode().strip()
-                    )
                 stream.close()
                 temporary.replace(evidence / ("compiler-" + uuid.uuid4().hex + ".tar.gz"))
-            except subprocess.TimeoutExpired as exc:
-                raise DeploymentError(
-                    "interrupted compiler input archive timed out; compiler caches were retained"
-                ) from exc
             finally:
+                stream.close()
                 temporary.unlink(missing_ok=True)
 
 
@@ -1035,15 +1039,17 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
     return images
 
 
-def reconcile_source_images(
+def reconcile_source_resources(
     kubectl: Kubectl, timeout: str, *, uninstall: bool = False,
     checkout: Path | None = None,
 ) -> None:
-    """Protect recorded selections and release unreferenced pins under source_operation.
+    """Reconcile source image pins and finish retired bindings under source_operation.
 
-    Uninstall releases all Foretoken pins, including bindings absent from this workstation.
+    Checkout-scoped calls release only their own pins. Exclusive calls also collect
+    retired compiler volumes and runtime files. Uninstall releases all Foretoken pins;
+    the platform lifecycle owns its remaining storage and state cleanup.
     """
-    from foretoken.node_images import SOURCE_BUILD_POD_LABEL, node_image_store
+    from foretoken.node_images import node_image_store
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
@@ -1070,11 +1076,11 @@ def reconcile_source_images(
         if (checkout is None or Path(path).parent == checkout)
         and state.get("build", {}).get("borrowed_images") is not True
     } - {None, ""}
-    completed_caches = set()
+    completed_bindings = set()
     if checkout is None and not uninstall:
         for path, record in retired.items():
             if _remove_retired_caches(kubectl, record, timeout):
-                completed_caches.add(record["binding"])
+                completed_bindings.add(record["binding"])
             abandoned = directory / "checkouts" / record["binding"]
             if abandoned.is_dir():
                 shutil.rmtree(abandoned)
@@ -1085,6 +1091,29 @@ def reconcile_source_images(
     if checkout is None:
         producer_builds.extend(build for record in retired.values() for build in record["builds"])
     config = default_platform_config()
+    if checkout is None and not uninstall and retired:
+        try:
+            origin = ApplicationFiles(kubectl, config.namespace)
+            references = origin.references(Helm(config).application_history())
+            if references is None:
+                completed_bindings.clear()
+            else:
+                # Saved candidates may need an application before their next service submission.
+                references.update(
+                    revision
+                    for state in states.values()
+                    for bundles in (state.get("bundles", {}), state.get("build", {}).get("applications", {}))
+                    for bundle in bundles.values()
+                    for key in ("revision", "previous")
+                    if (revision := bundle.get(key))
+                )
+                origin.prepare(timeout)
+                for record in retired.values():
+                    if not origin.retire_source(record["binding"], references, timeout=timeout):
+                        completed_bindings.discard(record["binding"])
+        except DeploymentError as error:
+            completed_bindings.clear()
+            print(f"Source application cleanup deferred: {error}", flush=True)
     installed_path = directory / "install.json"
     installed = json.loads(installed_path.read_text()) if installed_path.is_file() else {}
     build = installed.get("build", {}) or next(
@@ -1131,7 +1160,7 @@ def reconcile_source_images(
     # builders and pending state still retain access after a delivery-mode change.
     if not uninstall and not access and not sockets:
         for path, record in retired.items():
-            if record["binding"] in completed_caches:
+            if record["binding"] in completed_bindings:
                 shutil.rmtree(path.parent)
         return
     nodes = kubectl.list_resources(("nodes",), "")
@@ -1199,9 +1228,9 @@ def reconcile_source_images(
                                 records.append((image, digests[component]))
                     store.pin_records(records)
                 if store.release_except(retained):
-                    completed_caches.discard(binding)
+                    completed_bindings.discard(binding)
     for path, record in retired.items():
-        if record["binding"] in completed_caches:
+        if record["binding"] in completed_bindings:
             shutil.rmtree(path.parent)
 
 
@@ -1283,7 +1312,7 @@ def prepare_source_images(
     """Prepare installation artifacts, awaiting dependencies before node image delivery.
 
     The platform supplies before_delivery when preparing dependencies concurrently.
-    Inputs remain owned by this context until record_install commits them.
+    Captured inputs remain in pending state until the installation or checkout commits them.
     """
     root = Path(command.editable or "").expanduser().resolve()
     if (

@@ -97,6 +97,12 @@ def archive_inputs(workspace: Path, destination: Path) -> None:
     destination.chmod(0o444)
 
 
+def _clear_source_staging(directory: Path, binding: str) -> None:
+    """Remove one stopped publisher's staging files before reuse or retirement."""
+    for abandoned in directory.glob(f".{binding}.staging-*"):
+        shutil.rmtree(abandoned)
+
+
 def publish(
     source: Path,
     destination: Path,
@@ -114,9 +120,7 @@ def publish(
     """Publish a complete application, optionally replacing selected outputs of a completed base."""
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
-        # The caller stops this binding's previous publisher before starting another.
-        for abandoned in destination.parent.glob(prefix + "*"):
-            shutil.rmtree(abandoned)
+        _clear_source_staging(destination.parent, binding)
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -260,11 +264,12 @@ def publish(
 
 def retire(
     directory: Path, binding: str, keep: set[str], *, release_owned: bool = False
-) -> None:
-    """Remove completed versions belonging to the release or the source publisher binding."""
+) -> set[str]:
+    """Remove unreferenced publications owned by this publisher and return its retained versions."""
+    retained = set()
     for version in directory.iterdir():
         manifest = version / "manifest.json"
-        if version.name in keep or not manifest.is_file():
+        if not manifest.is_file():
             continue
         metadata = json.loads(manifest.read_text())
         owned = (
@@ -273,7 +278,11 @@ def retire(
             else metadata.get("binding") == binding
         )
         if owned:
-            shutil.rmtree(version)
+            if version.name in keep:
+                retained.add(version.name)
+            else:
+                shutil.rmtree(version)
+    return retained
 
 
 if __name__ == "__main__":
@@ -290,6 +299,16 @@ if __name__ == "__main__":
         )
     elif sys.argv[1] == "--archive-inputs":
         archive_inputs(Path(sys.argv[2]), Path(sys.argv[3]))
+    elif sys.argv[1] == "--retire-source":
+        root, binding = Path(sys.argv[2]), sys.argv[3]
+        keep = set(json.loads(sys.argv[4]))
+        retained = set()
+        for component in ("control-plane", "frontend", "model-server"):
+            directory = root / component
+            _clear_source_staging(directory, binding)
+            if directory.is_dir():
+                retained.update(retire(directory, binding, keep))
+        print(json.dumps({"retained": sorted(retained)}))
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]
