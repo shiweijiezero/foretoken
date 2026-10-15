@@ -147,6 +147,32 @@ spec:
                 description: Plan is fixed once selected; reconciliation never retargets
                   replacement runtimes.
                 properties:
+                  members:
+                    description: Members includes every engine container covered by
+                      the selected controls.
+                    items:
+                      description: |-
+                        ProfileMember identifies a covered engine container independently of its control endpoint.
+                        The controller retains its stop observation across Pod deletion and container restart.
+                      properties:
+                        containerID:
+                          type: string
+                        containerName:
+                          type: string
+                        groupUID:
+                          type: string
+                        podName:
+                          type: string
+                        podUID:
+                          type: string
+                      required:
+                      - containerID
+                      - containerName
+                      - groupUID
+                      - podName
+                      - podUID
+                      type: object
+                    type: array
                   model:
                     description: Model preserves the captured model identity after
                       the service is removed.
@@ -219,6 +245,13 @@ spec:
               startedAt:
                 format: date-time
                 type: string
+              stoppedMembers:
+                description: |-
+                  StoppedMembers preserves confirmed container exits before releasing their Pod protection.
+                  Values reference the Pod UIDs in the fixed execution plan.
+                items:
+                  type: string
+                type: array
             type: object
         required:
         - spec
