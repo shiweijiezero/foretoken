@@ -266,7 +266,7 @@ def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
     return {
         "covered_seconds": covered,
         "idle_seconds": sum(item["idle_seconds"] for item in items),
-        "expected_gpu_seconds": expected_gpu_seconds,
+        "expected_gpu_seconds": expected_gpu_seconds if items else None,
         "mean_utilization_percent": weighted / covered if covered else None,
         "coverage_percent": 100 * covered / expected_gpu_seconds
         if expected_gpu_seconds
