@@ -167,7 +167,7 @@ def create_video_benchmark_run(
 
 
 class VideoArtifactSink:
-    """Materialize video configuration and summary files in the execution directory."""
+    """Materialize video configuration beside the run's shared metrics."""
 
     def __init__(self, config: VideoBenchmarkConfig, run_dir: Path) -> None:
         self.config = config
@@ -185,9 +185,6 @@ class VideoArtifactSink:
         if self.config_path is None:
             raise RuntimeError("video artifact sink is not open")
         run.artifacts["config"] = self.config_path
-        run.artifacts["metrics"] = write_json(
-            str(self.run_dir), "metrics.json", run.metrics
-        )
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""

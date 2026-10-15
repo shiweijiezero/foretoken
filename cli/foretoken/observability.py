@@ -122,14 +122,12 @@ def prometheus_query(
     prometheus: PrometheusRef,
     expression: str,
     request_timeout: str,
+    *,
+    api_path: str | None = None,
 ) -> tuple[dict[str, Any], ...]:
-    """Execute one instant query through the selected Prometheus Service proxy."""
-    service_name, port = _prometheus_api_service(kubectl, prometheus)
-    path = (
-        f"/api/v1/namespaces/{prometheus.namespace}/services/"
-        f"http:{service_name}:{port}/proxy/api/v1/query?query="
-        f"{quote(expression, safe='')}"
-    )
+    """Execute an instant query, reusing a caller's resolved Service path when supplied."""
+    endpoint = api_path if api_path is not None else prometheus_api_path(kubectl, prometheus)
+    path = f"{endpoint}?query={quote(expression, safe='')}"
     try:
         payload = json.loads(kubectl.get_raw(path, request_timeout))
     except json.JSONDecodeError as exc:
@@ -186,10 +184,8 @@ def prometheus_selects_service_monitor(
     )
 
 
-def _prometheus_api_service(
-    kubectl: Kubectl, prometheus: PrometheusRef
-) -> tuple[str, str]:
-    """Return the unique HTTP Service owned by one Prometheus custom resource."""
+def prometheus_api_path(kubectl: Kubectl, prometheus: PrometheusRef) -> str:
+    """Resolve the API proxy path once for a caller's Prometheus query lifecycle."""
     candidates: list[tuple[str, str]] = []
     for service in kubectl.list_resources(("service",), prometheus.namespace):
         metadata = service.get("metadata") or {}
@@ -219,7 +215,11 @@ def _prometheus_api_service(
             f"Prometheus {prometheus.namespace}/{prometheus.name} needs exactly one "
             "HTTP Service for Kubernetes API proxy access"
         )
-    return selected[0]
+    service_name, port = selected[0]
+    return (
+        f"/api/v1/namespaces/{prometheus.namespace}/services/"
+        f"http:{service_name}:{port}/proxy/api/v1/query"
+    )
 
 
 def _requested_identity(requested: str | None) -> tuple[str, str] | None:
