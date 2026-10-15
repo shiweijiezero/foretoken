@@ -298,19 +298,20 @@ if __name__ == "__main__":
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]
+        selection = json.loads(sys.argv[4])
         destination = publish(
             Path(sys.argv[1]),
             destination,
             binding,
-            Path(sys.argv[4]) if sys.argv[4] else None,
-            reuse_previous=json.loads(sys.argv[6]),
-            sources=json.loads(sys.argv[7]),
-            image=json.loads(sys.argv[8]),
-            parts=json.loads(sys.argv[9]),
-            workspace=Path(sys.argv[10]),
-            archive_url=sys.argv[11],
+            Path(selection["previous"]) if selection["previous"] else None,
+            reuse_previous=selection["reuse_previous"],
+            sources=selection["sources"],
+            image=selection["image"],
+            parts=selection["parts"],
+            workspace=Path(selection["workspace"]),
+            archive_url=selection["archive_url"],
         )
-        retained = json.loads(sys.argv[5])
+        retained = selection["keep"]
         if retained is not None:
             retire(destination.parent, binding, set(retained) | {destination.name})
         print(json.dumps({"revision": destination.name}))

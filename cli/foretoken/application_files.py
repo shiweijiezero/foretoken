@@ -347,14 +347,16 @@ class ApplicationFiles:
             source,
             f"{self.mount}/{component}/{revision}",
             builder.binding,
-            f"{self.mount}/{component}/{previous}" if previous else "",
-            json.dumps(self._retained_versions(references)),
-            json.dumps(reuse_previous),
-            json.dumps(sources),
-            json.dumps(image),
-            json.dumps(parts),
-            builder.workspace,
-            f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
+            json.dumps({
+                "previous": f"{self.mount}/{component}/{previous}" if previous else None,
+                "keep": self._retained_versions(references),
+                "reuse_previous": reuse_previous,
+                "sources": sources,
+                "image": image,
+                "parts": parts,
+                "workspace": builder.workspace,
+                "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
+            }),
         ]
         if parts is not None and not previous:
             raise DeploymentError("partial publication requires a completed application")
