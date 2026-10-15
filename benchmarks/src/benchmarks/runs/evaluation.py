@@ -185,6 +185,7 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
     ))
     record = {"mode": "evaluation_comparison", "evaluator": config.evaluator}
     scores: list[dict[str, Any]] = []
+    execution: dict[str, Any] = {}
     methods = [
         {"label": label, "model": source.model or None, "directory": f"method-{index + 1}",
          "exit_code": None, "status": "not_started"}
@@ -207,6 +208,7 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
                     run = run_evaluation(child_config, service, output_dir=str(directory / method["directory"]))
                     method["exit_code"] = run.exit_code
                     method["status"] = "failed" if run.exit_code else "completed"
+                    execution[method["label"]] = run.metrics["execution"]
                     scores.extend({"method": method["label"], **row} for row in run.metrics["scores"])
             complete = True
         finally:
@@ -217,12 +219,18 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
             metrics = {
                 "duration_seconds": time.monotonic() - started,
                 "scores": scores,
-                "execution": {"evaluation_comparison": {
-                    "requested": len(config.services),
-                    "succeeded": sum(method["status"] == "completed" for method in methods),
-                    "errored": sum(method["status"] == "failed" for method in methods),
-                    "incomplete": not complete,
-                }},
+                "execution": {
+                    "evaluation_comparison": {
+                        "requested": len(config.services),
+                        "succeeded": sum(method["status"] == "completed" for method in methods),
+                        "errored": sum(method["status"] == "failed" for method in methods),
+                        "incomplete": failure or any(
+                            task.get("incomplete")
+                            for native in execution.values() for task in native.values()
+                        ),
+                    },
+                    "methods": execution,
+                },
                 "evaluation_comparison": {"methods": methods, "scores": scores},
             }
             outputs.publish(BenchmarkRun(

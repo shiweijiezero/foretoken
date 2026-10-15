@@ -204,6 +204,10 @@ class OpenAILoadClient:
                     completion=completion,
                 )
             transport_completed = True
+            # HTTP EOF can precede generation completion; retain partial content and usage.
+            if not content.is_complete(request_fields.get("n") or 1):
+                success = False
+                error_message = "Response ended before every requested choice received a finish_reason"
         except (APIError, httpx.HTTPError) as exc:
             success = False
             status_code = getattr(exc, "status_code", None)
