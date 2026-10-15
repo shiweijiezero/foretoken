@@ -86,6 +86,25 @@ def _application_part(path: Path) -> str:
     return "rust"
 
 
+def archive_inputs(workspace: Path, destination: Path, binding: str) -> None:
+    """Persist the synchronized build snapshot independently of compiler and runtime GC."""
+    if destination.is_file():
+        return
+    inputs = json.loads((workspace.parent / "inputs.json").read_text())
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{binding}.staging-", dir=destination.parent
+    ) as temporary:
+        archive = Path(temporary) / "inputs.tar.gz"
+        # Only synchronized inputs belong to the evidence, not generated Dockerfiles
+        # or compiler outputs that may also live in the builder's workspace.
+        with tarfile.open(archive, "w:gz", dereference=True) as package:
+            for name in sorted(inputs):
+                package.add(workspace / name, arcname=name, recursive=False)
+        archive.chmod(0o444)
+        archive.rename(destination)
+
+
 def publish(
     source: Path,
     destination: Path,
@@ -97,6 +116,8 @@ def publish(
     sources: dict | None = None,
     image: str | None = None,
     parts: list[str] | None = None,
+    workspace: Path | None = None,
+    archive_url: str = "",
 ) -> Path:
     """Publish a complete application, optionally replacing selected outputs of a completed base."""
     if (destination / "manifest.json").is_file():
@@ -181,6 +202,42 @@ def publish(
         # Comparing the complete manifest also detects files removed from the new export.
         if previous is not None and unchanged and files == previous_files:
             return previous
+        if sources is not None and workspace is not None:
+            # Evidence is a formal result, outside the component directories retired
+            # by runtime GC. Reusing a completed application creates no new archive.
+            application_parts = {
+                _application_part(Path(entry["path"])) for entry in files
+            }
+            if parts is None or application_parts.intersection(parts):
+                archive = (
+                    destination.parent.parent
+                    / "sources"
+                    / destination.parent.name
+                    / (destination.name + ".tar.gz")
+                )
+                archive_inputs(workspace, archive, binding)
+            sources = {**sources, "archive": archive_url}
+            adopted = {}
+            for part in sorted(application_parts):
+                if parts is not None and part not in parts:
+                    prior_sources = metadata.get("sources")
+                    if prior_sources is None:
+                        adopted[part] = None
+                    elif "parts" in prior_sources:
+                        adopted[part] = prior_sources["parts"][part]
+                    else:
+                        adopted[part] = {
+                            key: value
+                            for key, value in prior_sources.items()
+                            if key != "engines" or part == "engine"
+                        }
+                else:
+                    adopted[part] = {
+                        key: value
+                        for key, value in sources.items()
+                        if key != "engines" or part == "engine"
+                    }
+            sources = {"parts": adopted}
         (staging / "manifest.json").write_text(
             json.dumps(
                 {
@@ -237,6 +294,8 @@ if __name__ == "__main__":
             sources=json.loads(sys.argv[7]),
             image=json.loads(sys.argv[8]),
             parts=json.loads(sys.argv[9]),
+            workspace=Path(sys.argv[10]),
+            archive_url=sys.argv[11],
         )
         retained = json.loads(sys.argv[5])
         if retained is not None:

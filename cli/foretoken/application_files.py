@@ -299,6 +299,8 @@ class ApplicationFiles:
             json.dumps(sources),
             json.dumps(image),
             json.dumps(parts),
+            builder.workspace,
+            f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
         ]
         if parts is not None and not previous:
             raise DeploymentError("partial publication requires a completed application")
