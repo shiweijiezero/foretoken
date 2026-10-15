@@ -60,11 +60,21 @@ class KubernetesServiceUnavailableError(DeploymentError):
 
 
 class Kubectl:
-    """Run kubectl commands using the caller's active Kubernetes context."""
+    """Run kubectl in the selected context, optionally sharing one monotonic operation deadline."""
 
-    def __init__(self, context: str | None = None) -> None:
+    def __init__(self, context: str | None = None, *, deadline: float | None = None) -> None:
         self.context = context
+        self.deadline = deadline
         self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
+
+    def _timeout(self, timeout: float | None) -> float | None:
+        """Apply one caller-owned monotonic deadline to every command in an operation."""
+        if self.deadline is None:
+            return timeout
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise DeploymentError("Kubernetes operation deadline exceeded")
+        return remaining if timeout is None else min(timeout, remaining)
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
@@ -80,6 +90,7 @@ class Kubectl:
     ) -> subprocess.CompletedProcess[str]:
         """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
         command = self.command(args)
+        timeout = self._timeout(timeout)
         try:
             completed = subprocess.run(
                 command,
@@ -104,7 +115,8 @@ class Kubectl:
     def get_raw(self, path: str, request_timeout: str) -> str:
         """Return a bounded Kubernetes API or resource-proxy response as text."""
         return self.run(
-            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+            ["get", f"--request-timeout={request_timeout}", "--raw", path],
+            timeout=timeout_seconds(request_timeout) or None,
         ).stdout
 
     def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
@@ -112,17 +124,18 @@ class Kubectl:
         command = self.command(
             ["get", f"--request-timeout={request_timeout}", "--raw", path]
         )
+        timeout = self._timeout(timeout_seconds(request_timeout))
         try:
             completed = subprocess.run(
                 command,
                 text=True,
                 capture_output=True,
                 check=False,
-                timeout=timeout_seconds(request_timeout),
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             raise DeploymentError(
-                f"{' '.join(command)} timed out after {request_timeout}"
+                f"{' '.join(command)} timed out after {timeout:g}s"
             ) from exc
         if completed.returncode == 0:
             return completed.stdout

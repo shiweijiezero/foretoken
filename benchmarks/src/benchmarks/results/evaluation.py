@@ -265,7 +265,7 @@ class EvaluationConsoleSink:
 
 
 class EvaluationArtifactSink:
-    """Save invocation identity and the complete display projection beside native artifacts."""
+    """Save evaluation invocation identity beside native artifacts and shared metrics."""
 
     def __init__(self, config: EvaluationConfig, directory: str) -> None:
         self.config = config
@@ -275,9 +275,6 @@ class EvaluationArtifactSink:
         write_json(self.directory, "config.json", {**self.config.to_dict(), **record})
 
     def publish(self, run: BenchmarkRun) -> None:
-        run.artifacts["metrics"] = write_json(
-            self.directory, "metrics.json", run.metrics
-        )
         run.artifacts["config"] = Path(self.directory) / "config.json"
 
     def close(self, *, exit_code: int = 0) -> None:

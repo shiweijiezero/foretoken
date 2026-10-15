@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from benchmarks.results.console import (
     print_result_location,
 )
 from benchmarks.results.environment import (
+    OBSERVATION_TIMEOUT_SECONDS,
     ApplicationSources,
     client_environment,
     serving_environment,
@@ -154,7 +156,7 @@ def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dic
 
 
 class BenchmarkArtifactSink:
-    """Materialize HTTP configuration, metrics, and per-request records in the execution directory."""
+    """Materialize HTTP configuration and per-request records beside the run's shared metrics."""
 
     def __init__(self, benchmark: BenchmarkConfig, output_dir: str) -> None:
         self.benchmark = benchmark
@@ -172,11 +174,6 @@ class BenchmarkArtifactSink:
         if self.config_path is None:
             raise RuntimeError("benchmark artifact sink is not open")
         run.artifacts["config"] = self.config_path
-        run.artifacts["metrics"] = write_json(
-            self.output_dir,
-            "metrics.json",
-            run.metrics,
-        )
         if run.measurements is not None and "raw_output" not in run.artifacts:
             slo = run.metrics.get("slo") or {}
             slo_met = slo.get("request_slo_met")
@@ -638,14 +635,15 @@ class ResultOutputs:
         for sink in sinks:
             self._resources.callback(self._close_sink, sink)
             sink.open(record)
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if outputs.saves_local:
             self._environment = {
-                "client": client_environment(),
+                "client": client_environment(deadline=deadline),
             }
             write_json(self.execution_dir, "environment.json", self._environment)
         self._sinks = sinks
         if start_observers:
-            self.start_observers()
+            self.start_observers(deadline=deadline)
 
     def publish_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Send a measured progress snapshot to each selected live destination."""
@@ -665,12 +663,14 @@ class ResultOutputs:
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
-    def start_observers(self) -> None:
-        """Capture serving state and start resource sampling immediately before measurement."""
+    def start_observers(self, *, deadline: float | None = None) -> None:
+        """Prepare observations within one budget; deferred starts get a fresh budget after warmup."""
         outputs = self.benchmark.outputs
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._environment is not None and self.service is not None:
-            self._environment["before"] = serving_environment(self.service)
-            self._applications.capture(self._environment["before"])
+            self._environment["before"] = serving_environment(self.service, deadline=deadline)
+            self._applications.capture(self._environment["before"], deadline=deadline)
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -683,7 +683,7 @@ class ResultOutputs:
                     self.service.model,
                     self._applications,
                 )
-                observer.start()
+                observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
                     "Replica observation unavailable; continuing with benchmark: %s",
@@ -696,7 +696,7 @@ class ResultOutputs:
                 return
             try:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
-                prometheus_observer.start()
+                prometheus_observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
                 logger.warning(
                     "Prometheus observation unavailable; continuing with benchmark: %s",
@@ -741,6 +741,11 @@ class ResultOutputs:
         self._exit_code = 1 if failed else 0
         if exc_value is not None:
             logger.error("Benchmark failed: %s", exc_value)
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        if self._replica_observer is not None:
+            self._replica_observer.stop(deadline)
+        if self._prometheus_observer is not None:
+            self._prometheus_observer.stop(deadline)
         try:
             try:
                 return self._resources.__exit__(
@@ -790,7 +795,15 @@ class ResultOutputs:
         )
 
     def publish(self, run: BenchmarkRun) -> None:
-        """Stop observations, record the run status, and publish every open sink."""
+        """Save completed measurements before bounded observation finalization and presentation."""
+        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        # Stop both samplers before joining either. Their in-flight reads and
+        # final snapshots share this deadline rather than starting fresh budgets.
+        if self._replica_observer is not None:
+            self._replica_observer.stop(deadline)
+        if self._prometheus_observer is not None:
+            self._prometheus_observer.stop(deadline)
         for name in ("warmup_raw_output", "warmup_metrics"):
             path = Path(self.execution_dir) / f"{name}.json"
             if path.is_file():
@@ -809,10 +822,10 @@ class ResultOutputs:
         self._replica_observer = None
         if observer is not None:
             if run.time_origin is None:
-                observer.close()
+                observer.close(deadline=deadline)
             else:
                 observations = observer.finish(
-                    run.time_origin, float(run.metrics["benchmark_time"])
+                    run.time_origin, float(run.metrics["benchmark_time"]), deadline=deadline,
                 )
                 if self._environment is not None:
                     self._environment["workloads"] = observer.workload_history(
@@ -839,7 +852,9 @@ class ResultOutputs:
         prometheus_observer = self._prometheus_observer
         self._prometheus_observer = None
         if prometheus_observer is not None:
-            observations = prometheus_observer.finish(run.time_origin, run.metrics.get("benchmark_time"))
+            observations = prometheus_observer.finish(
+                run.time_origin, run.metrics.get("benchmark_time"), deadline=deadline,
+            )
             if observations["resources"] is not None:
                 run.metrics["resources"] = {
                     key: value for key, value in observations["resources"].items()
@@ -858,14 +873,15 @@ class ResultOutputs:
         if self._environment is not None:
             if self.service is not None:
                 self._environment["after"] = serving_environment(
-                    self.service
+                    self.service, deadline=deadline,
                 )
             if "after" in self._environment:
-                self._applications.capture(self._environment["after"])
+                self._applications.capture(self._environment["after"], deadline=deadline)
             if self._applications.records:
                 self._environment["applications"] = self._applications.records
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )
+        write_json(self.execution_dir, "metrics.json", run.metrics)
         for sink in self._sinks:
             sink.publish(run)
