@@ -86,23 +86,15 @@ def _application_part(path: Path) -> str:
     return "rust"
 
 
-def archive_inputs(workspace: Path, destination: Path, binding: str) -> None:
-    """Persist the synchronized build snapshot independently of compiler and runtime GC."""
-    if destination.is_file():
-        return
+def archive_inputs(workspace: Path, destination: Path) -> None:
+    """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
     inputs = json.loads((workspace.parent / "inputs.json").read_text())
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=f".{binding}.staging-", dir=destination.parent
-    ) as temporary:
-        archive = Path(temporary) / "inputs.tar.gz"
-        # Only synchronized inputs belong to the evidence, not generated Dockerfiles
-        # or compiler outputs that may also live in the builder's workspace.
-        with tarfile.open(archive, "w:gz", dereference=True) as package:
-            for name in sorted(inputs):
-                package.add(workspace / name, arcname=name, recursive=False)
-        archive.chmod(0o444)
-        archive.rename(destination)
+    # The init container owns this temporary volume; failure discards it with the Job.
+    # Include only synchronized inputs, retaining their original bytes and modes.
+    with tarfile.open(destination, "w:gz", dereference=True) as package:
+        for name in sorted(inputs):
+            package.add(workspace / name, arcname=name, recursive=False)
+    destination.chmod(0o444)
 
 
 def publish(
@@ -116,19 +108,15 @@ def publish(
     sources: dict | None = None,
     image: str | None = None,
     parts: list[str] | None = None,
-    workspace: Path | None = None,
+    source_archive: Path | None = None,
     archive_url: str = "",
 ) -> Path:
     """Publish a complete application, optionally replacing selected outputs of a completed base."""
     prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
     if not release_owned:
         # The caller stops this binding's previous publisher before starting another.
-        for directory in (
-            destination.parent,
-            destination.parent.parent / "sources" / destination.parent.name,
-        ):
-            for abandoned in directory.glob(prefix + "*"):
-                shutil.rmtree(abandoned)
+        for abandoned in destination.parent.glob(prefix + "*"):
+            shutil.rmtree(abandoned)
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -207,7 +195,7 @@ def publish(
         # Comparing the complete manifest also detects files removed from the new export.
         if previous is not None and unchanged and files == previous_files:
             return previous
-        if sources is not None and workspace is not None:
+        if sources is not None and source_archive is not None:
             # Evidence is a formal result, outside the component directories retired
             # by runtime GC. Reusing a completed application creates no new archive.
             application_parts = {
@@ -220,7 +208,12 @@ def publish(
                     / destination.parent.name
                     / (destination.name + ".tar.gz")
                 )
-                archive_inputs(workspace, archive, binding)
+                if not archive.is_file():
+                    archive.parent.mkdir(parents=True, exist_ok=True)
+                    pending_archive = Path(temporary) / "inputs.tar.gz"
+                    shutil.copyfile(source_archive, pending_archive)
+                    pending_archive.chmod(0o444)
+                    pending_archive.rename(archive)
             sources = {**sources, "archive": archive_url}
             adopted = {}
             for part in sorted(application_parts):
@@ -253,7 +246,7 @@ def publish(
             )
             + "\n"
         )
-        if sources is not None and workspace is not None:
+        if sources is not None and source_archive is not None:
             # Keep the same immutable manifest inode as source evidence when
             # runtime GC removes its application-directory link.
             evidence = destination.parent.parent / "sources" / destination.parent.name / (destination.name + ".json")
@@ -295,6 +288,8 @@ if __name__ == "__main__":
             selection["previous"],
             set(retained) if retained is not None else None,
         )
+    elif sys.argv[1] == "--archive-inputs":
+        archive_inputs(Path(sys.argv[2]), Path(sys.argv[3]))
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]
@@ -308,7 +303,7 @@ if __name__ == "__main__":
             sources=selection["sources"],
             image=selection["image"],
             parts=selection["parts"],
-            workspace=Path(selection["workspace"]),
+            source_archive=Path(selection["source_archive"]),
             archive_url=selection["archive_url"],
         )
         retained = selection["keep"]

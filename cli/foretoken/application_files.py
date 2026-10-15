@@ -25,6 +25,7 @@ SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
 _BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
 _SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
+_SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
 
 def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
@@ -354,7 +355,7 @@ class ApplicationFiles:
                 "sources": sources,
                 "image": image,
                 "parts": parts,
-                "workspace": builder.workspace,
+                "source_archive": _SOURCE_ARCHIVE,
                 "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
             }),
         ]
@@ -592,6 +593,37 @@ class ApplicationFiles:
                 },
             },
         }
+        if builder is not None:
+            # Read private inputs as their actual compiler owner. Only a read-only
+            # archive crosses into the publisher; neither container changes input modes.
+            pod = self.kubectl.get("pod", builder.name, builder.namespace)
+            compiler = next(container for container in pod["spec"]["containers"] if container["name"] == "builder")
+            compiler_security = {
+                **pod["spec"].get("securityContext", {}),
+                **compiler.get("securityContext", {}),
+            }
+            archive_mount = {"name": "source-evidence", "mountPath": str(PurePosixPath(_SOURCE_ARCHIVE).parent)}
+            volumes.append({"name": "source-evidence", "emptyDir": {}})
+            mounts.append({**archive_mount, "readOnly": True})
+            job["spec"]["template"]["spec"]["initContainers"] = [{
+                "name": "source-evidence",
+                "image": self.client_image,
+                "command": [
+                    "python", "-c", files("foretoken").joinpath("application_publish.py").read_text(),
+                    "--archive-inputs", builder.workspace, _SOURCE_ARCHIVE,
+                ],
+                "terminationMessagePolicy": "FallbackToLogsOnError",
+                "securityContext": {
+                    "runAsUser": compiler_security["runAsUser"],
+                    "allowPrivilegeEscalation": False,
+                    "readOnlyRootFilesystem": True,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "volumeMounts": [
+                    {"name": "compiler", "mountPath": builder.mount, "readOnly": True},
+                    archive_mount,
+                ],
+            }]
         if source_revision:
             # Keep publisher cleanup identity while exposing its borrowed files
             # to the existing cross-binding application reference collection.
@@ -697,7 +729,10 @@ class ApplicationFiles:
                     self.namespace,
                     label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
                 ):
-                    for container in pod.get("status", {}).get("containerStatuses", []):
+                    for container in (
+                        *pod.get("status", {}).get("initContainerStatuses", []),
+                        *pod.get("status", {}).get("containerStatuses", []),
+                    ):
                         if (
                             message := container.get("state", {})
                             .get("terminated", {})
