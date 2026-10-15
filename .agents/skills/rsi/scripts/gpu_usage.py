@@ -256,7 +256,7 @@ def summarize_gpu(observations: list[tuple], since: float, until: float) -> dict
 
 
 def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
-    """Combine GPU or node summaries by covered time for the enclosing resource scope."""
+    """Combine GPU summaries by covered time for their node's full-window scope."""
     covered = sum(item["covered_seconds"] for item in items)
     weighted = sum(
         item["mean_utilization_percent"] * item["covered_seconds"]
@@ -275,7 +275,7 @@ def aggregate_usage(items: list[dict], expected_gpu_seconds: float) -> dict:
 
 
 def summarize(directories: list[Path], since: float, until: float) -> dict:
-    """Merge retained collectors into one summary per node and one full-window total."""
+    """Merge retained collectors into one full-window summary per node."""
     nodes: dict[str, dict] = {}
     for directory in sorted({path.resolve() for path in directories}):
         collector, records = read_collector(directory, since, until)
@@ -347,9 +347,6 @@ def summarize(directories: list[Path], since: float, until: float) -> dict:
     return {
         "since": since,
         "until": until,
-        **aggregate_usage(
-            summaries, sum(node["expected_gpu_seconds"] for node in summaries)
-        ),
         "nodes": summaries,
     }
 

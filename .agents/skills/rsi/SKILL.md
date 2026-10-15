@@ -97,7 +97,7 @@ python3 -I .agents/skills/rsi/scripts/gpu_usage.py summarize "$GPU_RUN" \
   --since "$WINDOW_START" --until "$WINDOW_END"
 ```
 
-Pass additional run directories to summarize multiple nodes over the same window. Segments from the same node and GPU are merged without double-counting overlaps, with node and task totals covering the full requested window. The JSON includes per-GPU and per-node time-weighted utilization, sampling coverage, zero-utilization seconds, last sample times, and query errors. Each reading covers at most one sampling interval; uncovered time remains unknown. Check coverage and freshness alongside means. Zero utilization describes device activity, not whether an experiment should be running.
+Pass additional run directories to summarize multiple nodes over the same window. Segments from the same node and GPU are merged without double-counting overlaps, with each node summarized over the full requested window. The JSON includes per-GPU and per-node time-weighted utilization, sampling coverage, zero-utilization seconds, last sample times, and query errors. Each reading covers at most one sampling interval; uncovered time remains unknown. Check coverage and freshness alongside means. Zero utilization describes device activity, not whether an experiment should be running.
 
 Request a stop on the collecting host:
 
