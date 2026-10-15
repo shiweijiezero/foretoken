@@ -14,6 +14,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 并行候选由主 Agent 先创建 Git worktree，再在派工中提供绝对路径。Worker 修改分配的候选，主 Agent 从交付版的对应工作区执行。运行期间不改源码，继续开发时使用另一 worktree，或等待主 Agent 释放原工作区。Claude Code 的 Agent 启动调用若显式传入 `isolation`，会创建普通子 Agent 而非 teammate，因此将工作区准备与 Team 成员创建分开。
 
+Claude Code 的 worktree 隔离检查存在[已报告的参数误判](https://github.com/anthropics/claude-code/issues/86036)：合法 CLI 子命令 `eval` 可能被识别为 shell `eval`，导致执行前拒绝。记录原始拒绝信息和命令是否启动；这是执行工具的兼容问题，不是模型评测结果，也不代表用户禁止评测。
+
 任务权限与交接遵循共用角色约定。阶段结果用于继续推进；任务完成或需要改变范围时，由主 Agent 协调。共享 Task 工具可用时，可用它记录负责人和依赖。按任务选择合适的监测与持续执行工具；有后台工作运行时，`/goal` 可能暂缓完成判定。
 
 恢复任务时，根据原记录和预算核对仍在运行的成员，补建缺失成员后再分配未完成工作。恢复主会话的 goal 不会自动恢复 in-process teammates。用户暂停、停止及任务截止时间优先于继续派工，由主 Agent 协调资源收尾与交付。用户可用 `/goal clear` 取消 goal；取消本身不会停止实验进程。
