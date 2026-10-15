@@ -59,6 +59,10 @@ class KubernetesServiceUnavailableError(DeploymentError):
     """Identify API-server unavailability for callers that own a readiness deadline."""
 
 
+class KubernetesVersionConflictError(DeploymentError):
+    """Identify failed API version preconditions without reclassifying field ownership errors."""
+
+
 class Kubectl:
     """Run kubectl commands using the caller's active Kubernetes context."""
 
@@ -98,6 +102,11 @@ class Kubectl:
             message = f"{' '.join(command)} failed: {detail}"
             if detail.startswith("Error from server (ServiceUnavailable):"):
                 raise KubernetesServiceUnavailableError(message)
+            if (
+                "the object has been modified; please apply your changes to the latest version" in detail
+                or "metadata.resourceVersion: Invalid value: 0: must be specified for an update" in detail
+            ):
+                raise KubernetesVersionConflictError(message)
             raise DeploymentError(message)
         return completed
 
@@ -573,11 +582,27 @@ def resource_progress(
             if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
                 message += "\nThe previous generation remains available."
             return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
+        if (
+            condition_status == "True"
+            and target is not None
+            and int(target.get("observedGeneration") or 0) == generation
+            and target.get("status") != "True"
+        ):
+            return ResourceProgress(
+                resource, "Progressing", str(target["reason"]), str(target["message"]), False
+            )
     stopped = (
-        resource.kind == "FrontendService"
-        and (value.get("spec") or {}).get("replicas") == 0
-        and condition_status == "False"
+        condition_status == "False"
         and reason == "ScaledToZero"
+        and (
+            resource.kind == "FrontendService"
+            and (value.get("spec") or {}).get("replicas") == 0
+            or resource.kind == "ModelService"
+            and target is not None
+            and target.get("observedGeneration") == generation
+            and target.get("status") == "True"
+            and target.get("reason") == "ScaledToZero"
+        )
     )
     if condition_status == "True" or stopped:
         if (

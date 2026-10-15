@@ -137,6 +137,15 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Hold the Group until preparation and serving workloads have both retired.
+	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
+		base := group.DeepCopy()
+		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
+		if err := reconciler.Patch(ctx, group, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add ModelGroup drain finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
 	prepared, err := reconciler.reconcilePreparation(ctx, group, pool)
 	if err == errNoPreparationPlacement {
 		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, reconciler.updateStatus(ctx, group, modelGroupPlacementState())
@@ -146,17 +155,6 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	}
 	if !prepared {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
-	}
-
-	// Acquisition has no serving requests to drain; its Job can be cancelled by owner deletion.
-	// Protect serving resources before creating them, including a concurrent delete request.
-	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
-		base := group.DeepCopy()
-		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
-		if err := reconciler.Patch(ctx, group, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("add ModelGroup drain finalizer: %w", err)
-		}
-		return ctrl.Result{Requeue: true}, nil
 	}
 
 	workload, err := reconciler.reconcileWorkload(ctx, group, deployment)

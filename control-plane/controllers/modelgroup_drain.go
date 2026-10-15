@@ -17,6 +17,8 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,6 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
 const (
@@ -135,6 +138,21 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 		return ctrl.Result{}, nil
 	}
 
+	workloads, err := reconciler.groupWorkloads(ctx, group)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	serving := false
+	for _, workload := range workloads {
+		if _, preparation := workload.(*batchv1.Job); !preparation {
+			serving = true
+		}
+	}
+	drained := meta.FindStatusCondition(group.Status.Conditions, conditionDrained)
+	if !serving || (drained != nil && (drained.Status == metav1.ConditionTrue || drained.Reason == "DrainTimedOut")) {
+		return reconciler.retireGroupWorkloads(ctx, group, workloads)
+	}
+
 	now := reconciler.now()
 	if group.Status.DrainStartedAt == nil {
 		started := metav1.NewTime(now)
@@ -202,17 +220,82 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 	if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, true, true, true, "Drained", "Admission was closed, routing was withdrawn, and all accepted requests finished"); err != nil {
 		return ctrl.Result{}, err
 	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+// groupWorkloads reads the Group's preparation and serving owners before retirement.
+func (reconciler *ModelGroupReconciler) groupWorkloads(ctx context.Context, group *inferencev1alpha1.ModelGroup) ([]client.Object, error) {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	objects := []client.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: group.Name}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: "prepare-" + string(group.UID)}},
+	}
+	if reconciler.LeaderWorkerSets {
+		objects = append(objects, &lwsv1.LeaderWorkerSet{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: modelGroupLeaderWorkerSetName(group)}})
+		if modelGroupLeaderWorkerSetName(group) != group.Name {
+			objects = append(objects, &lwsv1.LeaderWorkerSet{ObjectMeta: metav1.ObjectMeta{Namespace: group.Namespace, Name: group.Name}})
+		}
+	}
+	var workloads []client.Object
+	for _, object := range objects {
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(object), object); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("get ModelGroup workload: %w", err)
+		}
+		if !metav1.IsControlledBy(object, group) {
+			return nil, fmt.Errorf("workload %q is not controlled by ModelGroup", object.GetName())
+		}
+		workloads = append(workloads, object)
+	}
+	return workloads, nil
+}
+
+// retireGroupWorkloads removes execution after drain and retains the Group while
+// Kubernetes terminates its Pods, so Pool and Service stop observations are complete.
+func (reconciler *ModelGroupReconciler) retireGroupWorkloads(ctx context.Context, group *inferencev1alpha1.ModelGroup, workloads []client.Object) (ctrl.Result, error) {
+	for _, workload := range workloads {
+		if !workload.GetDeletionTimestamp().IsZero() {
+			continue
+		}
+		uid := workload.GetUID()
+		if err := reconciler.Delete(ctx, workload, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, fmt.Errorf("retire ModelGroup workload: %w", err)
+		}
+	}
+	if len(workloads) > 0 {
+		return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	// Include Pods left behind by an externally deleted workload controller.
+	for _, label := range []string{modelGroupLabel, modelPreparationGroupLabel} {
+		var pods corev1.PodList
+		if err := reader.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels{label: group.Name}); err != nil {
+			return ctrl.Result{}, err
+		}
+		for _, pod := range pods.Items {
+			if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+				return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+			}
+		}
+	}
 	return ctrl.Result{}, reconciler.removeDrainFinalizer(ctx, group)
 }
 
-// finishDrainTimeout records an incomplete drain and releases the deletion finalizer.
+// finishDrainTimeout records an incomplete drain before workload termination.
 func (reconciler *ModelGroupReconciler) finishDrainTimeout(ctx context.Context, group *inferencev1alpha1.ModelGroup) (ctrl.Result, error) {
 	routingWithdrawn := meta.IsStatusConditionTrue(group.Status.Conditions, conditionRoutingWithdrawn)
 	admissionClosed := meta.IsStatusConditionTrue(group.Status.Conditions, conditionAdmissionClosed)
 	if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, routingWithdrawn, admissionClosed, false, "DrainTimedOut", "The bounded ModelGroup drain deadline expired"); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, reconciler.removeDrainFinalizer(ctx, group)
+	return ctrl.Result{Requeue: true}, nil
 }
 
 // routingWithdrawn verifies that every frontend snapshot and replica has observed route withdrawal.

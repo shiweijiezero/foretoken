@@ -11,6 +11,7 @@ import os
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +43,15 @@ class DirectoryVolumes:
     def __init__(self, kubectl: Kubectl) -> None:
         self.kubectl = kubectl
 
-    def apply(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Apply user intent, then bind directory PVs to the controller-created claims."""
+    def apply(
+        self, deployment: ForetokenDeployment, timeout: str,
+        *, submit: Callable[[str], None] | None = None,
+    ) -> None:
+        """Submit prepared intent, then bind directory PVs to the controller-created claims."""
+        submit = submit or self.kubectl.apply
         caches = tuple(cache for cache in deployment.runtime_caches if cache.directory)
         if not caches:
-            self.kubectl.apply(deployment.rendered)
+            submit(deployment.rendered)
             return
         documents = copy.deepcopy(deployment.objects)
         context = self.kubectl.current_context()
@@ -132,7 +137,7 @@ class DirectoryVolumes:
             spec["directory"] = resolved
 
         # Let admission and the controller resolve the PVC contract before creating a PV.
-        self.kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
+        submit(yaml.safe_dump_all(documents, sort_keys=False))
         for cache, path, hostnames in locations:
             self.kubectl.run(
                 [

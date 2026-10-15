@@ -32,6 +32,7 @@ from foretoken.manifest import (
     ForetokenDeployment,
     ResourceRef,
     parse_deployment,
+    service_requires_execution,
 )
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
@@ -365,10 +366,12 @@ class EditableDeployment:
         services = []
         for obj in objects:
             component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            if component is None:
+            if component is None or not str(obj.get("apiVersion") or "").startswith(
+                "inference.foretoken.io/"
+            ):
                 continue
-            # Retain pending bundles in checkout state until a frontend requests execution.
-            if component == "frontend" and obj["spec"].get("replicas", 1) == 0:
+            # Retain pending bundles until the service requests execution.
+            if not service_requires_execution(obj):
                 continue
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})

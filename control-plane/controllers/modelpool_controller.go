@@ -15,7 +15,6 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -27,6 +26,7 @@ import (
 )
 
 const (
+	modelPoolFinalizer          = "inference.foretoken.io/modelpool-protection"
 	conditionResolved           = "Resolved"
 	conditionGroupsMaterialized = "GroupsMaterialized"
 	conditionRolloutPending     = "RolloutPending"
@@ -92,9 +92,9 @@ func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, obje
 	return requests
 }
 
-// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch
+// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools/status,verbs=get;patch;update
-// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 
@@ -109,11 +109,48 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !pool.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		if !controllerutil.ContainsFinalizer(pool, modelPoolFinalizer) {
+			return ctrl.Result{}, nil
+		}
+		pending, err := reconciler.retireExcessGroups(ctx, pool, 0)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if pending {
+			return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+		}
+		base := pool.DeepCopy()
+		controllerutil.RemoveFinalizer(pool, modelPoolFinalizer)
+		return ctrl.Result{}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	}
 	service, err := reconciler.validateModelServiceOwnership(ctx, pool)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if !controllerutil.ContainsFinalizer(pool, modelPoolFinalizer) {
+		base := pool.DeepCopy()
+		controllerutil.AddFinalizer(pool, modelPoolFinalizer)
+		return ctrl.Result{Requeue: true}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	}
+	// Capacity retirement uses the immutable Groups already running. It does not
+	// depend on resolving the next template or applying new admission settings.
+	retiring, err := reconciler.retireExcessGroups(ctx, pool, pool.Spec.DesiredGroups)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if pool.Spec.DesiredGroups == 0 {
+		stopped := !retiring
+		target := conditionState{metav1.ConditionUnknown, "Stopping", "Waiting for ModelGroups to stop"}
+		if stopped {
+			target = conditionState{metav1.ConditionTrue, "ScaledToZero", "All ModelGroups have stopped"}
+		}
+		if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, reconciler.updateStatus(ctx, pool, metav1.ConditionUnknown, "NotRequired", "Stopping uses the existing Group execution contracts", groupState{
+			Materialized: stopped, RolloutPending: !stopped, Target: target,
+			Reason: target.Reason, Message: target.Message,
+		})
 	}
 	// Preserve the active limit until this Pool reflects the owning service's current intent.
 	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
@@ -151,7 +188,7 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if err := reconciler.reconcileWeightSources(ctx, pool, template); err != nil {
 		return ctrl.Result{}, err
 	}
-	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision)
+	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision, retiring)
 	if err != nil {
 		active, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
 		active.Reason, active.Message = "ApplyFailed", "ModelGroups were not fully materialized"
@@ -165,6 +202,46 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+// retireExcessGroups shares the Group drain lifecycle between scale-down and Pool deletion.
+// It reports pending retirement until every excess Group has released its workloads.
+func (reconciler *ModelPoolReconciler) retireExcessGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, desired int32) (bool, error) {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	groups, err := ownedModelGroups(ctx, reader, pool)
+	if err != nil {
+		return false, err
+	}
+	pending := false
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Ordinal < desired {
+			continue
+		}
+		pending = true
+		if err := reconciler.retireGroup(ctx, group); err != nil {
+			return false, err
+		}
+	}
+	return pending, nil
+}
+
+// retireGroup protects workload cleanup before requesting Group deletion.
+func (reconciler *ModelPoolReconciler) retireGroup(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+	if !group.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
+		base := group.DeepCopy()
+		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
+		if err := reconciler.Patch(ctx, group, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("protect ModelGroup retirement: %w", err)
+		}
+	}
+	return client.IgnoreNotFound(reconciler.Delete(ctx, group, client.Preconditions{UID: &group.UID}))
 }
 
 // validateModelServiceOwnership verifies that the referenced ModelService controls the ModelPool.
@@ -245,6 +322,14 @@ type groupState struct {
 	Message              string
 }
 
+// modelPoolStopped confirms the Pool controller has reconciled its current zero-capacity intent.
+func modelPoolStopped(pool *inferencev1alpha1.ModelPool) bool {
+	condition := meta.FindStatusCondition(pool.Status.Conditions, conditionTargetReady)
+	return pool.Spec.DesiredGroups == 0 && pool.Status.ObservedGeneration == pool.Generation &&
+		condition != nil && condition.ObservedGeneration == pool.Generation &&
+		condition.Status == metav1.ConditionTrue && condition.Reason == "ScaledToZero"
+}
+
 // currentActiveState derives serving readiness while a target revision is being reconciled.
 func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
 	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
@@ -258,7 +343,7 @@ func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, p
 }
 
 // reconcileGroups converges target and serving ModelGroup cohorts for one ModelPool.
-func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (groupState, error) {
+func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string, retiring bool) (groupState, error) {
 	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
 	if err != nil {
 		return groupState{}, err
@@ -266,25 +351,13 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	current := make(map[int32]*inferencev1alpha1.ModelGroup, len(groups))
 	for index := range groups {
 		group := &groups[index]
-		if group.Spec.Revision != template.Revision {
+		if group.Spec.Revision != template.Revision || group.Spec.Ordinal >= pool.Spec.DesiredGroups {
 			continue
 		}
 		if previous := current[group.Spec.Ordinal]; previous != nil {
 			return groupState{}, fmt.Errorf("ModelPool owns duplicate ModelGroups for revision %q ordinal %d", template.Revision, group.Spec.Ordinal)
 		}
 		current[group.Spec.Ordinal] = group
-	}
-
-	scalePending := false
-	for ordinal, group := range current {
-		if ordinal < pool.Spec.DesiredGroups {
-			continue
-		}
-		scalePending = true
-		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-			return groupState{}, fmt.Errorf("delete excess ModelGroup %q: %w", group.Name, err)
-		}
-		delete(current, ordinal)
 	}
 
 	for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
@@ -307,7 +380,7 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	}
 
 	materialized := int32(len(current)) == pool.Spec.DesiredGroups
-	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
+	targetReady := materialized && groupsReady(current, pool.Spec.DesiredGroups)
 	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
 	// Only the current target can be prepared; ModelService separately retains the serving revision.
 	preparedRevision := ""
@@ -315,7 +388,7 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 		preparedRevision = template.Revision
 	}
 	servingRevisionDraining := targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision
-	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision) && !servingRevisionDraining
+	ready := revisionServingReady(groups, servingRevision) && !servingRevisionDraining
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
 
 	// Keep the old cohort for zero-downtime replacement while the target can
@@ -329,7 +402,7 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 				continue
 			}
 			rolloutPending = true
-			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+			if err := reconciler.retireGroup(ctx, group); err != nil {
 				return groupState{}, fmt.Errorf("delete unschedulable serving ModelGroup %q: %w", group.Name, err)
 			}
 		}
@@ -339,11 +412,11 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	// Other revisions are no longer reachable and can enter their normal drain finalizer.
 	for index := range groups {
 		group := &groups[index]
-		if (pool.Spec.DesiredGroups > 0 && group.Spec.Revision == template.Revision) || group.Spec.Revision == servingRevision {
+		if group.Spec.Revision == template.Revision || group.Spec.Revision == servingRevision {
 			continue
 		}
 		rolloutPending = true
-		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+		if err := reconciler.retireGroup(ctx, group); err != nil {
 			return groupState{}, fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
 		}
 	}
@@ -352,15 +425,18 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 		Materialized:         materialized,
 		Ready:                ready,
 		CapacityReady:        targetReady,
-		RolloutPending:       rolloutPending || scalePending,
+		RolloutPending:       rolloutPending || retiring,
 		InsufficientCapacity: !targetReady && targetInsufficientCapacity,
 		PreparedRevision:     preparedRevision,
 		Reason:               "Applied",
 		Message:              "All requested ModelGroups were materialized",
 	}
 	state.Target = conditionState{metav1.ConditionUnknown, "Starting", "Waiting for requested ModelGroups to become ready"}
-	if targetReady || pool.Spec.DesiredGroups == 0 {
+	if targetReady {
 		state.Target = conditionState{metav1.ConditionTrue, "Ready", "Requested ModelGroup capacity is ready"}
+		if state.RolloutPending {
+			state.Target = conditionState{metav1.ConditionUnknown, "Converging", "Waiting for serving selection and retired ModelGroups"}
+		}
 	} else {
 		for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
 			group := current[ordinal]
@@ -475,7 +551,10 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionResolved, Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(state.Materialized), Reason: state.Reason, Message: state.Message, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionRolloutPending, Status: conditionStatus(state.RolloutPending), Reason: rolloutReason(state), Message: rolloutMessage(state), ObservedGeneration: pool.Generation})
-	readyReason, readyMessage := poolReadyReasonMessage(pool.Spec.DesiredGroups, state.Ready, state.CapacityReady)
+	readyReason, readyMessage := poolReadyReasonMessage(state.Ready, state.CapacityReady)
+	if pool.Spec.DesiredGroups == 0 {
+		readyReason, readyMessage = state.Target.Reason, state.Target.Message
+	}
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.Ready), Reason: readyReason, Message: readyMessage, ObservedGeneration: pool.Generation})
 	if reflect.DeepEqual(base.Status, pool.Status) {
 		return nil
@@ -486,15 +565,12 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	return nil
 }
 
-func poolReadyReasonMessage(desiredGroups int32, ready, capacityReady bool) (string, string) {
+func poolReadyReasonMessage(ready, capacityReady bool) (string, string) {
 	if ready && !capacityReady {
 		return "ServingRevisionReady", "The service-selected revision remains ready while requested capacity is converging"
 	}
 	if ready {
 		return "Ready", "All requested ModelGroups are ready"
-	}
-	if desiredGroups == 0 {
-		return "ScaledToZero", "ModelPool has no requested serving capacity"
 	}
 	return "GroupsNotReady", "One or more requested ModelGroups are not ready"
 }
