@@ -113,7 +113,7 @@ foretoken eval examples/quickstart \
 
 #### 性能剖析：定位执行瓶颈
 
-采集需使用源码安装的 CLI 和平台，见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。快速开始示例已配置持久化采集存储。
+快速开始示例已配置持久化采集存储。其他采集工具的准备和用法见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。
 
 ```bash
 foretoken perf examples/quickstart \

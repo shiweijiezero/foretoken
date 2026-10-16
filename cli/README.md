@@ -170,8 +170,6 @@ The command applies the configuration, deploys the selected services, and update
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
 
-To stop a service, set its replicas to zero and deploy again. Remove `spec.autoscaling` first for an autoscaled model; for a multi-pool model, set every pool's replicas to zero. Storage is retained while stopped. Increase replicas and deploy again to resume.
-
 Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
 
 Inspect the same deployment without applying it:
@@ -200,6 +198,14 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
+
+### Stop and resume
+
+```bash
+foretoken stop examples/multi-model-quickstart
+```
+
+The command waits for frontend and model execution to stop, preserving configuration and storage. Run the deployment command again to resume.
 
 ## Measure serving performance
 

@@ -984,6 +984,11 @@ spec:
                 - hf
                 - modelscope
                 type: string
+              suspend:
+                description: |-
+                  Suspend stops every Pool without changing replica counts or autoscaling configuration.
+                  Clearing it resumes reconciliation from the retained service intent.
+                type: boolean
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:

@@ -28,6 +28,7 @@ from foretoken.arguments import (
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
+    StopCommand,
     UninstallCommand,
     parse_arguments,
 )
@@ -53,6 +54,7 @@ from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
+from foretoken.service_execution import stop_deployment
 from foretoken.source import (
     release_source_deployment,
     source_operation,
@@ -126,6 +128,7 @@ def _deploy(
                 selection_kinds.add(identity["kind"])
     revision = uuid.uuid4().hex
     for obj in services:
+        obj["spec"].setdefault("suspend", False)
         if obj.get("kind") in selection_kinds:
             obj["spec"]["deploymentRevision"] = revision
     deployment = parse_deployment(
@@ -297,6 +300,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         elif isinstance(command, DeleteCommand):
             with source_operation(Kubectl(), command.timeout):
                 _delete(command.kustomize_path, command.timeout)
+        elif isinstance(command, StopCommand):
+            stop_deployment(command)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

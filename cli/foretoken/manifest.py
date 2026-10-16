@@ -68,6 +68,8 @@ class ForetokenDeployment:
 def service_requires_execution(service: dict[str, Any]) -> bool:
     """Tell deployment preparation whether a model or frontend needs running instances."""
     spec = service.get("spec") or {}
+    if spec.get("suspend", False):
+        return False
     if service["kind"] == "ModelService":
         if spec.get("autoscaling") is not None:
             return True

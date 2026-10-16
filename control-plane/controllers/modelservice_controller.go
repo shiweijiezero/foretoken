@@ -124,6 +124,15 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Explicit suspension overrides capacity policies and startup configuration.
+	// Retire the existing execution contracts without rewriting the user's intent.
+	if service.Spec.Suspend {
+		if err := reconciler.retirePoolCapacity(ctx, service, nil, true); err != nil {
+			return ctrl.Result{}, err
+		}
+		return reconciler.reconcileStoppedService(ctx, service, nil, nil)
+	}
+
 	compiledPools, err := compiler.CompileModelService(service.Spec)
 	if err != nil {
 		return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
@@ -321,8 +330,12 @@ func (reconciler *ModelServiceReconciler) reconcileStoppedService(ctx context.Co
 	if stopped {
 		target = conditionState{metav1.ConditionTrue, "ScaledToZero", "All model execution has stopped"}
 	}
+	compiled := conditionState{metav1.ConditionTrue, "Compiled", "ModelService capacity was compiled"}
+	if service.Spec.Suspend {
+		compiled = conditionState{metav1.ConditionUnknown, "Suspended", "Startup configuration is retained while model execution is suspended"}
+	}
 	err = reconciler.updateStatus(ctx, service, modelServiceState{
-		compiled:    conditionState{metav1.ConditionTrue, "Compiled", "ModelService capacity was compiled"},
+		compiled:    compiled,
 		pools:       conditionState{metav1.ConditionTrue, "Applied", "Existing ModelPools have no requested capacity"},
 		target:      target,
 		ready:       conditionState{metav1.ConditionFalse, target.Reason, target.Message},

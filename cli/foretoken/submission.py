@@ -8,16 +8,23 @@ from __future__ import annotations
 import copy
 import json
 import time
+import uuid
 from typing import Any
 
 import yaml
 
 from foretoken.application_files import SOURCE_REVISION
-from foretoken.kubernetes import Kubectl, KubernetesVersionConflictError, timeout_seconds
+from foretoken.kubernetes import (
+    Kubectl,
+    KubernetesVersionConflictError,
+    timeout_seconds,
+)
 from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
 
+_SERVICE_OPERATION_ANNOTATION = "inference.foretoken.io/service-operation"
 
-def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str] | None:
+
+def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str, str] | None:
     """Identify spec and executable intent independently of status-only API updates."""
     if value is None:
         return None
@@ -30,6 +37,7 @@ def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str] | None
         metadata["uid"],
         metadata["generation"],
         (metadata.get("annotations") or {}).get(SOURCE_REVISION, ""),
+        (metadata.get("annotations") or {}).get(_SERVICE_OPERATION_ANNOTATION, ""),
     )
 
 
@@ -40,14 +48,15 @@ class DeploymentSubmission:
         self.kubectl = kubectl
         self.namespace = deployment.namespace
         self.timeout = timeout_seconds(timeout)
+        self.operation = uuid.uuid4().hex
         self.expected = {
             ref: _intent_version(kubectl.get_if_exists(ref.kind, ref.name, ref.namespace))
             for ref in deployment.service_refs()
         }
-        self.committed: dict[ResourceRef, tuple[str, int, str] | None] = {}
+        self.committed: dict[ResourceRef, tuple[str, int, str, str] | None] = {}
 
-    def apply(self, rendered: str) -> None:
-        """Apply dependencies normally and each service once, preserving newer service intent."""
+    def apply(self, rendered: str, *, patch_services: bool = False) -> None:
+        """Submit services once, optionally patching only lifecycle intent, without replacing newer work."""
         services = []
         dependencies = []
         for value in yaml.safe_load_all(rendered):
@@ -62,9 +71,20 @@ class DeploymentSubmission:
         if dependencies:
             self.kubectl.apply(yaml.safe_dump_all(dependencies, sort_keys=False))
         for ref, value in services:
-            # Retirement was already submitted before source/storage preparation.
-            if ref not in self.committed:
-                self.committed[ref] = _intent_version(self._apply_service(ref, value))
+            if ref in self.committed:
+                continue
+            if patch_services:
+                self._apply_service(ref, value, patch=True)
+                continue
+            suspended = value["spec"].get("suspend", False)
+            if suspended and self.expected[ref] is not None:
+                self._apply_service(ref, value, patch=True)
+            # Keep execution-state writes separate from SSA configuration ownership.
+            # Resume only after new configuration is submitted; a newer stop between
+            # these stages changes the precondition and prevents the resume.
+            self._apply_service(ref, value)
+            if not suspended:
+                self._apply_service(ref, value, patch=True)
 
     def check(self) -> None:
         """Confirm submitted intent still owns the readiness and activation being observed."""
@@ -80,12 +100,27 @@ class DeploymentSubmission:
             )
         return value
 
-    def _apply_service(self, ref: ResourceRef, value: dict[str, Any]) -> dict[str, Any]:
-        """Use an API version precondition, refreshing only races caused by status updates."""
+    def _apply_service(self, ref: ResourceRef, value: dict[str, Any], *, patch: bool = False) -> None:
+        """Submit one stage and advance its precondition, retrying only status-update races."""
         deadline = time.monotonic() + self.timeout
+        suspended = value["spec"].get("suspend", False)
         while True:
             current = self._current(ref)
             payload = copy.deepcopy(value)
+            if patch:
+                if current is not None:
+                    payload = {
+                        "apiVersion": current["apiVersion"], "kind": ref.kind,
+                        "metadata": {"name": ref.name, "namespace": ref.namespace},
+                        "spec": {"suspend": suspended},
+                    }
+                # Repeating stop must supersede older preparation without requesting
+                # a different executable application through deploymentRevision.
+                payload["metadata"].setdefault("annotations", {})[_SERVICE_OPERATION_ANNOTATION] = self.operation
+            else:
+                payload["metadata"].get("annotations", {}).pop(_SERVICE_OPERATION_ANNOTATION, None)
+                if current is not None and not suspended:
+                    payload["spec"].pop("suspend", None)
             if current is None:
                 # SSA version zero permits creation but cannot update an existing CR.
                 payload["metadata"]["resourceVersion"] = "0"
@@ -98,12 +133,24 @@ class DeploymentSubmission:
             if remaining <= 0:
                 raise DeploymentError(f"Timed out submitting {ref.display_name}")
             try:
-                applied = self.kubectl.run(
-                    ["apply", "--server-side", "--filename=-", "--output=json"],
-                    input_text=yaml.safe_dump(payload, sort_keys=False),
-                    timeout=remaining,
-                )
-                return json.loads(applied.stdout)
+                if patch and current is not None:
+                    applied = self.kubectl.run(
+                        ["patch", ref.kind, ref.name, "--namespace", ref.namespace,
+                         "--type=merge", "--field-manager=kubectl", "--output=json",
+                         "--patch", json.dumps(payload)],
+                        timeout=remaining,
+                    )
+                else:
+                    applied = self.kubectl.run(
+                        ["apply", "--server-side", "--filename=-", "--output=json"],
+                        input_text=yaml.safe_dump(payload, sort_keys=False),
+                        timeout=remaining,
+                    )
+                result = json.loads(applied.stdout)
+                if patch and result.get("spec", {}).get("suspend") is not suspended:
+                    raise DeploymentError("The platform does not support service suspension; update the platform first")
+                self.committed[ref] = _intent_version(result)
+                return
             except KubernetesVersionConflictError:
                 latest = self._current(ref)
                 if current is None or latest["metadata"]["resourceVersion"] == current["metadata"]["resourceVersion"]:

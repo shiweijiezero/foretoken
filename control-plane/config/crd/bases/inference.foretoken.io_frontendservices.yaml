@@ -398,6 +398,10 @@ spec:
                 - picker
                 - scorer
                 type: object
+              suspend:
+                description: Suspend stops frontend execution while retaining its
+                  configured replicas and storage.
+                type: boolean
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:

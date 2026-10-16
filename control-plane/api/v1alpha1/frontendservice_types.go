@@ -106,6 +106,10 @@ type FrontendServiceSpec struct {
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
 
+	// Suspend stops frontend execution while retaining its configured replicas and storage.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0

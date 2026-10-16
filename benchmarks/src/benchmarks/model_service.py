@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -248,7 +249,15 @@ def _discover_model_service(
         "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
         else _select_model(deployment.models.values(), source.model)
     )
-    wait_for_resources(deployment.service_refs(), kubectl, source.wait_timeout)
+    model_refs = _model_service_refs(deployment, model)
+    resources = (ResourceRef("FrontendService", deployment.frontend, deployment.namespace), *model_refs)
+    progress = wait_for_resources(resources, kubectl, source.wait_timeout)
+    for service in progress:
+        if service.state == "Stopped":
+            raise DeploymentError(
+                f"{service.resource.display_name} is stopped; resume it before benchmarking with:\n"
+                f"foretoken deploy {shlex.quote(str(deployment.path))}"
+            )
     gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
     endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
     chat_completions_url = f"{endpoint.url}/v1/chat/completions"
@@ -258,7 +267,7 @@ def _discover_model_service(
         api_root,
         headers,
         wait_seconds,
-        deployment.models.values(),
+        (model,) if model else deployment.models.values(),
         source.api_key,
     )
     return ModelService(
@@ -269,7 +278,7 @@ def _discover_model_service(
         hostname=deployment.hostname,
         gpu_count=gpu_count,
         routing_host=endpoint.routing_host,
-        model_service_refs=_model_service_refs(deployment, model),
+        model_service_refs=model_refs,
         deployment=deployment,
     )
 

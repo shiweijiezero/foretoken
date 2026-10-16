@@ -8,6 +8,8 @@ This package turns controller-owned observations into `ModelPool` capacity. User
 
 The `ModelService` controller owns scheduling, observation collection, target discovery, status publication, and writing capacity to `ModelPool`. Algorithms are side-effect-free: they only evaluate one complete observation and return a recommendation.
 
+Service suspension bypasses autoscaling and retires execution without changing replica settings. Manual capacity applies the configured counts without load-driven adjustment.
+
 Every target scales one Pool. An E/P/D service has one encoder, one prefill, and one decode Pool; their capacities are evaluated independently, while the ModelService controller commits their prepared revisions as one complete serving cohort.
 
 ## Evaluation pipeline

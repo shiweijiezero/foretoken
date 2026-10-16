@@ -113,7 +113,7 @@ This scores 100 GSM8K math problems. See [Quality evaluation](benchmarks/docs/ev
 
 #### Profiling: inspect execution bottlenecks
 
-Use a source-installed CLI and platform for profiling, as described in the [profiling guide](benchmarks/docs/profile/README.md). The Quick Start already configures persistent capture storage.
+The Quick Start already configures persistent capture storage. See the [profiling guide](benchmarks/docs/profile/README.md) for tool setup and other capture options.
 
 ```bash
 foretoken perf examples/quickstart \

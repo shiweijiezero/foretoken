@@ -23,6 +23,8 @@ spec:
 
 This evaluates queue demand every five seconds and changes at most one replica per evaluation. `periodic` triggering and `step` adjustment are the defaults, so they can be omitted.
 
+To pause the service without changing its scaling settings, use the [stop and resume commands](../cli/README.md#stop-and-resume).
+
 ## Optional parameters
 
 Every stage accepts an `algorithm` and an optional `parameters` object. Omitted parameters use the algorithm defaults.

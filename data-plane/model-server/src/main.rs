@@ -264,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let mut profiler =
-        profiling.map(|config| profiling::Supervisor::new(config, backend.clone(), health.clone()));
+        profiling.map(|config| profiling::Supervisor::new(config, Some(backend.clone())));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let shutdown = Arc::new(Notify::new());
@@ -341,6 +341,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Stop new admission before draining HTTP handlers, the client, and finally the child process.
+    if let Some(profiler) = &profiler {
+        profiler.handle().close();
+    }
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
@@ -462,6 +465,10 @@ async fn run_worker(
     )
     .await
     .map_err(EngineStartupFailure::into_error)?;
+    let mut profiler = profiling
+        .filter(|_| config.launch.profiling.engine == profiling::Engine::Nsight)
+        .cloned()
+        .map(|profile| profiling::Supervisor::new(profile, None));
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let app = axum::Router::new()
@@ -472,7 +479,10 @@ async fn run_worker(
         .route(
             "/readyz",
             axum::routing::get(|| async { axum::http::StatusCode::OK }),
-        );
+        )
+        .merge(profiling::router(
+            profiler.as_ref().map(profiling::Supervisor::handle),
+        ));
     let mut server = Box::pin(
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { server_shutdown.notified().await })
@@ -484,10 +494,22 @@ async fn run_worker(
         result = &mut server => Some(format!("worker health server stopped: {result:?}")),
         reason = wait_cache_server(cache_server) => Some(reason),
         error = wait_cache_write_failure(cache, runtime_cache::Mode::Persistent) => Some(error.to_string()),
+        result = async {
+            match &mut profiler {
+                Some(profiler) => profiler.run().await,
+                None => std::future::pending().await,
+            }
+        } => Some(result.err().unwrap_or_else(|| "capture supervisor stopped".into())),
     };
+    if let Some(profiler) = &profiler {
+        profiler.handle().close();
+    }
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     engine.shutdown(config.launch.drain_timeout()).await?;
+    if let Some(profiler) = &mut profiler {
+        profiler.engine_stopped("worker runtime terminated").await;
+    }
     match failure {
         Some(message) => Err(io::Error::other(message).into()),
         None => Ok(()),

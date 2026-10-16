@@ -68,6 +68,14 @@ class DeleteCommand:
 
 
 @dataclass(frozen=True)
+class StopCommand:
+    """Suspend deployment execution while preserving its configuration and storage."""
+
+    kustomize_path: str
+    timeout: str
+
+
+@dataclass(frozen=True)
 class StatusCommand:
     """Inspect services selected by Kustomize configuration or namespace."""
 
@@ -157,6 +165,7 @@ ParsedCommand = (
     | ClusterCommand
     | DeployCommand
     | DeleteCommand
+    | StopCommand
     | StatusCommand
     | EndpointCommand
     | PerformanceCommand
@@ -342,6 +351,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_wait_timeout_argument(delete, "resource deletion")
 
+    stop = subparsers.add_parser(
+        "stop", help="Stop a deployment while keeping its configuration and storage",
+    )
+    stop.add_argument("kustomize_path", metavar="PATH", help="Kustomize root whose services should stop")
+    _add_wait_timeout_argument(stop, "service shutdown")
+
     status = subparsers.add_parser(
         "status",
         help="Show Foretoken service readiness",
@@ -493,6 +508,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         )
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "stop":
+        return StopCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "profile":
         return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
     if parsed_args.command == "status":

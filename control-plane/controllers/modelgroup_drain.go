@@ -148,6 +148,25 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 			serving = true
 		}
 	}
+	if serving {
+		reader := reconciler.APIReader
+		if reader == nil {
+			reader = reconciler.Client
+		}
+		var pods corev1.PodList
+		if err := reader.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels{modelGroupLabel: group.Name}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("read execution Pods before drain: %w", err)
+		}
+		// An unscheduled or finished Pod cannot hold accepted requests. Do not
+		// wait on an admission endpoint that has never started or already exited.
+		serving = false
+		for _, pod := range pods.Items {
+			if pod.Spec.NodeName != "" && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+				serving = true
+				break
+			}
+		}
+	}
 	drained := meta.FindStatusCondition(group.Status.Conditions, conditionDrained)
 	if !serving || (drained != nil && (drained.Status == metav1.ConditionTrue || drained.Reason == "DrainTimedOut")) {
 		return reconciler.retireGroupWorkloads(ctx, group, workloads)
@@ -309,6 +328,25 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		frontend := &frontends.Items[index]
 		if !frontend.DeletionTimestamp.IsZero() {
 			continue
+		}
+		if frontend.Spec.Suspend || frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0 {
+			reader := reconciler.APIReader
+			if reader == nil {
+				reader = reconciler.Client
+			}
+			latest := new(inferencev1alpha1.FrontendService)
+			if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), latest); err != nil {
+				return false, client.IgnoreNotFound(err)
+			}
+			ready := meta.FindStatusCondition(latest.Status.Conditions, conditionReady)
+			// A confirmed stop has no live routing consumers. Retained snapshots
+			// may still contain old routes, but cannot delay backend retirement.
+			if latest.UID == frontend.UID && latest.Status.ObservedGeneration == latest.Generation &&
+				(latest.Spec.Suspend || latest.Spec.Replicas != nil && *latest.Spec.Replicas == 0) &&
+				ready != nil && ready.ObservedGeneration == latest.Generation &&
+				ready.Status == metav1.ConditionFalse && ready.Reason == "ScaledToZero" {
+				continue
+			}
 		}
 		var snapshotVersion uint64
 		withdrawnViews := make(map[string]bool)

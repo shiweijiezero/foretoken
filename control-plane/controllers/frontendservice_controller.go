@@ -344,7 +344,7 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ReplicaRetirementFailed", FailureMessage: err.Error()})
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
-	if frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0 {
+	if frontend.Spec.Suspend || frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0 {
 		return reconciler.reconcileStoppedFrontend(ctx, frontend, current)
 	}
 	var services inferencev1alpha1.ModelServiceList
@@ -622,7 +622,12 @@ func (reconciler *FrontendServiceReconciler) retireFrontendReplicas(ctx context.
 	if deployment.Spec.Replicas != nil {
 		currentReplicas = *deployment.Spec.Replicas
 	}
-	if target := frontend.Spec.Replicas; target != nil && *target < currentReplicas {
+	target := frontend.Spec.Replicas
+	if frontend.Spec.Suspend {
+		zero := int32(0)
+		target = &zero
+	}
+	if target != nil && *target < currentReplicas {
 		base := deployment.DeepCopy()
 		deployment.Spec.Replicas = target
 		if err := reconciler.Patch(ctx, deployment, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}), client.FieldOwner(frontendServiceFieldOwner)); err != nil {
