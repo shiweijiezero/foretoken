@@ -60,6 +60,7 @@ def _poll_progress(
 def _execute(
     config: EvaluationConfig, service: ModelService, directory: Path,
     publish_progress: Callable[[dict[str, Any]], None],
+    outputs: ResultOutputs,
 ) -> int:
     """Stream native progress into a retained log; interrupt and reap the child before service cleanup."""
     native = directory / "native"
@@ -96,6 +97,7 @@ def _execute(
         stop = Event()
         progress = executor.submit(_poll_progress, config.evaluator, native, stop, publish_progress)
         try:
+            outputs.start_measurement()
             process.stdin.write(json.dumps(payload))
             process.stdin.close()
             for line in process.stdout:
@@ -106,7 +108,9 @@ def _execute(
                 log.write(line)
                 log.flush()
                 print(line, end="", flush=True)
-            return process.wait()
+            code = process.wait()
+            outputs.finish_measurement(code)
+            return code
         except BaseException:
             if process.poll() is None:
                 process.send_signal(signal.SIGINT)
@@ -117,8 +121,14 @@ def _execute(
                     process.wait()
             raise
         finally:
+            error = sys.exception()
             stop.set()
-            progress.result()
+            try:
+                progress.result()
+            except BaseException:
+                if error is None:
+                    raise
+                logger.exception("Evaluation progress cleanup also failed")
 
 
 def run_evaluation(
@@ -158,7 +168,7 @@ def run_evaluation(
             active_outputs.publish_progress(row, axis="Evaluation/Elapsed (s)")
 
         started = time.monotonic()
-        code = _execute(config, service, directory, publish_progress)
+        code = _execute(config, service, directory, publish_progress, active_outputs)
         metrics = read_quality_metrics(config.evaluator, directory / "native")
         run = BenchmarkRun(
             record=record,
@@ -185,6 +195,7 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
     ))
     record = {"mode": "evaluation_comparison", "evaluator": config.evaluator}
     scores: list[dict[str, Any]] = []
+    execution: dict[str, Any] = {}
     methods = [
         {"label": label, "model": source.model or None, "directory": f"method-{index + 1}",
          "exit_code": None, "status": "not_started"}
@@ -207,6 +218,7 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
                     run = run_evaluation(child_config, service, output_dir=str(directory / method["directory"]))
                     method["exit_code"] = run.exit_code
                     method["status"] = "failed" if run.exit_code else "completed"
+                    execution[method["label"]] = run.metrics["execution"]
                     scores.extend({"method": method["label"], **row} for row in run.metrics["scores"])
             complete = True
         finally:
@@ -217,12 +229,18 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
             metrics = {
                 "duration_seconds": time.monotonic() - started,
                 "scores": scores,
-                "execution": {"evaluation_comparison": {
-                    "requested": len(config.services),
-                    "succeeded": sum(method["status"] == "completed" for method in methods),
-                    "errored": sum(method["status"] == "failed" for method in methods),
-                    "incomplete": not complete,
-                }},
+                "execution": {
+                    "evaluation_comparison": {
+                        "requested": len(config.services),
+                        "succeeded": sum(method["status"] == "completed" for method in methods),
+                        "errored": sum(method["status"] == "failed" for method in methods),
+                        "incomplete": failure or any(
+                            task.get("incomplete")
+                            for native in execution.values() for task in native.values()
+                        ),
+                    },
+                    "methods": execution,
+                },
                 "evaluation_comparison": {"methods": methods, "scores": scores},
             }
             outputs.publish(BenchmarkRun(
