@@ -2,7 +2,7 @@
 
 [English](iteration-template.md) | 简体中文
 
-编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明指定执行者、开发者（Worker）、记录负责人（Recorder）和独立审查者。每次 perf/eval 后，执行者提供实际命令、运行身份、结果与资源状态，Worker 分析结果并继续修改实现，Recorder 整理分析并引用本轮 `../runs/` 中的证据。独立审查单独注明来源，不代替开发者分析。主 Agent 审阅证据、完成集成验证与最终验收，并提供保留或集成决定。按[记录手册](../experiment-records_zh.md#完善实验说明)保留分析、审查和决策的演进过程。
+编写 `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md` 时参考。注明指定执行者、开发者（Worker）、记录负责人（Experimenter）和独立审查者。每次 perf/eval 后，执行者提供实际命令、运行身份、结果与资源状态，Worker 分析结果并继续修改实现，Experimenter 整理分析并引用本轮 `../runs/` 中的证据。独立审查单独注明来源，不代替开发者分析。主 Agent 审阅证据、完成集成验证与最终验收，并提供保留或集成决定。按[记录手册](../experiment-records_zh.md#完善实验说明)保留分析、审查和决策的演进过程。
 
 ## 问题与分析
 

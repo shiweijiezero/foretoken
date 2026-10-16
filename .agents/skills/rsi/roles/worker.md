@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-Follow the [role contract](common.md). Own research, bottleneck analysis, design, implementation, and interpretation for an assigned question. When assigned candidate execution, also own its builds, deployment, measurements, and cleanup within the allocation. Otherwise deliver code and analysis to the named execution owner. Shared environment changes, resource reassignment, and final acceptance remain with the lead.
+Follow the [role contract](common.md). Own research, bottleneck analysis, design, candidate implementation, and interpretation of results. Hand ready versions and their comparisons to the assigned Experimenter, then prepare useful follow-up work while evaluation runs. A small task may combine Worker and Experimenter responsibilities in one member, within an explicit execution allocation. Shared changes, resource reassignment and final acceptance remain with the lead.
 
 ## Research and develop
 
@@ -15,16 +15,16 @@ Start from the task, reference configuration, relevant code, prior findings, and
 
 Explain the cause being addressed, intended effect, assumptions, and comparison that would distinguish the proposed explanation from alternatives. Implement viable changes in the assigned checkout and branch. Identify missing context before using it to justify an experiment; ask the relevant owner for the specific input while continuing independent work.
 
-## Iterate within the allocation
+## Prepare candidates and use evaluation feedback
 
-For an execution assignment, use the agreed deployment and resource limits, preserve comparison conditions, and follow the existing source-deployment and benchmark workflows. Run predetermined workload groups with a sweep. Analyze each result and continue useful code revisions and experiments within the assigned question and budget; report consequential findings without waiting for the whole direction to finish. A new scope, shared change, or allocation needs the lead's decision.
+Deliver a reproducible source version, the change explanation, reference and workload, expected mechanism, and execution requirements. Preserve that input while it waits or runs, or provide an independently preserved version. Use another checkout for the next candidate rather than modifying an evaluator's pending input. Preparation concurrency does not have to match evaluation concurrency; follow the lead's budget and backlog decisions.
 
-Keep the candidate checkout and runtime unchanged during build and measurement. Send the actual version, configuration, commands, job identity, result paths, and resource state directly to the lead and Recorder. Distinguish what ran from what was planned, and preserve failures and interrupted runs. Use measurements and profiles to refine the explanation, not only the best aggregate metric.
+Read results directly from the Experimenter, explain effects and trade-offs, and revise the implementation. Share consequential findings with the lead and Advisors without waiting for all evaluations to finish. Preserve negative evidence and distinguish an unsupported hypothesis from a promising implementation path that needs further work. Follow the [exploration guidance](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md) when investigating short-term regressions.
 
-If another member owns execution, deliver the checkout, changes, explanation, and proposed comparison to that owner. Do not edit the delivered version until the owner releases it; continue other research or development in an independent checkout. Analyze returned results and resolve implementation questions with the Recorder.
+Answer the Experimenter's implementation questions and the independent reviewer's attribution questions. If also assigned execution, follow the Experimenter contract and keep results separate from self-analysis; another member reviews any claims selected for retention.
 
 ## Integrate and hand off
 
-The lead selects retained changes after reading the implementation and relevant call paths and considering the independent review. Make assigned integration changes and return them for final validation. Supply the Recorder with the implementation and analysis for the iteration history and reusable knowledge.
+The lead selects retained changes after reading the implementation and relevant call paths and considering the independent review. Make assigned integration changes and return them for final validation. Supply the assigned writer with the implementation and analysis for the iteration history and reusable knowledge.
 
 Use the common handoff when the question is answered or further progress requires new scope or resources. Confirm owned execution has stopped or been handed over before releasing the allocation. A code delivery or progress report does not end authorized work.

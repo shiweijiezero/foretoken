@@ -19,29 +19,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 把任务列出的全部节点纳入实验安排，确认可用资源和现有使用者，按需求分配独立候选。未使用的节点记录具体阻塞并处理可解决的问题。区分整个资源池与单服务上限。
 
-使用 W&B 时，在并行运行前统一易读的命名。`--wandb-project` 对应持续研究的优化课题，以 `foretoken-` 开头，并用模型、硬件和目标标明课题，例如 `foretoken-qwen35-metax-inference`。一次完整 RSI 实验使用一个 `--wandb-group`，以日期或实验名区分，收拢全部迭代和并行候选；`--wandb-run-name` 区分迭代、负载、并发和重复测量。主 Agent 为同一次实验的全部候选使用相同 project 和 group，恢复时沿用原命名；同一课题新开实验时，在原 project 下使用新的 group。在实验总览和迭代记录中保存名称与运行链接，方便 Worker 和 Recorder 查找、对比结果。
+使用 W&B 时，在并行运行前统一易读的命名。`--wandb-project` 对应持续研究的优化课题，以 `foretoken-` 开头，并用模型、硬件和目标标明课题，例如 `foretoken-qwen35-metax-inference`。一次完整 RSI 实验使用一个 `--wandb-group`，以日期或实验名区分，收拢全部迭代和并行候选；`--wandb-run-name` 区分迭代、负载、并发和重复测量。主 Agent 为同一次实验的全部候选使用相同 project 和 group，恢复时沿用原命名；同一课题新开实验时，在原 project 下使用新的 group。在实验总览和迭代记录中保存名称与运行链接，方便 Worker 和 Experimenter 查找、对比结果。
 
 ## 组建团队与派工
 
-主 Agent 构思和调整方向、分配资源、综合发现并选择保留方案，负责共享环境准备、跨候选协调、集成验证和最终交付。每个候选指定唯一执行负责人，可以是主 Agent，也可以是明确获派的 Worker。开始执行前，按[角色协作约定](roles/common_zh.md)写清所需背景、资源、对照条件和可继续推进的范围。
+主 Agent 构思和调整方向、分配资源、综合发现并选择保留方案，负责共享环境准备、跨候选协调、集成验证和最终交付。每项评测指定唯一执行负责人，通常由 Experimenter 承担；需要时可由主 Agent 或 Worker 兼任。开始执行前，按[角色协作约定](roles/common_zh.md)写清所需背景、资源、对照条件和可继续推进的范围。
 
-给 Worker 完整的研究问题，而不是逐条命令。获派执行后，Worker 可在约定范围内持续研究、实现和运行候选；共享依赖或隔离条件尚不明确时，执行仍由主 Agent 负责。主 Agent 也持续理解系统、联系不同方向的发现，与 Advisor 提出新问题，而不只是处理待办。
+给 Worker 完整的研究问题，而不是逐条命令。准备与评测适合独立并发时，Worker 准备版本并解释结果，Experimenter 在配额内承接已就绪候选；共享依赖或隔离条件尚不明确时，执行仍由主 Agent 负责。主 Agent 也持续理解系统、联系不同方向的发现，与 Advisor 提出新问题，而不只是处理待办。
 
 派工提供角色约定、角色文件、任务、仓库规范、相关源码和原始证据的绝对路径，要求成员亲自阅读。成员不自动继承主 Agent 的对话，因此还应交代当前参考方案、未解问题及影响本任务的已有决定。
 
 | 角色指令 | 职责与人数 | 记录归属 |
 | --- | --- | --- |
-| 主 Agent | 确定方向、任务与资源分配，负责共享变更、保留决定、集成验证和交付；可亲自执行，也可明确委派候选执行。 | 派工、资源分配和决策，由 Recorder 维护总览。 |
-| [Advisor](roles/advisor_zh.md) | 至少两名成员研究互补问题、机制、替代方案并反思；主 Agent 按有效视角与预算安排人数。 | 直接向 Worker、主 Agent 和 Recorder 提供发现与建议。 |
+| 主 Agent | 确定方向、任务与资源分配，负责共享变更、保留决定、集成验证和交付；可亲自执行，也可明确委派候选执行。 | 派工、资源分配和决策，由指定作者维护总览。 |
+| [Advisor](roles/advisor_zh.md) | 至少两名成员研究互补问题、机制、替代方案并反思；主 Agent 按有效视角与预算安排人数。 | 直接向 Worker、主 Agent 和 Experimenter 提供发现与建议。 |
 | [Worker](roles/worker_zh.md) | 研究、实现和分析分配的问题，获派时负责候选执行。至少一名跟进端到端路径；人数不必与实验组数相同。 | 代码、所负责执行的命令与结果、分析和资源交接。 |
-| [Recorder](roles/recorder_zh.md) | 默认一名，独立检查行为、对照条件和归因，不实现自己审查的候选。 | 迭代历史、当前总览、证据链接和最终报告。 |
-| [Monitor](roles/monitor_zh.md) | 一名监督者，观察工作效率、资源、依赖和交接，负责持续 GPU 采集。 | 向主 Agent 和 Recorder 提供采集记录与可采取行动的观察。 |
+| [Experimenter](roles/experimenter_zh.md) | 执行就绪候选，观察所分配资源并负责事实记录；按评测容量而非 Worker 人数配置。独立复核另交未参与该候选的成员。 | 命令、运行身份、结果、采集记录和迭代说明；指定一名作者负责总览与报告。 |
 
-成员使用小写的 `<role>-<编号或代号>` 命名，前缀为 `lead`、`advisor`、`worker`、`recorder` 或 `monitor`，例如 `worker-01`、`worker-alpha`。名称标识成员而非方向，相关任务沿用名称；harness 固定主 Agent 消息地址时保留该地址。
+成员使用小写的 `<role>-<编号或代号>` 命名，前缀为 `lead`、`advisor`、`worker` 或 `experimenter`，例如 `worker-01`、`worker-alpha`。名称标识成员而非方向，相关任务沿用名称；harness 固定主 Agent 消息地址时保留该地址。
 
-执行期间持续维护任务要求的有效并行。Worker、Advisor 和 Recorder 仅在实际执行分配任务时计入，按成员去重；主 Agent、Monitor 以及等待、阻塞或完成成员不计入。完成和依赖变化时，结合原生任务状态核对实际进展；证据不足的时段保留未知，不从驻留 Pod 或名义运行状态推算工作时间。达不到要求时，报告具体的准备或资源阻塞。
+执行期间持续维护任务要求的有效并行。Worker、Experimenter 和 Advisor 仅在实际执行分配任务时计入，按成员去重；主 Agent 以及等待、阻塞或完成成员不计入，兼任角色不增加人数。完成和依赖变化时，结合原生任务状态核对实际进展；证据不足的时段保留未知，不从驻留 Pod 或名义运行状态推算工作时间。达不到要求时，报告具体的准备或资源阻塞。
 
-通过已有任务工具和实验总览保持下一项就绪工作可见。结果返回后，先核对资源归属并接续已授权工作，再继续独立研究。只有 harness 提供原子认领、且主 Agent 已分配所需资源时，才允许成员自行认领；否则由主 Agent 指派。最终隔离对照优先于受影响资源上的竞争执行，其他成员在任务约束内继续研究和分析。
+通过现有任务记录和实验总览分别展示准备中、等待评测和执行中的候选数量，按角色约定结合实际耗时与积压，分别调整准备并发和评测并发。结果返回后，先核对资源归属并接续已授权工作，再继续独立研究。只有 harness 提供原子认领、且主 Agent 已分配所需资源时，才允许成员自行认领；否则由主 Agent 指派。最终隔离对照优先于受影响资源上的竞争执行，其他成员在任务约束内继续研究和分析。
 
 恢复时读取原预算、当前总览、资源分配与作业身份，确认成员和进程的实际状态后再派工。按需补建缺失成员，不重跑已完成测量或重置预算。
 
@@ -61,7 +60,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 1. 主 Agent、Advisor 和 Worker 根据代码、资料与已有结果选择假设。查阅部署指南、[实验命令示例](../../../benchmarks/docs/recipes_zh.md)、维护中的配置和相关 CLI help；投入资源前确定对照条件与执行分配。
 2. Worker 实现并解释候选与对照。指定执行负责人在范围内构建、部署和诊断，确认预期路径实际执行；已确定的负载组合与重复次数交给现有 sweep，不冲突的候选由各负责人并行推进。
-3. 执行者将结果、配置与资源状态直接交 Worker、主 Agent 和 Recorder。Worker 解释效果并修订候选，Recorder 独立审查新证据、复用仍适用的已有结论并更新记录，Advisor 质疑解释并提出后续问题。
+3. Experimenter 记录结果、配置与资源状态，直接交 Worker、主 Agent 和审查者。Worker 解释效果并准备后续候选。由未参与该候选实现和执行的 Advisor 或其他成员独立复核结论，指定作者将复核意见纳入记录，不把审查判断混写成执行事实。
 4. 保留或集成改动前，主 Agent 亲自阅读实现及相关调用路径，审查架构与生效条件，结合独立证据作出决定。主 Agent 分配集成工作，负责组合方案验证，按需协调无竞争测量窗口。
 5. 随发现调整方向、人员和资源。反复出现的执行障碍在现有职责处修正：主 Agent 协调共享环境问题，Worker 实现分配的代码修复，执行负责人验证受影响流程。在剩余预算内持续推进分析、记录与有效的独立工作。
 
@@ -69,7 +68,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 采集 GPU 使用情况
 
-在每台 GPU 主机上使用本 skill 的 `scripts/gpu_usage.py`，需要 Python 3.11+ 及已安装的 `nvidia-smi` 或 `mx-smi`。脚本只依赖标准库；主机没有 checkout 时只需复制该脚本。使用现有远端任务管理器或本任务专属的持久 shell 会话，让采集在Monitor 分析期间及 SSH 断开后继续运行。
+在每台 GPU 主机上使用本 skill 的 `scripts/gpu_usage.py`，需要 Python 3.11+ 及已安装的 `nvidia-smi` 或 `mx-smi`。脚本只依赖标准库；主机没有 checkout 时只需复制该脚本。使用现有远端任务管理器或本任务专属的持久 shell 会话，让采集在执行者分析期间及 SSH 断开后继续运行。
 
 在各主机的仓库根目录，将 `GPU_RUN` 设为实验结果下的新运行目录，`GPU_INDICES` 设为该节点分配给本任务的宿主 GPU 序号（逗号分隔），`DEADLINE` 设为带 UTC 偏移的绝对 ISO 截止时间。启动一次：
 
@@ -80,7 +79,7 @@ python3 -I .agents/skills/rsi/scripts/gpu_usage.py collect \
 
 采集器打印 PID 和输出目录，此后默认每 10 秒向 `samples.jsonl` 追加数据。用 `--interval` 调整采样间隔。脚本自动选择已安装的设备工具；两种工具都存在时，用 `--backend nvidia` 或 `--backend metax` 指定。仅在任务拥有全部可见 GPU 时省略 `--gpus`，仅在任务没有时间预算时省略 `--deadline`。已有采样文件不会被覆盖，恢复采集使用新目录。
 
-定期分析时，将 `WINDOW_START`、`WINDOW_END` 设为下一个已完成窗口的 ISO 时间。可在原主机、共享存储或Monitor 机器上的记录副本中读取数据；汇总不会启动或中断采集：
+定期分析时，将 `WINDOW_START`、`WINDOW_END` 设为下一个已完成窗口的 ISO 时间。可在原主机、共享存储或执行者机器上的记录副本中读取数据；汇总不会启动或中断采集：
 
 ```bash
 python3 -I .agents/skills/rsi/scripts/gpu_usage.py summarize "$GPU_RUN" \

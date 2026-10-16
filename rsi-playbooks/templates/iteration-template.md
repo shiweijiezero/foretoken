@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the assigned executor, developer (Worker), assigned writer (Recorder), and independent reviewer. The executor supplies actual commands, runtime identity, results and resource state after each perf/eval command. The Worker analyzes those results and refines the implementation; the Recorder incorporates that analysis with links under `../runs/`. Attribute independent review separately; it does not replace developer analysis. The lead reviews the evidence, performs integrated validation and final acceptance, and supplies retention or integration decisions. Preserve the sequence of analysis, reviews, and decisions according to the [recording guide](../experiment-records.md#complete-the-experiment-notes).
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the assigned executor, developer (Worker), assigned writer (Experimenter), and independent reviewer. The executor supplies actual commands, runtime identity, results and resource state after each perf/eval command. The Worker analyzes those results and refines the implementation; the Experimenter incorporates that analysis with links under `../runs/`. Attribute independent review separately; it does not replace developer analysis. The lead reviews the evidence, performs integrated validation and final acceptance, and supplies retention or integration decisions. Preserve the sequence of analysis, reviews, and decisions according to the [recording guide](../experiment-records.md#complete-the-experiment-notes).
 
 ## Question and analysis
 

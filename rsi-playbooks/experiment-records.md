@@ -84,10 +84,10 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Record | How it changes |
 | --- | --- |
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
-| `iterations/<name>/notes/iteration.md` | The assigned Recorder appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
-| `notes/experiment.md` | The Recorder updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and the lead's decisions. |
+| `iterations/<name>/notes/iteration.md` | The assigned Experimenter appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
+| `notes/experiment.md` | The Experimenter updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and the lead's decisions. |
 
-For example, a reviewer may recommend another comparison, the lead may authorize it, and a later result may justify discarding the candidate. Keep those as separate attributed entries rather than replacing the recommendation with the final decision. Each decision states the action and its scope; a changed decision or correction identifies the earlier entry it supersedes and the new evidence. The Recorder records the decision-maker's actual conclusion, not its own interpretation as a lead decision.
+For example, a reviewer may recommend another comparison, the lead may authorize it, and a later result may justify discarding the candidate. Keep those as separate attributed entries rather than replacing the recommendation with the final decision. Each decision states the action and its scope; a changed decision or correction identifies the earlier entry it supersedes and the new evidence. The Experimenter records the decision-maker's actual conclusion, not its own interpretation as a lead decision. Independent review comes from a member who neither implemented nor executed the candidate, and is recorded separately from execution facts.
 
 After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
 
