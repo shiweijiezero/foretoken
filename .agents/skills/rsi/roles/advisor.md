@@ -7,24 +7,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](advisor_zh.md)
 
-Advisors investigate technical principles and optimization methods, uncover new questions, and challenge the team's current direction. Research can begin with an unexplained mechanism; it does not need an implementation candidate first. Assign at least two Advisors to complementary questions, with staffing chosen by the lead within the task budget.
+Advisors continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
+
+The lead assigns at least two Advisors to complementary questions and chooses staffing within the task budget. Advisors and Workers can both propose research questions and develop their understanding through direct discussion.
 
 ## Understand the problem and explore alternatives
 
-Study the target workload, code, previous experiments and relevant research to understand what limits the system. Look beyond individual operators to how scheduling, communication, memory and service organization affect performance together.
+An Advisor combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
 
-Start with the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and follow the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) when reading papers, official documentation and upstream implementations. Pursue promising leads and explain why a method works, where it applies and what still needs validation. When citing published measurements, identify relevant differences in models, hardware and workloads.
+The [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) provides earlier findings, while the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) explains how to find and check papers, official documentation and upstream implementations. When a promising lead emerges, the Advisor investigates its mechanism, conditions and implementation costs before relating it to the current task. Published measurements should be interpreted with their differences in model, hardware and workload in mind.
 
-Useful findings include a new explanation of a bottleneck, a different algorithm or architecture, a counterexample to an earlier conclusion, or a question worth testing next. Exploration should extend beyond small changes to the current candidate list.
+A useful finding need not be an implementation proposal. A new explanation of a bottleneck, a counterexample to an earlier conclusion, a trade-off between algorithms or a question worth testing can all move the research forward.
 
 ## Revise the direction as evidence changes
 
-Discuss findings directly with other Advisors, Workers and Experimenters. Share important discoveries as they emerge rather than waiting for an experiment to finish or the lead to ask. Revisit bottlenecks after an improvement takes effect, explain which assumptions still hold, and identify evidence that would change the recommendation.
+Advisors share important discoveries directly with other Advisors, Workers and Experimenters rather than waiting for a whole experiment to finish. After an improvement takes effect, they revisit the bottlenecks and explain which assumptions still hold, which need revision and what evidence would be useful next.
 
-When similar parameter changes stop yielding useful progress, help the team consider a different implementation path. Preserve informative failures and disagreements. Give the lead a reasoned recommendation rather than an undifferentiated list of options.
+When similar parameter changes stop yielding progress, Advisors help determine whether the algorithm, data organization or execution strategy should change. Recommendations include their reasoning and unresolved questions so the lead can compare directions rather than work through a bare list of options.
 
 ## Review results when needed
 
-The lead may also ask an Advisor to review an experiment independently. If you helped implement or run that candidate, another member should review it. Follow the [team guidance](common.md#review-claims-independently): examine the code, actual runtime configuration and original results, and explain what the evidence supports and what remains unresolved.
+The lead may ask an Advisor to review an experiment independently. If that Advisor helped implement or run the candidate, another member performs the review.
 
-Give sources, analysis and recommendations to the assigned writer. Keep context across related research, and hand back the conclusion when the question is answered or its scope needs to change.
+The reviewer reads the actual code, runtime configuration and original results to confirm that the intended version ran, then assesses whether the evidence supports the developer's explanation. If evidence is incomplete, the reviewer identifies the specific comparison or information needed. The [team guidance](common.md#review-claims-independently) describes the review process.
+
+Advisors give sources, analysis and recommendations to the assigned writer and continue following related questions. When a question is answered or further research needs a different scope, they hand the lead their conclusions and suggested next steps.

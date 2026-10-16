@@ -7,24 +7,26 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](experimenter_zh.md)
 
-Experimenters build and evaluate prepared candidates, observe resource use, record results and clean up their experiments. One member can run several non-conflicting experiments; a Worker or the lead can combine this role for a small task. Follow the [team guidance](common.md) for resource allocation and handoff.
+An Experimenter builds and deploys prepared candidates, then evaluates them with the agreed workloads. During execution, they also observe resource use and save results; afterward, they remain responsible for cleanup and handoff. The lead chooses staffing from evaluation capacity. One member can manage several non-conflicting experiments, and a Worker or the lead may combine this role for a small task.
 
 ## Take a candidate for evaluation
 
-Understand the question, code version, reference result, workload and expected change, and check that the required resources have been assigned. Ask the developer for missing details while continuing other ready work.
+Before starting, the Experimenter needs to understand the question, code version, reference results, workload and expected change, and confirm that the required resources are assigned. If execution requirements are unclear, the developer supplies the missing details. Other candidates with complete inputs and available resources can proceed in the meantime.
 
-Take evaluations in the agreed priority order and keep the delivered code and comparison conditions unchanged. Return implementation issues to the Worker and resource or shared-environment changes to the lead. The Worker can prepare the next candidate in a separate checkout.
+The Experimenter takes evaluations in the agreed priority order and keeps the delivered code and comparison conditions unchanged. Implementation problems go back to the Worker; changes to resources or shared environments go to the lead. The Worker can prepare the next version in another checkout while evaluation continues. The [team guidance](common.md) describes this handoff.
 
 ## Run and record the experiment
 
-Use existing tools to synchronize, build, deploy, diagnose and measure the candidate. Run fixed workload groups through sweeps. Save actual commands, code versions, service configurations, logs and results, including failures and interruptions. Check measurement completion, request outcomes and acceptance against the task requirements separately.
+The Experimenter uses existing tools to synchronize, build, deploy, diagnose and measure each candidate. Fixed workload groups and repetitions can run through sweeps without a new instruction for each point. Each run retains its commands, code version, service configuration, logs and results, including failures and interruptions, so later analysis and recovery have the necessary evidence.
 
-Keep GPU collection continuous during the experiment, reusing [collectors](../SKILL.md#collect-gpu-usage) that already cover the assigned devices. The lead names one collection owner per device set to avoid duplicate collection. Interpret utilization alongside build, measurement and waiting periods, and report missing intervals. When collection spans several experiments, hand it over with the resources and stop it when no longer needed.
+Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
 
-Return each completed group of results directly to the Worker, lead and reviewer. Maintain the assigned iteration notes; the lead chooses one writer to update the overview and report. Follow the [experiment records guide](../../../../rsi-playbooks/experiment-records.md), keeping original data and distinguishing developer analysis, review findings and final decisions.
+GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.
+
+After each group of measurements, the Experimenter sends results directly to the Worker, lead and reviewer and updates the assigned iteration notes. The lead chooses one author for the overview and report, and other members send their contributions to that author. The [experiment records guide](../../../../rsi-playbooks/experiment-records.md) explains what to retain.
 
 ## Continue with ready work
 
-As resources become available, continue assigned evaluations whose inputs are ready. Report queue wait, observed durations and available capacity so the lead can adjust preparation and evaluation. Flag candidates whose value has changed because of new findings.
+As resources become available, the Experimenter continues assigned evaluations with complete inputs. Reports of actual durations, queue wait and available capacity help the lead adjust preparation and evaluation. New findings may also make a waiting candidate less useful, in which case the Experimenter raises that with the lead.
 
-On pause, deadline or handoff, stop or transfer owned jobs and collectors, confirm resource state and preserve results. Follow the team guidance for independent review and working-agent counts.
+On pause, deadline or handoff, the Experimenter stops or transfers owned jobs and collectors, confirms resource state and preserves results. Independent review and working-agent counts follow the team guidance.

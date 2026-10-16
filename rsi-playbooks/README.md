@@ -43,14 +43,13 @@ Use `/goal pause` to pause the goal and ask members to stop experiments and coll
 
 ## Agent roles
 
-| Role | Main work |
-| --- | --- |
-| Lead | Chooses research directions, allocates resources, combines findings, and owns final validation and delivery |
-| Advisor | Explores methods and mechanisms, uncovers questions and challenges the current direction |
-| Worker | Investigates a specific problem, implements an approach and improves it using experimental results |
-| Experimenter | Builds and evaluates approaches, observes resource use, records results and cleans up experiments |
+The lead coordinates the task, choosing research directions and allocating resources from the evidence available. It combines the team's findings, decides which changes to retain, and organizes final validation and delivery.
 
-Candidate preparation and evaluation can proceed in parallel, with staffing and concurrency chosen separately from the available resources. Small tasks can combine roles. Important conclusions are checked by someone who did not implement or run the corresponding candidate.
+Advisors continually investigate mechanisms and optimization methods, uncover new questions and reassess the current direction. Their research can deepen an existing investigation or explore ideas beyond the current candidate list.
+
+Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results. Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+
+Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations. Small tasks may combine roles, while important conclusions selected for retention are checked by someone who did not implement or run the corresponding candidate.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
@@ -58,7 +57,7 @@ See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace i
 
 The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
 
-Use existing sweeps for fixed workload groups. Assess performance and answer quality separately; see [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for research methods.
+Once workload groups are defined, the team can run them continuously through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results and continuing the research.
 
 ## Choose evaluations
 
@@ -73,6 +72,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-Each task saves commands, configurations, metrics and original results, along with an experiment overview and final report. The task file specifies their locations; the [experiment records guide](experiment-records.md) explains the layout. Runs published to W&B also retain their links in the records.
+Benchmark commands save configurations, metrics and original results, which the team uses to maintain an experiment overview and final report. The task file specifies delivery locations, and the [experiment records guide](experiment-records.md) explains how to organize them. Experiments using W&B also retain links to the corresponding runs.
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
