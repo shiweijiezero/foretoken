@@ -41,15 +41,18 @@ type ProfileRunReconciler struct {
 }
 
 type profileRecord struct {
-	RunUID          string  `json:"runUid"`
-	Phase           string  `json:"phase"`
-	StartedAtUnixMS *int64  `json:"startedAtUnixMs"`
-	ArtifactDir     *string `json:"artifactDir"`
-	Message         string  `json:"message"`
-	GPUActivity     *bool   `json:"gpuActivity"`
+	RunUID           string  `json:"runUid"`
+	NativeStopped    *bool   `json:"nativeStopped"`
+	ExportedAtUnixMS *int64  `json:"exportedAtUnixMs"`
+	Phase            string  `json:"phase"`
+	StartedAtUnixMS  *int64  `json:"startedAtUnixMs"`
+	ArtifactDir      *string `json:"artifactDir"`
+	Message          string  `json:"message"`
+	GPUActivity      *bool   `json:"gpuActivity"`
 }
 
 type profileObservation struct {
+	Protocol          int            `json:"protocol"`
 	Engine            string         `json:"engine"`
 	RuntimeID         string         `json:"runtimeId"`
 	PodUID            string         `json:"podUid"`
@@ -93,8 +96,8 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			return ctrl.Result{}, r.writeProfileStatus(ctx, run)
 		}
 		run.Status.Plan = &plan
-		run.Status.Phase = "Starting"
-		// Persist participant identities before any native operation can be accepted.
+		run.Status.Phase = "Pending"
+		// Persist identities before protecting Pods and accepting native operations.
 		return ctrl.Result{Requeue: true}, r.writeProfileStatus(ctx, run)
 	}
 	plan := *run.Status.Plan
@@ -124,6 +127,16 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 		}
 		action = "Cancel"
 	}
+	if run.Status.Phase == "Pending" {
+		return ctrl.Result{Requeue: true}, r.protectProfileMembers(ctx, run)
+	}
+	pods, err := r.observeProfileMembers(ctx, run)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if run.Status.Reason != "" {
+		action = "Cancel"
+	}
 	duration, err := time.ParseDuration(string(run.Spec.Duration))
 	if err != nil || duration < time.Millisecond {
 		return ctrl.Result{}, fmt.Errorf("capture duration must be at least 1ms: %q", run.Spec.Duration)
@@ -134,25 +147,18 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	gpuActive := 0
 	hasArtifacts := false
 	for _, participant := range plan.Participants {
-		pod := new(corev1.Pod)
-		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: participant.PodName}, pod)
-		if apierrors.IsNotFound(err) || (err == nil && string(pod.UID) != participant.PodUID) {
+		if profileParticipantStopped(run, participant) {
+			action = "Cancel"
+			continue
+		}
+		pod := pods[participant.PodUID]
+		if pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
 			allDone = false
 			if run.Status.Reason == "" {
-				run.Status.Reason, run.Status.Message = "StopUnconfirmed", "selected Pod is missing; engine stop cannot be confirmed"
+				run.Status.Reason, run.Status.Message = "StopUnconfirmed", "waiting for the selected engine containers to stop"
 			}
 			action = "Cancel"
 			continue
-		}
-		if err == nil && (pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded) {
-			if run.Status.Reason == "" {
-				run.Status.Reason, run.Status.Message = "RuntimeLost", "a selected runtime was removed or terminated"
-			}
-			action = "Cancel"
-			continue
-		}
-		if err != nil {
-			return ctrl.Result{}, err
 		}
 		observation, err := r.profileHTTP(ctx, participant.Endpoint, string(run.UID), nil)
 		if err != nil {
@@ -165,6 +171,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			continue
 		}
 		if observation.RuntimeID != participant.RuntimeID || observation.PodUID != participant.PodUID || observation.GroupUID != participant.GroupUID || observation.RuntimeCacheClaim != plan.RuntimeCacheClaim {
+			allDone = false
 			if run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "RuntimeReplaced", "the selected engine process was replaced"
 			}
@@ -206,6 +213,15 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			started := metav1.NewTime(time.UnixMilli(*record.StartedAtUnixMS))
 			if run.Status.StartedAt == nil || started.Before(run.Status.StartedAt) {
 				run.Status.StartedAt = &started
+			}
+		}
+		if profileTerminal(record.Phase) {
+			nativeStopped := record.Phase == "Succeeded" || record.Phase == "Cancelled" || record.ExportedAtUnixMS != nil
+			if record.NativeStopped != nil {
+				nativeStopped = *record.NativeStopped
+			}
+			if !nativeStopped {
+				allDone = false
 			}
 		}
 		switch record.Phase {
@@ -332,23 +348,37 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				if err := r.verifyProfilePod(ctx, &pod, &group); err != nil {
 					return plan, err
 				}
+				member := api.ProfileMember{GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID)}
+				for _, container := range pod.Status.ContainerStatuses {
+					if container.Name == "model-server" && container.State.Running != nil {
+						member.ContainerName, member.ContainerID = container.Name, container.ContainerID
+					}
+				}
+				if member.ContainerID == "" {
+					return plan, fmt.Errorf("diagnostic Pod %s has no running engine container identity", pod.Name)
+				}
+				plan.Members = append(plan.Members, member)
+				selected++
+				// RPC tools are controlled by the leader for the entire Group;
+				// each Nsight session owns only its Pod-local process tree.
+				if run.Spec.Engine != "nsight" && group.Spec.NodeCount > 1 && pod.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
+					continue
+				}
 				endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(group.Spec.Runtime.Port)))
 				observation, err := r.profileHTTP(ctx, endpoint, "", nil)
 				if err != nil {
 					return plan, fmt.Errorf("ModelGroup %s is not prepared for profiling: %w", group.Name, err)
 				}
+				if observation.Protocol != 1 {
+					return plan, fmt.Errorf("ModelGroup %s requires an updated model-server application for profiling; redeploy the ModelService", group.Name)
+				}
 				if observation.GroupUID != string(group.UID) || observation.PodUID != string(pod.UID) || observation.RuntimeID == "" || observation.RuntimeCacheClaim != cache.ClaimName {
 					return plan, fmt.Errorf("runtime returned an incomplete or mismatched RuntimeCache identity")
 				}
-				engine := observation.Engine
-				if engine == "" {
-					engine = "pytorch" // Original runtimes expose only PyTorch capture.
-				}
-				if engine != run.Spec.Engine {
-					return plan, fmt.Errorf("runtime is prepared for %s, requested %s; set ModelService spec.profiling.engine and redeploy", engine, run.Spec.Engine)
+				if observation.Engine != run.Spec.Engine {
+					return plan, fmt.Errorf("runtime is prepared for %s, requested %s; set ModelService spec.profiling.engine and redeploy", observation.Engine, run.Spec.Engine)
 				}
 				plan.Participants = append(plan.Participants, api.ProfileParticipant{GroupName: group.Name, GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID), RuntimeID: observation.RuntimeID, Endpoint: endpoint})
-				selected++
 			}
 			if selected != int(group.Spec.MemberCount) {
 				return plan, fmt.Errorf("ModelGroup %s does not have its expected Ready runtime members", group.Name)
@@ -517,10 +547,13 @@ func (r *ProfileRunReconciler) writeProfileStatus(ctx context.Context, run *api.
 
 // removeProfileFinalizer releases the recovery plan only after all possible starts have stopped.
 func (r *ProfileRunReconciler) removeProfileFinalizer(ctx context.Context, run *api.ProfileRun) error {
+	if err := r.releaseProfileMembers(ctx, run); err != nil {
+		return err
+	}
 	if !controllerutil.ContainsFinalizer(run, profileFinalizer) {
 		return nil
 	}
 	base := run.DeepCopy()
 	controllerutil.RemoveFinalizer(run, profileFinalizer)
-	return r.Patch(ctx, run, client.MergeFrom(base))
+	return r.Patch(ctx, run, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 }

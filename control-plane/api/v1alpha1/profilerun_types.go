@@ -47,6 +47,16 @@ type ProfileParticipant struct {
 	Endpoint  string `json:"endpoint"`
 }
 
+// ProfileMember identifies a covered engine container independently of its control endpoint.
+// The controller retains its stop observation across Pod deletion and container restart.
+type ProfileMember struct {
+	GroupUID      string `json:"groupUID"`
+	PodName       string `json:"podName"`
+	PodUID        string `json:"podUID"`
+	ContainerName string `json:"containerName"`
+	ContainerID   string `json:"containerID"`
+}
+
 // ProfileExecutionPlan is controller-owned recovery state, persisted before any start.
 type ProfileExecutionPlan struct {
 	// Model preserves the captured model identity after the service is removed.
@@ -57,6 +67,9 @@ type ProfileExecutionPlan struct {
 	Revisions         []ServingPoolRevision `json:"revisions"`
 	RuntimeCacheClaim string                `json:"runtimeCacheClaim"`
 	Participants      []ProfileParticipant  `json:"participants"`
+	// Members includes every engine container covered by the selected controls.
+	// +optional
+	Members []ProfileMember `json:"members,omitempty"`
 }
 
 // ProfileRunStatus publishes observed capture progress, not benchmark completion.
@@ -77,6 +90,10 @@ type ProfileRunStatus struct {
 	Participants int32 `json:"participants,omitempty"`
 	// +optional
 	CompletedParticipants int32 `json:"completedParticipants,omitempty"`
+	// StoppedMembers preserves confirmed container exits before releasing their Pod protection.
+	// Values reference the Pod UIDs in the fixed execution plan.
+	// +optional
+	StoppedMembers []string `json:"stoppedMembers,omitempty"`
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 	// +optional

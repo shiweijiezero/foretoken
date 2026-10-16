@@ -218,8 +218,9 @@ impl VllmBackend {
             .map_err(|error| error.to_string())
     }
 
-    /// Runs one native utility for the capture supervisor; callers own deadlines and escalation.
-    pub async fn set_profiling(&self, start: bool) -> Result<(), String> {
+    /// Controls native profiling across every rank using the supervisor's trace prefix.
+    /// The supervisor owns the output directory, deadlines, and failure escalation.
+    pub async fn set_profiling(&self, start: bool, prefix: &str) -> Result<(), String> {
         let guard = self.llm.read().await;
         let client = guard
             .as_ref()
@@ -229,9 +230,9 @@ impl VllmBackend {
             .closing
             .run_until_cancelled(async {
                 if start {
-                    client.start_profile(None).await
+                    client.start_profile(Some(prefix)).await
                 } else {
-                    client.stop_profile(None).await
+                    client.stop_profile(Some(prefix)).await
                 }
             })
             .await
