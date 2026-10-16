@@ -168,7 +168,9 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 
 The command applies the configuration, deploys the selected services, and updates existing services.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. Active services must become Ready; services with zero requested replicas must finish stopping. To stop an autoscaled model, remove `spec.autoscaling` before setting replicas to zero. For a model with multiple pools, set every pool's replicas to zero. Existing storage is retained while stopped, and source builds and storage preparation resume when running instances are requested. Selected alerts must also be configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
+
+To stop a service, set its replicas to zero and deploy again. Remove `spec.autoscaling` first for an autoscaled model; for a multi-pool model, set every pool's replicas to zero. Storage is retained while stopped. Increase replicas and deploy again to resume.
 
 Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
 
