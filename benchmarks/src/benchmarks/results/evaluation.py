@@ -210,6 +210,14 @@ def _display(row: dict[str, Any]) -> str:
     return "—" if value is None else str(value)
 
 
+def _execution_lines(execution: dict[str, Any]) -> list[str]:
+    """Format native task completion counts for single evaluations and method comparisons."""
+    return [
+        f"{task}: {status.get('succeeded')} / {status.get('requested')} samples scored; {status.get('errored')} errors; incomplete={status.get('incomplete')}"
+        for task, status in execution.items()
+    ]
+
+
 class EvaluationConsoleSink:
     """Print a readable task summary while keeping all detailed metrics in artifacts."""
 
@@ -254,10 +262,7 @@ class EvaluationConsoleSink:
             lines.append(
                 "Category and subset scores are included in metrics.json and W&B Scores."
             )
-        for task, status in run.metrics["execution"].items():
-            lines.append(
-                f"{task}: {status.get('succeeded')} / {status.get('requested')} samples scored; {status.get('errored')} errors; incomplete={status.get('incomplete')}"
-            )
+        lines.extend(_execution_lines(run.metrics["execution"]))
         logger.info("\n%s", "\n".join(lines))
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -365,7 +370,13 @@ class EvaluationComparisonConsoleSink:
 
     def publish(self, run: BenchmarkRun) -> None:
         for method in run.metrics["evaluation_comparison"]["methods"]:
-            logger.info("Method %s (%s): %s", method["label"], method["model"], method["status"])
+            native = run.metrics["execution"]["methods"].get(method["label"], {})
+            status = method["status"]
+            if status == "completed" and any(task.get("incomplete") for task in native.values()):
+                status = "completed with incomplete results"
+            logger.info("Method %s (%s): %s", method["label"], method["model"], status)
+            for line in _execution_lines(native):
+                logger.info("  %s", line)
         for row in run.metrics["scores"]:
             if row["level"] == "task":
                 logger.info("%s · %s · %s/%s: %s", row["method"], row["task"],

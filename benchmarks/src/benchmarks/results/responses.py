@@ -76,6 +76,7 @@ class ResponseContent:
         self.content_characters: int | None = None
         self.reasoning_characters: int | None = None
         self.finish_reason: str | None = None
+        self._finished_choices: set[int] = set()
         self.response_model: str | None = None
         self.response_id: str | None = None
         self.usage: dict[str, Any] | None = None
@@ -96,6 +97,8 @@ class ResponseContent:
             )
         for choice in payload.get("choices", []):
             index = choice.get("index", 0)
+            if choice.get("finish_reason"):
+                self._finished_choices.add(index)
             message = (
                 {"content": choice.get("text")}
                 if completion
@@ -142,6 +145,10 @@ class ResponseContent:
                         )
                 else:
                     assembled.update(choice)
+
+    def is_complete(self, choice_count: int) -> bool:
+        """Tell the request client whether every requested choice has a terminal finish reason."""
+        return all(index in self._finished_choices for index in range(choice_count))
 
     def record(self) -> dict[str, Any]:
         """Return the assembled response without any original SSE framing or timing arrays."""
