@@ -22,7 +22,7 @@ ARG FORETOKEN_GITHUB_MIRROR
 USER root
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential ccache cmake git ninja-build patch \
+      build-essential ccache cmake git libdw-dev ninja-build patch \
     && cuda=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c 'import torch; print("" if getattr(torch.version, "maca", None) else torch.version.cuda or "")') \
     && if [ -n "$cuda" ] && ! command -v nvcc >/dev/null 2>&1 && ! test -x "${CUDA_HOME:-/usr/local/cuda}/bin/nvcc"; then \
       version=$(printf %s "$cuda" | tr . -); \
