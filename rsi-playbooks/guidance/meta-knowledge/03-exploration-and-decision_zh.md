@@ -22,7 +22,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 把发现变成研究任务
 
-主 Agent、Advisor 和 Worker 主动从资料、源码和测量中提出具体问题。主 Agent 构思和调整方向、拆解任务、综合决策，统一负责环境准备、部署与并行实验。Advisor 提供独立研究、替代方案和反例。Worker 研究、寻找瓶颈、设计实现改动，分析主 Agent 返回的结果，无需等待 Advisor 交方案。
+主 Agent、Advisor 和 Worker 主动从资料、源码和测量中提出具体问题。主 Agent 构思和调整方向、拆解任务、综合决策，协调共享准备、资源与并行实验。Advisor 提供独立研究、替代方案和反例。Worker 研究、寻找瓶颈、设计实现改动，分析候选结果，无需等待 Advisor 交方案。
 
 每项研究说明目前知道什么、想改变什么、下一步怎样获得有用结果。没有现成开关、脚本或 tuner 时，根据问题复用上游能力或构造局部实验，继续进入具体实现。
 
@@ -49,10 +49,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 并行探索与交流
 
-按完整研究问题安排 Worker，让独立方向同时推进。给出目标、已有发现、范围和交付位置，并保留独立思考空间。Worker 持续研究、设计、修改并分析返回结果，与 Advisor 直接讨论机制，与 Recorder 核对证据。至少有一个 Worker 跟进整体执行路径，把局部发现与系统表现联系起来。
+按完整研究问题安排 Worker，让独立方向同时推进。给出目标、已有发现、范围和交付位置，并保留独立思考空间。Worker 持续研究、设计、修改并分析结果，与 Advisor 直接讨论机制，与 Recorder 核对证据。至少有一个 Worker 跟进整体执行路径，把局部发现与系统表现联系起来。
 
-主 Agent 安装一次共享平台，再按[并行候选示例](../../../docs/custom-deployment_zh.md#并行运行候选方案)准备独立 worktree 和 Kubernetes namespace。Worker 修改分配的候选，交付工作区、改动与解释。主 Agent 从交付版的对应工作区同步并执行，修改引擎时用 `--engine-source` 关联候选引擎源码，复用源码增量更新和编译缓存。各候选保留独立的可写运行缓存与结果目录，条件允许时共享只读模型数据。共享控制器、CRD 或平台配置也由主 Agent 更新。
-
-主 Agent 按实际容量安排并行构建、部署和测量，区分候选收益与共享 CPU、存储或网络争用的影响。候选运行时保持源码不变；Worker 继续独立研究、在另一 worktree 开发，或等主 Agent 释放工作区后恢复修改。主 Agent 及时返回结果，供 Worker 分析并继续开发。Worker 数量不必与 GPU 实验组数相同。
+委派候选执行时，按[角色协作约定](../../../.agents/skills/rsi/roles/common_zh.md)提供背景、资源和对照条件。主 Agent 统一协调共享准备与资源分配，指定负责人在范围内连续迭代，不逐条等待命令。独立候选相互隔离，测量期间保持源码不变。共享资源争用和最终无竞争对照需明确协调，namespace 分离本身不代表测量互不影响。
 
 及时交换可复用实现、已排除的假设、新限制和可组合的改动。主 Agent 综合发现并选择保留改动，Worker 完成分配的代码整合，主 Agent 验证组合服务并验收结果。Advisor 持续探索与反思，Recorder 独立审查和记录证据。交付不意味着协作结束：继续推进范围内的工作，需要新任务时向主 Agent 提交结论与未解问题。

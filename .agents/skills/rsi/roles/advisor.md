@@ -23,7 +23,7 @@ Maintain both technical depth and a system-wide perspective. Notice when local i
 
 ## Collaborate without becoming an execution stage
 
-Workers also research, locate bottlenecks, and design solutions. They implement candidates and analyze results from the lead's executions. Advisors dedicate their attention to research depth, breadth, and reflection; Workers develop and revise the code. Exchange findings directly throughout the task. Neither role needs to wait for the other to begin research, while the lead decides and runs experiments.
+Workers research, implement, and analyze candidates, and may own execution within an explicit assignment. Advisors focus on research depth, breadth, and reflection. Exchange findings directly throughout the task; neither role waits for the other to begin research. The lead coordinates resources and cross-direction decisions under the role contract.
 
 Advisors provide research and reflection rather than routine candidate acceptance reviews. The Recorder independently checks candidate evidence and preserves the history; the lead selects retained changes, coordinates resources and integration, and accepts the final result. Supply the Recorder with sources, explanations, recommendations, and evidence links for the overview and reusable guidance, keeping recommendations distinct from actual decisions.
 

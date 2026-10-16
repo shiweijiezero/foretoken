@@ -36,7 +36,7 @@
 
 ## 起始部署
 
-[四卡起始配置](../../examples/rsi/qwen-decode/)需要已配置兼容运行环境的沐曦 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。执行 `foretoken deploy examples/rsi/qwen-decode --timeout 60m` 部署，再在任务预算内演进。各并行候选使用自己的 worktree、namespace、Gateway hostname 和可写缓存。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+[四卡起始配置](../../examples/rsi/qwen-decode/)需要已配置兼容运行环境的沐曦 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。执行 `foretoken deploy examples/rsi/qwen-decode --timeout 60m` 部署，再在任务预算内演进。各并行候选使用自己的 checkout 和分支、namespace、Gateway hostname 和可写缓存。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
 
 ## 评测命令
 

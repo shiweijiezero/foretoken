@@ -16,9 +16,18 @@ Name the components that may change, or explicitly leave the scope open to the w
 
 List the models, workloads, and metrics for comparison. State which conditions must remain the same across approaches and link the configurations and reference measurements.
 
+## Current coordination
+
+For a team experiment, keep a short current view of assignments. Link native task records rather than duplicating their status. Without task tools, use one row per active research question:
+
+| Question and next action | Owner and execution scope | Allocation and job/result links | State, dependency or lead decision needed |
+| --- | --- | --- | --- |
+
+State the original deadline and any reserved quiet measurement window. Update on handoff, release or a consequential finding; distinguish executing, waiting, blocked and finished work. Keep interpretation and review history in iteration notes.
+
 ## Findings
 
-At the end of each iteration, the developer or agent adds new or revised findings to this experiment summary, linking `../iterations/<name>/notes/iteration.md` and supporting results.
+At the end of each iteration, the assigned writer updates this summary with new or revised findings, linking `../iterations/<name>/notes/iteration.md` and supporting results.
 
 ## Next questions
 

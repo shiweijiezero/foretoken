@@ -36,7 +36,7 @@ See [optimization tasks](README.md#autonomous-execution) for execution and resou
 
 ## Starting deployment
 
-Use the [four-GPU starting configuration](../../examples/rsi/qwen-decode/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen-decode --timeout 60m`, then evolve it within the task budget. Each parallel candidate uses its own worktree, namespace, Gateway hostname, and writable cache. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+Use the [four-GPU starting configuration](../../examples/rsi/qwen-decode/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen-decode --timeout 60m`, then evolve it within the task budget. Each parallel candidate uses its own checkout and branch, namespace, Gateway hostname, and writable cache. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
 ## Evaluation commands
 
