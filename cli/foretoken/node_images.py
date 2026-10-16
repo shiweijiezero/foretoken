@@ -268,9 +268,10 @@ class NodeImageStore:
         if unused:
             self.run([*self.containerd(), "images", "remove", *sorted(unused)])
 
-    def release_except(self, retained: set[str]) -> None:
-        """Release only owned pins and labels outside the caller's retained reference set."""
-        for reference in sorted(self.owned_images().keys() - retained):
+    def release_except(self, retained: set[str]) -> set[str]:
+        """Release unreferenced owned pins and return owned references still retained by consumers."""
+        owned = self.owned_images().keys()
+        for reference in sorted(owned - retained):
             self.run(
                 [
                     *self.containerd(),
@@ -282,6 +283,7 @@ class NodeImageStore:
                     SOURCE_BUILD_BINDING_LABEL + "=",
                 ]
             )
+        return owned & retained
 
 
 @contextmanager

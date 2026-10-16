@@ -9,7 +9,9 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import time
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from typing import Any
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.integrations.video import VideoGenerationClient, VideoSampleResult
 from benchmarks.model_service import require_health_endpoint
-from benchmarks.results.output import ResultOutputs
+from benchmarks.results.output import BenchmarkRun, ResultOutputs
 from benchmarks.results.video import (
     aggregate_video_results,
     create_video_benchmark_run,
@@ -37,6 +39,7 @@ async def _run_requests(
     warmup: bool = False,
     duration_s: float | None = None,
     respect_config_duration: bool = True,
+    on_complete: Callable[[list[VideoSampleResult]], None] | None = None,
 ) -> list[VideoSampleResult]:
     """Execute bounded video requests, retaining each completion before live publication."""
     writer = outputs.create_request_writer("warmup_raw_output" if warmup else "raw_results")
@@ -51,7 +54,6 @@ async def _run_requests(
     )
 
     async def one(index: int) -> VideoSampleResult | None:
-        nonlocal completed, successful
         request = selected[index]
         if admission_duration is not None:
             remaining = admission_duration - (time.perf_counter() - started)
@@ -72,6 +74,32 @@ async def _run_requests(
             # Retain completed requests before SDK publication so interruption
             # never discards their media paths, timings, or failure details.
             writer.write(result.to_dict())
+            return result
+        finally:
+            semaphore.release()
+
+    tasks: list[asyncio.Task[VideoSampleResult | None]] = []
+    try:
+        ffprobe_warning = await client.prepare_video_validation()
+        if ffprobe_warning is not None:
+            logger.warning(
+                "Generated video metadata validation is disabled: %s",
+                ffprobe_warning,
+            )
+        if not warmup:
+            outputs.start_measurement()
+        tasks = [asyncio.create_task(one(index)) for index in range(len(selected))]
+        results = []
+        for count, pending in enumerate(asyncio.as_completed(tasks), start=1):
+            result = await pending
+            if result is not None:
+                results.append(result)
+            if count == len(tasks):
+                results.sort(key=lambda item: item.index)
+                if on_complete is not None:
+                    on_complete(results)
+            if result is None:
+                continue
             completed += 1
             successful += int(result.success)
             if not warmup:
@@ -97,31 +125,22 @@ async def _run_requests(
                     "Warmup video" if warmup else "Video", result.sample_id,
                     result.client_e2e_s, result.error,
                 )
-            return result
-        finally:
-            semaphore.release()
-
-    tasks: list[asyncio.Task[VideoSampleResult | None]] = []
-    try:
-        ffprobe_warning = await client.prepare_video_validation()
-        if ffprobe_warning is not None:
-            logger.warning(
-                "Generated video metadata validation is disabled: %s",
-                ffprobe_warning,
-            )
-        tasks = [asyncio.create_task(one(index)) for index in range(len(selected))]
-        results = await asyncio.gather(*tasks)
-        return [item for item in results if item is not None]
+        return results
     finally:
-        # Request tasks must release their permits and output streams before
-        # the transport and result lifecycle close after failure or cancellation.
+        # Request tasks must release permits and streams before transport closure.
+        error = sys.exception()
         for task in tasks:
             if not task.done():
                 task.cancel()
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            await client.close()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                await client.close()
+        except BaseException:
+            if error is None:
+                raise
+            logger.exception("Video client cleanup also failed")
 
 
 async def run_video_benchmark(
@@ -136,7 +155,7 @@ async def run_video_benchmark(
             "Video dry run validated config:\n%s",
             json.dumps(config.to_dict(), indent=2, ensure_ascii=False),
         )
-        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True}
+        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True, "exit_code": 0}
 
     record = video_run_record(config)
     result_output_dir = None
@@ -170,9 +189,16 @@ async def run_video_benchmark(
             )
             if not warmup or any(not item.success for item in warmup):
                 raise ValueError("Warmup requests failed; measurement was not started")
-        results = await _run_requests(config, run_dir, outputs)
-        run = create_video_benchmark_run(record, results, run_dir)
+        run: BenchmarkRun
+
+        def measured(results: list[VideoSampleResult]) -> None:
+            """Retain formal results before the request client closes."""
+            nonlocal run
+            run = create_video_benchmark_run(record, results, run_dir)
+            outputs.save_measurement(run)
+
+        await _run_requests(config, run_dir, outputs, on_complete=measured)
         outputs.publish(run)
         if config.outputs.saves_local:
             result_output_dir = outputs.execution_dir
-    return {"metrics": run.metrics, "output_dir": result_output_dir}
+    return {"metrics": run.metrics, "output_dir": result_output_dir, "exit_code": run.exit_code}

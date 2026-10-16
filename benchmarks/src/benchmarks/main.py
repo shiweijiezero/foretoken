@@ -57,9 +57,9 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
                 if config.sweep.path
                 else asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
             )
-            if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
-                raise SystemExit(1)
-    except (ValueError, wandb.errors.Error) as exc:
+            if result["exit_code"]:
+                raise SystemExit(result["exit_code"])
+    except (OSError, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 
 
@@ -87,9 +87,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                         print_model_service(service)
                     logger.info("%s", format_benchmark_config(benchmark, service))
                     run = run_benchmark(benchmark, service, outputs=outputs)
-            if run.metrics["success_num"] == 0:
-                raise SystemExit(1)
-    except (DeploymentError, ValueError, wandb.errors.Error) as exc:
+            if run.exit_code:
+                raise SystemExit(run.exit_code)
+    except (DeploymentError, OSError, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 
 

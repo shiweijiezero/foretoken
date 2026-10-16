@@ -108,11 +108,13 @@ foretoken perf examples/candidate --num-prompts 20 \
 
 结果保存在各自 worktree 中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
-候选结束后，只删除自己的部署：
+候选结束后删除部署：
 
 ```bash
 foretoken delete examples/candidate
 ```
+
+删除部署时，会一并清理不再使用的构建资源，保留源码目录、实验结果和源码归档。
 
 所有候选结束后，再统一卸载平台。
 

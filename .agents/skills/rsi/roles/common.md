@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](common_zh.md)
 
-Read the applicable repository instructions, task, role instructions, assigned source, and original evidence yourself. Choose tools suited to the assignment and retain role context across related work.
+Read the applicable repository instructions, task, role instructions, assigned source, and original evidence yourself. Before choosing an approach or writing a tool, consult the relevant component guides, maintained examples, and existing implementation to find capabilities that already serve the task. Prefer reusing those capabilities. Choose tools suited to the assignment and retain role context across related work.
 
 ## Work within an assignment
 

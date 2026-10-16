@@ -24,6 +24,7 @@ from benchmarks.results.output import (
     wandb_group_name,
     write_json,
 )
+from benchmarks.results.tasks import prepare_task_resume, run_task
 from benchmarks.results.wandb import publish_slo_wandb
 from benchmarks.runs.http import HttpBenchmark
 
@@ -137,13 +138,14 @@ class SloAutoTuneBenchmark:
         probe_benchmark = replace(
             probe_config, load=replace(probe_config.load, max_concurrency=value)
         )
-        return HttpBenchmark(
+        # Completed negative probes are search evidence, including all-request failures.
+        return run_task(Path(probe_dir), lambda: HttpBenchmark(
             probe_benchmark,
             self.service,
             label=label,
             output_dir=probe_dir,
             wandb_group=wandb_group,
-        ).run()
+        ).run(), reuse_failed_measurements=True)
 
     def _search_group(
         self,
@@ -283,6 +285,11 @@ class SloAutoTuneBenchmark:
             directory_prefix="slo-", sink_factory=sinks,
         )
         with context as outputs:
+            plan = {"mode": "slo_search", "base": self.benchmark.to_dict()}
+            if self.benchmark.sweep.resume:
+                prepare_task_resume(Path(self.benchmark.sweep.resume), Path(outputs.execution_dir), plan)
+                plan["resumed_from"] = str(Path(self.benchmark.sweep.resume).resolve())
+            write_json(outputs.execution_dir, "config.json", plan)
             outputs.sink_factory = sinks
             outputs.open(record)
             probes: list[dict[str, Any]] = []
@@ -314,10 +321,8 @@ class SloAutoTuneBenchmark:
                 },
                 measurements=None,
                 artifacts={"slo_results": artifact},
-                exit_code=0 if winning_run is not None else 1,
+                exit_code=0 if all(group["best_max_concurrency"] is not None for group in groups) else 1,
             )
             log_slo_results(search)
             outputs.publish(run)
-            if winning_run is None:
-                raise ValueError("no SLO probe satisfied the configured criteria")
         return run

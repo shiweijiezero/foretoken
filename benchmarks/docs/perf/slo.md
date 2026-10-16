@@ -64,4 +64,6 @@ Supported search metrics are:
 
 The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason.
 
+Use [`--resume`](sweep.md#continue-a-saved-sweep) to continue an interrupted search.
+
 If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart` when it is no longer needed.

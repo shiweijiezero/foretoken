@@ -91,6 +91,8 @@ def parse_video_arguments(
         help="Validate and print the workload without sending requests",
     )
     parsed = parser.parse_args(list(argv))
+    if parsed.resume and not parsed.sweep:
+        parser.error("--resume requires --sweep for video benchmarks")
     dataset_path, requests = load_video_dataset(
         parsed.dataset,
         defaults=VideoDatasetDefaults(
@@ -137,6 +139,7 @@ def parse_video_arguments(
             path=parsed.sweep,
             num_runs=parsed.num_runs,
             experiment_name=parsed.experiment_name,
+            resume=parsed.resume,
         ),
     )
     config.validate()

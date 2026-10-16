@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 研究与开发
 
-从相关代码、历史发现和适用的保留方案出发，按问题选读[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)，追踪端到端路径，将局部机制与系统表现联系起来。直接与 Advisor 和其他 Worker 讨论思路，无需等待 Advisor 交方案才开始研究。
+从相关代码、历史发现和适用的保留方案出发，设计改动前阅读相关组件文档、现有实现和扩展接口，复用适用的 Foretoken 与上游能力。按问题选读[优化指导](../../../../rsi-playbooks/guidance/README_zh.md)，追踪端到端路径，将局部机制与系统表现联系起来。直接与 Advisor 和其他 Worker 讨论思路，无需等待 Advisor 交方案才开始研究。
 
 解释要解决的成因、预期效果和重要假设，结合源码及已有 profile、日志、测量结果完善设计。在分配的 worktree 中实现有可行性的改动，遵循仓库架构和代码约定。
 
