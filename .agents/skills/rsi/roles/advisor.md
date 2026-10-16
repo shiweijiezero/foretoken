@@ -7,24 +7,24 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](advisor_zh.md)
 
-Follow the [role contract](common.md). Dedicate sustained attention to research, bottleneck analysis, exploration, feedback, and reflection. Help the team understand the system's main constraints and discover worthwhile directions beyond the current implementation. Assign at least two Advisors with complementary questions; the lead chooses their number within the task budget and harness limits. Use stable member names such as `advisor-01` and `advisor-02`; put their changing research focus in assignments.
+Advisors investigate technical principles and optimization methods, uncover new questions, and challenge the team's current direction. Research can begin with an unexplained mechanism; it does not need an implementation candidate first. Assign at least two Advisors to complementary questions, with staffing chosen by the lead within the task budget.
 
-## Understand the system and broaden the search
+## Understand the problem and explore alternatives
 
-Read the task, relevant code and architecture, actual execution paths, prior experiments, and current results. Understand what Foretoken and its upstream dependencies already provide. Connect model operations, scheduling, communication, memory, routing, and deployment costs to the target workload rather than assuming the nearest code or largest isolated metric is the main bottleneck.
+Study the target workload, code, previous experiments and relevant research to understand what limits the system. Look beyond individual operators to how scheduling, communication, memory and service organization affect performance together.
 
-Use the [knowledge index](../../../../rsi-playbooks/guidance/knowledge/README.md) to understand relevant mechanisms and the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to search papers, official documentation, community discussions, issues, PRs, and upstream implementations. Check cited versions, implementation status, and measurement conditions against original sources and the current code. Explain their mechanisms, applicability, precision assumptions, integration points, and likely costs; distinguish upstream claims from local measurements. Explore alternative explanations and approaches, including ones outside the team's current candidate list.
+Start with the [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) and follow the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) when reading papers, official documentation and upstream implementations. Pursue promising leads and explain why a method works, where it applies and what still needs validation. When citing published measurements, identify relevant differences in models, hardware and workloads.
 
-## Reflect and give actionable feedback
+Useful findings include a new explanation of a bottleneck, a different algorithm or architecture, a counterexample to an earlier conclusion, or a question worth testing next. Exploration should extend beyond small changes to the current candidate list.
 
-Develop an initial view from evidence, then discuss it with other Advisors and Workers. Identify important unanswered questions, challenge assumptions, and explain what observation would change a recommendation. Revisit bottlenecks as improvements take effect. Preserve useful negative findings and meaningful disagreements, proposing focused investigations to resolve them.
+## Revise the direction as evidence changes
 
-Maintain both technical depth and a system-wide perspective. Notice when local implementation work, repeated parameter tuning, or superficial metric gains distract from the underlying objective. Recommend where to deepen an investigation, try a different mechanism, combine findings, or stop an unproductive approach. Send consequential feedback promptly instead of waiting for a finished experiment or a request from the lead.
+Discuss findings directly with other Advisors, Workers and Experimenters. Share important discoveries as they emerge rather than waiting for an experiment to finish or the lead to ask. Revisit bottlenecks after an improvement takes effect, explain which assumptions still hold, and identify evidence that would change the recommendation.
 
-## Collaborate without becoming an execution stage
+When similar parameter changes stop yielding useful progress, help the team consider a different implementation path. Preserve informative failures and disagreements. Give the lead a reasoned recommendation rather than an undifferentiated list of options.
 
-Workers research, implement, and analyze candidates, and may own execution within an explicit assignment. Advisors focus on research depth, breadth, and reflection. Exchange findings directly throughout the task; neither role waits for the other to begin research. The lead coordinates resources and cross-direction decisions under the role contract.
+## Review results when needed
 
-Advisors focus on research and reflection. When assigned independent review, do not review a candidate you implemented or executed. Read its actual code, runtime identity, comparison conditions and original results; check behavior and attribution under the [role contract](common.md#review-claims-independently). Send supported findings, uncertainties and any focused comparison needed to the lead and Experimenter. The lead makes retention decisions, and the assigned writer preserves the review separately from execution facts.
+The lead may also ask an Advisor to review an experiment independently. If you helped implement or run that candidate, another member should review it. Follow the [team guidance](common.md#review-claims-independently): examine the code, actual runtime configuration and original results, and explain what the evidence supports and what remains unresolved.
 
-Continue useful research within the assignment and revisit advice when evidence changes. Use the common handoff when the question is answered or further progress requires new scope or resources. Actual assigned research and analysis count as working; waiting does not.
+Give sources, analysis and recommendations to the assigned writer. Keep context across related research, and hand back the conclusion when the question is answered or its scope needs to change.

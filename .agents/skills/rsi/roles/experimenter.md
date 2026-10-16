@@ -7,26 +7,24 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](experimenter_zh.md)
 
-Follow the [role contract](common.md). Own candidate execution, resource-use observation, and factual experiment records within the lead's allocation. Reuse existing deployment, benchmark, profiling, recording, and GPU-collection tools. The lead chooses the number of Experimenters from evaluation capacity and workload; one Experimenter can run several non-conflicting candidates. For a small task, a Worker or the lead may also perform this role rather than adding a separate member.
+Experimenters build and evaluate prepared candidates, observe resource use, record results and clean up their experiments. One member can run several non-conflicting experiments; a Worker or the lead can combine this role for a small task. Follow the [team guidance](common.md) for resource allocation and handoff.
 
-## Consume ready candidates
+## Take a candidate for evaluation
 
-Read the candidate's question, recorded source version, reference result, expected behavior, workload, and execution requirements. Check that the handoff is reproducible and fits the assigned resources. Ask the developer for specific missing inputs rather than guessing the intended comparison; meanwhile execute other ready work within scope.
+Understand the question, code version, reference result, workload and expected change, and check that the required resources have been assigned. Ask the developer for missing details while continuing other ready work.
 
-Take a ready evaluation task using the harness's ownership mechanism and the lead's priority order. An assigned task is not permission to exceed the allocation. Keep the delivered source unchanged while queued or running, unless a separately preserved version is the actual evaluation input. The Worker can prepare the next candidate in another checkout. Do not change candidate code or comparison conditions to make a run succeed; return implementation issues to the Worker and resource or shared-environment changes to the lead.
+Take evaluations in the agreed priority order and keep the delivered code and comparison conditions unchanged. Return implementation issues to the Worker and resource or shared-environment changes to the lead. The Worker can prepare the next candidate in a separate checkout.
 
-## Execute, observe, and record together
+## Run and record the experiment
 
-Own synchronization, builds, deployment, diagnostics, measurement, and resource cleanup for assigned runs. Use sweeps for fixed workload groups and repeats. Save actual commands, source and runtime identity, logs, request outcomes, metrics, profiles, and job state through existing tools. Distinguish a completed command, completed measurement, and task acceptance; failed or incomplete results remain evidence.
+Use existing tools to synchronize, build, deploy, diagnose and measure the candidate. Run fixed workload groups through sweeps. Save actual commands, code versions, service configurations, logs and results, including failures and interruptions. Check measurement completion, request outcomes and acceptance against the task requirements separately.
 
-Observe resource use while execution continues. Reuse task-owned [GPU collectors](../SKILL.md#collect-gpu-usage); the lead assigns one collection owner per covered host/device set, so concurrent candidates do not start duplicate collectors. Preserve sampling gaps and coverage. Collectors may outlive a candidate: stop them at scope end or explicitly hand them over when releasing that allocation. Correlate utilization with build, deployment, measurement and waiting intervals rather than treating low GPU use as proof that resources are free.
+Keep GPU collection continuous during the experiment, reusing [collectors](../SKILL.md#collect-gpu-usage) that already cover the assigned devices. The lead names one collection owner per device set to avoid duplicate collection. Interpret utilization alongside build, measurement and waiting periods, and report missing intervals. When collection spans several experiments, hand it over with the resources and stop it when no longer needed.
 
-Maintain the assigned iteration notes and send results directly to the developer, lead and independent reviewer. The lead designates one Experimenter as writer of the current overview and user report; other members contribute updates without editing those files concurrently. Follow the [recording guide](../../../../rsi-playbooks/experiment-records.md), preserving original results and attributed interpretations. Update current summaries from reviewed evidence and decisions, not from planned work.
+Return each completed group of results directly to the Worker, lead and reviewer. Maintain the assigned iteration notes; the lead chooses one writer to update the overview and report. Follow the [experiment records guide](../../../../rsi-playbooks/experiment-records.md), keeping original data and distinguishing developer analysis, review findings and final decisions.
 
-## Keep evaluation capacity productive
+## Continue with ready work
 
-Use the existing task records to distinguish candidates being prepared, ready candidates waiting for evaluation, and candidates executing. Report actual resource availability, queue wait and observed preparation/evaluation durations to the lead. Continue ready, authorized evaluations without waiting for a new command after every point. If preparation is the bottleneck, identify what an idle evaluation slot could accept; if the ready queue grows, report which pending candidates have become redundant or depend on new results.
+As resources become available, continue assigned evaluations whose inputs are ready. Report queue wait, observed durations and available capacity so the lead can adjust preparation and evaluation. Flag candidates whose value has changed because of new findings.
 
-Execution, observation and factual recording belong together, but they are not independent acceptance. An Advisor or another member who neither implemented nor executed the candidate reviews claims before the lead retains or integrates them. Supply the original evidence and answer execution questions; do not label self-analysis an independent review.
-
-On pause, deadline or handoff, stop or transfer owned jobs and collectors, confirm resource state, and preserve evidence. Count this member once while actively executing assigned work; a resident service or unattended wait is not an additional working agent.
+On pause, deadline or handoff, stop or transfer owned jobs and collectors, confirm resource state and preserve results. Follow the team guidance for independent review and working-agent counts.

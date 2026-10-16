@@ -41,4 +41,4 @@ After an initial implementation yields gains, profile the optimized system again
 
 Have different agents propose alternatives, analyze source code, estimate costs, or implement key pieces. Exchange views around concrete implementations: which work was eliminated, whether added costs offset the gains, whether the approach holds across workloads, and which other assumptions could change.
 
-Workers research assigned questions, identify bottlenecks, design and implement changes, and explain their delivered code. They discuss alternatives directly with Advisors and refine implementations using candidate results. The lead develops the overall direction, synthesizes findings, coordinates shared preparation and execution allocations, and owns integrated acceptance. Use the [parallel exploration workflow](03-exploration-and-decision.md#explore-and-exchange-findings-in-parallel) for candidate handoffs and execution. Keep refining designs as results arrive; the lead validates retained changes together in the full service.
+Use the results to refine the designs and validate retained changes together in the full service.

@@ -18,12 +18,12 @@ List the models, workloads, and metrics for comparison. State which conditions m
 
 ## Current coordination
 
-For a team experiment, keep a short current view of assignments. Link native task records rather than duplicating their status. Without task tools, use one row per candidate or independent research task:
+For a team experiment, link existing task records here. Without task tools, use one row per candidate or independent research task:
 
-| Candidate or question, stage and next action | Owner and execution scope | Allocation and job/result links | State, dependency or lead decision needed |
+| Question and next action | Owner | Resources and job/result links | Status and dependencies |
 | --- | --- | --- | --- |
 
-Summarize candidates being prepared, ready and waiting, and executing, along with preparation and evaluation concurrency. State the original deadline and any reserved quiet measurement window. Update on handoff, release or a consequential finding; distinguish executing, waiting, blocked and finished work. Keep interpretation and review history in iteration notes.
+State the original deadline and any reserved quiet measurement window.
 
 ## Findings
 

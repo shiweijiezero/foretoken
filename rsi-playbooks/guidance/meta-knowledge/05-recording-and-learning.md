@@ -13,7 +13,7 @@ Turn research findings, failure causes, and unproductive detours into reusable k
 
 Raw artifacts preserve commands, configurations, versions, metrics, and outputs. Iteration notes explain the question, changes, results, and next steps. See the [experiment records guide](../../experiment-records.md) for recording instructions.
 
-Keep concurrent candidates' raw results in separate directories. Workers supply source versions, implementation explanations and result analysis; Experimenters supply actual commands, runtime identity, outcomes and resource observations, and maintain factual records. An uninvolved member independently reviews code, comparison conditions and attribution before the lead retains or integrates a candidate. Preserve these contributions and corrections with their authors and evidence links. Advisors contribute sources and mechanisms to reusable knowledge; agree on one writer per entry so knowledge capture overlaps ongoing research.
+Link knowledge entries to the original analysis and evidence, and agree on one writer per entry.
 
 Extract useful insights from reference reading, source analysis, and experiments:
 

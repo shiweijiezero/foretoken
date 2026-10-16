@@ -3,72 +3,57 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# RSI role contract
+# Working as an RSI team
 
 English | [简体中文](common_zh.md)
 
-Read the applicable repository instructions, task, role instructions, assigned source, and original evidence yourself. Before choosing an approach or writing a tool, consult the relevant component guides, maintained examples, and existing implementation. Reuse capabilities that already serve the question and retain context across related work.
+Workers can prepare the next approach while Experimenters evaluate the previous one. Results return directly to the developers, and the lead uses them to adjust research priorities and resources. Keep related work with the same members so they can build on what they have learned.
 
-## Assign a question and its execution boundary
+## Assign complete questions
 
-For example, Workers prepare draft-depth and routing candidates while Experimenters build and measure ready versions in separate allocated deployments. Preparation of the next candidate overlaps evaluation of the previous one. Results return directly to the developers and independent reviewers. The lead adjusts priorities and allocations and coordinates the quiet window for final comparison.
+Each member reads the task, role instructions, relevant code and previous results. The lead provides those sources and explains:
 
-The lead owns research priorities, resource allocation, shared environment changes, integration, and final acceptance. It assigns one execution owner per evaluation, normally an Experimenter; the lead or a Worker may combine that role for a small task. That owner manages synchronization, builds, deployment, measurements, and cleanup within the assignment. A Worker without an execution assignment researches, edits, and analyzes saved results; an idle GPU or an unclaimed task is not an allocation.
+- the question to answer and the findings or decisions that already apply;
+- what may change and which workloads, precision and generation settings must stay comparable;
+- who will run the experiment, which checkout, deployment and resources it will use, and where results belong;
+- the remaining budget, follow-up work that can proceed, and changes that need coordination.
 
-Include enough context to make local decisions without reconstructing the lead's conversation:
+Members continue independently within that assignment rather than asking for every command. The first update should identify the reference and planned comparison so misunderstandings surface early. Additional resources, shared environment changes and different comparison conditions go back to the lead.
 
-| Assignment content | What the member needs |
-| --- | --- |
-| Question and scope | Intended effect, allowed code/configuration changes, and the decision the results should inform |
-| Current understanding | Reference configuration and results, relevant findings and ruled-out approaches, known uncertainties, and original sources to read |
-| Comparison | Workloads, precision, generation behavior, and other conditions to preserve; permitted diagnostics and quality-evaluation budget |
-| Ownership and resources | Execution owner, checkout and branch, deployment identities, node/device allocation, CPU/memory budget, writable caches, and result paths |
-| Continuation | Time budget, dependencies, allowed follow-up work, stopping conditions, and who receives results or needs to decide |
+## Prepare candidates while evaluations run
 
-Within this boundary, choose methods, resolve recoverable problems, and advance useful iterations without seeking approval for every command. In the first progress update, state the reference, proposed change, and comparison being executed so misunderstandings surface early. A progress report or code delivery does not end the assignment. Research or review may conclude without a code change.
+When different members develop and evaluate a candidate, use two tasks with a dependency between them. The Worker supplies a reproducible code version, change explanation, reference result, workload and execution requirements. Keep the delivered version unchanged while it waits or runs; use another checkout for further development or preserve a separate evaluation copy.
 
-## Separate candidate preparation from evaluation
+Use the same task records to track candidates being prepared, waiting for evaluation and executing. Choose preparation and evaluation concurrency separately. If preparation leaves evaluation resources idle, prepare useful candidates ahead. If the queue grows, reduce new preparation and spend the time interpreting results or improving work still in development. Adjust priorities from observed durations, remaining time and new findings, recording why a candidate is deferred or dropped.
 
-Use two dependent tasks when different members prepare and execute a candidate. Preparation produces a recorded source version, change explanation, reference and workload, expected mechanism, and execution requirements. A candidate is ready when these inputs are available, not when its performance has already been established. Preserve the delivered version while queued and running, or give the evaluator a separately preserved checkout; developing the next version must not change a pending evaluation's input.
+Use native task owners, dependencies and completion records when available. Members may self-claim only when the harness supports atomic claims and the lead has assigned the required resources. Otherwise the lead assigns work. Without task tools, keep assignments and progress in the experiment overview.
 
-Track three candidate counts from the existing task records: being prepared, ready and waiting for evaluation, and executing. These are not agent counts or the number of sweep points. Set preparation concurrency and evaluation concurrency separately from actual CPU, GPU, storage and time budgets. Use harness dependencies and ownership where available; otherwise the lead assigns ready work explicitly. Keep one source of task state rather than three separate queues.
+## Coordinate resources and environments
 
-Adjust preparation ahead of evaluation using observed durations and queue wait. If preparation leaves evaluation resources idle, prepare a small set of useful independent candidates in advance. If the ready queue grows, reduce new preparation and put effort into interpreting results, improving candidates still in preparation, or investigating new mechanisms. Do not prepare speculative variants merely to fill a queue, and do not start candidates whose evaluation and analysis will not fit the remaining budget. Reprioritize waiting candidates when new evidence changes their value, preserving why a candidate was deferred or discarded.
+One member runs and cleans up each deployment. The lead allocates resources within the user's authorization and coordinates changes to shared controllers, CRDs, drivers and platform installations. Assign code ownership by checkout, file or section to avoid concurrent edits to the same content.
 
-## Coordinate resources, not individual commands
+Use Kubernetes requests, limits and device plugins for managed model workloads. Capacity planning also needs to cover builds, preparation jobs and benchmark clients. Separate namespaces and caches prevent data conflicts, but workloads on one node can still compete for CPU, storage and network capacity. Before a comparison that requires isolation, the affected members confirm that competing work has stopped.
 
-Within the task's authorization, only the lead changes allocations, schedules competing work, or authorizes shared platform and host changes. Before using a different service, exceeding the allocation, changing comparison conditions, or entering another member's scope, report the required change and its effect on other experiments. Continue independent authorized work while that decision is pending. Keep shared control-plane, CRD, driver, and installation changes with the lead; candidate execution does not authorize them.
+An executor may continue with the next authorized candidate in the same allocation. Release resources after their processes and services stop or another owner accepts the handoff. After an SSH disconnect, check the original job before starting a replacement.
 
-Use the assignment in the harness task record when available; otherwise use the lead's explicit assignment message and link it from the experiment overview. Keep one execution owner per deployment and one writer per checkout, file, or explicitly separated section. Claiming a task does not reserve hardware: verify its allocation and dependencies before starting. If the harness has no atomic task-claim mechanism, the lead assigns owners rather than asking members to race for unowned work.
+## Return results as work finishes
 
-Use Kubernetes resource requests and limits and the existing device plugin for managed workloads. Separate namespaces, writable caches, and result paths isolate candidate identities and data, not CPU, storage, or network performance. Include builds, preparation, and benchmark clients in capacity planning; model limits do not cover all of them. Before an isolated comparison, affected owners confirm competing execution has stopped. Resume other experiments when the lead releases that window.
+Run fixed workload groups and repetitions through existing sweeps. Use task-owned remote sessions or an existing job manager to retain logs and exit status. Read saved benchmark results to distinguish measurement completion, request outcomes and acceptance against the task's requirements.
 
-Keep a candidate's source and runtime unchanged while it is building or being measured. Further edits use another checkout or wait until the execution owner finishes that run. The owner may start the next authorized iteration in the same allocation without a new grant. Report release only after dependent processes and services have stopped or been explicitly handed over. Silence, low GPU utilization, and a lost SSH connection do not release an allocation.
+Send new results directly to the people who need them. Include the result location, resource state, next action and any decision needed. On completion or a dependency change, the lead schedules ready work before returning to its own research. Members continue unaffected work when part of an assignment is blocked.
 
-## Reuse execution tools and share concise updates
-
-Use existing sweeps for predetermined workload groups and repeats instead of asking the lead to launch each point. Use saved benchmark task/results records and documented resume behavior to determine what finished; inspect request outcomes separately from command completion. Use a task-owned remote session or job manager with remote logs and exit status, and consume its completion notification. On reconnect, inspect that job before starting another. The GPU collector's deadline stops the collector, not the experiments; execution owners remain responsible for stopping their jobs at the task deadline.
-
-Native task dependencies, claims, and notifications can coordinate ready work when the harness provides them. They do not determine whether a hypothesis is valuable, a result is comparable, or a member is doing useful research. The lead and independent reviewers make those judgments from evidence. Do not introduce a second scheduler or maintain parallel copies of the same task state.
-
-Send each actionable update to the peers who need it, with:
-
-- the new finding or completed result and its evidence location;
-- the job and allocation state, including any resources now released;
-- the next authorized action, or the dependency and decision needed.
-
-Send mechanism findings directly to Advisors and Workers, execution evidence to the assigned writer and reviewer, and cross-direction decisions to the lead. Do not forward full logs or repeat unchanged status. On a completion or dependency change, the lead reconciles results and allocations, starts ready work, and then returns to research. If work is blocked, continue independent work within scope; request reassignment when none remains.
-
-The designated Experimenter maintains the current overview and report, linking task records and original results rather than creating a competing resource ledger. Factual recording belongs to execution; independent review belongs to a member who neither implemented nor executed that candidate. Reuse prior reviewed findings when their inputs and assumptions still apply; inspect changed conditions, new results, and anomalies rather than repeatedly reviewing an unchanged run. Preserve hypotheses, executor interpretations, independent reviews, and lead decisions as distinct contributions.
+Experimenters maintain their iteration notes, and one designated writer updates the overview and report. Summaries link to the original data. Reuse reviewed results when their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
 
 ## Review claims independently
 
-Before retaining or integrating a candidate, assign an Advisor or another member who neither implemented nor executed it to review the claim. Read the actual code/configuration changes, commands, runtime identity and original results. Compare precision, inputs, generation settings, output lengths, failed requests, cache state, warmup, device allocation and competing load. Confirm the intended path ran and distinguish its effect from changed conditions or measurement variation. Request a focused follow-up only when it resolves a concrete uncertainty.
+Before retaining an approach, ask someone who did not implement or run it to check the results. Review the actual code, runtime configuration and original data. Confirm that the change took effect and check precision, workload, output settings and allocated resources. Consider whether failed requests, caches, warmup or competing load explain the apparent gain. Request further measurements only to answer a specific unresolved question.
 
-Keep the reviewer's conclusion, the developer's interpretation, execution facts and the lead's retention decision attributed separately. Reuse reviewed evidence whose inputs and assumptions still apply. The Experimenter records the review without turning it into self-acceptance; the lead owns final judgment.
+Keep the developer's explanation, reviewer's assessment and lead's decision distinct in the records. The Experimenter brings these contributions together; the lead decides what to retain or integrate.
 
-## Complete or hand off work
+## Hand off and resume
 
-When the question is answered, report the supported conclusion, changes and evidence, remaining questions, and resource/process state. Propose the next useful work and state whether it is already within the assignment. Update native task state where available. Self-claim ready work only when authorized and when its recorded allocation is available; otherwise request follow-up.
+At the end of an assignment, report the conclusion, result locations, open questions and resources still in use. Continue follow-up work already covered by the assignment, or propose it to the lead. On resumption, check recorded progress, live jobs and team members before continuing with the original budget and completed results.
 
-On resumption, reread changed inputs and reconcile records with actual processes and results. Preserve completed measurements rather than repeating them because a message was delayed. On pause, stop, deadline, or assignment completion, stop or hand off owned processes as agreed and preserve evidence and unfinished changes. Working-agent counts include Workers, Experimenters, and Advisors actually executing assigned work, counted once per member. Exclude the lead and waiting, blocked, or completed members; combining roles does not increase the count. User pause, stop, and deadline instructions take precedence over staffing and handoff plans.
+On a user pause, stop or deadline, stop scheduling new experiments. Each owner stops or hands over their jobs and preserves the results. A GPU collector's deadline stops only that collector; other jobs need their own stop action.
+
+Count Workers, Experimenters and Advisors while they are actually doing assigned work, once per member. Exclude the lead and members who are waiting, blocked or finished. Mark intervals with insufficient evidence as unknown.

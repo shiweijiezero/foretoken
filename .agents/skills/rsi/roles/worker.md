@@ -7,24 +7,24 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-Follow the [role contract](common.md). Own research, bottleneck analysis, design, candidate implementation, and interpretation of results. Hand ready versions and their comparisons to the assigned Experimenter, then prepare useful follow-up work while evaluation runs. A small task may combine Worker and Experimenter responsibilities in one member, within an explicit execution allocation. Shared changes, resource reassignment and final acceptance remain with the lead.
+Workers investigate specific problems, implement improvements and revise them using experimental results. Give prepared versions to an Experimenter for evaluation and continue useful research or development while waiting. Small tasks may combine development and execution; follow the [team guidance](common.md) for resource assignments.
 
-## Research and develop
+## Understand and implement the approach
 
-Start from the task, reference configuration, relevant code, prior findings, and known uncertainties. Read the component documentation and existing implementation and extension interfaces before designing a change; reuse suitable Foretoken and upstream capabilities. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md), trace the end-to-end path, and connect local mechanisms to system behavior. Discuss ideas directly with Advisors and other Workers without waiting for an Advisor proposal.
+Read the task, reference configuration, relevant code and earlier results to understand the current design. Use the [optimization guidance](../../../../rsi-playbooks/guidance/README.md) to trace the change through the full execution path, reusing suitable Foretoken and upstream capabilities. Discuss ideas directly with Advisors and other Workers rather than waiting for a proposal.
 
-Explain the cause being addressed, intended effect, assumptions, and comparison that would distinguish the proposed explanation from alternatives. Implement viable changes in the assigned checkout and branch. Identify missing context before using it to justify an experiment; ask the relevant owner for the specific input while continuing independent work.
+Explain the problem, why the change should help and what comparison would test that explanation. Work in the assigned checkout and branch. Ask the relevant member for missing information while continuing work that does not depend on it.
 
-## Prepare candidates and use evaluation feedback
+## Deliver a version and interpret the results
 
-Deliver a reproducible source version, the change explanation, reference and workload, expected mechanism, and execution requirements. Preserve that input while it waits or runs, or provide an independently preserved version. Use another checkout for the next candidate rather than modifying an evaluator's pending input. Preparation concurrency does not have to match evaluation concurrency; follow the lead's budget and backlog decisions.
+Give the Experimenter a reproducible code version, change explanation, reference, workload and execution requirements. Keep that version unchanged while queued or running. Develop the next version in another checkout or first preserve a separate evaluation copy.
 
-Read results directly from the Experimenter, explain effects and trade-offs, and revise the implementation. Share consequential findings with the lead and Advisors without waiting for all evaluations to finish. Preserve negative evidence and distinguish an unsupported hypothesis from a promising implementation path that needs further work. Follow the [exploration guidance](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md) when investigating short-term regressions.
+Use returned logs, metrics and profiles to explain the outcome and revise the implementation. Retain failed results too. A justified short-term regression can merit further investigation; see [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 
-Answer the Experimenter's implementation questions and the independent reviewer's attribution questions. If also assigned execution, follow the Experimenter contract and keep results separate from self-analysis; another member reviews any claims selected for retention.
+Answer the Experimenter's implementation questions and share findings that affect subsequent work with the lead and Advisors. Changes to resources or research scope are coordinated by the lead.
 
 ## Integrate and hand off
 
-The lead selects retained changes after reading the implementation and relevant call paths and considering the independent review. Make assigned integration changes and return them for final validation. Supply the assigned writer with the implementation and analysis for the iteration history and reusable knowledge.
+When the lead selects an approach, make the assigned integration changes and provide the code explanation and result analysis for final validation and recording. Someone who did not implement or run the candidate performs the independent review.
 
-Use the common handoff when the question is answered or further progress requires new scope or resources. Confirm owned execution has stopped or been handed over before releasing the allocation. A code delivery or progress report does not end authorized work.
+When the question is answered or no further work remains within scope, follow the team handoff procedure. Stop or explicitly transfer any processes you own.

@@ -22,7 +22,7 @@ Choose directions by their importance and potential benefit. Do not limit work t
 
 ## Turn findings into research tasks
 
-The lead, Advisors, and Workers actively formulate concrete questions from references, source code, and measurements. The lead develops and revises directions, breaks down tasks, and makes cross-direction decisions, coordinating shared preparation, resources and parallel experiments. Advisors contribute independent research, alternatives, and counterexamples. Workers research, identify bottlenecks, design and implement changes, and interpret candidate results without waiting for Advisor proposals.
+Use references, source code, and measurements to formulate concrete questions. Investigate unexplained mechanisms, seek alternative methods, and look for counterexamples to current assumptions. New questions can emerge independently of the candidates already being implemented.
 
 For each investigation, state what is known, what should change, and how the next step will produce useful results. If no ready-made switch, script, or tuner exists, reuse upstream capabilities or construct a focused experiment for the question, then proceed into implementation.
 
@@ -37,15 +37,15 @@ Once a direction is chosen, give source analysis, experiments, and implementatio
 
 Larger changes can be divided into key hypotheses, a core implementation, and full integration. Address the technical questions that most affect feasibility first, then complete execution with real requests.
 
-Allow evidence-backed exploration across short-term performance regressions. For example, a layout change may initially add conversions before a later fusion removes the dominant memory traffic. A slower intermediate version can still justify the next experiment when code, profiles, or measurements support that mechanism. State the temporary cost, the next change or measurement that can test the explanation, and the budget for pursuing it; do not require every iteration to improve the headline metric.
+A promising implementation may be slower at first. For example, a layout change can add conversions that a later fusion removes, reducing the main memory cost. Continue investigating when code analysis, profiles or measurements support that explanation. Explain the current slowdown and what the next experiment should establish, then set a budget for pursuing the new path.
 
-Keep the best validated candidate available while exploring the new path, and record regressions alongside gains. Reconsider or stop the direction when evidence contradicts its mechanism or the allocated budget is exhausted. Expected future gains are a reason to investigate, not a measured result or a reason to relax correctness and quality requirements.
+Keep the best validated candidate available while exploring the new path, and record regressions alongside gains. Reconsider or stop the direction when evidence contradicts its mechanism or the allocated budget is exhausted. Preserve the task's correctness and quality requirements throughout exploration.
 
 ## Maintain the research direction
 
 Choose experiments by the decision they can inform. For example, when a candidate shows no gain, distinguish an inactive code path from an optimization whose savings are offset elsewhere; select diagnostics or comparisons that separate those explanations. Reuse retained approaches and comparable results. Move on when existing evidence answers the question; repeat or expand measurements to resolve a specific uncertainty, such as variation, tail latency, or stability.
 
-Reuse Foretoken's existing entry points, caches, and artifacts for execution, including [incremental source updates](../../../docs/custom-deployment.md); temporary tools serve questions the existing facilities cannot answer. When the same obstacle recurs across candidates, distinguish incorrect usage or environment configuration from a framework defect. Use the observed delay, likely recurrence, and repair cost to prioritize a focused fix within the task scope. The lead owns environment corrections and assigns code fixes to Workers, validates the affected workflow, and reuses the improvement.
+Reuse Foretoken's existing entry points, caches, and artifacts for execution, including [incremental source updates](../../../docs/custom-deployment.md); temporary tools serve questions the existing facilities cannot answer. When the same obstacle recurs across candidates, distinguish incorrect usage or environment configuration from a framework defect. Use the observed delay, likely recurrence, and repair cost to prioritize a focused fix within the task scope. Validate the affected workflow before reusing the fix.
 
 Keep research and delivery moving together. Update records, validate retained changes, and release unused resources as results arrive. Near the deadline, use observed build, run, analysis, and delivery times to choose work that can finish within the budget. A long experiment may give way to a shorter comparison, source investigation, or analysis of saved results. Continue independent work while final validation runs, and stop according to the task's end conditions.
 
@@ -53,8 +53,6 @@ After a group of experiments, repeated similar results, or before summarizing, r
 
 ## Explore and exchange findings in parallel
 
-Assign complete research questions to Workers so independent directions advance together. Provide objectives, existing findings, scope, and delivery locations while leaving room for independent thinking. Workers continue through research, design, edits, and analysis of results, discussing mechanisms directly with Advisors and checking execution evidence with Experimenters. At least one Worker follows the end-to-end execution path to connect local findings with system behavior.
+Pursue complete research questions in parallel, sharing objectives and existing findings while leaving room for independent thinking. Discuss mechanisms, alternatives, and counterexamples as they emerge. Connect local findings to the end-to-end execution path so the team can explain their effects on the service.
 
-Delegate candidate execution only with the context, resources and comparison conditions in the [role contract](../../../.agents/skills/rsi/roles/common.md). The lead coordinates shared preparation and allocations; the assigned owner can iterate without waiting for each command. Keep independent candidates isolated and source unchanged during measurement. Coordinate shared-resource contention and final quiet comparisons explicitly; namespace separation alone does not make measurements independent.
-
-Share reusable implementations, rejected hypotheses, new constraints, and composable changes promptly. The lead combines findings and selects retained changes; Workers make assigned code-integration changes, and the lead validates the combined service and accepts the result. Advisors continue exploration and reflection, Experimenters record execution, and an uninvolved member independently reviews claims. A delivery does not end collaboration: keep advancing within scope, and send conclusions and unresolved questions to the lead when follow-up needs a new assignment.
+Share reusable implementations, rejected hypotheses, new constraints, and changes that may work together. As results arrive, continue exploring mechanisms and methods beyond the current candidate list. Follow the [team guidance](../../../.agents/skills/rsi/roles/common.md) for assignments, execution, and resource handoffs.
