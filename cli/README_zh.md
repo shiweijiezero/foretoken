@@ -11,7 +11,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.11 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
+需要准备 Python 3.11 或更高版本、`kubectl` 和 Helm。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
 
 ## 安装命令行工具
 
@@ -205,7 +205,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 foretoken stop examples/multi-model-quickstart
 ```
 
-命令等待前端和模型实例退出，保留配置与存储。再次执行部署命令即可恢复。
+实验暂时不用 GPU 时，可以停止服务，同时保留配置、存储和构建缓存。命令等待前端和模型实例退出；之后对同一目录执行 `foretoken deploy` 即可恢复，模型进程会重新启动并加载权重。
 
 ## 性能评测：响应速度与吞吐量
 

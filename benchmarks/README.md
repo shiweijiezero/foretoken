@@ -21,7 +21,7 @@ Run the examples from the repository checkout prepared by the [Quick Start](../R
 
 Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
-Existing services are reused unchanged. Otherwise, Foretoken creates temporary services and cleans up its resources after measurement, retaining the namespace, shared resources, and services taken over by a subsequent deployment or stop command.
+Existing services are reused unchanged; run `foretoken deploy` first to measure code or configuration changes. If no services exist, Foretoken creates them temporarily using installed applications and cleans up afterward. The namespace, shared resources, and services adopted by a later deploy or stop command are retained.
 
 ## Measure performance
 

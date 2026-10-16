@@ -80,15 +80,6 @@ resources:
   - ../quickstart
 patches:
   - target:
-      kind: ModelService
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests/gpu/count
-        value: 2
-      - op: replace
-        path: /spec/engineArgs/tensor-parallel-size
-        value: 2
-  - target:
       kind: RuntimeCache
     patch: |-
       - op: replace
@@ -104,9 +95,9 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选在一个节点上使用两张 GPU，张量并行度为 2。模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
+候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
 
-其他候选使用独立的源码目录、命名空间和 iteration 名称。八个候选共请求 16 张 GPU，还需为服务和平台预留 CPU 与内存。需要独立物理设备时，使用独占 GPU 资源。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
+其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
 结果保存在各自源码目录中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 

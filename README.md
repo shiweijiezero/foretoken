@@ -140,10 +140,10 @@ spec:
 Then run:
 
 ```bash
-# Install the platform in Gateway mode
-foretoken install --frontend-mode gateway
-# For a source-installed platform:
-# foretoken install -e . --frontend-mode gateway
+# Enable Gateway mode for the source installation above.
+foretoken install -e . --frontend-mode gateway
+# For a published platform installation:
+# foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart --timeout 20m

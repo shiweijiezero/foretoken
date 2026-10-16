@@ -21,11 +21,13 @@ if TYPE_CHECKING:
     from foretoken.kubernetes import Kubectl
 
 # Mutating subprocesses retain the local lock if their parent CLI exits first.
-mutation_lock_fds: ContextVar[tuple[int, ...]] = ContextVar("mutation_lock_fds", default=())
+mutation_lock_fds: ContextVar[tuple[int, ...]] = ContextVar(
+    "mutation_lock_fds", default=()
+)
 
 
 class NamespaceMutation:
-    """Own a short Kubernetes mutex; preparation and workload waits run outside it."""
+    """Coordinate namespace writes across deploy, stop and temporary retirement."""
 
     def __init__(self, kubectl: Kubectl, namespace: str, timeout: str) -> None:
         from foretoken.kubernetes import timeout_seconds
@@ -34,7 +36,10 @@ class NamespaceMutation:
         self.namespace = namespace
         self.timeout = timeout_seconds(timeout)
         self._depth = 0
-        self.directory = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "foretoken/deployment-operations"
+        self.directory = (
+            Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+            / "foretoken/deployment-operations"
+        )
 
     def _recover_local(self, name: str, namespace: str) -> None:
         """Release an abandoned local record only after its CLI and inherited subprocess locks exit."""
@@ -75,7 +80,8 @@ class NamespaceMutation:
         name = f"foretoken-deployment-operation-{self.namespace}"
         operation = uuid.uuid4().hex
         document = {
-            "apiVersion": "v1", "kind": "ConfigMap",
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
             "metadata": {"name": name, "namespace": platform_namespace},
             "data": {"operation": operation, "namespace": self.namespace},
         }
@@ -91,12 +97,15 @@ class NamespaceMutation:
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise DeploymentError(f"Timed out waiting for another deployment operation in {self.namespace}")
+                        raise DeploymentError(
+                            f"Timed out waiting for another deployment operation in {self.namespace}"
+                        )
                     try:
                         uncertain_create = True
                         result = self.kubectl.run(
                             ["create", "--filename=-", "--output=json"],
-                            input_text=json.dumps(document), timeout=remaining,
+                            input_text=json.dumps(document),
+                            timeout=remaining,
                         )
                         receipt = json.loads(result.stdout)
                         acquired = True

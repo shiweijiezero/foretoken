@@ -140,10 +140,10 @@ spec:
 然后运行：
 
 ```bash
-# 安装平台并启用网关模式
-foretoken install --frontend-mode gateway
-# 源码安装的平台：
-# foretoken install -e . --frontend-mode gateway
+# 为上面的源码安装启用网关模式
+foretoken install -e . --frontend-mode gateway
+# 使用发布版平台时：
+# foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
 foretoken deploy examples/quickstart --timeout 20m

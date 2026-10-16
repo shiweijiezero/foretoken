@@ -80,15 +80,6 @@ resources:
   - ../quickstart
 patches:
   - target:
-      kind: ModelService
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests/gpu/count
-        value: 2
-      - op: replace
-        path: /spec/engineArgs/tensor-parallel-size
-        value: 2
-  - target:
       kind: RuntimeCache
     patch: |-
       - op: replace
@@ -104,9 +95,9 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate uses two GPUs on one node, with tensor parallelism set to two. It gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
+The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
 
-Use separate source directories, namespaces and iteration names for other candidates. Eight candidates request 16 GPUs, plus CPU and memory for their services and the platform. Use exclusive GPU resources for separate physical devices. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
+Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
 Results are saved in each source directory. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 

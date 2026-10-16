@@ -11,7 +11,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 
 ## Before you start
 
-You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
+You need Python 3.11 or later, `kubectl`, and Helm. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
 
 ## Install the command-line tool
 
@@ -205,7 +205,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 foretoken stop examples/multi-model-quickstart
 ```
 
-The command waits for frontend and model execution to stop, preserving configuration and storage. Run the deployment command again to resume.
+Use this to release GPUs between experiments while keeping configuration, storage and build caches. The command waits for frontend and model execution to stop. Run `foretoken deploy` with the same directory to resume; model processes start and load weights again.
 
 ## Measure serving performance
 
