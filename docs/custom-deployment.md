@@ -108,13 +108,13 @@ Repeat with different worktree, branch, namespace and iteration names for other 
 
 Results are saved in each worktree. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
-When the candidate is finished, delete its deployment and retire its source-build resources:
+Delete the candidate when finished:
 
 ```bash
-foretoken delete examples/candidate --retire-source
+foretoken delete examples/candidate
 ```
 
-This saves the captured source inputs locally and releases the candidate's unused build resources and application files. It preserves the worktree, engine checkouts and shared platform. From another directory, add `-e ../candidate-a` to select the checkout. Ordinary `foretoken delete` keeps source-build caches for continued development.
+Deletion also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
 
 Uninstall the platform only after all candidates have finished.
 

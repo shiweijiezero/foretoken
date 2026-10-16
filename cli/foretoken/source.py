@@ -23,9 +23,9 @@ from typing import Any
 import yaml
 
 from foretoken.application_files import (
-    ApplicationFiles,
     SERVICE_COMPONENTS,
     SOURCE_REVISION,
+    ApplicationFiles,
     application_consumers,
     remove_application_jobs,
 )
@@ -38,7 +38,7 @@ from foretoken.cluster_build import (
 )
 from foretoken.engine_environment import resolve_vllm_base_image
 from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.manifest import DeploymentError, ForetokenDeployment
 from foretoken.network_sources import select_build_sources
 from foretoken.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
 
@@ -177,7 +177,9 @@ def checkout_state_directory(cluster: Path, root: Path) -> Path:
                 return identity.parent
         directory = checkouts / uuid.uuid4().hex
         directory.mkdir()
-        _write_json(directory / "checkout.json", {"root": str(root)})
+        _write_json(directory / "checkout.json", {
+            "root": str(root), "services": [], "services_complete": True,
+        })
         return directory
 
 
@@ -193,161 +195,114 @@ def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Itera
         yield
 
 
-def retire_source_checkout(kubectl: Kubectl, root: Path, timeout: str) -> None:
-    """Archive and retire an existing candidate binding under the exclusive source lock.
-
-    Platform installation state and user checkouts are not candidate-owned resources.
-    Retired producer records remain until compiler claims, runtime files and image pins are released.
-    """
-    cluster = _state_directory(kubectl)
-    retired = cluster / "retired"
-    matched = any(
-        json.loads(path.read_text())["root"] == str(root)
-        for path in retired.glob("*/retired.json")
-    )
-    for identity in (cluster / "checkouts").glob("*/checkout.json"):
-        if json.loads(identity.read_text())["root"] != str(root):
-            continue
-        matched = True
-        directory = identity.parent
-        record = retired / directory.name / "retired.json"
-        if record.is_file():
-            continue
-        states = [
-            json.loads(path.read_text())
-            for name in ("install.json", "build.json")
-            if (path := directory / name).is_file()
-        ]
-        binding = directory.name
-        # Legacy claims are recoverable only while a builder proves the exact claim
-        # and binding. A vanished Pod is not evidence of ownership of a named PVC.
-        builders = kubectl.list_all_resources(
-            ("pods",),
-            label_selector=f"{SOURCE_BUILD_POD_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
-        )
-        caches = [cache for state in states for cache in state.get("build", {}).get("caches", [])]
-        claims = kubectl.list_all_resources(
-            ("persistentvolumeclaims",),
-            label_selector=f"{_BUILD_CACHE_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
-        )
-        for pod in builders:
-            for volume in pod["spec"].get("volumes", []):
-                if volume["name"] != "cache" or "persistentVolumeClaim" not in volume:
-                    continue
-                claim = kubectl.get_if_exists(
-                    "pvc", volume["persistentVolumeClaim"]["claimName"], pod["metadata"]["namespace"]
-                )
-                if claim is None or claim["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
-                    continue
-                if claim["metadata"].get("labels", {}).get(SOURCE_BUILD_BINDING_LABEL) is None:
-                    claims.append(claim)
-        for claim in claims:
-            metadata = claim["metadata"]
-            cache = {key: metadata[key] for key in ("namespace", "name", "uid")}
-            if not any(all(value.get(key) == cache[key] for key in cache) for value in caches):
-                caches.append({
-                    **cache,
-                    "binding": binding,
-                    "legacy": SOURCE_BUILD_BINDING_LABEL not in metadata.get("labels", {}),
-                })
-        evidence = _source_home().parent / "source-archives" / cluster.name / binding
-        evidence.mkdir(parents=True, exist_ok=True)
-        for abandoned in evidence.glob(".staging-*"):
-            abandoned.unlink()
-        # Preserve exact captured inputs, not a new scan of a checkout that may have changed.
-        archive_path = evidence / (uuid.uuid4().hex + ".tar.gz")
-        with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
-            temporary = Path(stream.name)
-        try:
-            with tarfile.open(temporary, "w:gz") as archive:
-                for path in directory.iterdir():
-                    if path.name.startswith("inputs-") or path.name in {"checkout.json", "install.json", "build.json"}:
-                        archive.add(path, arcname=path.name)
-            temporary.replace(archive_path)
-        finally:
-            temporary.unlink(missing_ok=True)
-        missing_inputs = (bool(builders or caches) and not states) or any(
-            "inputs" not in state
-            or (state["inputs"] is not None and not (directory / state["inputs"]).is_dir())
-            for state in states
-        )
-        if missing_inputs:
-            if not builders:
-                raise DeploymentError(
-                    "source retirement needs the interrupted build's saved inputs; compiler caches were retained"
-                )
-            _archive_builder_inputs(kubectl, builders, evidence, timeout)
-        print(f"Source inputs archived locally: {evidence}", flush=True)
-        record.parent.mkdir(parents=True, exist_ok=True)
-        _write_json(record, {
-            "root": str(root),
-            "context": _context_identity(kubectl),
-            "binding": binding,
-            "caches": caches,
-            "builds": [
-                {key: value for key, value in state.get("build", {}).items()
-                 if key in {"binding", "containerd_socket", "arguments", "registry_mirrors", "pull_secrets"}}
-                for state in states
-            ] + [
-                {"binding": binding, "containerd_socket": volume["hostPath"]["path"]}
-                for pod in builders
-                for volume in pod["spec"].get("volumes", [])
-                if volume["name"] == "runtime-socket" and "hostPath" in volume
-            ],
-        })
-        # The durable retirement record excludes this binding from future source selections.
-        # Its evidence lives outside forget_install's cluster-state deletion boundary.
-        shutil.rmtree(directory)
-    if not matched:
-        print("No source checkout binding to retire", flush=True)
-        return
-    reconcile_source_resources(kubectl, timeout)
-    pending = [
-        path for path in retired.glob("*/retired.json")
-        if json.loads(path.read_text())["root"] == str(root)
-    ]
-    if pending:
-        print("Source checkout retired; remaining build resources await cleanup or consumer release", flush=True)
-    else:
-        print("Source checkout build resources retired", flush=True)
+def record_source_deployment(directory: Path, deployment: ForetokenDeployment) -> None:
+    """Associate a checkout with intended services before building, including failed submissions."""
+    path = directory / "checkout.json"
+    identity = json.loads(path.read_text())
+    services = identity.setdefault("services", [])
+    for ref in deployment.service_refs():
+        service = {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
+        if service not in services:
+            services.append(service)
+    _write_json(path, identity)
 
 
-def _archive_builder_inputs(
-    kubectl: Kubectl, builders: list[dict[str, Any]], evidence: Path, timeout: str
+def release_source_deployment(
+    kubectl: Kubectl, deployment: ForetokenDeployment, timeout: str,
 ) -> None:
-    """Preserve legacy compiler source state, including an interrupted delta upload, before retirement."""
-    from foretoken.kubernetes import timeout_seconds
+    """Release a deleted deployment's source associations and clean unused builds under the source lock."""
+    if not _has_server_binding(kubectl):
+        return
+    cluster = _state_directory(kubectl)
+    services = [
+        {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
+        for ref in deployment.service_refs()
+    ]
+    namespaces = {
+        obj["metadata"]["name"] for obj in deployment.objects if obj.get("kind") == "Namespace"
+    }
+    for path in (cluster / "checkouts").glob("*/checkout.json"):
+        identity = json.loads(path.read_text())
+        retained = [
+            service for service in identity.get("services", [])
+            if service not in services and service["namespace"] not in namespaces
+        ]
+        if retained == identity.get("services", []):
+            continue
+        if retained or not identity.get("services_complete", False):
+            identity["services"] = retained
+            _write_json(path, identity)
+            if not retained:
+                print("Source build resources retained: earlier deployment ownership is unknown", flush=True)
+        else:
+            # Keep the final association until its recovery archive and retirement
+            # record are durable, so repeating delete can finish interrupted cleanup.
+            _retire_source_checkout(kubectl, path.parent)
+    reconcile_source_resources(kubectl, timeout)
 
-    # An interrupted sync can leave its only complete changed files in incoming,
-    # with inputs.next describing the intended workspace rather than its partial copy.
-    script = """set -eu
-cd "$1"
-test -d workspace || test -d incoming
-set --
-for path in workspace incoming inputs.json inputs.next; do
-    if test -e "$path"; then set -- "$@" "$path"; fi
-done
-tar -czf - "$@"
-"""
-    for pod in builders:
-        container = next(c for c in pod["spec"]["containers"] if c["name"] == "builder")
-        arguments = container["args"]
-        root = str(Path(arguments[arguments.index("--root") + 1]).parent)
-        with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
-            temporary = Path(stream.name)
-            try:
-                kubectl.run(
-                    [
-                        "exec", "-n", pod["metadata"]["namespace"], pod["metadata"]["name"],
-                        "-c", "builder", "--", "sh", "-c", script, "archive", root,
-                    ],
-                    output=stream, timeout=timeout_seconds(timeout),
-                )
-                stream.close()
-                temporary.replace(evidence / ("compiler-" + uuid.uuid4().hex + ".tar.gz"))
-            finally:
-                stream.close()
-                temporary.unlink(missing_ok=True)
+
+def _retire_source_checkout(kubectl: Kubectl, directory: Path) -> None:
+    """Archive a checkout with no remaining deployments and transfer its resources to cleanup."""
+    cluster = directory.parent.parent
+    binding = directory.name
+    record = cluster / "retired" / binding / "retired.json"
+    if record.is_file():
+        return
+    identity = json.loads((directory / "checkout.json").read_text())
+    states = [
+        json.loads(path.read_text())
+        for name in ("install.json", "build.json")
+        if (path := directory / name).is_file()
+    ]
+    caches = [cache for state in states for cache in state.get("build", {}).get("caches", [])]
+    # Include claims created just before an interrupted build recorded their UIDs.
+    claims = kubectl.list_all_resources(
+        ("persistentvolumeclaims",),
+        label_selector=f"{_BUILD_CACHE_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
+    )
+    for claim in claims:
+        metadata = claim["metadata"]
+        cache = {key: metadata[key] for key in ("namespace", "name", "uid")}
+        if not any(all(value.get(key) == cache[key] for key in cache) for value in caches):
+            caches.append({**cache, "binding": binding})
+    if (caches and not states) or any(
+        "inputs" not in state
+        or (state["inputs"] is not None and not (directory / state["inputs"]).is_dir())
+        for state in states
+    ):
+        raise DeploymentError("source cleanup needs the build's saved inputs; compiler caches were retained")
+    evidence = _source_home().parent / "source-archives" / cluster.name / binding
+    evidence.mkdir(parents=True, exist_ok=True)
+    for abandoned in evidence.glob(".staging-*"):
+        abandoned.unlink()
+    # Preserve exact captured inputs, not a new scan of a checkout that may have changed.
+    archive_path = evidence / (uuid.uuid4().hex + ".tar.gz")
+    with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        with tarfile.open(temporary, "w:gz") as archive:
+            for path in directory.iterdir():
+                if path.name.startswith("inputs-") or path.name in {"checkout.json", "install.json", "build.json"}:
+                    archive.add(path, arcname=path.name)
+        temporary.replace(archive_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print(f"Source inputs archived locally: {evidence}", flush=True)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(record, {
+        "root": identity["root"],
+        "context": _context_identity(kubectl),
+        "binding": binding,
+        "caches": caches,
+        "builds": [
+            {key: value for key, value in state.get("build", {}).items()
+             if key in {"binding", "containerd_socket", "arguments", "registry_mirrors", "pull_secrets"}}
+            for state in states
+        ],
+    })
+    # The durable retirement record excludes this binding from future source selections.
+    # Its evidence lives outside forget_install's cluster-state deletion boundary.
+    shutil.rmtree(directory)
 
 
 def _remove_retired_caches(kubectl: Kubectl, record: dict[str, Any], timeout: str) -> bool:
@@ -1713,7 +1668,7 @@ def prepare_source_images(
         # service intent is committed. Platform publication defers GC to install.
         with ThreadPoolExecutor(max_workers=len(references)) as publications:
             pending = {}
-            for component in references:
+            for component, image in references.items():
                 prior = (
                     previous.get("bundles", {})
                     .get(component, build.get("applications", {}).get(component, {}))
@@ -1730,7 +1685,7 @@ def prepare_source_images(
                     timeout=command.timeout,
                     reuse_previous=True,
                     sources=build_sources(snapshot, component),
-                    image=references[component],
+                    image=image,
                 )
             application_revisions = {
                 component: future.result() for component, future in pending.items()

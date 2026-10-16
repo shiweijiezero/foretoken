@@ -49,9 +49,7 @@ from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
 from foretoken.source import (
-    reconcile_source_resources,
-    retire_source_checkout,
-    source_checkout,
+    release_source_deployment,
     source_operation,
 )
 from foretoken.storage import DirectoryVolumes
@@ -108,7 +106,7 @@ def _deploy(
         submission.enter_context(source_operation(kubectl, timeout, shared=True))
         source = EditableDeployment.discover(kubectl, editable, engine_sources)
         if source is not None:
-            submission.enter_context(source.operation(timeout))
+            submission.enter_context(source.operation(deployment, timeout))
             prepared_at = time.monotonic()
             source.prepare(timeout)
             deployment = source.apply(deployment, timeout)
@@ -186,7 +184,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
     DirectoryVolumes(kubectl).delete(deployment, timeout)
-    reconcile_source_resources(kubectl, timeout)
+    release_source_deployment(kubectl, deployment, timeout)
     print("Foretoken deployment deleted")
 
 
@@ -263,10 +261,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         elif isinstance(command, DeleteCommand):
             with source_operation(Kubectl(), command.timeout):
-                root = source_checkout(command.editable) if command.retire_source else None
                 _delete(command.kustomize_path, command.timeout)
-                if root is not None:
-                    retire_source_checkout(Kubectl(), root, command.timeout)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

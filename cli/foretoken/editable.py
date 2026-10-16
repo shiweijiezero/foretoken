@@ -19,7 +19,11 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import SERVICE_COMPONENTS, SOURCE_REVISION, ApplicationFiles
+from foretoken.application_files import (
+    SERVICE_COMPONENTS,
+    SOURCE_REVISION,
+    ApplicationFiles,
+)
 from foretoken.arguments import InstallCommand
 from foretoken.cluster_build import (
     ClusterBuilder,
@@ -56,6 +60,7 @@ from foretoken.source import (
     pinned_rust_revision,
     prepare_source_images,
     reconcile_source_resources,
+    record_source_deployment,
     snapshot_versions,
     source_checkout,
     validate_build_inputs,
@@ -123,9 +128,10 @@ class EditableDeployment:
         return cls(kubectl, directory, state, source_checkout(editable), engine_sources)
 
     @contextmanager
-    def operation(self, timeout: str) -> Iterator[None]:
-        """Load and commit only this checkout while unrelated candidates keep building."""
+    def operation(self, deployment: ForetokenDeployment, timeout: str) -> Iterator[None]:
+        """Register intended services and own this checkout's builds through service submission."""
         with checkout_operation(self.directory, self.kubectl, timeout):
+            record_source_deployment(self.directory, deployment)
             path = self.directory / "install.json"
             saved = json.loads(path.read_text()) if path.is_file() else None
             if saved is None:
