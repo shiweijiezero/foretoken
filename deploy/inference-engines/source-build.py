@@ -61,7 +61,7 @@ def synchronize_source(
 def prepare_patches(
     core: Path, plugin: Path | None, version: str, metax: bool
 ) -> dict[Path, set[str]]:
-    """Prepare complete engine trees from captured inputs before replacing builder sources."""
+    """Validate complete patch stacks, then publish owned sources without deleting generated files."""
     directories = [core] if plugin is None else [core, plugin]
     staging = Path(tempfile.mkdtemp(prefix="engine-patches-", dir=core.parent))
     completed = False
@@ -94,12 +94,52 @@ def prepare_patches(
             }
             for directory in directories
         }
-        # Only prepared source trees are replaced. Compiler objects and retained
-        # native-install outputs live beside them and survive source reconstruction.
+        # CMake also generates files inside the source tree. Publish only captured
+        # inputs and patch outputs, retaining generated files and unchanged mtimes.
         for directory in directories:
-            if directory.exists():
-                shutil.rmtree(directory)
-            (staging / directory.name).rename(directory)
+            prepared = staging / directory.name
+            manifest = directory.parent / f"{directory.name}-prepared-files.json"
+            inputs = directory.parent / f"{directory.name}-files.json"
+            previous = set(json.loads(inputs.read_text()))
+            if manifest.exists():
+                previous.update(json.loads(manifest.read_text()))
+            else:
+                # Trees prepared before file ownership was recorded may have lost
+                # generated sources. Reconfigure once without discarding objects.
+                (directory.parent / "native-build/CMakeCache.txt").unlink(missing_ok=True)
+            current = {
+                str(path.relative_to(prepared))
+                for path in prepared.rglob("*") if path.is_file()
+            }
+            # Record every possible publication before writes, so a retry can also
+            # remove files introduced by an interrupted, subsequently changed stack.
+            pending = staging / manifest.name
+            pending.write_text(json.dumps(sorted(previous | current)) + "\n")
+            pending.replace(manifest)
+            for name in sorted(previous - current, reverse=True):
+                path = directory / name
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                parent = path.parent
+                while parent != directory and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+            for name in sorted(current):
+                origin, target = prepared / name, directory / name
+                if (
+                    target.is_file()
+                    and target.stat().st_mode == origin.stat().st_mode
+                    and filecmp.cmp(origin, target, shallow=False)
+                ):
+                    continue
+                if target.is_dir():
+                    target.rmdir()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # Restoring an older input must still invalidate compiled consumers.
+                origin.touch()
+                origin.replace(target)
+            pending.write_text(json.dumps(sorted(current)) + "\n")
+            pending.replace(manifest)
         completed = True
         return patched_files
     finally:
