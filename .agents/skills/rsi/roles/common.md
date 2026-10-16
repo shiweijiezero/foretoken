@@ -11,6 +11,12 @@ A Worker turns an idea into a code or configuration change and hands that candid
 
 Related work should stay with members who already understand it. This lets them build on earlier findings instead of reconstructing the same background for every iteration.
 
+## Learn the framework first
+
+Every role—the lead, Advisors, Workers and Experimenters—starts by learning how Foretoken is designed and used. Begin with the [project README](../../../../README.md), then use architecture guidance, relevant component documentation and maintained examples to understand how the control plane, data plane, inference engines and benchmark tools work together. This includes how services are deployed, requests are executed, and evaluations and results are produced.
+
+With that shared understanding, each member studies the source, configuration and earlier experiments relevant to their question. They identify capabilities the framework already provides and the parts their work could affect. The lead supplies the source locations, and members read the originals and check them against the implementation. When versions or task scope change, refresh the affected parts of that understanding.
+
 ## Assign complete questions
 
 The lead begins an assignment by explaining the question, the findings already available and the decision the work should inform. It provides the relevant code, reference configuration and experiment records so the member can read the sources and understand their conditions and unresolved questions.

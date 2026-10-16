@@ -13,7 +13,7 @@ The lead assigns at least two Advisors and chooses staffing within the task budg
 
 ## Understand the problem and explore alternatives
 
-An Advisor combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
+An Advisor first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
 
 The [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) provides earlier findings, while the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) explains how to find and check papers, official documentation and upstream implementations. When a promising lead emerges, the Advisor investigates its mechanism, conditions and implementation costs before relating it to the current task. Published measurements should be interpreted with their differences in model, hardware and workload in mind.
 

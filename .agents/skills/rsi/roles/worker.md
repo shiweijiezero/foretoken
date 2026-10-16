@@ -11,7 +11,7 @@ A Worker investigates a specific question, implements an approach that can be ev
 
 ## Understand and implement the approach
 
-Before editing code, the Worker reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Advisors and other Workers rather than waiting for a proposal.
+The Worker first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Advisors and other Workers rather than waiting for a proposal.
 
 The implementation should begin with an explanation of the problem, why the change is expected to help, and what comparison will test that explanation. Code changes stay in the assigned checkout and branch. If necessary information is missing, the Worker asks the relevant member for it while continuing work that does not depend on the answer.
 

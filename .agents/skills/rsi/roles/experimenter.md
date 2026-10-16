@@ -11,7 +11,7 @@ An Experimenter builds and deploys prepared candidates, then evaluates them with
 
 ## Take a candidate for evaluation
 
-Before starting, the Experimenter needs to understand the question, code version, reference results, workload and expected change, and confirm that the required resources are assigned. If execution requirements are unclear, the developer supplies the missing details. Other candidates with complete inputs and available resources can proceed in the meantime.
+The Experimenter first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reviews the question, code version, reference results, workload and expected change, and confirms that the required resources are assigned. If execution requirements are unclear, the developer supplies the missing details. Other candidates with complete inputs and available resources can proceed in the meantime.
 
 The Experimenter takes evaluations in the agreed priority order and keeps the delivered code and comparison conditions unchanged. Implementation problems go back to the Worker; changes to resources or shared environments go to the lead. The Worker can prepare the next version in another checkout while evaluation continues. The [team guidance](common.md) describes this handoff.
 

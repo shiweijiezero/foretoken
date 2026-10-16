@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 明确任务
 
-主 Agent 开始工作前，应阅读仓库规范、用户提供的任务和相关实验记录，并按当前问题查阅[研究资料](../../../rsi-playbooks/guidance/README_zh.md)。本文件中的相对链接以 skill 所在目录为起点。
+所有角色开始工作前，都应先[熟悉 Foretoken](roles/common_zh.md#先熟悉框架)。各成员还应阅读仓库规范、用户提供的任务和相关实验记录，并按当前问题查阅[研究资料](../../../rsi-playbooks/guidance/README_zh.md)。本文件中的相对链接以 skill 所在目录为起点。
 
 只有用户要求执行或恢复任务时，团队才启动实验。新任务需要记录起始时间和截止时间；恢复任务时，则先查看已有作业和结果，继续使用原来的时间预算。任务提供的配置是研究起点，可以根据证据继续修改；如果没有起始配置，团队先记录一个用于比较的初始方案，再逐步探索。团队沿用已有的有效结论继续研究，直到任务规定的结束条件满足。
 

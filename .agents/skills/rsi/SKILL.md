@@ -14,7 +14,7 @@ English | [简体中文](SKILL_zh.md)
 
 ## Establish the task
 
-Before starting, the lead reads the repository instructions, the user's task and relevant experiment records, using the [research library](../../../rsi-playbooks/guidance/README.md) for the current question. Relative links in this document resolve from the skill directory.
+Before starting, every role [learns how Foretoken works](roles/common.md#learn-the-framework-first). Members also read the repository instructions, the user's task and relevant experiment records, using the [research library](../../../rsi-playbooks/guidance/README.md) for the current question. Relative links in this document resolve from the skill directory.
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
