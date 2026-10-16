@@ -15,10 +15,10 @@ Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 4 independent experiment groups across the two nodes
 Maximum parallel experiments: not fixed at four; determine and record the limit from actual GPU, CPU, memory, and storage needs, including smaller experiments
-Parallel scheduling: plan two four-GPU candidates per node, or more smaller experiments; reserve CPU and memory for the platform, builds, and benchmark clients, isolate writable caches and endpoints, and hand off resources as work completes. If fewer than four groups can run, record and address the concrete readiness or resource blocker rather than holding idle full-service allocations
+Parallel scheduling: plan two four-GPU candidates per node, or more smaller experiments. If fewer than four groups can run, record and address the preparation or resource constraints.
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
 Accuracy evaluation: run foretoken eval as needed for changes that may affect accuracy, at most once per 20 completed performance iterations
-Allowed changes: source code, configuration, and other implementation artifacts may be changed within the precision and resource constraints above. Optimization directions include, but are not limited to, deployment configuration, concurrency and batching, parallelism, prefill/decode disaggregation, inference engines and scheduling, kernel optimization and fusion, compilation and graph execution, communication, memory management, KV caching and offloading, speculative decoding, sampling, routing and load balancing, admission and queueing, autoscaling, and CPU/I/O optimization
+Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
 Measurement budget per iteration: default to 10 minutes of perf/eval measurement to keep iterations fast; adjust the measurement budget and request count to the actual workload, recording the reason and time spent
 Work duration: a total budget of 24 hours from the start of task execution
 Expected outcome / completion criteria: maximize throughput and minimize TPOT without fixed metric thresholds; continue diagnosis, online research, and optimization experiments until measurements confirm no further optimization opportunities, the time budget expires, or the user explicitly asks to stop
@@ -32,11 +32,11 @@ Deliverables (<iteration> is the approach name passed to --iteration):
   - User-facing summary: create rsi-playbooks/tasks/qwen-decode/<experiment>/ using the experiment name. Use rsi-playbooks/templates/report-template.md to write that directory's report.md for readers who did not participate, presenting iteration changes, measured metrics and changes from base, conclusions, execution efficiency, and W&B result links; place key plots in figures/ and reference them with relative paths. Deliver the summary file path.
 ```
 
-See [optimization tasks](README.md#autonomous-execution) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
+Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and resource scheduling, and the [experiment records guide](../experiment-records.md) for recording results.
 
 ## Starting deployment
 
-Use the [four-GPU starting configuration](../../examples/rsi/qwen-decode/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen-decode --timeout 60m`, then evolve it within the task budget. Each parallel candidate uses its own worktree, namespace, Gateway hostname, and writable cache. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+Use the [four-GPU starting configuration](../../examples/rsi/qwen-decode/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen-decode --timeout 60m`, then evolve it within the task budget. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
 ## Evaluation commands
 

@@ -7,24 +7,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](advisor_zh.md)
 
-Follow the [role contract](common.md). Dedicate sustained attention to research, bottleneck analysis, exploration, feedback, and reflection. Help the team understand the system's main constraints and discover worthwhile directions beyond the current implementation. Assign at least two Advisors with complementary questions; the lead chooses their number within the task budget and harness limits. Use stable member names such as `advisor-01` and `advisor-02`; put their changing research focus in assignments.
+Advisors continually investigate technical principles and optimization methods, helping the team discover new questions and assess whether its current direction remains worthwhile. Research may start with a known bottleneck, an unexplained observation, a method from another project or a different architectural idea. Its findings can improve an existing approach or change the direction of the investigation.
 
-## Understand the system and broaden the search
+The lead assigns at least two Advisors and chooses staffing within the task budget. Advisors investigate independently: they may explore different questions or examine the same question from different angles. Both Advisors and Workers can propose questions, share findings as they emerge, and revise their judgments in light of the evidence.
 
-Read the task, relevant code and architecture, actual execution paths, prior experiments, and current results. Understand what Foretoken and its upstream dependencies already provide. Connect model operations, scheduling, communication, memory, routing, and deployment costs to the target workload rather than assuming the nearest code or largest isolated metric is the main bottleneck.
+## Understand the problem and explore alternatives
 
-Use the [knowledge index](../../../../rsi-playbooks/guidance/knowledge/README.md) to understand relevant mechanisms and the [research guidance](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) to search papers, official documentation, community discussions, issues, PRs, and upstream implementations. Check cited versions, implementation status, and measurement conditions against original sources and the current code. Explain their mechanisms, applicability, precision assumptions, integration points, and likely costs; distinguish upstream claims from local measurements. Explore alternative explanations and approaches, including ones outside the team's current candidate list.
+An Advisor first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then combines the target workload, current code, previous experiments and relevant research to understand what limits the system. Local operators matter, but so do the ways scheduling, communication, memory and service organization affect performance together.
 
-## Reflect and give actionable feedback
+Advisors choose their methods from the research objective and evidence already available, whether that calls for source analysis, examining experimental results or searching external material. The [knowledge library](../../../../rsi-playbooks/guidance/knowledge/README.md) provides earlier findings, and the [reference guide](../../../../rsi-playbooks/guidance/meta-knowledge/01-reference-search.md) offers entry points for papers, official documentation and upstream implementations. When a promising lead emerges, the Advisor investigates its mechanism, conditions and implementation costs before relating it to the current task. Published measurements should be interpreted with their differences in model, hardware and workload in mind.
 
-Develop an initial view from evidence, then discuss it with other Advisors and Workers. Identify important unanswered questions, challenge assumptions, and explain what observation would change a recommendation. Revisit bottlenecks as improvements take effect. Preserve useful negative findings and meaningful disagreements, proposing focused investigations to resolve them.
+A useful finding need not be an implementation proposal. A new explanation of a bottleneck, a counterexample to an earlier conclusion, a trade-off between algorithms or a question worth testing can all move the research forward.
 
-Maintain both technical depth and a system-wide perspective. Notice when local implementation work, repeated parameter tuning, or superficial metric gains distract from the underlying objective. Recommend where to deepen an investigation, try a different mechanism, combine findings, or stop an unproductive approach. Send consequential feedback promptly instead of waiting for a finished experiment or a request from the lead.
+## Revise the direction as evidence changes
 
-## Collaborate without becoming an execution stage
+Advisors share important discoveries directly with other Advisors, Workers and Experimenters rather than waiting for a whole experiment to finish. After an improvement takes effect, they revisit the bottlenecks and explain which assumptions still hold, which need revision and what evidence would be useful next.
 
-Workers also research, locate bottlenecks, and design solutions. They implement candidates and analyze results from the lead's executions. Advisors dedicate their attention to research depth, breadth, and reflection; Workers develop and revise the code. Exchange findings directly throughout the task. Neither role needs to wait for the other to begin research, while the lead decides and runs experiments.
+When similar parameter changes stop yielding progress, Advisors help determine whether the algorithm, data organization or execution strategy should change. Recommendations include their reasoning and unresolved questions so the lead can compare directions rather than work through a bare list of options.
 
-Advisors provide research and reflection rather than routine candidate acceptance reviews. The Recorder independently checks candidate evidence and preserves the history; the lead selects retained changes, coordinates resources and integration, and accepts the final result. Supply the Recorder with sources, explanations, recommendations, and evidence links for the overview and reusable guidance, keeping recommendations distinct from actual decisions.
+## Review results when needed
 
-Continue useful research within the assignment and revisit advice when evidence changes. Use the common handoff when the question is answered or further progress requires new scope or resources. Actual assigned research and analysis count as working; waiting does not.
+The lead may ask an Advisor to review an experiment independently. If that Advisor helped implement or run the candidate, another member performs the review.
+
+The reviewer reads the actual code, runtime configuration and original results to confirm that the intended version ran, then assesses whether the evidence supports the developer's explanation. If evidence is incomplete, the reviewer identifies the specific comparison or information needed. The [team guidance](common.md#review-claims-independently) describes the review process.
+
+Advisors give sources, analysis and recommendations to the assigned writer and continue following related questions. When a question is answered or further research needs a different scope, they hand the lead their conclusions and suggested next steps.

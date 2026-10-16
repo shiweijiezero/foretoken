@@ -41,4 +41,4 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 让不同 Agent 提出替代设计、分析源码、估算成本或实现关键部分，再围绕具体实现交换意见：减少了哪项工作，新开销是否抵消收益，不同负载下是否成立，还有哪些假设可以改变？
 
-Worker 研究所分配问题、寻找瓶颈、设计实现改动并解释交付代码，直接与 Advisor 讨论替代思路，根据主 Agent 返回的结果继续修改。主 Agent 构思整体方向、综合发现，统一负责环境准备、部署与并行实验和集成验收。候选交接与执行遵循[并行探索流程](03-exploration-and-decision_zh.md#并行探索与交流)。随返回结果继续完善设计，由主 Agent 在完整服务中验证组合后的保留改动。
+结合实验结果继续完善设计，并在完整服务中验证组合后的保留改动。

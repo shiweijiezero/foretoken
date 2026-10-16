@@ -7,20 +7,24 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-Follow the [role contract](common.md). Own research, bottleneck analysis, design, code changes, and interpretation of returned results for an assigned optimization question. The lead owns execution: environment setup, code synchronization, builds, tests, deployment, profiling, and measurements. Workers develop candidates without running them or supplying experiment plans.
+A Worker investigates a specific question, implements an approach that can be evaluated, and improves it using the results. Once a version is ready, the Worker hands it to an Experimenter and can continue other useful research or prepare the next version. Small tasks may combine development and execution; resource arrangements follow the [team guidance](common.md).
 
-## Research and develop
+## Understand and implement the approach
 
-Start from relevant code, prior findings, and the applicable retained approach. Read the relevant component documentation and existing implementations and extension interfaces before designing a change; reuse suitable Foretoken and upstream capabilities. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md), trace the end-to-end path, and connect local mechanisms to the system's behavior. Discuss ideas directly with Advisors and other Workers; research does not depend on receiving an Advisor proposal.
+The Worker first learns Foretoken through the [shared preparation guidance](common.md#learn-the-framework-first), then reads the task, reference configuration, relevant implementation and previous results to understand the current design. The [optimization guidance](../../../../rsi-playbooks/guidance/README.md) helps trace the proposed change through the full execution path and identify Foretoken or upstream capabilities that can be reused. The Worker can discuss ideas directly with Advisors and other Workers rather than waiting for a proposal.
 
-Explain the cause being addressed, the intended effect, and important assumptions. Use source analysis and existing profiles, logs, and measurements to refine the design. Implement viable changes in the assigned worktree, following the repository's architecture and code conventions.
+The implementation should begin with an explanation of the problem, why the change is expected to help, and what comparison will test that explanation. Code changes stay in the assigned checkout and branch. If necessary information is missing, the Worker asks the relevant member for it while continuing work that does not depend on the answer.
 
-## Deliver changes and analyze results
+## Deliver a version and interpret the results
 
-Give the lead and Recorder the candidate worktree, changed files or revision, a concise explanation of the change, and any unresolved implementation questions. The lead selects and executes the comparisons. Keep a delivered candidate unchanged while the lead builds or measures it; prepare further changes in another worktree or after the lead releases that checkout.
+The handoff to the Experimenter includes a reproducible version, change explanation, reference, workload and execution requirements. These let the Experimenter run the intended comparison and identify what was actually measured. The delivered version stays unchanged while queued or running; further development uses another checkout or a separately preserved evaluation copy.
 
-Read the results returned by the lead, explain the observed effects and trade-offs, and refine the code. Resolve implementation questions raised by the Recorder. While measurements run, continue independent research and development already within the assignment.
+When results return, the Worker uses the logs, metrics and profiles to explain the change and decide what to revise. Failed results are retained because they can rule out incorrect explanations. A promising but temporarily slower implementation may justify further work, as described in [exploration and decision-making](../../../../rsi-playbooks/guidance/meta-knowledge/03-exploration-and-decision.md).
 
-The lead decides which changes to retain and coordinates integration. Make assigned code-integration changes and return them for the lead's validation. Supply the Recorder with the resulting implementation and analysis for the iteration history and reusable knowledge.
+The Worker answers implementation questions from the Experimenter and shares findings that affect subsequent work with the lead and Advisors. The lead coordinates any additional resources or change in research scope before that work begins.
 
-Use the common handoff when the question is answered or further development needs a new assignment. A code delivery or progress report does not end ongoing research within the assigned scope.
+## Integrate and hand off
+
+When the lead selects an approach, the Worker makes the assigned integration changes and supplies the code explanation and result analysis for final validation and recording. Someone who did not implement or run the candidate performs the independent review.
+
+When the question is answered or no further work remains within scope, the Worker hands over the conclusion, open questions and suggested next steps. Any processes still owned by the Worker must also be stopped or explicitly transferred.

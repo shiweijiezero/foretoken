@@ -16,9 +16,18 @@ Name the components that may change, or explicitly leave the scope open to the w
 
 List the models, workloads, and metrics for comparison. State which conditions must remain the same across approaches and link the configurations and reference measurements.
 
+## Current coordination
+
+For a team experiment, link existing task records here. Without task tools, use one row per candidate or independent research task:
+
+| Question and next action | Owner | Resources and job/result links | Status and dependencies |
+| --- | --- | --- | --- |
+
+State the original deadline and any reserved quiet measurement window.
+
 ## Findings
 
-At the end of each iteration, the developer or agent adds new or revised findings to this experiment summary, linking `../iterations/<name>/notes/iteration.md` and supporting results.
+At the end of each iteration, the assigned writer updates this summary with new or revised findings, linking `../iterations/<name>/notes/iteration.md` and supporting results.
 
 ## Next questions
 

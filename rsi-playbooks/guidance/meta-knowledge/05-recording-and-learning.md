@@ -13,7 +13,7 @@ Turn research findings, failure causes, and unproductive detours into reusable k
 
 Raw artifacts preserve commands, configurations, versions, metrics, and outputs. Iteration notes explain the question, changes, results, and next steps. See the [experiment records guide](../../experiment-records.md) for recording instructions.
 
-Keep raw results from concurrent experiments in separate candidate directories. Workers provide the lead and Recorder with the delivered worktree, changed files or revision, and an explanation of the implementation. The lead supplies the executed version, environment, deployment and run identities, commands, and original result locations, and returns results to Workers for analysis. Recorders independently check the corresponding code, comparison conditions, and attribution; implementation questions go to Workers, while execution issues or missing measurements go to the lead. Workers explain returned results and continue refining the code. Recorders append attributed analysis, reviews, the lead's decisions, and corrections to iteration history, and maintain the overview with links to those entries. Advisors continue research, feedback, and reflection and contribute sources and mechanisms to reusable knowledge. Agree on one writer per guidance file so recording overlaps ongoing research.
+Link knowledge entries to the original analysis and evidence, and agree on one writer per entry.
 
 Extract useful insights from reference reading, source analysis, and experiments:
 

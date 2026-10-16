@@ -2,7 +2,7 @@
 
 English | [简体中文](iteration-template_zh.md)
 
-Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Name the executor (lead), developer (Worker), assigned writer (Recorder), and independent reviewer. The lead supplies execution records and returns results after each perf/eval command. The Worker analyzes those results and refines the implementation; the Recorder incorporates that analysis with links under `../runs/`. Attribute independent review separately; it does not replace developer analysis. The lead reviews the evidence, performs integrated validation and final acceptance, and supplies retention or integration decisions. Preserve the sequence of analysis, reviews, and decisions according to the [recording guide](../experiment-records.md#complete-the-experiment-notes).
+Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Identify the developer, executor, writer, and independent reviewer, and link supporting runs under `../runs/`. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) to preserve the history of analysis, reviews, and decisions.
 
 ## Question and analysis
 
@@ -14,7 +14,7 @@ Record the Worker's proposed improvement, expected mechanism, and concrete desig
 
 ## Implementation and deployment
 
-Describe the Worker's delivered changes, linking the worktree, revision or changed files, and explanation. Record the version, environment, and configuration the lead actually built and deployed, including material departures from the design. Identify the checkout held unchanged during execution.
+Describe the Worker's delivered changes, linking the checkout, revision or changed files, and explanation. Record the version, environment, and configuration the executor actually built and deployed, including material departures from the design. Identify the checkout held unchanged during execution.
 
 ## Measurements and interpretation
 

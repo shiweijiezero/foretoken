@@ -70,7 +70,7 @@ The table below lists common experiment files. Paths start at `results/decode/pa
 | Order | Read | What to examine |
 | --- | --- | --- |
 | 1 | `generated/context.json` | Whether the command completed, its exit status, and the source record for this run |
-| 2 | `config.json`, `environment.json` | Whether workloads, generation settings, client versions, and service configurations are comparable; Foretoken configuration mode also records service images, Pods, resource declarations, runtime identity changes and available build-source provenance |
+| 2 | `config.json`, `environment.json` | Compare workloads, generation settings, client versions and service configurations. For Foretoken deployments, also check recorded service changes and code versions |
 | 3 | `metrics.json`, result figures | Changes in success counts, actual output lengths, and target metrics, and whether they support the hypothesis |
 | 4 | `raw_output.json`; `responses.jsonl` with `raw` enabled | Find anomalous requests and use `request_id` to match measurements, stop reasons, and actual answers; for quality evaluations, inspect native reports and saved per-sample records under `native/` |
 | 5 | `generated/run.log` and the result directory's `run.log` with `quiet` enabled; `evaluator.log` for quality evaluations | Locate errors in client preparation and execution. Use existing resource observations and profiles to explain performance differences and decide what to measure next. Check the corresponding server logs for model-loading or engine errors. |
@@ -84,12 +84,12 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Record | How it changes |
 | --- | --- |
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
-| `iterations/<name>/notes/iteration.md` | The assigned Recorder appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
-| `notes/experiment.md` | The Recorder updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and the lead's decisions. |
+| `iterations/<name>/notes/iteration.md` | The assigned Experimenter appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
+| `notes/experiment.md` | The designated writer updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and decisions. |
 
-For example, a reviewer may recommend another comparison, the lead may authorize it, and a later result may justify discarding the candidate. Keep those as separate attributed entries rather than replacing the recommendation with the final decision. Each decision states the action and its scope; a changed decision or correction identifies the earlier entry it supersedes and the new evidence. The Recorder records the decision-maker's actual conclusion, not its own interpretation as a lead decision.
+Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
-After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the existing [iteration template](templates/iteration-template.md) for the history; there is no need to add mutable decision fields to independent review artifacts. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
+After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the [iteration template](templates/iteration-template.md) for the history. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
 
 The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
