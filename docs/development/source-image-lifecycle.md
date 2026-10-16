@@ -25,8 +25,6 @@ Rust executables, Python adapters and inference-engine files have separate build
 
 Publish the assembled application before submitting it to a service. Each publication contains all files needed to run; its lifetime does not depend on the build cache or the applications it reused.
 
-The manifest's `sources.parts` links each runtime part to its build-input archive, preserving original sources when files are reused. These archives and their source manifests survive compiler-cache and runtime-file cleanup. Benchmarks record provenance in `environment.json` and retain available archives locally under `sources/`.
-
 ## Serving and cleanup
 
 Publish the environment image and complete application files together in an immutable manifest at the trusted application origin. Controllers resolve and save that selection before creating workloads, so preparation, serving, restarts and scaling use the same code without rereading the manifest. Report deployment success only after that code and its serving routes are ready; rollout and draining remain controller-owned.

@@ -73,7 +73,7 @@ foretoken eval examples/quickstart \
 | `metrics.json` | 查看已测得的汇总结果 |
 | `context.json` | 查看运行结果和所处阶段，并单独确认测量的退出状态 |
 | `run.log` | 排查准备、执行过程及错误 |
-| `environment.json`、`sources/` | 运行配置、源码来源及可用源码归档；归档不上传 W&B |
+| `environment.json`、`sources/` | 查看保存在本地的服务配置与可用源码归档 |
 | `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 逐条查看已完成请求，中断后也可用于排查 |
 | `responses.jsonl`，需选择 `--output local,raw` | 查看 HTTP 请求输入和响应内容，包括 reasoning 和工具调用 |
 
