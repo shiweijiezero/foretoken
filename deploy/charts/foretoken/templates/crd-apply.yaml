@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Shared API definitions are upgraded only by platform installation.
+{{- if eq .Values.scope "platform" }}
+{{- $application := index (include "foretoken.applications" . | fromJson) "control-plane" }}
+{{- $arguments := list }}
+{{- if $application }}
+{{- $arguments = list (printf "--crds-dir=%s/current/crds" (include "foretoken.applicationMount" .)) }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-crd-apply" .Release.Name) }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    foretoken.io/platform-task: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "foretoken.labels" . | nindent 8 }}
+      {{- if $application }}
+      annotations:
+        inference.foretoken.io/application-url: {{ $application | quote }}
+      {{- end }}
+    spec:
+      {{- include "foretoken.platformJobPod" (dict "root" . "binary" "crd-apply" "args" $arguments) | nindent 6 }}
+{{- end }}

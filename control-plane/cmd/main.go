@@ -9,19 +9,19 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"log"
 	"net/http"
 	"os"
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -41,6 +41,13 @@ const (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "maintain-log-storage" {
+		if err := maintainLogStorage(os.Args[2:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
@@ -96,8 +103,6 @@ func main() {
 	var modelExpress bool
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
-	var logStorageStatefulSet string
-	var logStorageMaxSize string
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
@@ -106,8 +111,6 @@ func main() {
 	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from the platform application origin.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
-	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
-	flag.StringVar(&logStorageMaxSize, "log-storage-max-size", "", "Maximum capacity of each managed log volume.")
 	flag.StringVar(&autoscalingTelemetryConfigurationPath, "autoscaling-telemetry-config", "", "Platform configuration file supplying autoscaling telemetry collection budgets.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
@@ -312,26 +315,32 @@ func main() {
 		}
 	}
 
+	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
+	if controlPlaneNamespace == "" {
+		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure deployment controller scope")
+		os.Exit(1)
+	}
+	// Each deployment owns its cache and election lease. Cluster-scoped node
+	// observations remain available; direct API access is restricted by RBAC.
 	manager, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme: scheme,
+		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
+			controlPlaneNamespace: {},
+		}},
 		Client: client.Options{Cache: &client.CacheOptions{
-			// The shared credential is read by its fixed name; avoid a cluster-wide Secret informer.
+			// Namespace credentials are read by fixed names without a Secret informer.
 			DisableFor: []client.Object{&corev1.Secret{}},
 		}},
-		Metrics:                metricsserver.Options{BindAddress: metricsAddress},
-		HealthProbeBindAddress: probeAddress,
-		LeaderElection:         leaderElection,
-		LeaderElectionID:       "inference.foretoken.io",
+		Metrics:                 metricsserver.Options{BindAddress: metricsAddress},
+		HealthProbeBindAddress:  probeAddress,
+		LeaderElection:          leaderElection,
+		LeaderElectionID:        "inference.foretoken.io",
+		LeaderElectionNamespace: controlPlaneNamespace,
 		// Main exits when the manager stops, so a normal shutdown can release the lease.
 		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "unable to create manager")
-		os.Exit(1)
-	}
-	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
-	if controlPlaneNamespace == "" {
-		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure control-plane networking")
 		os.Exit(1)
 	}
 
@@ -344,27 +353,6 @@ func main() {
 	if err != nil {
 		ctrl.Log.Error(err, "invalid observability configuration")
 		os.Exit(1)
-	}
-
-	if logStorageStatefulSet != "" {
-		maximum, err := resource.ParseQuantity(logStorageMaxSize)
-		if err != nil || maximum.Sign() <= 0 || maximum.CmpInt64(maximum.Value()) != 0 {
-			ctrl.Log.Error(errors.New("log-storage-max-size must be a positive whole-byte quantity"), "invalid log storage configuration")
-			os.Exit(1)
-		}
-		kubeClient, err := kubernetes.NewForConfig(restConfig)
-		if err != nil {
-			ctrl.Log.Error(err, "unable to configure log volume observations")
-			os.Exit(1)
-		}
-		if err := (&controllers.LogStorageReconciler{
-			Client: manager.GetClient(), Kubernetes: kubeClient,
-			StatefulSet: client.ObjectKey{Namespace: controlPlaneNamespace, Name: logStorageStatefulSet},
-			MaxSize:     maximum,
-		}).SetupWithManager(manager); err != nil {
-			ctrl.Log.Error(err, "unable to register log storage controller")
-			os.Exit(1)
-		}
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.

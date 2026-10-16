@@ -5,16 +5,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
-import uuid
 from collections.abc import Sequence
-from contextlib import ExitStack
 from urllib.parse import urlsplit
-
-import yaml
 
 from foretoken.arguments import (
     ClusterCommand,
@@ -33,7 +28,7 @@ from foretoken.arguments import (
     parse_arguments,
 )
 from foretoken.cluster import run as run_cluster
-from foretoken.editable import EditableDeployment
+from foretoken.deployment import DeploymentLifecycle
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -42,25 +37,14 @@ from foretoken.kubernetes import (
     read_progress,
     resolve_frontend_endpoint,
     timeout_seconds,
-    wait_for_resources,
 )
-from foretoken.manifest import (
-    DeploymentError,
-    ResourceRef,
-    parse_deployment,
-    service_requires_execution,
-)
+from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
 from foretoken.service_execution import stop_deployment
-from foretoken.source import (
-    release_source_deployment,
-    source_operation,
-)
-from foretoken.storage import DirectoryVolumes
-from foretoken.submission import DeploymentSubmission
+from foretoken.source import source_operation
 
 
 def _deployment_resources(
@@ -99,112 +83,14 @@ def _deploy(
     kustomize_path: str, timeout: str, profile: ProfileCommand | None = None,
     *, editable: str | None = None, engine_sources: tuple[str, ...] = (),
 ) -> None:
-    """Apply and wait for serving readiness, then optionally capture external traffic."""
-    started = time.monotonic()
+    """Apply service intent, then optionally capture external traffic."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
-    timeout_seconds(timeout)
-    submission = DeploymentSubmission(kubectl, deployment, timeout)
-    capture = None
-    if profile is not None:
-        # Resolve the selected model before changing the deployment.
-        capture = ProfileRun(profile, deployment=deployment)
-    services = [
-        obj for obj in deployment.objects
-        if obj.get("kind") in {"ModelService", "FrontendService"}
-        and str(obj.get("apiVersion") or "").startswith("inference.foretoken.io/")
-    ]
-    schema = json.loads(
-        kubectl.get_raw("/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout)
+    # Resolve profiling intent before changing the deployment.
+    capture = ProfileRun(profile, deployment=deployment) if profile is not None else None
+    DeploymentLifecycle(kubectl).apply(
+        deployment, timeout, editable=editable, engine_sources=engine_sources,
     )
-    selection_kinds = set()
-    for definition in schema["components"]["schemas"].values():
-        for identity in definition.get("x-kubernetes-group-version-kind", []):
-            if (
-                identity["kind"] in {"ModelService", "FrontendService"}
-                and "deploymentRevision"
-                in definition["properties"]["spec"]["properties"]
-            ):
-                selection_kinds.add(identity["kind"])
-    revision = uuid.uuid4().hex
-    for obj in services:
-        obj["spec"].setdefault("suspend", False)
-        if obj.get("kind") in selection_kinds:
-            obj["spec"]["deploymentRevision"] = revision
-    deployment = parse_deployment(
-        deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
-    )
-    stopping = [obj for obj in services if not service_requires_execution(obj)]
-    runtime_required = len(stopping) != len(services)
-    namespace = deployment.namespace or "<current>"
-    print(f"Applying {deployment.path} to namespace {namespace}")
-    # Submit retirement before startup preparation or its locks. Inactive services
-    # retain their existing storage and executable selections until they resume.
-    if stopping:
-        namespaces = [
-            obj for obj in deployment.objects
-            if obj.get("kind") == "Namespace"
-            and (obj.get("metadata") or {}).get("name") == deployment.namespace
-        ]
-        submission.apply(yaml.safe_dump_all([*namespaces, *stopping], sort_keys=False))
-    source = None
-    # Explicit source options still update the checkout's future selection while idle.
-    # Ready observation remains outside both submission locks.
-    with ExitStack() as locks:
-        if runtime_required or editable is not None or engine_sources:
-            locks.enter_context(source_operation(kubectl, timeout, shared=True))
-            source = EditableDeployment.discover(kubectl, editable, engine_sources)
-            if source is not None:
-                locks.enter_context(source.operation(deployment, timeout))
-                if runtime_required:
-                    prepared_at = time.monotonic()
-                    source.prepare(timeout)
-                    deployment = source.apply(deployment, timeout)
-                    print(
-                        f"Source preparation and publication completed in {time.monotonic() - prepared_at:.1f}s",
-                        flush=True,
-                    )
-        if runtime_required:
-            DirectoryVolumes(kubectl).apply(deployment, timeout, submit=submission.apply)
-    print(f"Waiting up to {timeout} for Foretoken services")
-    rollout_started = time.monotonic()
-    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
-        def observe(
-            resources: tuple[ResourceRef, ...], elapsed: float, budget: float = 5.0,
-        ) -> None:
-            """Observe readiness only while the submitted service intent remains current."""
-            submission.check()
-            startup.poll(resources, elapsed, budget)
-
-        try:
-            wait_for_resources(
-                deployment.service_refs(),
-                kubectl,
-                timeout,
-                report=_report_progress,
-                observe=observe,
-                expected_revisions={
-                    ref: revision for ref in deployment.service_refs()
-                    if ref.kind in selection_kinds
-                },
-            )
-        except DeploymentError:
-            # Capture the final container attempt even when the normal polling interval has not elapsed.
-            startup.poll(
-                deployment.service_refs(), time.monotonic() - rollout_started,
-                follow_logs=False, force=True,
-            )
-            raise
-        if source is not None and runtime_required:
-            source.verify(
-                deployment,
-                timeout,
-                observe=lambda: observe(
-                    deployment.service_refs(), time.monotonic() - rollout_started
-                ),
-            )
-    submission.check()
-    print(f"Foretoken deployment completed in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
             capture.start()
@@ -221,8 +107,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     timeout_seconds(timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
-    DirectoryVolumes(kubectl).delete(deployment, timeout)
-    release_source_deployment(kubectl, deployment, timeout)
+    DeploymentLifecycle(kubectl).delete(deployment, timeout)
     print("Foretoken deployment deleted")
 
 
@@ -298,8 +183,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 editable=command.editable, engine_sources=command.engine_sources,
             )
         elif isinstance(command, DeleteCommand):
-            with source_operation(Kubectl(), command.timeout):
-                _delete(command.kustomize_path, command.timeout)
+            _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StopCommand):
             stop_deployment(command)
         elif isinstance(command, StatusCommand):

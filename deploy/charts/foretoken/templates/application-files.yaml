@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Serve immutable application files without depending on the Foretoken controller.
-{{- if or .Values.development.enabled .Values.controller.applicationURL .Values.applicationFiles.releaseURL }}
+{{- if and (eq .Values.scope "platform") (or .Values.development.enabled .Values.controller.applicationURL .Values.applicationFiles.releaseURL) }}
 {{- $name := include "foretoken.applicationFilesName" . }}
 {{- $storageMount := "/srv/applications" }}
 apiVersion: v1

@@ -1,20 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Deploys the control-plane manager and initializes its CRDs.
-
+# Each deployment owns a controller for its namespace, never the shared APIs.
+{{- if eq .Values.scope "deployment" }}
 {{- include "foretoken.validateValues" . }}
-{{- $sourceMode := and .Values.development .Values.development.enabled | default false }}
-{{- $application := .Values.controller.applicationURL }}
-{{- $frontendApplication := .Values.frontend.applicationURL }}
-{{- $modelApplication := .Values.runtime.vllm.applicationURL }}
-{{- if .Values.applicationFiles.releaseURL }}
-{{- $origin := include "foretoken.applicationFilesOrigin" . }}
-{{- $revision := default .Chart.AppVersion .Values.applicationFiles.revision }}
-{{- $application = default (printf "%s/control-plane/%s" $origin $revision) $application }}
-{{- $frontendApplication = default (printf "%s/frontend/%s" $origin $revision) $frontendApplication }}
-{{- $modelApplication = default (printf "%s/model-server/%s" $origin $revision) $modelApplication }}
-{{- end }}
+{{- $sourceMode := .Values.development.enabled }}
+{{- $applications := include "foretoken.applications" . | fromJson }}
+{{- $application := index $applications "control-plane" }}
+{{- $frontendApplication := index $applications "frontend" }}
+{{- $modelApplication := index $applications "model-server" }}
 {{- $applicationMount := include "foretoken.applicationMount" . }}
 {{- $applicationClient := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage) }}
 apiVersion: apps/v1
@@ -56,9 +50,8 @@ spec:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
-      # Establish the APIs before controller-runtime starts discovery and caches.
+      {{- if $application }}
       initContainers:
-        {{- if $application }}
         - name: application-files
           image: {{ $applicationClient | quote }}
           command:
@@ -75,29 +68,7 @@ spec:
           volumeMounts:
             - name: application
               mountPath: {{ $applicationMount }}
-        {{- end }}
-        - name: crd-apply
-          image: {{ include "foretoken.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command:
-            {{- if $application }}
-            - {{ printf "%s/current/bin/crd-apply" $applicationMount }}
-            - {{ printf "--crds-dir=%s/current/crds" $applicationMount }}
-            {{- else }}
-            - /crd-apply
-            {{- end }}
-          {{- if $application }}
-          volumeMounts:
-            - name: application
-              mountPath: {{ $applicationMount }}
-              readOnly: true
-          {{- end }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
+      {{- end }}
       containers:
         - name: manager
           image: {{ include "foretoken.image" . }}
@@ -133,10 +104,6 @@ spec:
             - {{ printf "--observability-labels=%s" (include "foretoken.observabilityLabels" . | fromYaml | toJson) | quote }}
             {{- else }}
             - --metrics-bind-address=0
-            {{- end }}
-            {{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
-            - {{ printf "--log-storage-statefulset=%s" .Values.observability.logs.managedStatefulSet | quote }}
-            - {{ printf "--log-storage-max-size=%s" .Values.observability.logs.maxSize | quote }}
             {{- end }}
             {{- with .Values.admissionStore.externalURLSecret.name }}
             - {{ printf "--admission-store-url-secret-name=%s" . | quote }}
@@ -267,3 +234,4 @@ spec:
           emptyDir: {}
         {{- end }}
       terminationGracePeriodSeconds: 10
+{{- end }}

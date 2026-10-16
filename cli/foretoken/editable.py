@@ -69,8 +69,14 @@ from foretoken.source import (
 )
 
 _APPLICATION_PARTS = {
+    "control-plane": ("go",),
     "frontend": ("rust",),
     "model-server": ("rust", "python", "engine"),
+}
+_APPLICATION_IMAGE_KEYS = {
+    "control-plane": "control_plane_image",
+    "frontend": "image",
+    "model-server": "model_image",
 }
 
 
@@ -99,16 +105,8 @@ class EditableDeployment:
             if editable is not None or engine_sources:
                 raise DeploymentError("source deployment requires `foretoken install -e PATH` first")
             return None
-        platforms = kubectl.list_all_resources(
-            ("deployment.apps",),
-            label_selector="app.kubernetes.io/name=foretoken-control-plane",
-        )
-        source = [
-            p
-            for p in platforms
-            if p["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) == "source"
-        ]
-        if not source:
+        platform = Helm(default_platform_config()).platform_configuration(kubectl)
+        if platform["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) != "source":
             if editable is not None or engine_sources:
                 raise DeploymentError("source deployment requires a source-installed platform")
             return None
@@ -120,9 +118,8 @@ class EditableDeployment:
             )
         state = json.loads(path.read_text())
         if (
-            len(source) != 1
-            or state.get("platform_uid") != source[0]["metadata"]["uid"]
-            or state["runtime"] != _runtime_settings(source[0])
+            state.get("platform_uid") != platform["metadata"]["uid"]
+            or state["runtime"] != _runtime_settings(platform)
         ):
             raise DeploymentError(
                 "source installation changed; run `foretoken install -e .` from the intended checkout's root"
@@ -143,10 +140,7 @@ class EditableDeployment:
                 self.state.update(
                     root=str(self.root), inputs=snapshot.name,
                     platform_inputs=self.platform["inputs"],
-                    bundles={
-                        component: bundle for component, bundle in self.state["bundles"].items()
-                        if component in {"frontend", "model-server"}
-                    },
+                    bundles=copy.deepcopy(self.state["bundles"]),
                 )
                 self.state["build"]["binding"] = self.directory.name
                 self.state["build"]["caches"] = []
@@ -174,8 +168,12 @@ class EditableDeployment:
                 self.state["runtime"].update({
                     key: copy.deepcopy(value)
                     for key, value in self.platform["runtime"].items()
-                    if key not in {"image", "model_image"}
+                    if key not in {"control_plane_image", "image", "model_image"}
                 })
+                # A checkout's first namespace controller uses the installed environment.
+                self.state["runtime"].setdefault(
+                    "control_plane_image", self.platform["runtime"]["control_plane_image"]
+                )
             self.state["command"]["editable"] = str(self.root)
             engines = (
                 engine_source_roots(self.engine_sources) if self.engine_sources
@@ -255,9 +253,14 @@ class EditableDeployment:
                     rebuild = True
                 else:
                     components.setdefault("model-server", set()).add("engine")
-            elif name.startswith(("control-plane/", "deploy/charts/")):
-                # Shared controllers and platform configuration change only through install.
+            elif name.startswith(("deploy/charts/", "deploy/grafana/")):
+                # Templates and dashboards are applied by Helm, independently of application builds.
                 continue
+            elif name.startswith("control-plane/"):
+                if name == "control-plane/Dockerfile":
+                    rebuild = True
+                else:
+                    components.setdefault("control-plane", set()).add("go")
             elif name.startswith("data-plane/model-server/python/"):
                 components.setdefault("model-server", set()).add("python")
             elif name.startswith("data-plane/") and (
@@ -321,7 +324,7 @@ class EditableDeployment:
                     default_platform_config(self.state["command"]["oci_registry"]).namespace,
                 )
                 manifest = origin.read_manifest(origin.reference(component, bundle["previous"]))
-                image = self.state["runtime"]["model_image" if component == "model-server" else "image"]
+                image = self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]]
                 # Only a completed publication represents the prior inputs. Pending
                 # or deferred updates require a full build, even after another edit.
                 if manifest is not None and manifest.get("image") == image:
@@ -351,14 +354,18 @@ class EditableDeployment:
         with prepare_source_images(
             command, namespace, values, self.state.get("base_image"),
             origin=origin, checkout=self.directory,
-            components=("frontend", "model-server"),
+            components=("control-plane", "frontend", "model-server"),
             saved_arguments=self.build_arguments,
             runtime_backend=build.get("runtime_backend", "nvidia"),
             build_metax_runtime=build.get("build_metax_runtime", False),
         ) as prepared:
             destination = self.directory / prepared.inputs.name
             prepared.inputs.rename(destination)
-            runtime.update(image=prepared.frontend, model_image=prepared.model_server)
+            runtime.update(
+                control_plane_image=prepared.control_plane,
+                image=prepared.frontend,
+                model_image=prepared.model_server,
+            )
             self.state.update(
                 inputs=destination.name, build=prepared.build_state,
                 bundles=prepared.build_state["applications"],
@@ -374,7 +381,7 @@ class EditableDeployment:
     ) -> ForetokenDeployment:
         """Publish selected applications before submitting service and model-storage intent."""
         objects = copy.deepcopy(deployment.objects)
-        pending: set[str] = set()
+        pending: set[str] = {"control-plane"}
         services = []
         for obj in objects:
             component = SERVICE_COMPONENTS.get(obj.get("kind"))
@@ -437,18 +444,31 @@ class EditableDeployment:
             deployment.path, yaml.safe_dump_all(objects, sort_keys=False)
         )
 
+    def deployment_values(self, installed: dict[str, Any]) -> dict[str, Any]:
+        """Select this checkout's published controller without changing platform defaults."""
+        values = copy.deepcopy(installed)
+        reference = self.state["runtime"]["control_plane_image"]
+        repository, separator, digest = reference.partition("@")
+        if separator:
+            values["image"].update(repository=repository, digest=digest, tag="")
+        else:
+            repository, tag = reference.rsplit(":", 1)
+            values["image"].update(repository=repository, tag=tag, digest="")
+        bundle = self.state["bundles"].get(
+            "control-plane", self.state["build"]["applications"]["control-plane"]
+        )
+        origin = ApplicationFiles(
+            self.kubectl,
+            default_platform_config(self.state["command"]["oci_registry"]).namespace,
+        )
+        values["controller"]["applicationURL"] = origin.reference(
+            "control-plane", bundle["revision"]
+        )
+        return values
+
     def _publish_applications(self, components: set[str], timeout: str) -> None:
         """Publish selected components once, independently of their model namespaces and caches."""
-        platforms = self.kubectl.list_all_resources(
-            ("deployments",),
-            label_selector="app.kubernetes.io/name=foretoken-control-plane",
-        )
-        platform = next(
-            item
-            for item in platforms
-            if item["metadata"]["uid"] == self.state["platform_uid"]
-        )
-        namespace = platform["metadata"]["namespace"]
+        namespace = default_platform_config(self.state["command"]["oci_registry"]).namespace
         origin = ApplicationFiles(self.kubectl, namespace)
         pending = set(components)
         missing = {
@@ -647,7 +667,7 @@ class EditableDeployment:
                         timeout=timeout,
                         reuse_previous=True,
                         sources=build_sources(snapshot, component),
-                        image=self.state["runtime"]["model_image" if component == "model-server" else "image"],
+                        image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
                         parts=bundle.get("parts"),
                     )
                 published = {

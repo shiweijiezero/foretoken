@@ -1,7 +1,7 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+{{- if and (eq .Values.scope "platform") (eq (include "foretoken.observabilityEnabled" .) "true") }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -11,6 +11,8 @@ metadata:
     {{- include "foretoken.observabilityLabels" . | nindent 4 }}
 spec:
   jobLabel: app.kubernetes.io/name
+  namespaceSelector:
+    any: true
   selector:
     matchLabels:
       {{- include "foretoken.selectorLabels" . | nindent 6 }}

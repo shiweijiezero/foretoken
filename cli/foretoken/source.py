@@ -670,25 +670,23 @@ def snapshot_versions(
 
 
 def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
-    """Read the controller-owned runtime environment used to bind and validate source builds."""
-    arguments = platform["spec"]["template"]["spec"]["containers"][0]["args"]
-    options = dict(
-        arg[2:].split("=", 1)
-        for arg in arguments
-        if arg.startswith("--") and "=" in arg
+    """Read installed application defaults without depending on a serving controller."""
+    values = json.loads(platform["data"]["deploymentValues"])
+    image = values["image"]
+    controller_image = image["repository"] + (
+        "@" + image["digest"] if image.get("digest") else ":" + image["tag"]
     )
+    runtime = values["runtime"]
+    workload = values["workload"]
     return {
-        "image": options["frontend-image"],
-        "model_image": options["inference-engine-image"],
-        "omni_image": options.get("omni-inference-engine-image", ""),
-        "nsight_image": options.get("nsight-image", ""),
-        "mount": options["cache-mount-path"],
-        "claim": options.get("cache-claim", ""),
-        "pull_secrets": [
-            arg.split("=", 1)[1]
-            for arg in arguments
-            if arg.startswith("--workload-image-pull-secret=")
-        ],
+        "control_plane_image": controller_image,
+        "image": values["frontend"]["image"],
+        "model_image": runtime["vllm"]["image"],
+        "omni_image": runtime["vllmOmni"]["image"],
+        "nsight_image": runtime["vllm"]["nsightImage"],
+        "mount": workload["cache"]["mountPath"],
+        "claim": workload["cache"]["claimName"],
+        "pull_secrets": [item["name"] for item in workload["imagePullSecrets"]],
     }
 
 
@@ -734,17 +732,12 @@ def record_install(
         values=[],
         engine_sources=[f"{name}={path}" for name, path in engines.items()],
     )
-    platforms = kubectl.list_all_resources(
-        ("deployment.apps",),
-        label_selector="app.kubernetes.io/name=foretoken-control-plane",
-    )
-    managed = [
-        p
-        for p in platforms
-        if p["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) == "source"
-    ]
-    if len(managed) != 1:
-        raise DeploymentError("expected one source-installed Foretoken platform")
+    from foretoken.platform.config import default_platform_config
+    from foretoken.platform.helm import Helm
+
+    platform = Helm(default_platform_config(command.oci_registry)).platform_configuration(kubectl)
+    if platform["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) != "source":
+        raise DeploymentError("expected a source-installed Foretoken platform")
     path = directory / "install.json"
     previous = json.loads(path.read_text()) if path.is_file() else {}
     applications = (build_state or {}).get("applications", {})
@@ -767,9 +760,9 @@ def record_install(
                 "build": build_state or {},
                 "context": _context_identity(kubectl),
                 "inputs": destination.name,
-                "platform_uid": managed[0]["metadata"]["uid"],
+                "platform_uid": platform["metadata"]["uid"],
                 "base_image": base_image,
-                "runtime": _runtime_settings(managed[0]),
+                "runtime": _runtime_settings(platform),
                 "command": settings,
                 "bundles": bundles,
             },
@@ -1099,6 +1092,12 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
     """Read environment images selected by platform defaults, services and workload consumers."""
     images: set[str] = set()
     for document in documents:
+        if document.get("metadata", {}).get("labels", {}).get("foretoken.io/platform") == "configuration":
+            runtime = _runtime_settings(document)
+            images.update(filter(None, (
+                runtime["control_plane_image"], runtime["image"], runtime["model_image"],
+                runtime["omni_image"], runtime["nsight_image"],
+            )))
         spec = document.get("spec", {})
         status = document.get("status", {})
         template = spec.get("template", {})

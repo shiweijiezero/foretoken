@@ -21,7 +21,24 @@
 {{- end }}
 
 {{- define "foretoken.applicationFilesOrigin" -}}
-{{- printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace -}}
+{{- default (printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace) .Values.applicationFiles.origin -}}
+{{- end }}
+
+{{- define "foretoken.platformName" -}}
+{{- include "foretoken.compactName" (printf "%s-platform" .Release.Name) -}}
+{{- end }}
+
+{{/* Resolve all applications once for both installed defaults and workload selection. */}}
+{{- define "foretoken.applications" -}}
+{{- $applications := dict "control-plane" .Values.controller.applicationURL "frontend" .Values.frontend.applicationURL "model-server" .Values.runtime.vllm.applicationURL -}}
+{{- if .Values.applicationFiles.releaseURL -}}
+{{- $origin := include "foretoken.applicationFilesOrigin" . -}}
+{{- $revision := default .Chart.AppVersion .Values.applicationFiles.revision -}}
+{{- range $component, $url := $applications -}}
+{{- $_ := set $applications $component (default (printf "%s/%s/%s" $origin $component $revision) $url) -}}
+{{- end -}}
+{{- end -}}
+{{- $applications | toJson -}}
 {{- end }}
 
 {{- define "foretoken.applicationMount" -}}
@@ -66,6 +83,61 @@
 {{- else -}}
 {{- .Values.frontend.gateway.sectionName -}}
 {{- end -}}
+{{- end }}
+
+{{/* Platform Jobs consume installed application files but never run a serving controller. */}}
+{{- define "foretoken.platformJobPod" -}}
+{{- $root := .root -}}
+{{- $application := index (include "foretoken.applications" $root | fromJson) "control-plane" -}}
+{{- $mount := include "foretoken.applicationMount" $root -}}
+serviceAccountName: {{ include "foretoken.platformName" $root }}
+restartPolicy: Never
+{{- with $root.Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+{{- if $application }}
+initContainers:
+  - name: application-files
+    image: {{ include "foretoken.imageWithRegistry" (dict "registry" $root.Values.global.imageRegistry "image" $root.Values.applicationFiles.clientImage) | quote }}
+    command: [python, -c, {{ $root.Files.Get "files/application-download.py" | quote }}, {{ $application | quote }}, {{ $mount | quote }}]
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+    volumeMounts:
+      - name: application
+        mountPath: {{ $mount }}
+volumes:
+  - name: application
+    emptyDir: {}
+{{- end }}
+containers:
+  - name: task
+    image: {{ include "foretoken.image" $root }}
+    imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+    command:
+      - {{ ternary (printf "%s/current/bin/%s" $mount .binary) (printf "/%s" .binary) (not (empty $application)) | quote }}
+    args:
+      {{- toYaml .args | nindent 6 }}
+    {{- if $application }}
+    volumeMounts:
+      - name: application
+        mountPath: {{ $mount }}
+        readOnly: true
+    {{- end }}
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
 {{- end }}
 
 {{/* Enables Prometheus Operator resources explicitly or when both required APIs are discoverable. */}}

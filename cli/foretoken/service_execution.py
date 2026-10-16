@@ -10,6 +10,7 @@ import copy
 import yaml
 
 from foretoken.arguments import StopCommand
+from foretoken.deployment import DeploymentLifecycle
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -26,10 +27,6 @@ def stop_deployment(command: StopCommand) -> None:
     deployment = load_deployment(command.kustomize_path, kubectl)
     submission = DeploymentSubmission(kubectl, deployment, command.timeout)
     objects = []
-    if not kubectl.exists("namespace", deployment.namespace):
-        objects.append({
-            "apiVersion": "v1", "kind": "Namespace", "metadata": {"name": deployment.namespace},
-        })
     for value in deployment.objects:
         if value.get("kind") not in {"ModelService", "FrontendService"} or not value.get("apiVersion", "").startswith("inference.foretoken.io/"):
             continue
@@ -37,6 +34,7 @@ def stop_deployment(command: StopCommand) -> None:
         stopped["spec"]["suspend"] = True
         objects.append(stopped)
     submission.apply(yaml.safe_dump_all(objects, sort_keys=False), patch_services=True)
+    DeploymentLifecycle(kubectl).prepare_controller(submission, command.timeout, reuse_existing=True)
 
     def report(elapsed: float, progress: ResourceProgress) -> None:
         print(f"[{elapsed:6.1f}s] {progress.resource.display_name}: {progress.state} — {progress.detail or progress.reason}", flush=True)

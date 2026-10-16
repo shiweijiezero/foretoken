@@ -78,7 +78,7 @@ workload:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-修改源码后，继续执行同一条命令。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署模型服务)。
+修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 

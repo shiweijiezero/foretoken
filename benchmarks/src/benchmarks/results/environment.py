@@ -91,7 +91,17 @@ def serving_environment(service: ModelService, *, deadline: float | None = None)
         models = [r for r in resources if r["kind"] == "ModelService" and r["metadata"]["name"] in names]
         frontends = [r for r in resources if r["kind"] == "FrontendService"
                      and service.deployment is not None and r["metadata"]["name"] == service.deployment.frontend]
-        owners = {r["metadata"]["uid"] for r in models + frontends}
+        controllers = [r for r in resources if r["kind"] == "Deployment"
+                       and r["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-control-plane"]
+        owners = {r["metadata"]["uid"] for r in models + frontends + controllers}
+        snapshot["controllers"] = [{
+            "name": r["metadata"]["name"], "uid": r["metadata"]["uid"],
+            "generation": r["metadata"]["generation"],
+            "application": {
+                "image": next(c["image"] for c in r["spec"]["template"]["spec"]["containers"] if c["name"] == "manager"),
+                "applicationURL": r["spec"]["template"].get("metadata", {}).get("annotations", {}).get("inference.foretoken.io/application-url", ""),
+            },
+        } for r in controllers]
         descendants = {}
         # Runtime Pods belong to ReplicaSets created by the group's Deployment.
         for kind in ("ModelPool", "ModelGroup", "Deployment", "ReplicaSet", "Pod"):
@@ -142,6 +152,7 @@ def serving_environment(service: ModelService, *, deadline: float | None = None)
             "uid": r["metadata"]["uid"],
             "node": r["spec"].get("nodeName"),
             "phase": r.get("status", {}).get("phase"),
+            "application_url": r["metadata"].get("annotations", {}).get("inference.foretoken.io/application-url", ""),
             "containers": [{
                 "name": c["name"], "image": c["image"], "resources": c.get("resources", {}),
             } for c in r["spec"]["containers"]],
@@ -192,6 +203,12 @@ class ApplicationSources:
             for frontend in snapshot.get("frontends", [])
             if frontend.get("application") and frontend["application"].get("applicationURL")
         )
+        references.update(
+            controller["application"]["applicationURL"]
+            for controller in snapshot.get("controllers", [])
+            if controller["application"].get("applicationURL")
+        )
+        references.update(pod["application_url"] for pod in snapshot.get("pods", []) if pod.get("application_url"))
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         origin = None

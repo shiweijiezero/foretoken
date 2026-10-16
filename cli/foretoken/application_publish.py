@@ -77,8 +77,10 @@ def import_release(
             )
 
 
-def _application_part(path: Path) -> str:
+def _application_part(path: Path, component: str) -> str:
     """Assign each application file to the build output that replaces it as a group."""
+    if component == "control-plane":
+        return "go"
     if path.parts[0] == "python":
         return "python"
     if path.parts[0] in {"engine", "engine-environment.json"}:
@@ -150,13 +152,13 @@ def publish(
         # replacing each in full so deleted files cannot survive from the base.
         inputs = {
             relative: path for relative, path in inputs.items()
-            if _application_part(relative) in parts
+            if _application_part(relative, destination.parent.name) in parts
         }
         for entry in metadata["files"]:
             relative = Path(entry["path"])
             if not relative.parts or relative.is_absolute() or ".." in relative.parts:
                 raise ValueError("application manifest contains an invalid file path")
-            if _application_part(relative) not in parts:
+            if _application_part(relative, destination.parent.name) not in parts:
                 inputs[relative] = previous / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -207,7 +209,7 @@ def publish(
             # Evidence is a formal result, outside the component directories retired
             # by runtime GC. Reusing a completed application creates no new archive.
             application_parts = {
-                _application_part(Path(entry["path"])) for entry in files
+                _application_part(Path(entry["path"]), destination.parent.name) for entry in files
             }
             if parts is None or application_parts.intersection(parts):
                 archive = (

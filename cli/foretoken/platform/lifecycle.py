@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ from foretoken.kubernetes import (
     unmark_managed_metrics_scraper_namespace,
 )
 from foretoken.manifest import DeploymentError
+from foretoken.namespace_mutation import NamespaceMutation
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
@@ -241,27 +243,6 @@ class PlatformLifecycle:
             ),
         )
         load_balancer_config = resolve_load_balancer_config(values)
-
-        deployments = control_plane_deployments(kubectl)
-        expected_deployment = f"{platform.name}-control-plane"
-        unexpected_deployments = tuple(
-            deployment
-            for deployment in deployments
-            if not (
-                platform_exists
-                and deployment.namespace == platform.namespace
-                and deployment.name == expected_deployment
-            )
-        )
-        if unexpected_deployments:
-            existing = ", ".join(
-                f"{deployment.namespace}/{deployment.display_name}"
-                for deployment in unexpected_deployments
-            )
-            raise DeploymentError(
-                "another Foretoken control plane already exists; use its existing "
-                f"lifecycle: {existing}"
-            )
 
         load_balancer_plan = load_balancer.resolve_install(load_balancer_config)
         if load_balancer_plan.blocking:
@@ -681,6 +662,8 @@ class PlatformLifecycle:
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
+        if platform_exists:
+            self._adopt_existing_deployments(command)
         if (
             not dragonfly_plan.config.enabled
             or dragonfly_plan.release != helm.dragonfly_release()
@@ -742,6 +725,46 @@ class PlatformLifecycle:
                 "loadBalancer.managedAddresses in --values to install managed MetalLB",
             )
 
+    def _adopt_existing_deployments(self, command: InstallCommand) -> None:
+        """Give legacy services a namespace owner without advancing their recorded runtime selections.
+
+        Discovery also resumes an interrupted handoff: services remain authoritative
+        after the shared controller has gone. Independent namespace controllers keep
+        their own lifecycle, and no service intent or deployment revision is rewritten.
+        """
+        helm, kubectl = self._helm, self._kubectl
+        namespaces = {resource.namespace for resource in platform_service_resources(kubectl)}
+        defaults = None
+        for namespace in sorted(namespaces):
+            with NamespaceMutation(kubectl, namespace, command.timeout).hold():
+                # Deletion or a candidate deployment may have completed since discovery.
+                if not any(resource.namespace == namespace for resource in platform_service_resources(kubectl)):
+                    continue
+                installed = {release.namespace: release for release in helm.deployment_releases()}
+                release = installed.get(namespace)
+                if release is not None:
+                    status = json.loads(helm.run([
+                        "status", release.name, "--namespace", release.namespace, "--output", "json",
+                    ]).stdout)["info"]["status"]
+                    if status == "deployed":
+                        continue
+                    # Retry a failed release with its own recorded runtime choices.
+                    values = helm.release_user_values(release)
+                else:
+                    if any(resource.namespace == namespace for resource in control_plane_deployments(kubectl)):
+                        _print_plan("Serving controller", "Preserve", f"existing controller in {namespace}")
+                        continue
+                    if defaults is None:
+                        defaults = helm.deployment_values(kubectl)
+                    values = defaults
+                    release = helm.deployment_release(namespace)
+                _print_plan("Serving controller", "Adopt", release.display_name)
+                helm.install_deployment(
+                    release, values, command.timeout,
+                    source_root=Path(command.editable).expanduser().resolve() if command.editable else None,
+                )
+            helm.wait_control_plane(release, command.timeout)
+
     def uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
         helm = self._helm
@@ -779,12 +802,11 @@ class PlatformLifecycle:
         )
         metax_managed = bool(metax_exporter.managed_resources())
         managed_logs = self._logs.managed_releases()
-        dragonfly_managed = helm.release_exists(
-            helm.dragonfly_release()
-        ) and helm.is_cleanup_managed(helm.dragonfly_release())
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
+        deployments = helm.deployment_releases()
+        dragonfly_managed = helm.is_cli_managed(helm.dragonfly_release())
         if (
             platform_exists
             or source_storage
@@ -796,15 +818,16 @@ class PlatformLifecycle:
             or managed_logs
             or dragonfly_managed
             or gateway_plan.managed
+            or deployments
         ):
             resources = platform_service_resources(kubectl)
-            if resources:
-                remaining = ", ".join(
-                    f"{resource.namespace}/{resource.display_name}"
-                    for resource in resources
-                )
+            if resources or deployments:
+                remaining = ", ".join([
+                    *(f"{resource.namespace}/{resource.display_name}" for resource in resources),
+                    *(release.display_name for release in deployments),
+                ])
                 raise DeploymentError(
-                    "delete Foretoken services and wait for their workloads to be removed before uninstalling the platform: "
+                    "delete Foretoken deployments and wait for their services and controllers to be removed before uninstalling the platform: "
                     f"{remaining}"
                 )
 
@@ -846,6 +869,7 @@ class PlatformLifecycle:
             _print_plan(
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
+        helm.stop_platform_tasks(kubectl, command.timeout)
         if source_builds:
             reconcile_source_resources(kubectl, command.timeout, uninstall=True)
         self._logs.uninstall(managed_logs, command.timeout)

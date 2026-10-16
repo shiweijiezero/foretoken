@@ -324,7 +324,7 @@ ROUTER = (
     'model_name=~"$model_name"'
 )
 SERVICE = 'namespace=~"$namespace",modelservice=~"$model_service",model_name=~"$model_name"'
-CONTROLLER = 'job="foretoken-control-plane"'
+CONTROLLER = 'job="foretoken-control-plane",namespace=~"$namespace"'
 AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
 DEVICE_LEGEND = "{{node}} / {{device_id}}"
@@ -690,7 +690,6 @@ def admission_panels(board: dashboard.Dashboard) -> None:
     pod_keys = target_keys + ",model_name"
     service_keys = "namespace,frontend_service,model_name"
     service_legend = "{{namespace}} / {{frontend_service}} / {{model_name}}"
-    replica_legend = service_legend + " / {{pod}}"
 
     def metric(name: str, extra: str = "", *, rate: bool = False) -> str:
         labels = 'pod=~"$frontend_pod"'
@@ -1596,8 +1595,8 @@ def build() -> dashboard_models.Dashboard:
             "Reconciliation errors per second by controller.",
             [
                 foretoken_query(
-                    f"sum by(controller) (rate(controller_runtime_reconcile_errors_total{{{CONTROLLER}}}[$__rate_interval]))",
-                    "{{controller}}",
+                    f"sum by(namespace,controller) (rate(controller_runtime_reconcile_errors_total{{{CONTROLLER}}}[$__rate_interval]))",
+                    "{{namespace}} / {{controller}}",
                 )
             ],
             unit="ops",
@@ -1610,9 +1609,9 @@ def build() -> dashboard_models.Dashboard:
             "P99 reconciliation time by controller.",
             [
                 foretoken_query(
-                    "histogram_quantile(0.99,sum by(controller,le) "
+                    "histogram_quantile(0.99,sum by(namespace,controller,le) "
                     f"(rate(controller_runtime_reconcile_time_seconds_bucket{{{CONTROLLER}}}[$__rate_interval])))",
-                    "{{controller}}",
+                    "{{namespace}} / {{controller}}",
                 )
             ],
             unit="s",
@@ -1623,7 +1622,7 @@ def build() -> dashboard_models.Dashboard:
         series(
             "Controller workqueues",
             "Depth of each controller workqueue.",
-            [foretoken_query(f"max by(name) (workqueue_depth{{{CONTROLLER}}})", "{{name}}")],
+            [foretoken_query(f"max by(namespace,name) (workqueue_depth{{{CONTROLLER}}})", "{{namespace}} / {{name}}")],
             unit="short",
             span=8,
         )

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-{{- if .Values.rdma.managed }}
+{{- if and (eq .Values.scope "platform") .Values.rdma.managed }}
 {{- $name := printf "%s-rdma" .Release.Name }}
 apiVersion: v1
 kind: ConfigMap

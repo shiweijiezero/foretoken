@@ -1107,7 +1107,7 @@ rm -rf "$incoming"
         parts: list[str] | None = None,
     ) -> None:
         """Export selected first-party application parts; callers assemble engine files separately."""
-        if parts is None or "rust" in parts:
+        if parts is None or "rust" in parts or "go" in parts:
             dockerfile = (
                 "control-plane/Dockerfile" if component == "control-plane"
                 else f"data-plane/{component}/Dockerfile"

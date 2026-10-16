@@ -50,7 +50,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Use `foretoken deploy` for frontend and model-server changes, and `foretoken install -e .` for the shared controller and CRDs. Updating a service restarts its processes and may reload model weights.
+After changing controller, frontend or model-server code, rerun `foretoken deploy`; it builds the changes and updates the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
@@ -64,7 +64,7 @@ foretoken delete examples/quickstart
 
 ### Run candidates in parallel
 
-Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. All candidates can share the same CLI installation and platform.
+Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. Candidates share the CLI installation and cluster platform, while each namespace has its own controller and serving code.
 
 From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 
@@ -116,7 +116,7 @@ Delete the candidate when finished:
 foretoken delete examples/candidate
 ```
 
-Deletion also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
+Deletion waits for the candidate's services to finish cleanup, then removes its namespace controller and namespace. It also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
 
 Uninstall the platform only after all candidates have finished.
 

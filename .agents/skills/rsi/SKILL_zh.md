@@ -35,7 +35,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 团队在任务分支上修改代码，并为并行写入者提供不同的工作区。需要独立执行目录时，可以分别 clone 仓库；仅在同一目录切换分支，无法隔离同时进行的修改。主 Agent 记录各工作区使用的源码版本、负责成员和资源分配。
 
-共享 CLI 和平台按[源码部署指南](../../../docs/custom-deployment_zh.md)统一准备。共享控制器、CRD、驱动和平台安装的变更由主 Agent 协调，而各候选使用自己的部署、可写缓存和结果目录。只读模型数据在条件合适时可以复用。
+共享 CLI 和平台按[源码部署指南](../../../docs/custom-deployment_zh.md)统一准备。CRD、驱动和共享平台安装的变更由主 Agent 协调，而各候选使用自己的部署、可写缓存和结果目录。只读模型数据在条件合适时可以复用。
 
 执行者从候选工作区运行命令，使用该候选的 Kustomize 配置和 namespace。如果从其他目录执行，就用 `-e` 指定工作区，并提供部署目录的绝对路径。修改引擎时，通过 `--engine-source` 指定候选引擎源码；后续运行继续使用记录的源码选择和增量构建。
 

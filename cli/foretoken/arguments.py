@@ -236,12 +236,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install = subparsers.add_parser(
         "install",
-        help="Install or update the Foretoken Kubernetes control plane",
+        help="Prepare Foretoken's shared Kubernetes infrastructure",
         description=(
-            "Install or update Foretoken CRDs and the controller, discover the cluster "
-            "LoadBalancer, configure shared metrics and persistent logs, and create Gateway resources "
-            "when Gateway mode is selected. "
-            "Model services are deployed separately with 'foretoken deploy'."
+            "Prepare Foretoken CRDs, discover the cluster LoadBalancer, configure shared "
+            "metrics and persistent logs, and create Gateway resources when Gateway mode "
+            "is selected. Deploy namespace controllers and model services with 'foretoken deploy'."
         ),
     )
     install.add_argument(
@@ -330,7 +329,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     deploy.add_argument(
         "-e", "--editable", metavar="PATH",
-        help="build this checkout's runtime applications (defaults to the current Foretoken checkout on a source-installed platform)",
+        help="build this checkout's controller and serving applications (defaults to the current Foretoken checkout on a source-installed platform)",
     )
     deploy.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",

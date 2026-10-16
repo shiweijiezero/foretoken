@@ -59,13 +59,13 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## 安装 Kubernetes 平台
 
-`foretoken install` 会在当前 Kubernetes context 中安装或更新 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+`foretoken install` 在当前 Kubernetes context 中安装或更新共享的 Foretoken CRD 和依赖。平台资源使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。`foretoken deploy` 在各个部署命名空间中创建控制器和模型服务。
 
-平台更新后，新服务使用更新后的版本；已有模型和前端服务保持原运行版本，重新部署时才更新。
+安装会设置后续部署使用的默认配置，不会重启已有控制器或服务。重新部署服务后，才会采用更新后的默认配置。
 
 ### 默认安装
 
-默认安装已发布的平台，并通过 `LoadBalancer` Service 提供本地访问入口：
+默认安装已发布的平台，并为模型部署选择通过 `LoadBalancer` Service 直接访问的方式：
 
 ```bash
 foretoken install
@@ -102,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-部署时，`foretoken deploy` 会使用当前 Foretoken 目录中的代码。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
+`foretoken deploy` 会从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -142,7 +142,7 @@ modelDistribution:
 
 自动权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型；显式设置的 `load-format` 保持不变。每个 GPU worker 选择拓扑邻近的可用 RDMA 网卡，没有兼容源副本时加载已准备的文件。
 
-修改设置后重新执行上述安装命令；将 `enabled` 设为 `false` 即可关闭对应能力。`foretoken uninstall` 在没有工作负载使用时移除托管的 Dragonfly，复用的安装会保留。
+修改设置后重新执行上述安装命令，再部署需要更新的服务。将 `enabled` 设为 `false` 即可关闭对应能力。`foretoken uninstall` 在没有工作负载使用时移除托管的 Dragonfly，复用的安装会保留。
 
 ### 安装选项
 
@@ -166,7 +166,7 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-命令会应用配置，部署所选服务，并更新已有服务。
+命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
 
 等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
@@ -231,5 +231,7 @@ foretoken stop examples/multi-model-quickstart
 foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
+
+删除命令会先等待服务完成清理，再移除命名空间控制器。该命名空间中仍有其他 Foretoken 资源时，控制器继续保留。Kustomize 配置中包含的命名空间及其全部资源会在最后删除。
 
 卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。

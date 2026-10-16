@@ -37,7 +37,7 @@ Use native task owners, dependencies and completion states when available. Membe
 
 ## Coordinate resources and environments
 
-One member is responsible for running and cleaning up each deployment. The lead allocates resources within the user's authorization and coordinates changes to shared controllers, CRDs, drivers and platform installations. Code changes also need clear owners and scope so members do not overwrite one another's files.
+One member is responsible for running and cleaning up each deployment. The lead allocates resources within the user's authorization and coordinates changes to CRDs, drivers and shared platform installations. Code changes also need clear owners and scope so members do not overwrite one another's files.
 
 Use Kubernetes requests, limits and device plugins to place managed model workloads, while also budgeting for builds, preparation jobs and benchmark clients. Separate namespaces and caches prevent data conflicts, but workloads on one node may still compete for CPU, storage and network capacity. Before a comparison that requires isolation, the affected members therefore confirm that competing work has stopped.
 

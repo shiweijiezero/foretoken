@@ -15,8 +15,14 @@ from typing import TYPE_CHECKING, Any
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
-from foretoken.observability import PrometheusRef, prometheus_api_path, prometheus_query, select_prometheus
+from foretoken.observability import (
+    PrometheusRef,
+    prometheus_api_path,
+    prometheus_query,
+    select_prometheus,
+)
 from foretoken.platform.config import default_platform_config
+from foretoken.platform.helm import Helm
 
 from benchmarks.results.environment import OBSERVATION_TIMEOUT_SECONDS
 
@@ -57,17 +63,8 @@ class PrometheusObserver:
         kubectl = Kubectl(deadline=deadline)
         kubectl = Kubectl(context=kubectl.current_context(), deadline=deadline)
         namespace = default_platform_config().namespace
-        selected = {
-            argument.split("=", 1)[1]
-            for deployment in kubectl.list_resources(
-                ("deployments",), namespace,
-                label_selector="app.kubernetes.io/name=foretoken-control-plane",
-            )
-            for container in deployment["spec"]["template"]["spec"]["containers"]
-            for argument in container.get("args", [])
-            if argument.startswith("--observability-prometheus=") and argument.split("=", 1)[1]
-        }
-        requested = next(iter(selected)) if len(selected) == 1 else None
+        values = Helm(default_platform_config()).deployment_values(kubectl)
+        requested = values["observability"]["prometheus"] or None
         prometheus = select_prometheus(kubectl, namespace, requested)
         if prometheus is None:
             raise DeploymentError("no compatible Prometheus is available")

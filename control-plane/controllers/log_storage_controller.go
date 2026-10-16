@@ -18,27 +18,14 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// LogStorageReconciler grows claims mounted by the CLI-selected Loki StatefulSet.
-// Helm owns the workload and initial claim template; this controller only increases live claims.
+// LogStorageReconciler grows claims mounted by the selected platform Loki StatefulSet.
+// The maintenance command invokes it once; Helm owns the workload and initial claim template.
 type LogStorageReconciler struct {
 	client.Client
-	Kubernetes  *kubernetes.Clientset
-	StatefulSet client.ObjectKey
-	MaxSize     resource.Quantity
-}
-
-// SetupWithManager watches the selected log store; successful observations repeat every 30 seconds.
-func (r *LogStorageReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
-		Named("log-storage").
-		For(&appsv1.StatefulSet{}).
-		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
-			return client.ObjectKeyFromObject(object) == r.StatefulSet
-		})).
-		Complete(r)
+	Kubernetes *kubernetes.Clientset
+	MaxSize    resource.Quantity
 }
 
 // Reconcile reads the mounted log filesystem and requests bounded growth through Kubernetes.
@@ -76,7 +63,7 @@ func (r *LogStorageReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			}
 		}
 	}
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{}, nil
 }
 
 // expandClaim waits for pending resizes and uses live PVC requests to avoid repeating growth

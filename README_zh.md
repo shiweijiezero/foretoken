@@ -67,6 +67,8 @@ foretoken install -e .
 # foretoken install
 ```
 
+安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
+
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例

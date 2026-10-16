@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, _method
-from benchmarks.results.tasks import task_source
 from benchmarks.results.plots.measurements import (
     _quality_charts,
     _slo_charts,
     comparison_charts,
 )
+from benchmarks.results.tasks import task_source
 
 
 @dataclass
@@ -93,7 +93,7 @@ def _environment_settings(directory: Path) -> dict[str, Any] | None:
         for service in snapshot.get("services", []):
             spec = service["spec"]
             service_settings = {key: spec[key] for key in (
-                "model", "backend", "engineArgs", "env", "resources", "replicas", "nodes",
+                "model", "backend", "engineArgs", "env", "resources", "replicas", "nodes", "autoscaling",
             ) if key in spec}
             if "modelPools" in spec:
                 service_settings["modelPoolNames"] = sorted(pool["name"] for pool in spec["modelPools"])
@@ -108,9 +108,26 @@ def _environment_settings(directory: Path) -> dict[str, Any] | None:
                 "backend", "engineArgs", "env", "image", "applicationURL",
             ) if key in group["runtime"]},
         } for group in snapshot.get("groups", [])]
+        # Keep code selections observed during a rollout, without comparing disposable Pod identities.
+        applications = [controller["application"] for controller in snapshot.get("controllers", [])]
+        applications.extend({"image": container["image"], "applicationURL": pod["application_url"]}
+                            for pod in snapshot.get("pods", []) if "application_url" in pod
+                            for container in pod.get("containers", []) if container["name"] == "manager")
+        controllers = {json.dumps(application, sort_keys=True): application for application in applications}
+        frontends = []
+        for frontend in snapshot.get("frontends", []):
+            application = frontend.get("application") or {}
+            frontends.append({
+                "application": {key: application[key] for key in ("image", "applicationURL") if key in application} or None,
+                "spec": {key: frontend["spec"][key] for key in (
+                    "replicas", "resources", "routerPipeline", "admission", "roleRules",
+                ) if key in frontend["spec"]},
+            })
         settings[phase] = {
             "source": snapshot.get("source"),
             "declared_gpu_count": snapshot.get("declared_gpu_count"),
+            "controllers": [controllers[key] for key in sorted(controllers)] or None,
+            "frontends": sorted(frontends, key=lambda value: json.dumps(value, sort_keys=True)) or None,
             "services": sorted(services, key=lambda value: json.dumps(value, sort_keys=True)) or None,
             "groups": sorted(groups, key=lambda value: json.dumps(value, sort_keys=True)) or None,
         }

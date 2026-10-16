@@ -103,8 +103,8 @@ class DirectoryVolumes:
             platform = None
             options = {}
             if not context.startswith("k3d-"):
-                platforms = self.kubectl.list_all_resources(
-                    ("deployment.apps",),
+                platforms = self.kubectl.list_resources(
+                    ("deployment.apps",), deployment.namespace or self.kubectl.current_namespace(),
                     label_selector="app.kubernetes.io/name=foretoken-control-plane",
                 )
                 if len(platforms) == 1:
@@ -206,7 +206,7 @@ class DirectoryVolumes:
         """Read directory identity with the selected platform's tools before applying consumers."""
         if platform is None:
             raise DeploymentError(
-                "automatic directory ownership discovery requires exactly one Foretoken control plane"
+                "directory ownership discovery requires this namespace's Foretoken controller"
             )
         tools = json.loads(options.get("application-files", "{}"))
         if not tools.get("image"):
@@ -215,8 +215,7 @@ class DirectoryVolumes:
             )
         seconds = timeout_seconds(timeout)
         namespace = platform["metadata"]["namespace"]
-        # The probe runs before a new workload namespace exists. Its credentials
-        # must belong to the platform namespace, just like its tools image.
+        # Reuse this deployment's tools and pull credentials after its controller is ready.
         pull_secrets = platform["spec"]["template"]["spec"].get("imagePullSecrets", [])
         owners = set()
         for node in nodes:
@@ -372,9 +371,16 @@ class DirectoryVolumes:
                 ["patch", "pv", name, "--type=json", "-p", json.dumps(patch)]
             )
 
-    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Delete deployment resources and explicitly disposable PVs, never directory files."""
+    def delete(
+        self, deployment: ForetokenDeployment, timeout: str,
+        *, remove: Callable[[tuple[dict[str, Any], ...]], set[str]] | None = None,
+    ) -> None:
+        """Retire user resources and disposable PVs, optionally filtering deletion by live ownership."""
         volumes = []
+        expected_uids = {
+            (obj["metadata"].get("namespace", deployment.namespace), obj["metadata"]["name"]): obj["metadata"].get("uid")
+            for obj in deployment.objects if obj.get("kind") == "RuntimeCache"
+        }
         for cache in deployment.runtime_caches:
             if not cache.directory or cache.retention_policy != "Delete":
                 continue
@@ -382,6 +388,9 @@ class DirectoryVolumes:
                 "runtimecache", cache.name, cache.namespace
             )
             if resource is None:
+                continue
+            expected_uid = expected_uids.get((cache.namespace, cache.name))
+            if expected_uid is not None and resource["metadata"]["uid"] != expected_uid:
                 continue
             claim_name = resource.get("status", {}).get("claimName")
             if not claim_name:
@@ -396,9 +405,15 @@ class DirectoryVolumes:
                     raise DeploymentError(
                         f"PV/{volume['metadata']['name']} is assigned to another claim"
                     )
-                volumes.append(volume)
-        self.kubectl.delete(deployment.rendered, timeout)
-        for previous in volumes:
+                volumes.append((resource["metadata"]["uid"], volume))
+        if remove is None:
+            self.kubectl.delete(deployment.rendered, timeout)
+            removed = {uid for uid, _ in volumes}
+        else:
+            removed = remove(deployment.objects)
+        for uid, previous in volumes:
+            if uid not in removed:
+                continue
             name = previous["metadata"]["name"]
             current = self.kubectl.get_if_exists("pv", name)
             if current is None:
@@ -412,9 +427,7 @@ class DirectoryVolumes:
                 "pvc", claim["name"], claim["namespace"]
             ):
                 raise DeploymentError(f"PV/{name} still has a claim")
-            self.kubectl.run(
-                ["delete", "pv", name, "--wait=true", f"--timeout={timeout}"]
-            )
+            self.kubectl.delete_object(current, timeout)
 
     @classmethod
     def read_directory_owner(cls, cache: dict[str, Any]) -> tuple[int, int] | None:

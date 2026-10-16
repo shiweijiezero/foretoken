@@ -78,7 +78,7 @@ Deploy and update code:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-After editing the checkout, run the same command again. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
+After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 

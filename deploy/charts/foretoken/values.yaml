@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Provides default settings for the Foretoken control-plane chart.
+# One chart installs shared infrastructure or one namespace's serving controller.
+# The CLI selects the scope for install and deploy.
+scope: platform
 
 global:
   # Replaces the registry host for release images. Source-image installs set explicit images instead.
@@ -37,6 +39,8 @@ development:
 
 # Persistent application file delivery, independent of model caches.
 applicationFiles:
+  # The deployment scope receives the installed platform's shared origin.
+  origin: ""
   # Ordinary HTTP tar.gz asset; published charts supply their version's URL.
   releaseURL: ""
   revision: "" # Defaults to Chart.appVersion; private replacement assets use a new version.

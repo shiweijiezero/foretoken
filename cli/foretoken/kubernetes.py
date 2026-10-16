@@ -25,6 +25,7 @@ from foretoken.manifest import (
     parse_deployment,
     service_requires_execution,
 )
+from foretoken.namespace_mutation import mutation_lock_fds
 from foretoken.tools import resolve_tool
 
 _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
@@ -106,6 +107,7 @@ class Kubectl:
                 input=input_text,
                 text=True,
                 stdout=output if output is not None else subprocess.PIPE,
+                pass_fds=mutation_lock_fds.get(),
                 stderr=subprocess.PIPE,
                 check=False,
                 timeout=timeout,
@@ -179,6 +181,12 @@ class Kubectl:
             return None
         raise DeploymentError(f"{' '.join(command)} failed: {detail}")
 
+    def current_namespace(self) -> str:
+        """Resolve the selected context's namespace for namespace-local deployment ownership."""
+        return self.run([
+            "config", "view", "--minify", "-o", "jsonpath={.contexts[0].context.namespace}",
+        ]).stdout.strip() or "default"
+
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
         return self.run(["kustomize", str(path)]).stdout
@@ -203,11 +211,34 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True) -> None:
+        """Conditionally delete one observed UID/version; callers may wait outside a mutation lock."""
+        metadata = value["metadata"]
+        version = value["apiVersion"]
+        base = f"/api/{version}" if "/" not in version else f"/apis/{version}"
+        resources = json.loads(self.get_raw(base, timeout))["resources"]
+        resource = next(item for item in resources if item["kind"] == value["kind"] and "/" not in item["name"])
+        path = base
+        if resource["namespaced"]:
+            path += "/namespaces/" + metadata["namespace"]
+        path += "/" + resource["name"] + "/" + metadata["name"]
+        self.run(
+            ["delete", "--raw", path, "--filename=-"],
+            input_text=json.dumps({
+                "apiVersion": "v1", "kind": "DeleteOptions",
+                "preconditions": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
+                "propagationPolicy": "Foreground",
+            }),
+            timeout=timeout_seconds(timeout),
+        )
+        if wait:
+            self.wait_deleted(value["kind"], metadata, timeout)
+
     def wait_deleted(
         self, resource: str, metadata: dict[str, Any], timeout: str
     ) -> None:
         """Wait for one owned UID to disappear without waiting on a reused resource name."""
-        name, namespace, uid = metadata["name"], metadata["namespace"], metadata["uid"]
+        name, namespace, uid = metadata["name"], metadata.get("namespace", ""), metadata["uid"]
         deadline = time.monotonic() + timeout_seconds(timeout)
         while True:
             current = self.get_if_exists(
@@ -515,19 +546,9 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
 
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
-    """Find services and remaining serving workloads before their platform is removed."""
+    """Find Foretoken reconciliation resources and workloads before migrating or removing their platform."""
     supported = set(kubectl.api_resource_names())
-    kinds = tuple(
-        name
-        for name in (
-            "frontendservices.inference.foretoken.io",
-            "modelservices.inference.foretoken.io",
-            "kvservices.inference.foretoken.io",
-            "modelpools.inference.foretoken.io",
-            "modelgroups.inference.foretoken.io",
-        )
-        if name in supported
-    )
+    kinds = tuple(sorted(name for name in supported if name.endswith(".inference.foretoken.io")))
     objects = list(kubectl.list_all_resources(kinds)) if kinds else []
     workloads = ("pods", "jobs", "replicasets", "deployments", "statefulsets")
     if "leaderworkersets.leaderworkerset.x-k8s.io" in supported:

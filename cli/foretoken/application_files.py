@@ -37,6 +37,13 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
         template = spec.get("template", {})
         metadata = obj["metadata"]
         template_metadata = template.get("metadata", {})
+        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
+            values = json.loads(obj["data"]["deploymentValues"])
+            references.update(filter(None, (
+                values["controller"]["applicationURL"],
+                values["frontend"]["applicationURL"],
+                values["runtime"]["vllm"]["applicationURL"],
+            )))
         references.update(
             selection["applicationURL"]
             for selection in obj.get("status", {}).get("poolApplications", {}).values()
@@ -94,6 +101,10 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
     # callers can retire unreferenced applications or image pins.
     with ThreadPoolExecutor() as queries:
         pending = [queries.submit(kubectl.list_all_resources, kinds)] if kinds else []
+        pending.append(queries.submit(
+            kubectl.list_all_resources, ("configmaps",),
+            label_selector="foretoken.io/platform=configuration",
+        ))
         pending.extend(
             queries.submit(
                 kubectl.list_all_resources,

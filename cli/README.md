@@ -59,13 +59,13 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## Install the Kubernetes platform
 
-`foretoken install` installs or updates the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+`foretoken install` installs or updates the shared Foretoken CRDs and dependencies in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. `foretoken deploy` creates the controller and model services in each deployment namespace.
 
-Platform updates set the version used by new services. Existing model and frontend services keep their running versions until redeployed.
+Installation sets defaults for subsequent deployments; it does not restart existing controllers or services. Redeploy a service to use the updated defaults.
 
 ### Default installation
 
-The default installs the published platform and provides local access through a `LoadBalancer` Service:
+The default installs the published platform and selects direct access through a `LoadBalancer` Service for model deployments:
 
 ```bash
 foretoken install
@@ -102,7 +102,7 @@ The cluster needs a default StorageClass for application files. Run from the For
 foretoken install -e .
 ```
 
-`foretoken deploy` then uses the code in your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -142,7 +142,7 @@ modelDistribution:
 
 Automatic weight transfer uses remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged. Each GPU worker selects a nearby available RDMA interface; replicas without a compatible source load the prepared files.
 
-Reapply the installation command after changing either setting. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
+Reapply the installation command after changing either setting, then redeploy the affected services. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
 
 ### Installation options
 
@@ -166,7 +166,7 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration, deploys the selected services, and updates existing services.
+The command installs or updates the controller for the deployment namespace and applies the selected services. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
 
@@ -232,4 +232,6 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-CRDs, log storage, and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.
+Deletion waits for service cleanup before removing the namespace controller. If other Foretoken resources remain in that namespace, the controller is retained. A namespace included in the Kustomize configuration is removed last, along with all its resources.
+
+Uninstall preserves CRDs, log storage, and reused cluster components. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.
