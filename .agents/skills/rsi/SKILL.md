@@ -26,7 +26,7 @@ The lead establishes W&B naming before parallel experiments begin. An ongoing re
 
 The lead develops research directions, assigns questions and resources, and combines results to decide which approaches to retain. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
 
-[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. The lead assigns at least two Advisors to complementary investigations so the team can examine problems from different perspectives.
+[Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. The lead assigns at least two Advisors to investigate independently. They may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
 
 [Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. At least one Worker follows the end-to-end execution path to connect local changes with service behavior.
 

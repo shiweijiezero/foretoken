@@ -21,7 +21,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 主 Agent 负责把握研究方向、分配问题与资源，并综合实验结果决定保留哪些方案。团队成员围绕完整的问题开展工作，能够在约定范围内连续推进，而不必逐条等待命令。具体分配和交接方式见[团队协作说明](roles/common_zh.md)。
 
-[Advisor](roles/advisor_zh.md) 持续探索技术机制、优化方法和新的研究问题，并帮助团队反思当前方向。主 Agent 至少安排两名 Advisor 开展互补研究，让团队能够从不同角度理解问题。
+[Advisor](roles/advisor_zh.md) 持续探索技术机制、优化方法和新的研究问题，并帮助团队反思当前方向。主 Agent 至少安排两名 Advisor 独立开展研究。Advisor 可以探索不同问题，也可以从不同角度研究同一个问题，并在研究过程中持续交流发现。
 
 [Worker](roles/worker_zh.md) 研究具体问题并实现候选方案，再根据实验结果继续改进。至少一名 Worker 应跟进完整执行流程，以便把局部改动与服务整体表现联系起来。
 

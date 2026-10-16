@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Advisor 的职责是持续研究技术原理和优化方法，帮助团队发现新问题，并判断当前方向是否仍然值得投入。研究既可以围绕已有瓶颈展开，也可以从尚未解释的现象、其他项目的方法或新的架构思路出发。得到的认识可能用于改进已有方案，也可能让团队重新选择研究方向。
 
-主 Agent 至少安排两名 Advisor 研究互补的问题，并根据任务预算决定具体人数。Advisor 与 Worker 都可以主动提出研究问题，两者通过交流逐步完善认识。
+主 Agent 至少安排两名 Advisor，并根据任务预算决定具体人数。Advisor 独立开展研究，既可以探索不同问题，也可以从不同角度研究同一个问题。Advisor 与 Worker 都可以主动提出问题，及时交流发现，并根据证据修正各自的判断。
 
 ## 理解问题，寻找新方向
 
