@@ -48,7 +48,10 @@ from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
-from foretoken.source import reconcile_source_images, source_operation
+from foretoken.source import (
+    release_source_deployment,
+    source_operation,
+)
 from foretoken.storage import DirectoryVolumes
 
 
@@ -103,7 +106,7 @@ def _deploy(
         submission.enter_context(source_operation(kubectl, timeout, shared=True))
         source = EditableDeployment.discover(kubectl, editable, engine_sources)
         if source is not None:
-            submission.enter_context(source.operation(timeout))
+            submission.enter_context(source.operation(deployment, timeout))
             prepared_at = time.monotonic()
             source.prepare(timeout)
             deployment = source.apply(deployment, timeout)
@@ -181,7 +184,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
     DirectoryVolumes(kubectl).delete(deployment, timeout)
-    reconcile_source_images(kubectl, timeout)
+    release_source_deployment(kubectl, deployment, timeout)
     print("Foretoken deployment deleted")
 
 

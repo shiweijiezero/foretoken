@@ -11,7 +11,7 @@ Follow the [role contract](common.md). Own research, bottleneck analysis, design
 
 ## Research and develop
 
-Start from relevant code, prior findings, and the applicable retained approach. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md), trace the end-to-end path, and connect local mechanisms to the system's behavior. Discuss ideas directly with Advisors and other Workers; research does not depend on receiving an Advisor proposal.
+Start from relevant code, prior findings, and the applicable retained approach. Read the relevant component documentation and existing implementations and extension interfaces before designing a change; reuse suitable Foretoken and upstream capabilities. Select references from [shared guidance](../../../../rsi-playbooks/guidance/README.md), trace the end-to-end path, and connect local mechanisms to the system's behavior. Discuss ideas directly with Advisors and other Workers; research does not depend on receiving an Advisor proposal.
 
 Explain the cause being addressed, the intended effect, and important assumptions. Use source analysis and existing profiles, logs, and measurements to refine the design. Implement viable changes in the assigned worktree, following the repository's architecture and code conventions.
 

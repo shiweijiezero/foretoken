@@ -414,8 +414,10 @@ def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 title=f"{chart.title} — {chart.ylabel}",
             )
         sdk_run.log({f"Sweep/{chart.name}": plot})
+    sdk_run.summary.update({f"Sweep/{key}": run.metrics["sweep"][key]
+                            for key in ("status", "tasks", "completed", "failed", "interrupted", "running", "pending")})
     artifact = wandb.Artifact(f"sweep-{sdk_run.id}", type="benchmark")
-    for name in ("config", "sweep_points", "sweep_summary", "sweep_summary_csv"):
+    for name in ("config", "metrics", "sweep_points", "sweep_summary", "sweep_summary_csv"):
         path = run.artifacts[name]
         artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)

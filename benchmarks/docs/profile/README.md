@@ -9,7 +9,7 @@ English | [简体中文](README_zh.md) · [Evaluation and profiling](../../READM
 
 Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/metax-deployment.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
 
-Profiling requires a [source-installed](../../../docs/custom-deployment.md) CLI and platform. The Quick Start already configures persistent RuntimeCache storage for captures. W&B sign-in is covered by the [shared setup](../../README.md#get-started).
+Profiling requires a [source-installed](../../../docs/custom-deployment.md) CLI and platform. After updating the platform, run `foretoken deploy` for existing model services before capturing. The Quick Start already configures persistent RuntimeCache storage for captures. W&B sign-in is covered by the [shared setup](../../README.md#get-started).
 
 ## Capture a benchmark workload
 

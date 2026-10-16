@@ -375,6 +375,11 @@ class HttpBenchmark:
                 profile = outputs.create_profile()
                 with profile if profile is not None else nullcontext():
 
+                    def measurement_started(origin: float) -> None:
+                        """Confirm formal dispatch after warmup and capture readiness."""
+                        outputs.start_measurement()
+                        phase_started(origin)
+
                     async def measure(index, episode, scheduled_at, deadline):
                         return await self._execute_episode(
                             client,
@@ -395,6 +400,113 @@ class HttpBenchmark:
                         "Measurement: %s HTTP requests",
                         workload.request_count or "duration-bounded",
                     )
+
+                    def measured_run(episodes: list[EpisodeResult], duration: float, origin: float) -> BenchmarkRun:
+                        """Retain the completed window before progress, profile, or transport finalization."""
+                        records = sorted(
+                            (row for item in episodes for row in item.records),
+                            key=lambda row: row["started_at"],
+                        )
+                        measurements = [request_measurement(row, origin) for row in records]
+                        criteria = benchmark.slo.params[0] if benchmark.slo.params else None
+                        metrics = summarize_measurements(
+                            measurements,
+                            total_time=duration,
+                            stream=benchmark.generation.stream,
+                            arrival_rate=benchmark.load.arrival_rate,
+                            request_count=workload.request_count
+                            if workload.request_count is not None
+                            else len(measurements),
+                            reported_concurrency=benchmark.load.max_concurrency,
+                            gpu_count=self.service.gpu_count
+                            if {item.model for item in measurements} == {self.service.model}
+                            else None,
+                            include_normalized_throughput=workload.trace_events is None,
+                            slo_criteria=criteria,
+                            itl_summary=measured_itl.summary(),
+                        )
+                        metrics.update(
+                            summarize_measurement_groups(
+                                measurements,
+                                total_time=duration,
+                                stream=benchmark.generation.stream,
+                                arrival_rate=benchmark.load.arrival_rate,
+                                reported_concurrency=benchmark.load.max_concurrency,
+                                slo_criteria=criteria,
+                                include_single_dataset=workload.dataset_tasks is not None,
+                                itl_summaries={
+                                    dimension: {
+                                        name: stats.summary() for name, stats in groups.items()
+                                    }
+                                    for dimension, groups in measured_groups.items()
+                                },
+                            )
+                        )
+                        attempted = sum(item.conversation_attempted for item in episodes)
+                        if attempted:
+                            metrics.update(
+                                multi_turn=True,
+                                conversation={
+                                    "attempted_num": attempted,
+                                    "completed_num": sum(
+                                        item.conversation_completed for item in episodes
+                                    ),
+                                    "request_num": len(measurements),
+                                    "max_turns": workload.dataset.max_turns,
+                                    "avg_turn_requests": len(measurements) / attempted,
+                                    "attempted_conversations_per_second": attempted / duration
+                                    if duration
+                                    else 0.0,
+                                },
+                            )
+                        artifacts = (
+                            {"profile": Path(outputs.execution_dir) / "profile.json"}
+                            if profile is not None
+                            else {}
+                        )
+                        if workload.trace_events is not None:
+                            for name in ("replay_delay", "trace_e2e_ttft", "trace_e2e_latency"):
+                                metrics[name] = percentile_summary(
+                                    [
+                                        row[name]
+                                        for row in records
+                                        if row["success"] and row[name] is not None
+                                    ]
+                                )
+                            slo = metrics.get("slo") or {}
+                            for row, met in zip(records, slo.get("request_slo_met") or []):
+                                row.update(slo_met=met, slo_target=slo["request_criteria"])
+                        run = BenchmarkRun(
+                            record=record,
+                            metrics=metrics,
+                            measurements=measurements,
+                            artifacts=artifacts,
+                            time_origin=origin,
+                            exit_code=0 if metrics["success_num"] else 1,
+                            http_series_published=progress is not None,
+                        )
+                        outputs.save_measurement(run)
+                        if workload.trace_events is not None:
+                            artifacts["raw_output"] = write_json(
+                                outputs.execution_dir,
+                                "raw_output.json",
+                                [
+                                    {
+                                        **{
+                                            key: value
+                                            for key, value in row.items()
+                                            if key != "started_at"
+                                        },
+                                        **request_measurement_record(
+                                            item, stream=benchmark.generation.stream
+                                        ),
+                                    }
+                                    for row, item in zip(records, measurements)
+                                ],
+                                compact=True,
+                            )
+                        return run
+
                     async with asyncio.TaskGroup() as tasks:
                         sampler = tasks.create_task(progress.sample()) if progress is not None else None
                         try:
@@ -403,112 +515,14 @@ class HttpBenchmark:
                                 seed=workload.dataset.random_seed,
                                 trace_start=workload.trace_start if workload.trace_events is not None else None,
                                 before_first=profile.start if profile is not None else None,
-                                on_start=phase_started,
+                                on_start=measurement_started,
                             )
+                            run = measured_run(episodes, duration, origin)
                         finally:
                             if sampler is not None:
                                 sampler.cancel()
                     if progress is not None:
                         progress.emit(duration, final=True)
-            records = sorted(
-                (row for item in episodes for row in item.records),
-                key=lambda row: row["started_at"],
-            )
-            measurements = [request_measurement(row, origin) for row in records]
-            criteria = benchmark.slo.params[0] if benchmark.slo.params else None
-            metrics = summarize_measurements(
-                measurements,
-                total_time=duration,
-                stream=benchmark.generation.stream,
-                arrival_rate=benchmark.load.arrival_rate,
-                request_count=workload.request_count
-                if workload.request_count is not None
-                else len(measurements),
-                reported_concurrency=benchmark.load.max_concurrency,
-                gpu_count=self.service.gpu_count
-                if {item.model for item in measurements} == {self.service.model}
-                else None,
-                include_normalized_throughput=workload.trace_events is None,
-                slo_criteria=criteria,
-                itl_summary=measured_itl.summary(),
-            )
-            metrics.update(
-                summarize_measurement_groups(
-                    measurements,
-                    total_time=duration,
-                    stream=benchmark.generation.stream,
-                    arrival_rate=benchmark.load.arrival_rate,
-                    reported_concurrency=benchmark.load.max_concurrency,
-                    slo_criteria=criteria,
-                    include_single_dataset=workload.dataset_tasks is not None,
-                    itl_summaries={
-                        dimension: {
-                            name: stats.summary() for name, stats in groups.items()
-                        }
-                        for dimension, groups in measured_groups.items()
-                    },
-                )
-            )
-            attempted = sum(item.conversation_attempted for item in episodes)
-            if attempted:
-                metrics.update(
-                    multi_turn=True,
-                    conversation={
-                        "attempted_num": attempted,
-                        "completed_num": sum(
-                            item.conversation_completed for item in episodes
-                        ),
-                        "request_num": len(measurements),
-                        "max_turns": workload.dataset.max_turns,
-                        "avg_turn_requests": len(measurements) / attempted,
-                        "attempted_conversations_per_second": attempted / duration
-                        if duration
-                        else 0.0,
-                    },
-                )
-            artifacts = (
-                {"profile": Path(outputs.execution_dir) / "profile.json"}
-                if profile is not None
-                else {}
-            )
-            if workload.trace_events is not None:
-                for name in ("replay_delay", "trace_e2e_ttft", "trace_e2e_latency"):
-                    metrics[name] = percentile_summary(
-                        [
-                            row[name]
-                            for row in records
-                            if row["success"] and row[name] is not None
-                        ]
-                    )
-                slo = metrics.get("slo") or {}
-                for row, met in zip(records, slo.get("request_slo_met") or []):
-                    row.update(slo_met=met, slo_target=slo["request_criteria"])
-                artifacts["raw_output"] = write_json(
-                    outputs.execution_dir,
-                    "raw_output.json",
-                    [
-                        {
-                            **{
-                                key: value
-                                for key, value in row.items()
-                                if key != "started_at"
-                            },
-                            **request_measurement_record(
-                                item, stream=benchmark.generation.stream
-                            ),
-                        }
-                        for row, item in zip(records, measurements)
-                    ],
-                    compact=True,
-                )
-            run = BenchmarkRun(
-                record=record,
-                metrics=metrics,
-                measurements=measurements,
-                artifacts=artifacts,
-                time_origin=origin,
-                http_series_published=progress is not None,
-            )
             outputs.publish(run)
             return run
 

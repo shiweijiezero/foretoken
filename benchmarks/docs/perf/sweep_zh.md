@@ -133,6 +133,12 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 每次命令都创建独立结果目录，`--experiment-name` 用作目录名前缀。调整指标、图宽或对照历史运行，见[绘制与对照结果](../recipes_zh.md#绘制与对照结果)。
 
+## 继续已有扫描
+
+中断后，在原命令后加上 `--resume RESULT_DIR` 再次执行，`RESULT_DIR` 使用上次打印的结果目录。保持原有负载和测量设置。
+
+续跑会复用已完成的结果，继续剩余测量。结果保存在新目录中，仍需保留原始结果目录。
+
 ## 视频参数
 
 ```bash

@@ -142,6 +142,11 @@ def _add_benchmark_arguments(
         help=("Comma-separated outputs: local, wandb, plot, experiment, quiet" if video else "Comma-separated outputs: local, wandb, plot, experiment, raw (request/response content), quiet"),
     )
     parser.add_argument(
+        "--resume", default="", metavar="RESULT_DIR",
+        help=("Continue a saved video sweep from completed measurements" if video
+              else "Continue a saved sweep or SLO search from completed measurements"),
+    )
+    parser.add_argument(
         "--output-dir",
         default=_default(BenchmarkOutputConfig, "output_dir"),
         help="Result root or directory for benchmark artifacts",
@@ -572,6 +577,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             path=namespace.sweep,
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
+            resume=namespace.resume,
         ),
         # A sweep repeats the whole search; standalone SLO repeats each probe.
         slo=SloTuneConfig(
@@ -605,4 +611,7 @@ def parse_benchmark_arguments(
 
     parsed_args = parser.parse_args(argv)
     validate_profile_arguments(parser, parsed_args)
-    return _benchmark_config(parsed_args)
+    config = _benchmark_config(parsed_args)
+    if config.sweep.resume and not (config.sweep.path or len(config.service_choices) > 1 or config.slo.search):
+        parser.error("--resume requires --sweep, multiple services, or --slo-search")
+    return config

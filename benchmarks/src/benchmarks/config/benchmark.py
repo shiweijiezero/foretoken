@@ -299,10 +299,9 @@ class BenchmarkOutputConfig:
 
     def for_child_run(self) -> BenchmarkOutputConfig:
         """Retain child measurements while the enclosing sweep or search exports comparison plots."""
-        return replace(self, destinations=tuple(dict.fromkeys(
-            "local" if destination == "plot" else destination
-            for destination in self.destinations
-        )))
+        return replace(self, destinations=tuple(dict.fromkeys((
+            "local", *(destination for destination in self.destinations if destination != "plot"),
+        ))))
 
     def validate(self) -> None:
         """Validate the selected HTTP benchmark output destinations."""
@@ -339,6 +338,7 @@ class ParameterSweepConfig:
     path: str = ""
     num_runs: int = 1
     experiment_name: str = ""
+    resume: str = ""
 
 
 @dataclass

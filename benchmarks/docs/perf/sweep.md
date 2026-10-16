@@ -133,6 +133,12 @@ Use `sweep_summary.csv` and the comparison plots to compare latency and throughp
 
 Every invocation creates a separate result directory; `--experiment-name` supplies its name prefix. To change metrics, layout or compare earlier runs, see [plotting saved results](../recipes.md#plot-saved-results).
 
+## Continue a saved sweep
+
+After an interruption, repeat the original command with `--resume RESULT_DIR`, using the result directory it printed. Keep the same workload and measurement settings.
+
+The command reuses completed results and runs the remaining measurements. Results are saved in a new directory; keep the original result directories, which are still used.
+
 ## Video settings
 
 ```bash

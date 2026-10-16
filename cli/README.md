@@ -217,7 +217,7 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 
 ## Clean up
 
-Delete the deployed services before uninstalling the platform:
+Delete the deployed services and their unused build resources before uninstalling the platform:
 
 ```bash
 foretoken delete examples/multi-model-quickstart
