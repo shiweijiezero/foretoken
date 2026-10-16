@@ -114,6 +114,7 @@ class VideoParameterSweepConfig:
     path: str = ""
     num_runs: int = 1
     experiment_name: str = ""
+    resume: str = ""
 
 
 @dataclass(frozen=True)

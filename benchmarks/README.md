@@ -70,8 +70,10 @@ Local results use a separate directory under `results/` for each run; `--output-
 
 | Record | Use |
 | --- | --- |
-| `metrics.json` | Read the final aggregate results |
+| `metrics.json` | Read the measured aggregate results |
+| `context.json` | Check the run outcome and phase separately from the measurement exit status |
 | `run.log` | Inspect preparation, execution, and errors |
+| `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
 | `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 

@@ -28,6 +28,7 @@ from benchmarks.results.plots.measurements import (
     phase_summary_charts,
 )
 from benchmarks.results.plots.saved_results import read_saved_results
+from benchmarks.results.tasks import task_source
 
 _PALETTE = (
     "#2a78d6",
@@ -446,7 +447,14 @@ def render_results(
     out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
-    direct = base is None and not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
+    if base is None and not others:
+        source = task_source(source)
+    direct = base is None and not others and (
+        (source / "slo_results.json").is_file()
+        or (source / "config.json").is_file() and any(
+            (source / name).is_file() for name in ("metrics.json", "sweep_points.json")
+        )
+    )
     comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
     if base is None and comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
         measured = comparison_results.runs[0].get("result")
@@ -553,7 +561,7 @@ def render_results(
             charts += gpu_allocation_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
-        if "evaluation_comparison" in run_metrics:
+        if "evaluation_comparison" in run_metrics or (source / "context.json").is_file():
             runs = read_saved_results((source,), methods=methods).runs
             file = _table(out / "comparison-runs", [
                 {key: value for key, value in row.items() if key != "environment_settings"} for row in runs

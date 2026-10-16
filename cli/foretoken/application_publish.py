@@ -86,6 +86,23 @@ def _application_part(path: Path) -> str:
     return "rust"
 
 
+def archive_inputs(workspace: Path, destination: Path) -> None:
+    """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
+    inputs = json.loads((workspace.parent / "inputs.json").read_text())
+    # The init container owns this temporary volume; failure discards it with the Job.
+    # Include only synchronized inputs, retaining their original bytes and modes.
+    with tarfile.open(destination, "w:gz", dereference=True) as package:
+        for name in sorted(inputs):
+            package.add(workspace / name, arcname=name, recursive=False)
+    destination.chmod(0o444)
+
+
+def _clear_source_staging(directory: Path, binding: str) -> None:
+    """Remove one stopped publisher's staging files before reuse or retirement."""
+    for abandoned in directory.glob(f".{binding}.staging-*"):
+        shutil.rmtree(abandoned)
+
+
 def publish(
     source: Path,
     destination: Path,
@@ -97,8 +114,13 @@ def publish(
     sources: dict | None = None,
     image: str | None = None,
     parts: list[str] | None = None,
+    source_archive: Path | None = None,
+    archive_url: str = "",
 ) -> Path:
     """Publish a complete application, optionally replacing selected outputs of a completed base."""
+    prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
+    if not release_owned:
+        _clear_source_staging(destination.parent, binding)
     if (destination / "manifest.json").is_file():
         return destination
     if not source.is_dir():
@@ -133,10 +155,6 @@ def publish(
             if _application_part(relative) not in parts:
                 inputs[relative] = previous / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
-    prefix = _RELEASE_STAGING_PREFIX if release_owned else f".{binding}.staging-"
-    if not release_owned:
-        for abandoned in destination.parent.glob(prefix + "*"):
-            shutil.rmtree(abandoned)
     with tempfile.TemporaryDirectory(
         prefix=prefix, dir=destination.parent
     ) as temporary:
@@ -181,6 +199,47 @@ def publish(
         # Comparing the complete manifest also detects files removed from the new export.
         if previous is not None and unchanged and files == previous_files:
             return previous
+        if sources is not None and source_archive is not None:
+            # Evidence is a formal result, outside the component directories retired
+            # by runtime GC. Reusing a completed application creates no new archive.
+            application_parts = {
+                _application_part(Path(entry["path"])) for entry in files
+            }
+            if parts is None or application_parts.intersection(parts):
+                archive = (
+                    destination.parent.parent
+                    / "sources"
+                    / destination.parent.name
+                    / (destination.name + ".tar.gz")
+                )
+                if not archive.is_file():
+                    archive.parent.mkdir(parents=True, exist_ok=True)
+                    pending_archive = Path(temporary) / "inputs.tar.gz"
+                    shutil.copyfile(source_archive, pending_archive)
+                    pending_archive.chmod(0o444)
+                    pending_archive.rename(archive)
+            sources = {**sources, "archive": archive_url}
+            adopted = {}
+            for part in sorted(application_parts):
+                if parts is not None and part not in parts:
+                    prior_sources = metadata.get("sources")
+                    if prior_sources is None:
+                        adopted[part] = None
+                    elif "parts" in prior_sources:
+                        adopted[part] = prior_sources["parts"][part]
+                    else:
+                        adopted[part] = {
+                            key: value
+                            for key, value in prior_sources.items()
+                            if key != "engines" or part == "engine"
+                        }
+                else:
+                    adopted[part] = {
+                        key: value
+                        for key, value in sources.items()
+                        if key != "engines" or part == "engine"
+                    }
+            sources = {"parts": adopted}
         (staging / "manifest.json").write_text(
             json.dumps(
                 {
@@ -191,17 +250,26 @@ def publish(
             )
             + "\n"
         )
+        if sources is not None and source_archive is not None:
+            # Keep the same immutable manifest inode as source evidence when
+            # runtime GC removes its application-directory link.
+            evidence = destination.parent.parent / "sources" / destination.parent.name / (destination.name + ".json")
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            pending_evidence = Path(temporary) / "source-manifest.json"
+            os.link(staging / "manifest.json", pending_evidence)
+            pending_evidence.replace(evidence)
         staging.rename(destination)
     return destination
 
 
 def retire(
     directory: Path, binding: str, keep: set[str], *, release_owned: bool = False
-) -> None:
-    """Remove completed versions belonging to the release or the source publisher binding."""
+) -> set[str]:
+    """Remove unreferenced publications owned by this publisher and return its retained versions."""
+    retained = set()
     for version in directory.iterdir():
         manifest = version / "manifest.json"
-        if version.name in keep or not manifest.is_file():
+        if not manifest.is_file():
             continue
         metadata = json.loads(manifest.read_text())
         owned = (
@@ -210,7 +278,11 @@ def retire(
             else metadata.get("binding") == binding
         )
         if owned:
-            shutil.rmtree(version)
+            if version.name in keep:
+                retained.add(version.name)
+            else:
+                shutil.rmtree(version)
+    return retained
 
 
 if __name__ == "__main__":
@@ -225,20 +297,35 @@ if __name__ == "__main__":
             selection["previous"],
             set(retained) if retained is not None else None,
         )
+    elif sys.argv[1] == "--archive-inputs":
+        archive_inputs(Path(sys.argv[2]), Path(sys.argv[3]))
+    elif sys.argv[1] == "--retire-source":
+        root, binding = Path(sys.argv[2]), sys.argv[3]
+        keep = set(json.loads(sys.argv[4]))
+        retained = set()
+        for component in ("control-plane", "frontend", "model-server"):
+            directory = root / component
+            _clear_source_staging(directory, binding)
+            if directory.is_dir():
+                retained.update(retire(directory, binding, keep))
+        print(json.dumps({"retained": sorted(retained)}))
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]
+        selection = json.loads(sys.argv[4])
         destination = publish(
             Path(sys.argv[1]),
             destination,
             binding,
-            Path(sys.argv[4]) if sys.argv[4] else None,
-            reuse_previous=json.loads(sys.argv[6]),
-            sources=json.loads(sys.argv[7]),
-            image=json.loads(sys.argv[8]),
-            parts=json.loads(sys.argv[9]),
+            Path(selection["previous"]) if selection["previous"] else None,
+            reuse_previous=selection["reuse_previous"],
+            sources=selection["sources"],
+            image=selection["image"],
+            parts=selection["parts"],
+            source_archive=Path(selection["source_archive"]),
+            archive_url=selection["archive_url"],
         )
-        retained = json.loads(sys.argv[5])
+        retained = selection["keep"]
         if retained is not None:
             retire(destination.parent, binding, set(retained) | {destination.name})
         print(json.dumps({"revision": destination.name}))

@@ -217,7 +217,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 清理
 
-先删除部署的服务，再卸载平台：
+先删除服务及其不再使用的构建资源，再卸载平台：
 
 ```bash
 foretoken delete examples/multi-model-quickstart

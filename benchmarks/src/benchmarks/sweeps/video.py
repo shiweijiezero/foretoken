@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 from benchmarks.config.benchmark import parse_duration_seconds
 from benchmarks.config.video import VideoBenchmarkConfig, VideoParameterSweepConfig
-from benchmarks.results.output import wandb_run_timestamp
+from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
 from benchmarks.runs.video import run_video_benchmark
 from benchmarks.sweeps.core import (
     _BENCHMARK_NAME,
@@ -112,7 +112,7 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
         label: str,
         wandb_group: str,
         dry_run: bool,
-    ) -> dict[str, Any]:
+    ) -> BenchmarkRun:
         run_config = replace(
             config,
             sweep=VideoParameterSweepConfig(),
@@ -123,7 +123,7 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
             dry_run=dry_run,
             output_dir=output_dir,
         ))
-        return dict(result["metrics"])
+        return BenchmarkRun(run_config.to_dict(), result["metrics"], None, {}, exit_code=result["exit_code"])
 
 
 def expand_video_sweep_point(record: SweepPoint) -> list[SweepPoint]:
@@ -155,7 +155,7 @@ def run_video_sweep(
     sweep = config.sweep
     execution = run_sweep(
         config,
-        SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name),
+        SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume),
         _VideoSweepAdapter(),
         mode="video_parameter_sweep",
         dry_run=dry_run,
@@ -163,6 +163,7 @@ def run_video_sweep(
     return {
         "dry_run": dry_run,
         "metrics": execution.run.metrics,
+        "exit_code": execution.run.exit_code,
         "output_dir": execution.experiment_dir if config.outputs.saves_local else None,
     }
 

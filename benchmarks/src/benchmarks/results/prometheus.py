@@ -15,8 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
-from foretoken.observability import PrometheusRef, prometheus_query, select_prometheus
+from foretoken.observability import PrometheusRef, prometheus_api_path, prometheus_query, select_prometheus
 from foretoken.platform.config import default_platform_config
+
+from benchmarks.results.environment import OBSERVATION_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from benchmarks.model_service import ModelService
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SAMPLE_INTERVAL_SECONDS = 5.0
-_REQUEST_TIMEOUT = "5s"
+_REQUEST_TIMEOUT = f"{OBSERVATION_TIMEOUT_SECONDS:g}s"
 
 
 class PrometheusObserver:
@@ -34,21 +36,26 @@ class PrometheusObserver:
     def __init__(self, service: ModelService, resources: KubernetesReplicaObserver) -> None:
         self._service = service
         self._resources = resources
-        self._kubectl: Kubectl | None = None
+        self._context: str | None = None
         self._prometheus: PrometheusRef | None = None
+        self._api_path: str | None = None
         self._stop = threading.Event()
+        self._stop_deadline: float | None = None
         self._thread: threading.Thread | None = None
         self._samples: list[tuple[float, dict[str, Any]]] = []
         self._errors = 0
         self._last_error: str | None = None
 
-    def start(self) -> None:
-        """Select the installed Prometheus and start periodic sampling."""
+    def start(self, *, deadline: float | None = None) -> None:
+        """Resolve Prometheus and its HTTP Service once, then sample within bounded rounds."""
         if not self._service.model_service_refs:
             raise DeploymentError("Prometheus observation requires a Kustomize service")
         if self._thread is not None:
             raise RuntimeError("Prometheus observer is already active")
-        kubectl = Kubectl()
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        kubectl = Kubectl(deadline=deadline)
+        kubectl = Kubectl(context=kubectl.current_context(), deadline=deadline)
         namespace = default_platform_config().namespace
         selected = {
             argument.split("=", 1)[1]
@@ -64,7 +71,8 @@ class PrometheusObserver:
         prometheus = select_prometheus(kubectl, namespace, requested)
         if prometheus is None:
             raise DeploymentError("no compatible Prometheus is available")
-        self._kubectl = kubectl
+        self._api_path = prometheus_api_path(kubectl, prometheus)
+        self._context = kubectl.context
         self._prometheus = prometheus
         self._thread = threading.Thread(
             target=self._run,
@@ -97,9 +105,24 @@ class PrometheusObserver:
             f'{common},pod=~{pods},endpoint="model-server",inference_foretoken_io_model_role=~"aggregate|decode"',
         )
 
+    def _query(self, kubectl: Kubectl, expression: str) -> tuple[dict[str, Any], ...] | None:
+        """Keep one unavailable query distinct from an empty series without discarding other readings."""
+        try:
+            return prometheus_query(
+                kubectl, self._prometheus, expression, _REQUEST_TIMEOUT, api_path=self._api_path,
+            )
+        except DeploymentError as error:
+            self._errors += 1
+            self._last_error = str(error)
+            return None
+
     def _read_sample(self) -> dict[str, Any]:
-        if self._kubectl is None or self._prometheus is None:
+        if self._context is None or self._prometheus is None:
             raise RuntimeError("Prometheus observer is not active")
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        if self._stop_deadline is not None:
+            deadline = min(deadline, self._stop_deadline)
+        kubectl = Kubectl(context=self._context, deadline=deadline)
         namespace = self._service.model_service_refs[0].namespace
         namespace_label = json.dumps(namespace)
         model_filter = f",model_name={json.dumps(self._service.model)}" if self._service.model else ""
@@ -179,10 +202,13 @@ class PrometheusObserver:
         observed_at = time.time()
         queries = {}
         for name, expression in expressions.items():
-            queries[name] = {
-                "expression": expression,
-                "result": list(prometheus_query(self._kubectl, self._prometheus, expression, _REQUEST_TIMEOUT)),
-            }
+            if self._stop.is_set():
+                break
+            result = self._query(kubectl, expression)
+            queries[name] = {"expression": expression, "result": list(result or ())}
+            if result is None:
+                queries[name]["error"] = self._last_error
+                break
         # Zero utilization still identifies an allocated device. Preserve the exporter
         # identity rather than interpreting missing samples as zero allocated GPUs.
         device_keys = ("namespace", "pod", "container", "node", "model_group", "vendor", "device_id")
@@ -204,7 +230,9 @@ class PrometheusObserver:
         namespace = json.dumps(self._service.model_service_refs[0].namespace)
         return f'namespace={namespace},pod=~{json.dumps(pods)},container="model-server"'
 
-    def _measure_resource_window(self, time_origin: float, duration_seconds: float, ended_at: float) -> dict[str, Any] | None:
+    def _measure_resource_window(
+        self, time_origin: float, duration_seconds: float, ended_at: float, kubectl: Kubectl,
+    ) -> dict[str, Any] | None:
         """Estimate container CPU counters within the formal measurement window, including retired Pods."""
         containers = self._container_selector()
         window_ms = round(duration_seconds * 1000)
@@ -231,11 +259,13 @@ class PrometheusObserver:
                 "max by (namespace,pod,container,id) ("
                 f"increase({metric}{{{containers}}}[{window_ms}ms] @ {ended_at:.3f}))"
             )
-            result = prometheus_query(self._kubectl, self._prometheus, expression, _REQUEST_TIMEOUT)
-            queries[name] = {"expression": expression, "result": list(result)}
+            result = self._query(kubectl, expression)
+            queries[name] = {"expression": expression, "result": list(result or ())}
+            if result is None:
+                queries[name]["error"] = self._last_error
             observed = {}
             unmatched = False
-            for item in result:
+            for item in result or ():
                 labels = item["metric"]
                 value = float(item["value"][1])
                 identity = next((key for key in expected
@@ -255,9 +285,9 @@ class PrometheusObserver:
             "cpu_throttled_periods_ratio": throttled / periods if throttled is not None and periods else None,
         }
 
-    def _measure_spec_window(self, duration_seconds: float, ended_at: float) -> dict[str, Any] | None:
+    def _measure_spec_window(self, duration_seconds: float, ended_at: float, kubectl: Kubectl) -> dict[str, Any] | None:
         """Estimate measured-window counters for observed Pods, including counter resets."""
-        if self._kubectl is None or self._prometheus is None or not self._resources.pod_names:
+        if self._context is None or self._prometheus is None or not self._resources.pod_names:
             return None
         _, raw = self._spec_selectors()
         window_ms = round(duration_seconds * 1000)
@@ -278,7 +308,7 @@ class PrometheusObserver:
             # Anchor at measurement completion; publication can take much longer.
             expression = f"sum(increase({metric}{{{raw}}}[{window_ms}ms] @ {ended_at:.3f}))"
             queries[name] = expression
-            result = prometheus_query(self._kubectl, self._prometheus, expression, _REQUEST_TIMEOUT)
+            result = self._query(kubectl, expression)
             measured = float(result[0]["value"][1]) if result else None
             values[name] = measured if measured is not None and math.isfinite(measured) else None
         if all(value is None for value in values.values()):
@@ -314,25 +344,30 @@ class PrometheusObserver:
             ),
         }
 
-    def finish(self, time_origin: float | None, duration_seconds: float | None = None) -> dict[str, Any]:
-        """Align samples and estimate speculative metrics over the measured request window."""
+    def finish(
+        self, time_origin: float | None, duration_seconds: float | None = None, *, deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Align samples and estimate window counters within the result owner's remaining budget."""
         ended_at = (
             time.time() - (time.perf_counter() - time_origin - duration_seconds)
             if time_origin is not None and duration_seconds is not None else None
         )
-        self.close()
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        self.close(deadline=deadline)
+        kubectl = Kubectl(context=self._context, deadline=deadline)
         prometheus = self._prometheus
         summary = None
         resources = None
         if ended_at is not None and duration_seconds is not None:
             try:
-                summary = self._measure_spec_window(duration_seconds, ended_at)
+                summary = self._measure_spec_window(duration_seconds, ended_at, kubectl)
             except (DeploymentError, KeyError, TypeError, ValueError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
         if ended_at is not None and duration_seconds is not None:
             try:
-                resources = self._measure_resource_window(time_origin, duration_seconds, ended_at)
+                resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
             except DeploymentError as exc:
                 self._errors += 1
                 self._last_error = str(exc)
@@ -368,11 +403,16 @@ class PrometheusObserver:
             "resources": resources,
         }
 
-    def close(self) -> None:
-        """Stop and join the sampling thread; repeated calls are harmless."""
+    def stop(self, deadline: float) -> None:
+        """Stop scheduling queries before the result owner joins its observation threads."""
+        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
+        self._stop.set()
+
+    def close(self, *, deadline: float | None = None) -> None:
+        """Join the bounded in-flight query; repeated calls are harmless."""
         thread = self._thread
         if thread is None:
             return
         self._thread = None
-        self._stop.set()
+        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
         thread.join()

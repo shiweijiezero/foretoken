@@ -176,7 +176,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         label: str,
         wandb_group: str,
         dry_run: bool,
-    ) -> dict[str, Any]:
+    ) -> BenchmarkRun:
         point_config = replace(
             config, sweep=ParameterSweepConfig(),
             wandb=replace(config.wandb, group=wandb_group),
@@ -206,11 +206,11 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         metrics = dict(result.metrics)
         metrics["gpu_count"] = (
             self.service.gpu_count
-            if metrics["throughput"].get("generation_tokens_per_second_per_gpu") is not None
+            if metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
             else None
         )
         metrics["label"] = label
-        return metrics
+        return replace(result, metrics=metrics)
 
 
 class ParameterSweepBenchmark:
@@ -224,11 +224,11 @@ class ParameterSweepBenchmark:
         sweep = self.benchmark.sweep
         resources = ExitStack()
         adapter = _HttpSweepAdapter(resources)
-        definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name)
+        definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume)
         if sweep.path:
             combinations = load_core_sweep_points(definition, adapter)
         else:
-            definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison")
+            definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison", sweep.resume)
             combinations = [
                 {
                     _BENCHMARK_NAME: f"service-{choice['name']}",

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import platform
 import subprocess
+import time
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -23,9 +24,13 @@ from benchmarks.model_service import ModelService
 
 logger = logging.getLogger(__name__)
 
+OBSERVATION_TIMEOUT_SECONDS = 5.0
 
-def client_environment() -> dict[str, Any]:
-    """Describe the executing client; a source commit is recorded only for this package's checkout."""
+
+def client_environment(*, deadline: float | None = None) -> dict[str, Any]:
+    """Describe the client within its caller's observation budget, including source when available."""
+    if deadline is None:
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
     packages = {}
     for name in ("foretoken", "evalscope", "lm_eval", "httpx", "openai", "transformers", "datasets", "numpy"):
         try:
@@ -35,9 +40,19 @@ def client_environment() -> dict[str, Any]:
     root = Path(foretoken.__file__).resolve().parents[2]
     source = None
     if (root / ".git").exists():
-        commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-        changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
-        source = {"commit": commit, "dirty": bool(changed)}
+        try:
+            commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True,
+                timeout=max(0, deadline - time.monotonic()),
+            ).strip()
+            changed = subprocess.check_output(
+                ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True,
+                timeout=max(0, deadline - time.monotonic()),
+            )
+            source = {"commit": commit, "dirty": bool(changed)}
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            source = {"error": str(error)}
+            logger.warning("Client source observation unavailable: %s", error)
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -46,7 +61,7 @@ def client_environment() -> dict[str, Any]:
     }
 
 
-def serving_environment(service: ModelService) -> dict[str, Any]:
+def serving_environment(service: ModelService, *, deadline: float | None = None) -> dict[str, Any]:
     """Snapshot this service's declared intent and owned runtimes for local before/after evidence.
 
     URL targets expose no authoritative deployment or hardware inventory. Kubernetes
@@ -62,10 +77,12 @@ def serving_environment(service: ModelService) -> dict[str, Any]:
     if not service.model_service_refs:
         return snapshot
     snapshot["namespace"] = service.model_service_refs[0].namespace
-    kubectl = Kubectl()
+    if deadline is None:
+        deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+    kubectl = Kubectl(deadline=deadline)
     try:
         snapshot["context"] = kubectl.current_context()
-        kubectl = Kubectl(context=snapshot["context"])
+        kubectl = Kubectl(context=snapshot["context"], deadline=deadline)
         resources = kubectl.list_resources(
             ("modelservices", "frontendservices", "modelpools", "modelgroups", "deployments", "replicasets", "pods"),
             snapshot["namespace"],
@@ -152,12 +169,15 @@ def serving_environment(service: ModelService) -> dict[str, Any]:
 class ApplicationSources:
     """Retain build provenance when an application is observed, before retired files can be collected."""
 
-    def __init__(self) -> None:
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
         self.records: dict[str, dict[str, Any]] = {}
-        self._origin: ApplicationFiles | None = None
+        self._archives: dict[str, dict[str, str]] = {}
+        self._context: str | None = None
 
-    def capture(self, snapshot: dict[str, Any]) -> None:
-        """Capture newly observed service applications for the run-owned resource observer."""
+    def capture(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
+        """Capture lightweight application provenance without transferring source archives in samplers."""
+        self._context = snapshot.get("context", self._context)
         references = {
             group["runtime"]["applicationURL"]
             for group in snapshot.get("groups", []) if group["runtime"].get("applicationURL")
@@ -172,12 +192,49 @@ class ApplicationSources:
             for frontend in snapshot.get("frontends", [])
             if frontend.get("application") and frontend["application"].get("applicationURL")
         )
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        origin = None
         for reference in sorted(references - self.records.keys()):
             try:
-                if self._origin is None:
-                    self._origin = ApplicationFiles(
-                        Kubectl(context=snapshot.get("context")), default_platform_config().namespace,
+                if origin is None:
+                    origin = ApplicationFiles(
+                        Kubectl(context=self._context, deadline=deadline),
+                        default_platform_config().namespace,
                     )
-                self.records[reference] = {"sources": self._origin.read_sources(reference)}
+                sources = origin.read_sources(reference)
             except DeploymentError as error:
                 self.records[reference] = {"sources": None, "error": str(error)}
+                continue
+            self.records[reference] = {"sources": sources}
+
+    def save_archives(self, *, deadline: float) -> None:
+        """Retain source bytes locally at run boundaries, leaving URI evidence when transfer is unavailable."""
+        archives_by_application = {
+            reference: {
+                part["archive"] for part in (record["sources"] or {}).get("parts", {}).values()
+                if part is not None and "archive" in part
+            }
+            for reference, record in self.records.items()
+        }
+        origin = None
+        for archive in sorted({url for urls in archives_by_application.values() for url in urls}):
+            if "path" in self._archives.get(archive, {}):
+                continue
+            try:
+                if origin is None:
+                    origin = ApplicationFiles(
+                        Kubectl(context=self._context, deadline=deadline),
+                        default_platform_config().namespace,
+                    )
+                path = origin.download_source_archive(
+                    archive, self.directory / "sources", timeout=f"{OBSERVATION_TIMEOUT_SECONDS:g}s",
+                )
+                self._archives[archive] = {"path": str(path.relative_to(self.directory))}
+            except DeploymentError as error:
+                self._archives[archive] = {"error": str(error)}
+        for reference, archives in archives_by_application.items():
+            if archives:
+                self.records[reference]["archives"] = {
+                    archive: self._archives[archive] for archive in sorted(archives)
+                }

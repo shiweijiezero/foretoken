@@ -108,11 +108,13 @@ Repeat with different worktree, branch, namespace and iteration names for other 
 
 Results are saved in each worktree. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
-Delete only the candidate's deployment when finished:
+Delete the candidate when finished:
 
 ```bash
 foretoken delete examples/candidate
 ```
+
+Deletion also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
 
 Uninstall the platform only after all candidates have finished.
 

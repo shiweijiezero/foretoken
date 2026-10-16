@@ -56,7 +56,7 @@ from foretoken.source import (
     forget_install,
     has_source_state,
     prepare_source_images,
-    reconcile_source_images,
+    reconcile_source_resources,
     record_install,
     remove_build_caches,
     resolve_source_base_image,
@@ -724,7 +724,7 @@ class PlatformLifecycle:
                 source_images.inputs,
                 build_state=source_images.build_state,
             )
-            reconcile_source_images(kubectl, command.timeout)
+            reconcile_source_resources(kubectl, command.timeout)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -838,7 +838,7 @@ class PlatformLifecycle:
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
         if source_builds:
-            reconcile_source_images(kubectl, command.timeout, uninstall=True)
+            reconcile_source_resources(kubectl, command.timeout, uninstall=True)
         self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)

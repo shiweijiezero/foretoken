@@ -536,7 +536,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
     per_worker_name = "Output tokens/s/user"
     header = (
-        f"{'Method / group / run':<32} "
+        f"{'Method / group / run':<32} {'Status':>12} "
         f"{'Concurrency':>12} {'Arrival rate':>12} {'Requests':>10} "
         f"{'Output tokens/s':>15} {per_worker_name:>32} "
         f"{'Output tokens/s/GPU':>19} {'P99 E2EL (s)':>12}"
@@ -548,6 +548,9 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     for item in results:
         method = item["bench"].get("service", {}).get("name", "default")
         identity = f"{method} / {item['parameter_group']} / {item['run_number'] + 1}"
+        if "slo_search" in item and "throughput" not in item:
+            lines.append(f"{identity:<32} {item['status']:>12}  No passing SLO probe")
+            continue
         parallel = item["max_concurrency"]
         parallel_label = (
             "unlimited" if int(parallel) < 0 else str(int(parallel))
@@ -565,7 +568,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
             "generation_tokens_per_second_per_gpu"
         )
         lines.append(
-            f"{identity:<32} {parallel_label:>12} {rate_label:>12} {int(item['request_num']):>10} "
+            f"{identity:<32} {item['status']:>12} {parallel_label:>12} {rate_label:>12} {int(item['request_num']):>10} "
             f"{_format_metric(generation_tokens_per_second, 2):>15} "
             f"{_format_metric(generation_tokens_per_second_per_concurrency, 2):>32} "
             f"{_format_metric(generation_tokens_per_second_per_gpu_value, 2):>19} "

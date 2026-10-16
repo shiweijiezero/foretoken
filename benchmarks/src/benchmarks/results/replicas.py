@@ -16,13 +16,12 @@ from typing import Any
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError, ResourceRef
 
-from benchmarks.results.environment import ApplicationSources
+from benchmarks.results.environment import OBSERVATION_TIMEOUT_SECONDS, ApplicationSources
 from benchmarks.results.timeseries import ELAPSED_TIME
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS = 1.0
-DEFAULT_REPLICA_KUBECTL_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -75,8 +74,8 @@ class KubernetesReplicaObserver:
         self._resources = resources
         self._model = model
         self._applications = applications
-        self._kubectl = Kubectl()
         self._stop = threading.Event()
+        self._stop_deadline: float | None = None
         self._thread: threading.Thread | None = None
         self._observations: list[ReplicaObservation] = []
         self._errors = 0
@@ -114,11 +113,11 @@ class KubernetesReplicaObserver:
             for at, sample in before[-1:] + within
         ]
 
-    def start(self) -> None:
-        """Read the pre-measurement boundary, then start one sampling thread."""
+    def start(self, *, deadline: float | None = None) -> None:
+        """Read the pre-measurement boundary within the caller's budget, then sample independently."""
         if self._thread is not None:
             raise RuntimeError("replica observer is already active")
-        self._sample()
+        self._sample(deadline=deadline)
         self._thread = threading.Thread(
             target=self._run,
             name="foretoken-benchmark-resources",
@@ -129,12 +128,14 @@ class KubernetesReplicaObserver:
         while not self._stop.wait(DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS):
             self._sample()
 
-    def _sample(self) -> None:
+    def _sample(self, *, deadline: float | None = None) -> None:
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        if self._stop_deadline is not None:
+            deadline = min(deadline, self._stop_deadline)
+        kubectl = Kubectl(deadline=deadline)
         try:
-            values = self._kubectl.get_resources(
-                self._resources,
-                timeout=DEFAULT_REPLICA_KUBECTL_TIMEOUT_SECONDS,
-            )
+            values = kubectl.get_resources(self._resources)
         except (DeploymentError, KeyError, TypeError, ValueError) as exc:
             self._errors += 1
             self._last_error = str(exc)
@@ -148,12 +149,12 @@ class KubernetesReplicaObserver:
             self._errors += 1
             self._last_error = str(exc)
         try:
-            self._gpu_samples.append(self._read_gpu_sample(values))
+            self._gpu_samples.append(self._read_gpu_sample(values, kubectl))
         except (DeploymentError, KeyError, TypeError, ValueError) as exc:
             self._gpu_failures.append(time.perf_counter())
             self._last_gpu_error = str(exc)
         if self._workload_samples:
-            self._applications.capture(self._workload_samples[-1][1])
+            self._applications.capture(self._workload_samples[-1][1], deadline=deadline)
 
     def _read_observations(
         self, values: tuple[dict[str, Any], ...], observed_at: float,
@@ -221,7 +222,7 @@ class KubernetesReplicaObserver:
             )
         return tuple(observations)
 
-    def _read_gpu_sample(self, services: tuple[dict[str, Any], ...]) -> GPUAllocationSample:
+    def _read_gpu_sample(self, services: tuple[dict[str, Any], ...], kubectl: Kubectl) -> GPUAllocationSample:
         identities = {
             (item["metadata"]["name"], item["metadata"]["uid"])
             for item in services
@@ -232,12 +233,11 @@ class KubernetesReplicaObserver:
         if self._service_uids is not None and service_uids != self._service_uids:
             raise DeploymentError("a selected ModelService was replaced during GPU observation")
 
-        output = self._kubectl.run(
+        output = kubectl.run(
             [
                 "get", "modelpools,modelgroups,pods", "--namespace",
                 self._resources[0].namespace, "-o", "json",
             ],
-            timeout=DEFAULT_REPLICA_KUBECTL_TIMEOUT_SECONDS,
         ).stdout
         items = json.loads(output)["items"]
         pools: set[tuple[str, str]] = set()
@@ -340,10 +340,12 @@ class KubernetesReplicaObserver:
             raise ValueError(allocation_error)
         return GPUAllocationSample(observed_at, counts)
 
-    def finish(self, time_origin: float, duration: float | None = None) -> list[dict[str, Any]]:
-        """Stop and align replica rows; optionally integrate measured GPU allocation."""
-        self.close()
-        self._sample()
+    def finish(
+        self, time_origin: float, duration: float | None = None, *, deadline: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Stop and align replica rows, bracketing GPU allocation within the remaining budget."""
+        self.close(deadline=deadline)
+        self._sample(deadline=deadline)
         if self._errors:
             logger.warning(
                 "Replica observation skipped %d Kubernetes reads; last error: %s",
@@ -436,13 +438,18 @@ class KubernetesReplicaObserver:
             "failed_reads": len(failures),
         }
 
-    def close(self) -> None:
-        """Stop and join the sampling thread; repeated calls are harmless."""
+    def stop(self, deadline: float) -> None:
+        """Stop scheduling reads before the result owner joins its observation threads."""
+        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
+        self._stop.set()
+
+    def close(self, *, deadline: float | None = None) -> None:
+        """Join the bounded in-flight sample; repeated calls are harmless."""
         thread = self._thread
         if thread is None:
             return
         self._thread = None
-        self._stop.set()
+        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
         thread.join()
 
 
