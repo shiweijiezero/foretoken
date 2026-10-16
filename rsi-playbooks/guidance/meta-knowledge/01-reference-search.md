@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](01-reference-search_zh.md)
 
-Look for reference material to understand the current state of the field and broaden your thinking. Combine local files with online searches, following papers, code, issues, pull requests, and design discussions to learn about existing approaches, recent developments, technical trade-offs, and open problems. Study promising principles and implementations in depth, develop your own research direction in the context of the current system, and add reusable findings to the knowledge base.
+Reference material helps explain the current state of the field and broaden the ideas available for research. Choose sources and how to obtain them according to the research objective and evidence already available: local code and experiment records may be useful, as may online searches for other approaches and recent developments. Study promising principles and implementations in depth, develop a research direction in the context of the current system, and add reusable findings to the knowledge base.
 
 ## Sources and search entry points
 
