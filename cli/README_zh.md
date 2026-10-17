@@ -61,7 +61,7 @@ foretoken cluster delete kind --name foretoken-dev
 
 `foretoken install` 在当前 Kubernetes context 中安装或更新共享的 Foretoken CRD 和依赖。平台资源使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。`foretoken deploy` 在各个部署命名空间中创建控制器和模型服务。
 
-安装会设置后续部署使用的默认配置，不会重启已有控制器或服务。重新部署服务后，才会采用更新后的默认配置。
+安装会设置后续部署使用的默认配置，不会重启已有控制器或服务。自行管理的部署在重新部署时采用新默认值；管理员准备的命名空间保留已选配置，由管理员通过命名空间安装的 `--values` 或 `-e` 选择需要更新的设置或源码。
 
 ### 默认安装
 
@@ -102,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-`foretoken deploy` 会从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
+部署时添加 `-e .`，即可从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -156,6 +156,28 @@ loadBalancer:
     - 192.168.1.240-192.168.1.250
 ```
 
+## 为成员准备命名空间
+
+管理员一次性准备控制器和服务操作权限，成员随后用自己的 namespace 权限执行正常部署命令。以下使用多模型示例的 `foretoken-multi-model-demo` 命名空间；将 `MEMBER_ID` 换成成员 kubeconfig 对应的 Kubernetes 身份：
+
+```bash
+foretoken install --namespace foretoken-multi-model-demo
+kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-demo \
+  --role foretoken-control-plane-operator --user MEMBER_ID
+```
+
+成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。部署清单中的 Namespace 由管理员维护；已提供共享缓存 PVC 时，优先使用该卷，不再创建清单中的 RuntimeCache。共享模型的配置见[跨命名空间复用模型文件](../docs/model-storage_zh.md#跨命名空间复用模型文件)。
+
+已有源码安装的管理员可以执行 `foretoken install --namespace foretoken-multi-model-demo -e .`，为该命名空间构建应用。成员的普通部署使用这些已准备的应用；显式执行 `deploy -e` 更新源码仍需源码开发权限。
+
+成员删除服务及托管缓存后，管理员可以移除该命名空间的控制器和访问配置：
+
+```bash
+foretoken uninstall --namespace foretoken-multi-model-demo
+```
+
+命名空间和共享模型文件继续保留，共享平台不受影响。
+
 ## 部署和管理模型服务
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
@@ -166,7 +188,7 @@ loadBalancer:
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
+命令应用所选服务的配置。管理员已准备好控制器时直接复用，否则安装或更新部署所在命名空间的控制器。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
 
 等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
 
@@ -225,13 +247,14 @@ foretoken stop examples/quickstart/multi-model
 
 ## 清理
 
-先删除服务及其不再使用的构建资源，再卸载平台：
+删除部署的服务：
 
 ```bash
 foretoken delete examples/quickstart/multi-model
-foretoken uninstall
 ```
 
-删除命令会先等待服务完成清理，再移除命名空间控制器。该命名空间中仍有其他 Foretoken 资源时，控制器继续保留。Kustomize 配置中包含的命名空间及其全部资源会在最后删除。
+共享平台不再使用时，由平台管理员执行 `foretoken uninstall`。
+
+在管理员准备的命名空间中，删除命令只清理提交的服务资源，保留控制器、命名空间和已提供的缓存。自行管理的部署会在服务完成清理后移除不再使用的控制器；Kustomize 配置中包含的命名空间及其资源在最后删除。
 
 卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。

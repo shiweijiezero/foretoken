@@ -60,7 +60,7 @@ from foretoken.source_state import (
     has_server_binding,
     local_candidates,
     reconcile_source_resources,
-    record_source_deployment,
+    record_source_resources,
     runtime_settings,
     write_source_state,
 )
@@ -124,10 +124,10 @@ class EditableDeployment:
         return cls(kubectl, directory, state, source_checkout(editable), engine_sources)
 
     @contextmanager
-    def operation(self, deployment: ForetokenDeployment, timeout: str) -> Iterator[None]:
-        """Register intended services and own this checkout's builds through service submission."""
+    def operation(self, resources: tuple[ResourceRef, ...], timeout: str) -> Iterator[None]:
+        """Register intended consumers and own this checkout's builds through their submission."""
         with checkout_operation(self.directory, self.kubectl, timeout):
-            record_source_deployment(self.directory, deployment)
+            record_source_resources(self.directory, resources)
             path = self.directory / "install.json"
             saved = json.loads(path.read_text()) if path.is_file() else None
             if saved is None:
@@ -450,6 +450,23 @@ class EditableDeployment:
         values["controller"]["applicationURL"] = origin.reference(
             "control-plane", bundle["revision"]
         )
+        return values
+
+    def prepare_namespace(self, timeout: str) -> None:
+        """Build and publish namespace defaults without changing the shared platform or service intent."""
+        self.prepare(timeout)
+        self._publish_applications(set(_APPLICATION_PARTS), timeout)
+
+    def namespace_values(self, installed: dict[str, Any]) -> dict[str, Any]:
+        """Select completed applications as the defaults owned by an administrator-prepared namespace."""
+        values = self.deployment_values(installed)
+        origin = ApplicationFiles(
+            self.kubectl, default_platform_config(self.state["command"]["oci_registry"]).namespace,
+        )
+        for component, settings in (("frontend", values["frontend"]), ("model-server", values["runtime"]["vllm"])):
+            bundle = self.state["bundles"].get(component, self.state["build"]["applications"][component])
+            settings["image"] = self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]]
+            settings["applicationURL"] = origin.reference(component, bundle["revision"])
         return values
 
     def _publish_applications(self, components: set[str], timeout: str) -> None:

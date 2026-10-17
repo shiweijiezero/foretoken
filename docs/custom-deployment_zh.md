@@ -38,7 +38,7 @@ foretoken install -e .
 在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码：
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
 这会在 `foretoken-demo` 命名空间中创建前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
@@ -50,7 +50,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-修改控制器、前端或模型服务代码后，重新执行 `foretoken deploy`，即可构建改动并更新该部署命名空间。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
+修改控制器、前端或模型服务代码后，重新执行上面的部署命令，即可构建改动并更新该部署命名空间。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
 
 从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
@@ -90,12 +90,12 @@ patches:
           retentionPolicy: Delete
 EOF
 
-foretoken deploy examples/candidate --timeout 20m
+foretoken deploy examples/candidate -e . --timeout 20m
 foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
+候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。为避免每个候选重复下载模型，可以[准备共享模型存储](model-storage_zh.md#跨命名空间复用模型文件)。
 
 其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
@@ -107,9 +107,7 @@ foretoken perf examples/candidate --num-prompts 20 \
 foretoken delete examples/candidate
 ```
 
-删除命令先等待候选服务完成清理，再移除其控制器和命名空间，同时回收不再使用的构建资源。源码目录、实验结果和源码归档会保留。
-
-所有候选结束后，再统一卸载平台。
+清理范围取决于命名空间和存储的管理方式，见 [CLI 指南](../cli/README_zh.md#清理)。源码目录和实验结果保留。
 
 ## 修改推理引擎
 
@@ -119,7 +117,7 @@ foretoken delete examples/candidate
 foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
-后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，重新执行 `foretoken deploy`，所需编译会自动完成。每个 Foretoken 源码目录的引擎目录需分别指定。
+后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 
@@ -139,7 +137,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b \
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，重新执行 `foretoken deploy`。
+源码安装、`make image-model-server`、`deploy/dev-build` 和发布构建都会使用这个设置。镜像必须与 Foretoken 的 vLLM 适配器兼容，并且构建器可以访问。已有源码安装修改后，部署时添加 `-e .`。
 
 只为某次安装指定不同基础镜像时，在 `deploy/platform-values.yaml` 中设置 `runtime.vllm.image`：
 

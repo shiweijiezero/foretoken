@@ -61,7 +61,7 @@ foretoken cluster delete kind --name foretoken-dev
 
 `foretoken install` installs or updates the shared Foretoken CRDs and dependencies in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. `foretoken deploy` creates the controller and model services in each deployment namespace.
 
-Installation sets defaults for subsequent deployments; it does not restart existing controllers or services. Redeploy a service to use the updated defaults.
+Installation sets defaults for subsequent deployments; it does not restart existing controllers or services. Self-managed deployments adopt new defaults when redeployed. Administrator-prepared namespaces keep their selected settings; their administrator chooses changes through namespace installation with `--values` or `-e`.
 
 ### Default installation
 
@@ -102,7 +102,7 @@ The cluster needs a default StorageClass for application files. Run from the For
 foretoken install -e .
 ```
 
-`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
+Add `-e .` to deployment commands to build controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -156,6 +156,28 @@ loadBalancer:
     - 192.168.1.240-192.168.1.250
 ```
 
+## Prepare a namespace for members
+
+An administrator can prepare the controller and service permissions once, then let members use the normal deployment commands with namespace-scoped access. The following uses the multi-model example's `foretoken-multi-model-demo` namespace. Replace `MEMBER_ID` with the Kubernetes identity in the member's kubeconfig:
+
+```bash
+foretoken install --namespace foretoken-multi-model-demo
+kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-demo \
+  --role foretoken-control-plane-operator --user MEMBER_ID
+```
+
+Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations in their deployment are left to the administrator. A provided cache PVC takes precedence over the deployment's RuntimeCache; see [sharing model files](../docs/model-storage.md#share-model-files-across-namespaces).
+
+From an existing source installation, the administrator can build this namespace's applications with `foretoken install --namespace foretoken-multi-model-demo -e .`. Ordinary member deployments use those prepared applications. Explicit `deploy -e` updates still require source-development permissions.
+
+After members have removed their services and managed caches, the administrator can remove the namespace controller and access resources:
+
+```bash
+foretoken uninstall --namespace foretoken-multi-model-demo
+```
+
+The namespace and shared model files remain available. This operation does not uninstall the shared platform.
+
 ## Deploy and operate model services
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
@@ -166,7 +188,7 @@ See the [multi-model example](../examples/quickstart/multi-model/README.md) for 
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-The command installs or updates the controller for the deployment namespace and applies the selected services. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
+The command applies the selected services. It reuses an administrator-prepared controller; otherwise it installs or updates the controller for the deployment namespace. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
 
 While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
@@ -225,13 +247,14 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 
 ## Clean up
 
-Delete the deployed services and their unused build resources before uninstalling the platform:
+Delete the deployed services:
 
 ```bash
 foretoken delete examples/quickstart/multi-model
-foretoken uninstall
 ```
 
-Deletion waits for service cleanup before removing the namespace controller. If other Foretoken resources remain in that namespace, the controller is retained. A namespace included in the Kustomize configuration is removed last, along with all its resources.
+The platform administrator can run `foretoken uninstall` when the shared platform is no longer needed.
+
+In administrator-prepared namespaces, deletion removes only the submitted service resources and leaves the controller, namespace and provided cache intact. For self-managed deployments, it waits for service cleanup before removing an unused controller; a namespace included in the Kustomize configuration is removed last, along with its resources.
 
 Uninstall preserves CRDs, log storage, and reused cluster components. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

@@ -12,4 +12,7 @@ metadata:
     {{- include "foretoken.labels" . | nindent 4 }}
 data:
   autoscaling-telemetry.json: {{ .Values.controller.autoscalingTelemetry | toJson | quote }}
+  {{- if .Values.namespaceAccess.enabled }}
+  namespace-access.json: {{ dict "cacheClaim" .Values.workload.cache.claimName "cacheAccessMode" .Values.namespaceAccess.cacheAccessMode "gateway" .Values.namespaceAccess.gateway | toJson | quote }}
+  {{- end }}
 {{- end }}

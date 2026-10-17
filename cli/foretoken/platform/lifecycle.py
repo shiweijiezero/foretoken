@@ -736,7 +736,9 @@ class PlatformLifecycle:
         namespaces = {resource.namespace for resource in platform_service_resources(kubectl)}
         defaults = None
         for namespace in sorted(namespaces):
-            with NamespaceMutation(kubectl, namespace, command.timeout).hold():
+            mutation = NamespaceMutation(kubectl, namespace, command.timeout)
+            mutation.prepare()
+            with mutation.hold():
                 # Deletion or a candidate deployment may have completed since discovery.
                 if not any(resource.namespace == namespace for resource in platform_service_resources(kubectl)):
                     continue

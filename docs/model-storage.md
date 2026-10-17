@@ -66,3 +66,16 @@ Add `storageClassName` to select a StorageClass. Add `maxSize` only when its dri
 To mount a PVC that is managed elsewhere, set `workload.cache.claimName` in platform values and create that claim in each workload namespace.
 
 Diagnostic captures use the same data root and store results below `profiles/`; see [Profiling](../benchmarks/docs/profile/README.md).
+
+## Share model files across namespaces
+
+For parallel experiments using the same model, an administrator can share an existing `ReadWriteMany` PVC backed by native NFS or the NFS CSI driver. The following uses `models` in the `model-library` namespace; replace that reference with your shared cache:
+
+```bash
+foretoken install --namespace candidate-a --shared-cache model-library/models
+foretoken install --namespace candidate-b --shared-cache model-library/models
+```
+
+Candidates reuse the same model files while keeping separate runtime compilation caches. Redeploying a service can reuse its namespace's cache. The source volume is set to `Retain`, so deleting a claim preserves the model files.
+
+Give members [namespace service permissions](../cli/README.md#prepare-a-namespace-for-members), then deploy normally. The provided shared cache takes precedence over the deployment's RuntimeCache, so no additional model volume is created. Deleting one candidate leaves the shared models and other candidates intact; the storage administrator reclaims shared data when it is no longer needed.

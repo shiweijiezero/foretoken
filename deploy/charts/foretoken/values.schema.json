@@ -17,6 +17,46 @@
   ],
   "properties": {
     "scope": {"type": "string", "enum": ["platform", "deployment"]},
+    "namespaceAccess": {
+      "type": "object",
+      "required": ["enabled", "cacheAccessMode", "gateway", "sharedCache"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "cacheAccessMode": {"type": "string", "enum": ["", "ReadWriteOnce", "ReadWriteMany"]},
+        "gateway": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "namespace": {"type": "string", "minLength": 1},
+            "sectionName": {"type": "string"},
+            "address": {"type": "string", "minLength": 1},
+            "scheme": {"type": "string", "enum": ["http", "https"]},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+          },
+          "additionalProperties": false,
+          "oneOf": [
+            {"maxProperties": 0},
+            {"required": ["name", "namespace", "sectionName", "address", "scheme", "port"]}
+          ]
+        },
+        "sharedCache": {
+          "type": "object",
+          "properties": {
+            "server": {"type": "string", "minLength": 1},
+            "path": {"type": "string", "pattern": "^/"},
+            "capacity": {"type": "string", "minLength": 1},
+            "directoryOwner": {"type": "string"},
+            "mountOptions": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          },
+          "additionalProperties": false,
+          "oneOf": [
+            {"maxProperties": 0},
+            {"required": ["server", "path", "capacity"]}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "admissionStore": {
       "type": "object",
       "required": ["image", "storageClass", "storageSize", "externalURL", "externalURLSecret"],

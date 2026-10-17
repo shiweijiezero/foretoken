@@ -28,7 +28,7 @@ from foretoken.arguments import InstallCommand
 from foretoken.build_storage import SOURCE_BUILD_CACHE_LABEL
 from foretoken.cluster_build import remove_build_pods
 from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError, ForetokenDeployment
+from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
 from foretoken.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
@@ -165,12 +165,12 @@ def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Itera
         yield
 
 
-def record_source_deployment(directory: Path, deployment: ForetokenDeployment) -> None:
-    """Associate a checkout with intended services before building, including failed submissions."""
+def record_source_resources(directory: Path, resources: tuple[ResourceRef, ...]) -> None:
+    """Associate a checkout with its intended service or namespace-controller consumers before building."""
     path = directory / "checkout.json"
     identity = json.loads(path.read_text())
     services = identity.setdefault("services", [])
-    for ref in deployment.service_refs():
+    for ref in resources:
         service = {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
         if service not in services:
             services.append(service)
@@ -181,9 +181,6 @@ def release_source_deployment(
     kubectl: Kubectl, deployment: ForetokenDeployment, timeout: str,
 ) -> None:
     """Release a deleted deployment's source associations and clean unused builds under the source lock."""
-    if not has_server_binding(kubectl):
-        return
-    cluster = cluster_state_directory(kubectl)
     services = [
         {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
         for ref in deployment.service_refs()
@@ -191,6 +188,21 @@ def release_source_deployment(
     namespaces = {
         obj["metadata"]["name"] for obj in deployment.objects if obj.get("kind") == "Namespace"
     }
+    _release_source_bindings(kubectl, services, namespaces, timeout)
+
+
+def release_source_namespace(kubectl: Kubectl, namespace: str, timeout: str) -> None:
+    """Retire an administrator-removed namespace's source associations under the source lock."""
+    _release_source_bindings(kubectl, [], {namespace}, timeout)
+
+
+def _release_source_bindings(
+    kubectl: Kubectl, services: list[dict[str, str]], namespaces: set[str], timeout: str,
+) -> None:
+    """Release matching consumers and let the existing source owner archive and reclaim unused builds."""
+    if not has_server_binding(kubectl):
+        return
+    cluster = cluster_state_directory(kubectl)
     for path in (cluster / "checkouts").glob("*/checkout.json"):
         identity = json.loads(path.read_text())
         retained = [

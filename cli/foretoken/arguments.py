@@ -38,6 +38,18 @@ class UninstallCommand:
 
 
 @dataclass(frozen=True)
+class NamespaceCommand:
+    """Prepare or retire administrator-owned serving resources in one namespace."""
+
+    action: str
+    namespace: str
+    timeout: str
+    values: tuple[str, ...] = ()
+    shared_cache: str | None = None
+    editable: str | None = None
+
+
+@dataclass(frozen=True)
 class ClusterCommand:
     """Create or remove a locally managed development cluster."""
 
@@ -162,6 +174,7 @@ def validate_profile_arguments(
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
+    | NamespaceCommand
     | ClusterCommand
     | DeployCommand
     | DeleteCommand
@@ -184,6 +197,13 @@ def _add_wait_timeout_argument(
         default="10m",
         help=f"maximum {target} wait (default: %(default)s)",
     )
+
+
+def _namespace_name(value: str) -> str:
+    """Reject empty selections before Kubernetes tools can substitute the current context's namespace."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("namespace cannot be empty")
+    return value
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -240,14 +260,23 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Prepare Foretoken CRDs, discover the cluster LoadBalancer, configure shared "
             "metrics and persistent logs, and create Gateway resources when Gateway mode "
-            "is selected. Deploy namespace controllers and model services with 'foretoken deploy'."
+            "is selected. With --namespace, prepare only that namespace's controller and member access."
+            " Deploy model services with 'foretoken deploy'."
         ),
+    )
+    install.add_argument(
+        "-n", "--namespace", metavar="NAME", type=_namespace_name,
+        help="prepare an administrator-managed namespace using the installed platform",
+    )
+    install.add_argument(
+        "--shared-cache", metavar="NAMESPACE/PVC",
+        help="reuse an existing writable NFS model cache (requires --namespace)",
     )
     install.add_argument(
         "-e",
         "--editable",
         metavar="PATH",
-        help="build the shared Foretoken platform and runtime defaults from this checkout",
+        help="build platform defaults or the selected namespace's applications from this checkout",
     )
     install.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
@@ -316,6 +345,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "uninstall",
         help="Remove the Foretoken platform release",
     )
+    uninstall.add_argument(
+        "-n", "--namespace", metavar="NAME", type=_namespace_name,
+        help="remove an unused namespace controller while retaining its namespace and shared model data",
+    )
     _add_wait_timeout_argument(uninstall, "platform removal")
 
     deploy = subparsers.add_parser(
@@ -369,6 +402,7 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument(
         "-n",
         "--namespace",
+        type=_namespace_name,
         metavar="NAMESPACE",
         help="inspect all Foretoken services in this namespace",
     )
@@ -406,7 +440,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     view.add_argument(
-        "-n", "--namespace",
+        "-n", "--namespace", type=_namespace_name,
         help="limit capture directories to one namespace (default: all namespaces)",
     )
     _add_wait_timeout_argument(view, "capture storage readiness")
@@ -451,6 +485,20 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             getattr(parsed_args, "config", None),
         )
     if parsed_args.command == "install":
+        if parsed_args.namespace is not None:
+            if any((
+                parsed_args.engine_source, parsed_args.registry,
+                parsed_args.oci_registry, parsed_args.prometheus, parsed_args.grafana_auth,
+                parsed_args.frontend_mode, parsed_args.gateway_name,
+                parsed_args.gateway_namespace, parsed_args.gateway_section_name,
+            )):
+                parser.error("namespace installation accepts --editable, --values, --shared-cache and --timeout; other install options configure the shared platform")
+            return NamespaceCommand(
+                "install", parsed_args.namespace, parsed_args.timeout,
+                tuple(parsed_args.values or ()), parsed_args.shared_cache, parsed_args.editable,
+            )
+        if parsed_args.shared_cache is not None:
+            parser.error("--shared-cache requires --namespace")
         reused_gateway_arguments = any(
             (
                 parsed_args.gateway_name,
@@ -488,6 +536,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             tuple(parsed_args.engine_source or ()),
         )
     if parsed_args.command == "uninstall":
+        if parsed_args.namespace is not None:
+            return NamespaceCommand("uninstall", parsed_args.namespace, parsed_args.timeout)
         return UninstallCommand(parsed_args.timeout)
     if parsed_args.command == "deploy":
         validate_profile_arguments(parser, parsed_args)

@@ -38,7 +38,7 @@ Source builds automatically reuse persistent node-local compiler caches. To stor
 From the Foretoken repository root, deploy the Quick Start using the code in this directory:
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
 This creates a frontend and a `Qwen/Qwen3-0.6B` model service in the `foretoken-demo` namespace, using one GPU. Once deployment completes, send a request:
@@ -50,7 +50,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-After changing controller, frontend or model-server code, rerun `foretoken deploy`; it builds the changes and updates the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
+After changing controller, frontend or model-server code, rerun the deployment command above to build the changes and update the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
@@ -90,12 +90,12 @@ patches:
           retentionPolicy: Delete
 EOF
 
-foretoken deploy examples/candidate --timeout 20m
+foretoken deploy examples/candidate -e . --timeout 20m
 foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
+The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To avoid downloading the same model for each candidate, [prepare shared model storage](model-storage.md#share-model-files-across-namespaces).
 
 Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
@@ -107,9 +107,7 @@ Delete the candidate when finished:
 foretoken delete examples/candidate
 ```
 
-Deletion waits for the candidate's services to finish cleanup, then removes its namespace controller and namespace. It also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
-
-Uninstall the platform only after all candidates have finished.
+Cleanup follows the namespace and storage ownership described in the [CLI guide](../cli/README.md#clean-up). Source directories and experiment results are retained.
 
 ## Edit an inference engine
 
@@ -119,7 +117,7 @@ To use vLLM code from a local directory, pass that directory on deployment. It m
 foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
-Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for each Foretoken source directory.
+Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
@@ -139,7 +137,7 @@ To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, run `foretoken deploy` again.
+Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, redeploy with `-e .`.
 
 To override the base for one installation instead, set `runtime.vllm.image` in `deploy/platform-values.yaml`:
 

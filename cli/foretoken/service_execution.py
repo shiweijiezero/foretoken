@@ -26,6 +26,7 @@ def stop_deployment(command: StopCommand) -> None:
     kubectl = Kubectl()
     deployment = load_deployment(command.kustomize_path, kubectl)
     submission = DeploymentSubmission(kubectl, deployment, command.timeout)
+    deployment = submission.deployment
     objects = []
     for value in deployment.objects:
         if value.get("kind") not in {"ModelService", "FrontendService"} or not value.get("apiVersion", "").startswith("inference.foretoken.io/"):
