@@ -65,6 +65,7 @@ foretoken delete examples/quickstart/qwen3-0.6b
 ### Run candidates in parallel
 
 Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. Candidates share the CLI installation and cluster platform, while each namespace has its own controller and serving code.
+
 From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
 
 ```bash

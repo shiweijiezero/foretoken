@@ -15,8 +15,6 @@ Source updates reuse compatible runtime environments and rebuild them automatica
 
 ## Builds and publication
 
-Source comparison uses file contents and executable state; ordinary read/write permissions and timestamps do not trigger rebuilds. Set any required installed-file permissions in the image recipe.
-
 Go controller executables, Rust serving executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs, replacing each updated group in full, including deletions. Reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Publish the complete application before updating services; running services must not depend on writable compiler caches.
 
 Compiler caches persist across builder replacement. An explicitly selected build StorageClass holds completed artifacts, while execution state stays on automatically managed local storage. Publication reads only completed exports; source archives are read from the corresponding local workspace. Both build volumes follow the same binding's cleanup. Application and model storage retain their own configuration and lifecycle.
