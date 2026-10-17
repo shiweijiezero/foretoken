@@ -60,4 +60,4 @@ See [model distribution comparison](../../../benchmarks/docs/eval/distribution-c
 
 Each example's `cache.yaml` uses the repository-root `data/` directory. For a remote cluster, replace `directory: ../../../../data` in the example you deploy with an absolute path visible to the target nodes; see [model storage](../../../docs/model-storage.md).
 
-Resolve the selected frontend with `foretoken endpoint` and use the model identifier from its section in an OpenAI-compatible request. The request format and Gateway hostname setup are shown in the [Single-Model Quick Start](../../quickstart/README.md). Downloaded model files remain in the directory cache after cleanup.
+Resolve the selected frontend with `foretoken endpoint` and use the model identifier from its section in an OpenAI-compatible request. The request format and Gateway hostname setup are shown in the [Single-Model Quick Start](../../quickstart/simple/README.md). Downloaded model files remain in the directory cache after cleanup.

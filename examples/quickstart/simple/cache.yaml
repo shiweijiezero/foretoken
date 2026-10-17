@@ -6,5 +6,5 @@ kind: RuntimeCache
 metadata:
   name: models
 spec:
-  directory: ../../data
+  directory: ../../../data
   accessMode: ReadWriteMany

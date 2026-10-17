@@ -172,7 +172,7 @@ jobs:
               path: /var/lib/foretoken-runtime-cache
               type: DirectoryOrCreate
           EOF
-          kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart
+          kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart/simple
           kubectl wait --for=condition=PoolsMaterialized \
             modelservice/quickstart-qwen3-0.6b \
             --namespace foretoken-demo \

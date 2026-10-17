@@ -160,7 +160,7 @@ loadBalancer:
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
-资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart`。
+资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart/simple`。
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m

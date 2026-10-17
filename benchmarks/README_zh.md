@@ -26,7 +26,7 @@ pip install foretoken
 ## 测量性能
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --prompt "用一句话解释什么是 token。" \
   --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
   --output local,wandb
@@ -41,7 +41,7 @@ foretoken perf examples/quickstart \
 ## 评测模型质量
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/simple \
   --evaluator lm-eval --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
@@ -84,7 +84,7 @@ foretoken eval examples/quickstart \
 使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 \
+foretoken perf examples/quickstart/simple --num-prompts 20 \
   --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
   --iteration baseline
 ```

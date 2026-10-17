@@ -26,7 +26,7 @@ Existing services are reused unchanged; run `foretoken deploy` first to measure 
 ## Measure performance
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --prompt "Explain what a token is in one sentence." \
   --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
   --output local,wandb
@@ -41,7 +41,7 @@ Performance time values may include a unit such as `s`, `min`, or `h`; unitless 
 ## Evaluate model quality
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/simple \
   --evaluator lm-eval --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
@@ -84,7 +84,7 @@ Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark p
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 \
+foretoken perf examples/quickstart/simple --num-prompts 20 \
   --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
   --iteration baseline
 ```

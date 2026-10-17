@@ -6,12 +6,12 @@
 
 ## 准备
 
-完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart`。
+完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart/simple`。
 
 评测已有端点时，将目录换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。默认模式下已部署的快速开始示例可这样获取地址和模型名：
 
 ```bash
-MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/simple)"
 export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```

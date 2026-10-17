@@ -5,29 +5,29 @@
 
 [English](model-storage.md)
 
-两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。默认示例的 `cache.yaml` 使用：
+两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。各自的 `cache.yaml` 使用：
 
 ```yaml
 spec:
-  directory: ../../data
+  directory: ../../../data
   accessMode: ReadWriteMany
 ```
 
 然后直接部署：
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 Foretoken 会为该配置创建目录型存储。删除服务时目录会保留，后续部署可以继续复用其中的文件。选择 ModelScope 或 Hugging Face 兼容地址见[模型来源](model-sources_zh.md)。
 
 ## 选择目录位置
 
-本机 k3d 的相对路径以 Kustomize 根目录为基准。默认示例用 `../../data`，多模型示例用 `../../../data` 指向项目根目录的 `data/`，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
+本机 k3d 的相对路径以 Kustomize 根目录为基准。两个示例都用 `../../../data` 指向项目根目录的 `data/`，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
 
 已有部署可以继续使用原路径。已绑定缓存更换目录时需要使用新的 RuntimeCache 名称；已有文件按需另行移动或复制。
 
-远程集群会自动将 `../../data` 这样的相对目录转换为动态 PVC，因此 Quick Start 的 YAML 无需修改。多节点集群使用 `ReadWriteMany` 共享模型文件和运行时数据；单节点集群会自动使用 `ReadWriteOnce`。需要选择特定 StorageClass、容量、访问模式或最大容量时，在 `cache.yaml` 中设置对应字段；绝对 `directory` 仍表示目标节点或所有目标节点共享文件系统上已经存在的路径。
+远程集群会自动将 `../../../data` 这样的相对目录转换为动态 PVC，因此 Quick Start 的 YAML 无需修改。多节点集群使用 `ReadWriteMany` 共享模型文件和运行时数据；单节点集群会自动使用 `ReadWriteOnce`。需要选择特定 StorageClass、容量、访问模式或最大容量时，在 `cache.yaml` 中设置对应字段；绝对 `directory` 仍表示目标节点或所有目标节点共享文件系统上已经存在的路径。
 
 ## 使用已有模型
 

@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，指定项目、分组和运行名称：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --num-prompts 20 --output local,wandb \
   --wandb-project foretoken-bench \
   --wandb-group qwen-comparison \

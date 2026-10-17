@@ -160,7 +160,7 @@ loadBalancer:
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
+See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/simple` for a single model.
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m

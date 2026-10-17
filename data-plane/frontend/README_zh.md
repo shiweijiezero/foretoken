@@ -14,7 +14,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 按仓库[快速开始](../../README_zh.md#快速开始)完成部署，再从仓库根目录发送请求：
 
 ```bash
-DEPLOYMENT=examples/quickstart
+DEPLOYMENT=examples/quickstart/simple
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 
@@ -59,7 +59,7 @@ spec:
 
 ## 视频生成
 
-通过 `POST /v1/videos/sync` 提交提示词和参考图片或视频，生成完成后直接返回视频内容。[MiniMax H3 配方](../../examples/quickstart/recipes/minimax-h3/a100-bf16-tp2/README_zh.md#根据图片生成视频)提供完整的部署和请求命令，将结果保存到 `./data/video.mp4`。
+通过 `POST /v1/videos/sync` 提交提示词和参考图片或视频，生成完成后直接返回视频内容。[MiniMax H3 配方](../../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md#根据图片生成视频)提供完整的部署和请求命令，将结果保存到 `./data/video.mp4`。
 
 ### 后台生成
 
@@ -75,7 +75,7 @@ spec:
 `video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，然后应用配置：
 
 ```bash
-DEPLOYMENT=examples/quickstart/recipes/minimax-h3/a100-bf16-tp2
+DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
 foretoken deploy "$DEPLOYMENT" --timeout 1h
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
@@ -165,7 +165,7 @@ spec:
 
 ## 修改服务配置
 
-修改部署 YAML 后，再执行 `foretoken deploy` 即可。例如，在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中调整日志级别和请求时限：
+修改部署 YAML 后，再执行 `foretoken deploy` 即可。例如，在 `examples/quickstart/simple/frontend.yaml` 已有的 `spec` 中调整日志级别和请求时限：
 
 ```yaml
 spec:
@@ -178,7 +178,7 @@ spec:
 重新部署快速开始示例：
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 命令等待配置生效后退出。[路由策略](src/router/README_zh.md)、准入规则、日志级别和请求时限支持在线更新；配置无效时保留原设置。

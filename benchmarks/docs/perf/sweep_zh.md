@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，使用现有[参数文件](../../examples/sweep.jsonl)比较不同并发：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --dataset random --min-prompt-length 128 --max-prompt-length 256 \
   --temperature 0 --sweep benchmarks/examples/sweep.jsonl \
   --warmup-requests 16 --num-runs 3 \
@@ -32,7 +32,7 @@ foretoken perf examples/quickstart \
 测量固定长度负载：
 
 ```bash
-foretoken perf examples/quickstart --dataset random \
+foretoken perf examples/quickstart/simple --dataset random \
   --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 1 --num-prompts 32 \
   --warmup-requests 4 --temperature 0 --output local,wandb,plot
 ```
@@ -65,7 +65,7 @@ JSONL 中的 `"slo_params": [{"ttft": "<=250ms", "tpot": "<=100ms"}, {"ttft": "<
 使用[长上下文配置](../../scripts/common/long-context.jsonl)，将并发设为 1、目标输出固定为 512 token：
 
 ```bash
-foretoken perf examples/quickstart --dataset random \
+foretoken perf examples/quickstart/simple --dataset random \
   --sweep benchmarks/scripts/common/long-context.jsonl \
   --min-output-length 512 --max-output-length 512 --max-concurrency 1 \
   --num-prompts 4 --warmup-requests 1 --num-runs 1 \
@@ -79,7 +79,7 @@ foretoken perf examples/quickstart --dataset random \
 比较 StudyChat 负载在不同并发下的性能：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/studychat-conversation.jsonl \
   --max-tokens 128 --temperature 0 --num-runs 3 \
@@ -89,14 +89,14 @@ foretoken perf examples/quickstart \
 使用同一个[速率配置](../../scripts/common/conversation-rate.jsonl)，分别指定 ShareGPT 和 StudyChat 数据集，比较对话启动速率：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \
   --num-prompts 100 --warmup-requests 0 --num-runs 1 \
   --experiment-name sharegpt-rate --output local,wandb,plot
 
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \
@@ -111,7 +111,7 @@ foretoken perf examples/quickstart \
 传入多个 Kustomize 示例，在各服务上测量同一负载：
 
 ```bash
-foretoken perf examples/quickstart examples/quickstart3 \
+foretoken perf examples/quickstart/simple examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 

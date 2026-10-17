@@ -75,7 +75,7 @@ The Quick Start uses the repository's `data/` directory on local k3d. On a remot
 Deploy and update code:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
@@ -83,7 +83,7 @@ After editing controller, frontend or model-server code, run the same command ag
 ## 4. Remove Foretoken
 
 ```bash
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/simple
 foretoken uninstall
 ```
 

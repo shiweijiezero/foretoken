@@ -74,7 +74,7 @@ The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and
 ### 3. Deploy the Quick Start
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
@@ -84,7 +84,7 @@ To try different code changes side by side, see [parallel candidates](docs/custo
 ### 4. Send a test request
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -99,7 +99,7 @@ The examples save results locally and to W&B. Run `wandb login` once before usin
 #### Performance: latency and throughput
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
+foretoken perf examples/quickstart/simple --num-prompts 20 --output local,wandb
 ```
 
 Read request success, latency, and throughput in the summary. [Performance examples](benchmarks/docs/perf/README.md) cover other workloads and load settings.
@@ -107,7 +107,7 @@ Read request success, latency, and throughput in the summary. [Performance examp
 #### Quality: score model answers
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/simple \
   --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
 ```
 
@@ -118,7 +118,7 @@ This scores 100 GSM8K math problems. See [Quality evaluation](benchmarks/docs/ev
 The Quick Start already configures persistent capture storage. See the [profiling guide](benchmarks/docs/profile/README.md) for tool setup and other capture options.
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/simple \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 foretoken profile view
@@ -130,7 +130,7 @@ Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; t
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Add the public hostname under `spec` in `examples/quickstart/simple/frontend.yaml`:
 
 ```yaml
 spec:
@@ -146,11 +146,11 @@ foretoken install -e . --frontend-mode gateway
 # foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 
 # Resolve the Gateway address and request hostname
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
 
 # Send a test request
 curl --fail-with-body --no-buffer \
@@ -166,7 +166,7 @@ The command installs Envoy Gateway when needed. See the [command-line tool guide
 
 ```bash
 # Delete the Quick Start resources, including its namespace and runtime cache PVC
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/simple
 
 # Uninstall the Foretoken platform
 foretoken uninstall

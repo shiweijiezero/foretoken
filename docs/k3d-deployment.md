@@ -114,14 +114,14 @@ foretoken install
 Deploy the Quick Start and resolve the address assigned by k3s ServiceLB:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+foretoken deploy examples/quickstart/simple --timeout 20m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
 ```
 
 ### 4.3 Gateway mode
 
-First, set the public hostname in `examples/quickstart/frontend.yaml`:
+First, set the public hostname in `examples/quickstart/simple/frontend.yaml`:
 
 ```yaml
 spec:
@@ -133,14 +133,14 @@ Enable Gateway mode and deploy the Quick Start:
 ```bash
 foretoken install -e . --frontend-mode gateway
 # For a release installation: foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 Resolve the configured Gateway endpoint:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
 ```
 
 ### 4.4 Send an OpenAI API-compatible request

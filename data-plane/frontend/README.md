@@ -14,7 +14,7 @@ The frontend provides text and video generation APIs for deployed models.
 Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root:
 
 ```bash
-DEPLOYMENT=examples/quickstart
+DEPLOYMENT=examples/quickstart/simple
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 
@@ -59,7 +59,7 @@ Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separ
 
 ## Generate video
 
-`POST /v1/videos/sync` accepts a prompt and reference media as multipart form data and returns the generated video. The [MiniMax H3 recipe](../../examples/quickstart/recipes/minimax-h3/a100-bf16-tp2/README.md#generate-from-an-image) provides deployment and request commands that save the result to `./data/video.mp4`.
+`POST /v1/videos/sync` accepts a prompt and reference media as multipart form data and returns the generated video. The [MiniMax H3 recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#generate-from-an-image) provides deployment and request commands that save the result to `./data/video.mp4`.
 
 ### Background generation
 
@@ -75,7 +75,7 @@ spec:
 `video-results` must be an existing dedicated persistent volume claim (PVC) in the same namespace. Use ReadWriteMany storage across nodes. Place the reference image at `inputs/reference.png` in this volume, then apply the configuration:
 
 ```bash
-DEPLOYMENT=examples/quickstart/recipes/minimax-h3/a100-bf16-tp2
+DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
 foretoken deploy "$DEPLOYMENT" --timeout 1h
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
@@ -165,7 +165,7 @@ A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPoo
 
 ## Update serving settings
 
-Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/frontend.yaml`:
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/simple/frontend.yaml`:
 
 ```yaml
 spec:
@@ -178,7 +178,7 @@ spec:
 Apply the Quick Start configuration:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/simple --timeout 20m
 ```
 
 The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.
