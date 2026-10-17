@@ -15,7 +15,7 @@ Source updates reuse compatible runtime environments and rebuild them automatica
 
 ## Builds and publication
 
-Source comparison uses file bytes and Git-style executable state. Private input snapshots normalize file permissions without changing the checkout; ordinary read/write permissions and timestamps do not invalidate builds. Image recipes set any required installed-file permissions explicitly. A fixed Mooncake dependency, including its nested submodules, can reuse prepared snapshot files when its selected revision and preparation recipe match. Initialized dependencies retain their actual local changes, and explicitly selected engine checkouts are always read from their own directories.
+Source comparison uses file contents and executable state; ordinary read/write permissions and timestamps do not trigger rebuilds. Set any required installed-file permissions in the image recipe.
 
 Go controller executables, Rust serving executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs, replacing each updated group in full, including deletions. Reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Publish the complete application before updating services; running services must not depend on writable compiler caches.
 
