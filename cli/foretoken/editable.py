@@ -25,12 +25,13 @@ from foretoken.application_files import (
     ApplicationFiles,
 )
 from foretoken.arguments import InstallCommand
+from foretoken.build_storage import ensure_build_volumes, local_build_nodes
 from foretoken.cluster_build import (
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
 )
-from foretoken.engine_environment import engine_build_arguments
+from foretoken.engine_environment import export_engine_source
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import (
     DeploymentError,
@@ -39,31 +40,29 @@ from foretoken.manifest import (
     parse_deployment,
     service_requires_execution,
 )
+from foretoken.node_images import image_tools_image
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
-from foretoken.source import (
-    _INSTALL_SOURCE,
-    _has_server_binding,
-    _local_candidates,
-    _runtime_settings,
-    _state_directory,
-    _write_json,
-    checkout_operation,
-    checkout_state_directory,
-    ensure_build_volumes,
-    image_tools_image,
-    local_build_nodes,
-    prepare_source_images,
-    reconcile_source_resources,
-    record_source_deployment,
-    source_checkout,
-)
+from foretoken.source import prepare_source_images
 from foretoken.source_inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
     pinned_rust_revision,
     snapshot_versions,
+    source_checkout,
+)
+from foretoken.source_state import (
+    SOURCE_INSTALL_ANNOTATION,
+    checkout_operation,
+    checkout_state_directory,
+    cluster_state_directory,
+    has_server_binding,
+    local_candidates,
+    reconcile_source_resources,
+    record_source_deployment,
+    runtime_settings,
+    write_source_state,
 )
 
 _APPLICATION_PARTS = {
@@ -99,16 +98,16 @@ class EditableDeployment:
         engine_sources: tuple[str, ...] = (),
     ) -> EditableDeployment | None:
         """Enable source updates only for a platform installed explicitly from source."""
-        if not _has_server_binding(kubectl):
+        if not has_server_binding(kubectl):
             if editable is not None or engine_sources:
                 raise DeploymentError("source deployment requires `foretoken install -e PATH` first")
             return None
         platform = Helm(default_platform_config()).platform_configuration(kubectl)
-        if platform["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) != "source":
+        if platform["metadata"].get("annotations", {}).get(SOURCE_INSTALL_ANNOTATION) != "source":
             if editable is not None or engine_sources:
                 raise DeploymentError("source deployment requires a source-installed platform")
             return None
-        directory = _state_directory(kubectl)
+        directory = cluster_state_directory(kubectl)
         path = directory / "install.json"
         if not path.is_file():
             raise DeploymentError(
@@ -117,7 +116,7 @@ class EditableDeployment:
         state = json.loads(path.read_text())
         if (
             state.get("platform_uid") != platform["metadata"]["uid"]
-            or state["runtime"] != _runtime_settings(platform)
+            or state["runtime"] != runtime_settings(platform)
         ):
             raise DeploymentError(
                 "source installation changed; run `foretoken install -e .` from the intended checkout's root"
@@ -194,7 +193,7 @@ class EditableDeployment:
             self.state["command"]["engine_sources"] = [
                 f"{name}={path}" for name, path in engines.items()
             ]
-            _write_json(path, self.state)
+            write_source_state(path, self.state)
             print(f"Source checkout: {self.root}", flush=True)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
@@ -203,7 +202,7 @@ class EditableDeployment:
 
     def prepare(self, timeout: str) -> None:
         """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
-        with _local_candidates(self.directory):
+        with local_candidates(self.directory):
             self._prepare(timeout)
 
     def _prepare(self, timeout: str) -> None:
@@ -318,7 +317,7 @@ class EditableDeployment:
                     bundle["parts"] = sorted(parts)
             bundles[component] = bundle
         self.state.update(inputs=snapshot.name, bundles=bundles)
-        _write_json(self.directory / "install.json", self.state)
+        write_source_state(self.directory / "install.json", self.state)
 
     def _rebuild(self, timeout: str) -> None:
         """Build candidate environments and applications without changing the shared platform."""
@@ -359,7 +358,7 @@ class EditableDeployment:
                 platform_uid=self.platform["platform_uid"],
                 platform_inputs=self.platform["inputs"],
             )
-            _write_json(self.directory / "install.json", self.state)
+            write_source_state(self.directory / "install.json", self.state)
             (self.directory / "build.json").unlink(missing_ok=True)
         self.environment_changed = False
 
@@ -472,7 +471,7 @@ class EditableDeployment:
             if bundle := self.state["bundles"].get(component):
                 self.state["bundles"][component] = {"revision": bundle["revision"]}
         if not missing:
-            _write_json(self.directory / "install.json", self.state)
+            write_source_state(self.directory / "install.json", self.state)
             return
 
         origin.prepare(timeout)
@@ -504,7 +503,7 @@ class EditableDeployment:
             """Keep each volume UID recoverable if paired allocation or publication fails."""
             if identity not in build.setdefault("caches", []):
                 build["caches"].append(identity)
-                _write_json(self.directory / "install.json", self.state)
+                write_source_state(self.directory / "install.json", self.state)
 
         _, execution = ensure_build_volumes(
             self.kubectl,
@@ -534,7 +533,7 @@ class EditableDeployment:
             build["engine_caches"][origin.node] = (
                 build["binding"] + "-" + uuid.uuid4().hex
             )
-            _write_json(self.directory / "install.json", self.state)
+            write_source_state(self.directory / "install.json", self.state)
         inputs = {
             str(path.relative_to(snapshot)): path
             for path in snapshot.rglob("*")
@@ -598,29 +597,11 @@ class EditableDeployment:
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
                 builder.export_application(component, payload, arguments, list(parts))
                 if component == "model-server" and build_engine:
-                    builder.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        target="source-export",
-                        destination=staging + "/engine",
-                        arguments={
-                            **engine_build_arguments(build["arguments"]),
-                            "RUNTIME_IMAGE": self.state["runtime"]["model_image"],
-                            "CACHE_ID": build["engine_caches"][
-                                "" if build["registry"] else origin.node
-                            ],
-                            "BUILD_NATIVE": str(build["engine_native"]).lower(),
-                        },
-                    )
-                    builder.run(
-                        [
-                            "sh",
-                            "-ec",
-                            'cp -R "$1/." "$2/"',
-                            "assemble",
-                            staging + "/engine",
-                            payload,
-                        ],
-                        container=builder.artifact_container,
+                    export_engine_source(
+                        builder, payload, build["arguments"],
+                        runtime_image=self.state["runtime"]["model_image"],
+                        cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
+                        build_native=build["engine_native"],
                     )
 
             # Each component owns its export directory. Join builds before validating
@@ -679,7 +660,7 @@ class EditableDeployment:
                     else "published"
                 )
                 print(f"Application {publication}: {component}", flush=True)
-            _write_json(self.directory / "install.json", self.state)
+            write_source_state(self.directory / "install.json", self.state)
             print(
                 f"Application publication completed in {time.monotonic() - published_at:.1f}s",
                 flush=True,

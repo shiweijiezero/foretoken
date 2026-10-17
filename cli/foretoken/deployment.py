@@ -33,7 +33,7 @@ from foretoken.namespace_mutation import NamespaceMutation
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.progress import StartupProgress
-from foretoken.source import release_source_deployment, source_operation
+from foretoken.source_state import release_source_deployment, source_operation
 from foretoken.storage import DirectoryVolumes
 from foretoken.submission import _SERVICE_OPERATION_ANNOTATION, DeploymentSubmission
 

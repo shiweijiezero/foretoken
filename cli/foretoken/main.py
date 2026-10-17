@@ -44,7 +44,7 @@ from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
 from foretoken.service_execution import stop_deployment
-from foretoken.source import source_operation
+from foretoken.source_state import source_operation
 
 
 def _deployment_resources(

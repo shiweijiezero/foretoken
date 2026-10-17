@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Resolve inference-engine build inputs for source deployment and repository image tools."""
+"""Resolve inference-engine build inputs and assemble source application exports."""
 
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ import json
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from foretoken.cluster_build import ClusterBuilder
 
 
 def resolve_vllm_base_image(
@@ -58,6 +61,28 @@ def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
         )
         if name in arguments
     }
+
+
+def export_engine_source(
+    builder: ClusterBuilder, payload: str, arguments: dict[str, str], *,
+    runtime_image: str, cache_id: str, build_native: bool,
+) -> None:
+    """Build and merge engine sources into a completed model-server export before publication."""
+    output = payload + "-engine"
+    builder.build(
+        "deploy/inference-engines/source-build.Dockerfile",
+        target="source-export", destination=output,
+        arguments={
+            **engine_build_arguments(arguments),
+            "RUNTIME_IMAGE": runtime_image,
+            "CACHE_ID": cache_id,
+            "BUILD_NATIVE": str(build_native).lower(),
+        },
+    )
+    builder.run(
+        ["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", output, payload],
+        container=builder.artifact_container,
+    )
 
 
 def _main() -> None:

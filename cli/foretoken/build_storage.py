@@ -7,14 +7,22 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import PurePosixPath
+from collections.abc import Callable, Sequence
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
 from foretoken.kubernetes import Kubectl, resource_ref, timeout_seconds
 from foretoken.manifest import DeploymentError
+from foretoken.node_images import (
+    SOURCE_BUILD_BINDING_LABEL,
+    SOURCE_BUILD_POD_LABEL,
+    image_tools_image,
+    node_containerd_socket,
+)
 
+SOURCE_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 SOURCE_BUILD_UID = 65531
 SOURCE_BUILD_STORAGE_CLASS = "foretoken-source-build"
 SOURCE_BUILD_PROVISIONER = "inference.foretoken.io/source-build"
@@ -484,3 +492,264 @@ def remove_build_storage(
             ]
         )
     return "Removed", SOURCE_BUILD_STORAGE_CLASS
+
+
+def build_configuration(
+    root: Path, values: Sequence[dict[str, Any]], image_registry: str
+) -> dict[str, str]:
+    """Resolve compiler storage and image choices from the chart's authoritative defaults."""
+    defaults = yaml.safe_load(
+        (root / "deploy/charts/foretoken/values.yaml").read_text()
+    )
+    configuration = dict(defaults["development"]["build"])
+    explicit_image = False
+    for value in values:
+        overrides = (value.get("development") or {}).get("build") or {}
+        explicit_image = explicit_image or "image" in overrides
+        configuration.update(overrides)
+    if image_registry and not explicit_image:
+        configuration["image"] = (
+            image_registry.rstrip("/") + "/" + configuration["image"].split("/", 1)[1]
+        )
+    return configuration
+
+
+def prepare_build_storage(
+    kubectl: Kubectl,
+    namespace: str,
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]],
+    pull_secrets: tuple[str, ...],
+    timeout: str,
+) -> None:
+    """Prepare node-local execution storage for installation, preserving artifact storage intent."""
+    automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
+    image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
+    ensure_build_storage(
+        kubectl, namespace, image_tools_image(arguments, registry_mirrors),
+        image, pull_secrets, timeout,
+    )
+
+
+def _ensure_build_cache(
+    kubectl: Kubectl,
+    namespace: str,
+    name: str,
+    configuration: dict[str, str],
+    *,
+    binding: str,
+    timeout: str,
+    recorded_caches: Sequence[dict[str, Any]] = (),
+    owner: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Prepare this binding's compiler volume and return its proven identity for retirement.
+
+    Superseded managed storage is reclaimed before rebuilding; legacy ownership
+    requires a binding-owned builder or its previously recorded claim UID.
+    """
+    if not kubectl.exists("namespace", namespace):
+        kubectl.run(["create", "namespace", namespace])
+    storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
+    existing = kubectl.get_if_exists("pvc", name, namespace)
+    owners = [owner] if owner is not None else []
+    if existing is not None:
+        if existing["metadata"].get("labels", {}).get(SOURCE_BUILD_CACHE_LABEL) != "true":
+            raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
+        claim_binding = existing["metadata"].get("labels", {}).get(SOURCE_BUILD_BINDING_LABEL)
+        if claim_binding not in {None, binding}:
+            raise DeploymentError(f"{namespace}/{name} belongs to another source binding")
+        actual_class = existing["spec"].get("storageClassName", "")
+        if configuration["storageClassName"] and actual_class != configuration["storageClassName"]:
+            raise DeploymentError(
+                f"compiler cache {namespace}/{name} uses StorageClass {actual_class!r}; "
+                "an existing compiler volume cannot change its storage class"
+            )
+        storage_class = actual_class
+        recorded_legacy = any(
+            identity.get("legacy") is True and identity.get("binding") == binding
+            and all(identity.get(key) == existing["metadata"][key] for key in ("namespace", "name", "uid"))
+            for identity in recorded_caches
+        )
+        volume = superseded_build_volume(kubectl, existing)
+        if volume is not None:
+            consumers = [
+                pod for pod in kubectl.list_resources(("pods",), namespace)
+                if any(item.get("persistentVolumeClaim", {}).get("claimName") == name for item in pod["spec"].get("volumes", []))
+            ]
+            for pod in consumers:
+                labels = pod["metadata"].get("labels", {})
+                if labels.get(SOURCE_BUILD_POD_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
+                    raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
+            if claim_binding is None and not consumers and not recorded_legacy:
+                raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
+            print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
+            owners = existing["metadata"].get("ownerReferences", owners)
+            for resource, obj in [*(("pods", pod) for pod in consumers), ("persistentvolumeclaims", existing)]:
+                metadata = obj["metadata"]
+                kubectl.run(
+                    ["delete", "--raw", f"/api/v1/namespaces/{namespace}/{resource}/{metadata['name']}", "-f", "-"],
+                    input_text=json.dumps({"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": metadata["uid"]}}),
+                )
+                kubectl.wait_deleted(resource, metadata, timeout)
+            kubectl.wait_deleted("persistentvolume", {**volume["metadata"], "namespace": ""}, timeout)
+            existing = None
+    if (
+        storage_class == SOURCE_BUILD_STORAGE_CLASS
+        and (existing is None or existing.get("status", {}).get("phase") != "Bound")
+        and not kubectl.exists("storageclass", storage_class)
+    ):
+        raise DeploymentError(
+            "source build storage is not installed; update the source platform "
+            "with `foretoken install -e PATH` before deploying"
+        )
+    if existing is not None:
+        spec = {"resources": {"requests": {"storage": configuration["storageSize"]}}}
+        if any(existing["spec"].get(key) != value for key, value in spec.items()):
+            kubectl.run(
+                [
+                    "patch",
+                    "pvc",
+                    name,
+                    "-n",
+                    namespace,
+                    "--type=merge",
+                    "-p",
+                    json.dumps({"spec": spec}),
+                ]
+            )
+        if claim_binding is None and not recorded_legacy:
+            builders = kubectl.list_resources(
+                ("pods",), namespace,
+                label_selector=f"{SOURCE_BUILD_POD_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
+            )
+            if not any(
+                volume["name"] == "cache"
+                and volume.get("persistentVolumeClaim", {}).get("claimName") == name
+                for pod in builders
+                for volume in pod["spec"].get("volumes", [])
+            ):
+                return None
+        return {
+            "namespace": namespace, "name": name, "uid": existing["metadata"]["uid"],
+            "binding": binding,
+            **({"legacy": True} if claim_binding is None else {}),
+        }
+    spec: dict[str, Any] = {
+        "accessModes": ["ReadWriteOnce"],
+        "resources": {"requests": {"storage": configuration["storageSize"]}},
+        "storageClassName": storage_class,
+    }
+    created = kubectl.run(
+        ["create", "-f", "-", "-o", "json"],
+        input_text=yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "metadata": {
+                    "name": name,
+                    "namespace": namespace,
+                    "labels": {
+                        SOURCE_BUILD_CACHE_LABEL: "true",
+                        SOURCE_BUILD_BINDING_LABEL: binding,
+                    },
+                    **({"ownerReferences": owners} if owners else {}),
+                },
+                "spec": spec,
+            }
+        ),
+    )
+    metadata = json.loads(created.stdout)["metadata"]
+    return {"namespace": namespace, "name": name, "uid": metadata["uid"], "binding": binding}
+
+
+def ensure_build_volumes(
+    kubectl: Kubectl,
+    namespace: str,
+    name: str,
+    configuration: dict[str, str],
+    *,
+    binding: str,
+    timeout: str,
+    record_identity: Callable[[dict[str, Any]], None],
+    recorded_caches: Sequence[dict[str, Any]] = (),
+    owner: dict[str, str] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare artifact and optional local execution PVCs for source build callers.
+
+    The source state owner records each UID before another PVC is created, so a
+    failed pair remains recoverable. Default local storage uses a single volume;
+    explicitly selected artifact storage receives a separate local execution PVC.
+    """
+    artifact = _ensure_build_cache(
+        kubectl, namespace, name, configuration,
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if artifact is not None:
+        record_identity(artifact)
+    # An omitted override preserves an existing volume's class, including NFS.
+    current = kubectl.get("pvc", name, namespace)
+    if current["spec"].get("storageClassName", "") in ("", SOURCE_BUILD_STORAGE_CLASS):
+        return artifact, None
+    if artifact is None:
+        raise DeploymentError(
+            f"cannot prepare execution storage: artifact PVC {namespace}/{name} has no proven source binding"
+        )
+    if artifact.get("legacy"):
+        metadata = current["metadata"]
+        labels = metadata.get("labels", {})
+        if metadata["uid"] != artifact["uid"] or labels.get(SOURCE_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
+            raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
+        updated = json.loads(kubectl.run([
+            "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
+                {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
+                {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
+                {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
+            ]),
+        ]).stdout)["metadata"]
+        artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
+        artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
+        record_identity(artifact)
+    execution_name = "foretoken-execution-" + artifact["uid"][:20]
+    execution = _ensure_build_cache(
+        kubectl, namespace, execution_name,
+        {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if execution is None:
+        raise DeploymentError(
+            f"execution PVC {namespace}/{execution_name} has no proven source binding"
+        )
+    record_identity(execution)
+    return artifact, execution
+
+
+def local_build_nodes(
+    kubectl: Kubectl, registry: str | None, socket: str = ""
+) -> list[tuple[str, str, str]]:
+    """Resolve node-local image stores for local and K3s clusters without a registry."""
+    if registry:
+        return [("", "", "foretoken-compiler-cache")]
+    nodes = [
+        node
+        for node in kubectl.list_resources(("nodes",), "")
+        if not node.get("spec", {}).get("unschedulable")
+    ]
+    if not nodes:
+        raise DeploymentError("source builds need a schedulable Kubernetes node")
+    if not socket:
+        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        sockets = {node_containerd_socket(context, node) for node in nodes}
+        if "" in sockets or len(sockets) != 1:
+            raise DeploymentError(
+                "source installation on a remote cluster requires --registry"
+            )
+        socket = sockets.pop()
+    return [
+        (
+            node["metadata"]["name"],
+            socket,
+            "foretoken-compiler-cache-" + node["metadata"]["uid"][:8],
+        )
+        for node in nodes
+    ]

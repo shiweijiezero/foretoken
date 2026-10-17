@@ -60,6 +60,28 @@ def image_manifest_digest(
     return child["digest"]
 
 
+def image_tools_image(
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]] | None = None,
+) -> str:
+    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
+    automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
+    return f"{registry}/library/debian:bookworm-slim"
+
+
+def node_containerd_socket(context: str, node: dict[str, Any]) -> str:
+    """Resolve the node-local runtime path supported by source import and cleanup."""
+    runtime = (
+        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
+    )
+    if context.startswith("k3d-") or "k3s" in runtime:
+        return "/run/k3s/containerd/containerd.sock"
+    if context.startswith("kind-"):
+        return "/run/containerd/containerd.sock"
+    return ""
+
+
 def images_container_spec(
     tools_image: str, containerd_socket: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:

@@ -155,6 +155,25 @@ def _git_names(root: Path, *paths: str) -> list[str]:
     return [os.fsdecode(name) for name in result.stdout.split(b"\0") if name]
 
 
+def source_checkout(explicit: str | None = None) -> Path:
+    """Resolve and validate the Foretoken checkout selected for installation or deployment."""
+    if explicit is not None:
+        root = Path(explicit).expanduser().resolve()
+    else:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode:
+            raise DeploymentError(
+                "source deployment requires a Foretoken checkout; run from that checkout or pass --editable PATH"
+            )
+        root = Path(result.stdout.strip()).resolve()
+    if not (root / "Makefile").is_file() or not (root / "deploy/charts/foretoken/Chart.yaml").is_file():
+        raise DeploymentError(f"not a Foretoken source checkout: {root}")
+    return root
+
+
 def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
     """Resolve explicitly selected runtime checkouts independently of the pinned Rust source."""
     roots = {}

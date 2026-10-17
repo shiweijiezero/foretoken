@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -41,8 +41,10 @@ from foretoken.platform.types import (
     PlatformGatewayConfig,
     ReleaseRef,
 )
-from foretoken.source import SourceImages
 from foretoken.submission import _SERVICE_OPERATION_ANNOTATION
+
+if TYPE_CHECKING:
+    from foretoken.source import SourceImages
 
 
 class Helm(HelmClient):
@@ -277,7 +279,7 @@ class Helm(HelmClient):
 
     def _installed_chart_images(self, release: ReleaseRef) -> set[str]:
         """Read prior images from native workloads and Prometheus Operator resources."""
-        from foretoken.source import application_images
+        from foretoken.source_state import application_images
 
         documents = self._installed_chart_manifest(release)
         images = application_images(documents)
@@ -1550,7 +1552,7 @@ class Helm(HelmClient):
 
     def image_history(self) -> set[str] | None:
         """Retain images selected by installed defaults or an available Helm rollback."""
-        from foretoken.source import application_images
+        from foretoken.source_state import application_images
 
         return self._history_references(application_images)
 

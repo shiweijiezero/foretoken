@@ -59,10 +59,10 @@ from foretoken.platform.rdma import (
     select_rdma,
 )
 from foretoken.platform.types import RuntimeOverrides
-from foretoken.source import (
+from foretoken.source import prepare_source_images
+from foretoken.source_state import (
     forget_install,
     has_source_state,
-    prepare_source_images,
     reconcile_source_resources,
     record_install,
     remove_build_caches,

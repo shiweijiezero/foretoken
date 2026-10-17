@@ -1,57 +1,45 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Own source installation bindings and platform application preparation."""
+"""Compose source environments and publish their completed applications."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
-import tarfile
-import tempfile
 import uuid
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from foretoken.application_files import (
-    SERVICE_COMPONENTS,
-    SOURCE_REVISION,
-    ApplicationFiles,
-    application_consumers,
-    remove_application_jobs,
-)
+from foretoken.application_files import ApplicationFiles
 from foretoken.arguments import InstallCommand
 from foretoken.build_environments import BuildEnvironments
 from foretoken.build_storage import (
-    SOURCE_BUILD_PROVISIONER_IMAGE,
-    SOURCE_BUILD_STORAGE_CLASS,
-    ensure_build_storage,
-    superseded_build_volume,
+    build_configuration,
+    ensure_build_volumes,
+    local_build_nodes,
+    prepare_build_storage,
 )
 from foretoken.cluster_build import (
     BuildCancellation,
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
-    remove_build_pods,
 )
 from foretoken.engine_environment import (
     engine_build_arguments,
     engine_cache_scope,
+    export_engine_source,
     resolve_vllm_base_image,
 )
 from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError, ForetokenDeployment
+from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
-from foretoken.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
+from foretoken.node_images import image_tools_image
 from foretoken.source_inputs import (
     SNAPSHOT_METADATA,
     BuildInputs,
@@ -60,480 +48,15 @@ from foretoken.source_inputs import (
     mooncake_inputs,
     pinned_rust_revision,
     snapshot_versions,
+    source_checkout,
 )
-
-_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
-_INSTALL_SOURCE = "foretoken.io/install-source"
-
-
-def _source_home() -> Path:
-    return (
-        Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        / "foretoken"
-        / "source"
-    )
-
-
-def _context_identity(kubectl: Kubectl) -> dict[str, str]:
-    """Read connection identity locally without adding API permissions to release deploys."""
-    config = json.loads(
-        kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout
-    )
-    return {"server": config["clusters"][0]["cluster"]["server"]}
-
-
-def _state_directory(kubectl: Kubectl) -> Path:
-    """Keep workstation paths local and bind them to the actual cluster identity."""
-    cluster = kubectl.get("namespace", "kube-system")["metadata"]["uid"]
-    return _source_home() / cluster
-
-
-def _has_server_binding(kubectl: Kubectl) -> bool:
-    """Prefilter local bindings without requiring cluster access for release deployments."""
-    bindings = [
-        *(_source_home().glob("*/install.json")),
-        *(_source_home().glob("*/build.json")),
-        *(_source_home().glob("*/checkouts/*/install.json")),
-        *(_source_home().glob("*/checkouts/*/build.json")),
-        *(_source_home().glob("*/retired/*/retired.json")),
-    ]
-    if not bindings:
-        return False
-    server = _context_identity(kubectl)["server"]
-    for path in bindings:
-        try:
-            state = json.loads(path.read_text())
-        except FileNotFoundError:
-            # An uninstall may retire a binding before this operation acquires its lock.
-            continue
-        if state["context"]["server"] == server:
-            return True
-    return False
-
-
-@contextmanager
-def source_operation(
-    kubectl: Kubectl, timeout: str, *, installing: bool = False, shared: bool = False
-) -> Iterator[None]:
-    """Exclude platform changes while independent source deployments share the cluster.
-
-    Install, delete and uninstall own cleanup under the exclusive lock. Deployments
-    additionally lock their checkout state, so unrelated candidates can build together.
-    """
-    if not installing and not _has_server_binding(kubectl):
-        yield
-        return
-    # POSIX locking is needed only for source operations, not other CLI commands.
-    import fcntl
-
-    directory = _state_directory(kubectl)
-    locks = _source_home() / "locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    # NFS shared locks require a readable descriptor; this file serves both lock modes.
-    with (locks / directory.name).open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
-        try:
-            if shared:
-                yield
-                return
-            bindings = set()
-            for name in ("install.json", "build.json"):
-                path = directory / name
-                if path.is_file():
-                    binding = (
-                        json.loads(path.read_text()).get("build", {}).get("binding")
-                    )
-                    if binding:
-                        bindings.add(binding)
-            for binding in bindings:
-                remove_application_jobs(kubectl, binding, timeout)
-                remove_build_pods(
-                    kubectl, timeout, binding=binding, preserve_ready=True
-                )
-            # Protect persisted source outputs before any compiler or workload can need them.
-            reconcile_source_resources(kubectl, timeout)
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-
-
-def source_checkout(explicit: str | None = None) -> Path:
-    """Resolve the deployment's checkout without borrowing another worktree's source."""
-    if explicit is not None:
-        root = Path(explicit).expanduser().resolve()
-    else:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(
-                "source deployment requires a Foretoken checkout; run from that checkout or pass --editable PATH"
-            )
-        root = Path(result.stdout.strip()).resolve()
-    if not (root / "deploy/charts/foretoken/Chart.yaml").is_file():
-        raise DeploymentError(f"not a Foretoken source checkout: {root}")
-    return root
-
-
-def checkout_state_directory(cluster: Path, root: Path) -> Path:
-    """Allocate one stable publisher identity per checkout under a short registry lock."""
-    import fcntl
-
-    checkouts = cluster / "checkouts"
-    checkouts.mkdir(parents=True, exist_ok=True)
-    with (checkouts / ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for identity in checkouts.glob("*/checkout.json"):
-            if (
-                json.loads(identity.read_text())["root"] == str(root)
-                and not (cluster / "retired" / identity.parent.name / "retired.json").is_file()
-            ):
-                return identity.parent
-        directory = checkouts / uuid.uuid4().hex
-        directory.mkdir()
-        _write_json(directory / "checkout.json", {
-            "root": str(root), "services": [], "services_complete": True,
-        })
-        return directory
-
-
-@contextmanager
-def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Iterator[None]:
-    """Own a checkout's build outputs until their service selections have been submitted."""
-    import fcntl
-
-    with (directory / ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        remove_application_jobs(kubectl, directory.name, timeout)
-        remove_build_pods(kubectl, timeout, binding=directory.name, preserve_ready=True)
-        yield
-
-
-def record_source_deployment(directory: Path, deployment: ForetokenDeployment) -> None:
-    """Associate a checkout with intended services before building, including failed submissions."""
-    path = directory / "checkout.json"
-    identity = json.loads(path.read_text())
-    services = identity.setdefault("services", [])
-    for ref in deployment.service_refs():
-        service = {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
-        if service not in services:
-            services.append(service)
-    _write_json(path, identity)
-
-
-def release_source_deployment(
-    kubectl: Kubectl, deployment: ForetokenDeployment, timeout: str,
-) -> None:
-    """Release a deleted deployment's source associations and clean unused builds under the source lock."""
-    if not _has_server_binding(kubectl):
-        return
-    cluster = _state_directory(kubectl)
-    services = [
-        {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
-        for ref in deployment.service_refs()
-    ]
-    namespaces = {
-        obj["metadata"]["name"] for obj in deployment.objects if obj.get("kind") == "Namespace"
-    }
-    for path in (cluster / "checkouts").glob("*/checkout.json"):
-        identity = json.loads(path.read_text())
-        retained = [
-            service for service in identity.get("services", [])
-            if service not in services and service["namespace"] not in namespaces
-        ]
-        if retained == identity.get("services", []):
-            continue
-        if retained or not identity.get("services_complete", False):
-            identity["services"] = retained
-            _write_json(path, identity)
-            if not retained:
-                print("Source build resources retained: earlier deployment ownership is unknown", flush=True)
-        else:
-            # Keep the final association until its recovery archive and retirement
-            # record are durable, so repeating delete can finish interrupted cleanup.
-            _retire_source_checkout(kubectl, path.parent)
-    reconcile_source_resources(kubectl, timeout)
-
-
-def _retire_source_checkout(kubectl: Kubectl, directory: Path) -> None:
-    """Archive a checkout with no remaining deployments and transfer its resources to cleanup."""
-    cluster = directory.parent.parent
-    binding = directory.name
-    record = cluster / "retired" / binding / "retired.json"
-    if record.is_file():
-        return
-    identity = json.loads((directory / "checkout.json").read_text())
-    states = [
-        json.loads(path.read_text())
-        for name in ("install.json", "build.json")
-        if (path := directory / name).is_file()
-    ]
-    caches = [cache for state in states for cache in state.get("build", {}).get("caches", [])]
-    # Include claims created just before an interrupted build recorded their UIDs.
-    claims = kubectl.list_all_resources(
-        ("persistentvolumeclaims",),
-        label_selector=f"{_BUILD_CACHE_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
-    )
-    for claim in claims:
-        metadata = claim["metadata"]
-        cache = {key: metadata[key] for key in ("namespace", "name", "uid")}
-        if not any(all(value.get(key) == cache[key] for key in cache) for value in caches):
-            caches.append({**cache, "binding": binding})
-    if (caches and not states) or any(
-        "inputs" not in state
-        or (state["inputs"] is not None and not (directory / state["inputs"]).is_dir())
-        for state in states
-    ):
-        raise DeploymentError("source cleanup needs the build's saved inputs; compiler caches were retained")
-    evidence = _source_home().parent / "source-archives" / cluster.name / binding
-    evidence.mkdir(parents=True, exist_ok=True)
-    for abandoned in evidence.glob(".staging-*"):
-        abandoned.unlink()
-    # Preserve exact captured inputs, not a new scan of a checkout that may have changed.
-    archive_path = evidence / (uuid.uuid4().hex + ".tar.gz")
-    with tempfile.NamedTemporaryFile(prefix=".staging-", dir=evidence, delete=False) as stream:
-        temporary = Path(stream.name)
-    try:
-        with tarfile.open(temporary, "w:gz") as archive:
-            for path in directory.iterdir():
-                if path.name.startswith("inputs-") or path.name in {"checkout.json", "install.json", "build.json"}:
-                    archive.add(path, arcname=path.name)
-        temporary.replace(archive_path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    print(f"Source inputs archived locally: {evidence}", flush=True)
-    record.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(record, {
-        "root": identity["root"],
-        "context": _context_identity(kubectl),
-        "binding": binding,
-        "caches": caches,
-        "builds": [
-            {key: value for key, value in state.get("build", {}).items()
-             if key in {"binding", "containerd_socket", "arguments", "registry_mirrors", "pull_secrets"}}
-            for state in states
-        ],
-    })
-    # The durable retirement record excludes this binding from future source selections.
-    # Its evidence lives outside forget_install's cluster-state deletion boundary.
-    shutil.rmtree(directory)
-
-
-def _remove_retired_caches(kubectl: Kubectl, record: dict[str, Any], timeout: str) -> bool:
-    """Release recorded compiler UIDs after binding writers stop, deferring occupied volumes."""
-    binding = record["binding"]
-    remove_application_jobs(kubectl, binding, timeout)
-    remove_build_pods(kubectl, timeout, binding=binding)
-    complete = True
-    for identity in record["caches"]:
-        namespace, name, uid = (identity[key] for key in ("namespace", "name", "uid"))
-        claim = kubectl.get_if_exists("pvc", name, namespace)
-        if claim is None or claim["metadata"]["uid"] != uid:
-            continue
-        labels = claim["metadata"].get("labels", {})
-        if labels.get(_BUILD_CACHE_LABEL) != "true" or not (
-            labels.get(SOURCE_BUILD_BINDING_LABEL) == binding
-            or (identity.get("legacy") and SOURCE_BUILD_BINDING_LABEL not in labels)
-        ):
-            complete = False
-            continue
-        consumers = [
-            pod for pod in kubectl.list_resources(("pods",), namespace)
-            if any(volume.get("persistentVolumeClaim", {}).get("claimName") == name
-                   for volume in pod["spec"].get("volumes", []))
-        ]
-        if consumers:
-            complete = False
-            continue
-        try:
-            kubectl.run(
-                ["delete", "--raw", f"/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}", "-f", "-"],
-                input_text=json.dumps({
-                    "apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": uid},
-                }),
-            )
-        except DeploymentError:
-            current = kubectl.get_if_exists("pvc", name, namespace)
-            if current is not None and current["metadata"]["uid"] == uid:
-                raise
-            continue
-        kubectl.wait_deleted("persistentvolumeclaims", claim["metadata"], timeout)
-    return complete
-
-
-def _write_json(path: Path, value: object) -> None:
-    """Replace one local source state only after its complete payload has been written."""
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            json.dump(value, stream, indent=2)
-            stream.write("\n")
-            stream.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
-@contextmanager
-def capture_build_inputs(
-    root: Path, engines: dict[str, str] | None = None,
-    previous: Path | None = None, *, mooncake_version: str | None = None,
-) -> Iterator[Path]:
-    """Capture candidate inputs until their source owner adopts the snapshot into saved state."""
-    destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
-    try:
-        inputs = BuildInputs.select(root, engines, previous, mooncake_version=mooncake_version)
-        inputs.capture(destination, previous=previous)
-        yield destination
-    finally:
-        if destination.exists():
-            shutil.rmtree(destination)
-
-
-@contextmanager
-def _local_candidates(directory: Path) -> Iterator[None]:
-    """Retire artifacts outside committed or pending state under the owning source lock.
-
-    Running workloads consume independent publications rather than local snapshots.
-    """
-    try:
-        yield
-    finally:
-        retained = {
-            json.loads(path.read_text()).get("inputs")
-            for name in ("install.json", "build.json")
-            if (path := directory / name).is_file()
-        }
-        for snapshot in directory.glob("inputs-*"):
-            if snapshot.name not in retained:
-                shutil.rmtree(snapshot)
-        if (directory / "bundles").is_dir():
-            shutil.rmtree(directory / "bundles")
-
-
-def has_source_state(kubectl: Kubectl) -> bool:
-    """Identify source builds for uninstall from local records or owned cluster caches."""
-    if _has_server_binding(kubectl):
-        directory = _state_directory(kubectl)
-        if (
-            any((directory / name).is_file() for name in ("install.json", "build.json"))
-            or any((directory / "checkouts").glob("*/*.json"))
-            or any((directory / "retired").glob("*/retired.json"))
-        ):
-            return True
-    return bool(kubectl.list_all_resources(
-        ("persistentvolumeclaims",), label_selector=_BUILD_CACHE_LABEL + "=true"
-    ))
-
-
-def forget_install(kubectl: Kubectl) -> None:
-    """Remove this cluster's workstation binding after platform uninstall, retaining remote data."""
-    if _has_server_binding(kubectl):
-        directory = _state_directory(kubectl)
-        if directory.exists():
-            shutil.rmtree(directory)
-
-
-def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
-    """Read installed application defaults without depending on a serving controller."""
-    values = json.loads(platform["data"]["deploymentValues"])
-    image = values["image"]
-    controller_image = image["repository"] + (
-        "@" + image["digest"] if image.get("digest") else ":" + image["tag"]
-    )
-    runtime = values["runtime"]
-    workload = values["workload"]
-    return {
-        "control_plane_image": controller_image,
-        "image": values["frontend"]["image"],
-        "model_image": runtime["vllm"]["image"],
-        "omni_image": runtime["vllmOmni"]["image"],
-        "nsight_image": runtime["vllm"]["nsightImage"],
-        "mount": workload["cache"]["mountPath"],
-        "claim": workload["cache"]["claimName"],
-        "pull_secrets": [item["name"] for item in workload["imagePullSecrets"]],
-    }
-
-
-def resolve_source_base_image(
-    kubectl: Kubectl,
-    root: Path,
-    requested_image: str | None,
-    saved_image: str | None = None,
-) -> str | None:
-    """Select explicit base intent from requests or this checkout's installed and pending state."""
-    if requested_image is not None:
-        return None if requested_image == "auto" else requested_image or None
-    if saved_image is not None:
-        return saved_image
-    directory = _state_directory(kubectl)
-    for name in ("install.json", "build.json"):
-        path = directory / name
-        if path.is_file():
-            state = json.loads(path.read_text())
-            if state.get("root") == str(root):
-                return state.get("base_image")
-    return None
-
-
-def record_install(
-    kubectl: Kubectl,
-    command: InstallCommand,
-    base_image: str | None,
-    snapshot: Path,
-    *,
-    build_state: dict[str, Any] | None = None,
-) -> None:
-    """Associate a successful editable installation with its checkout on this workstation."""
-    if command.editable is None:
-        return
-    root = Path(command.editable).expanduser().resolve()
-    directory = _state_directory(kubectl)
-    directory.mkdir(parents=True, exist_ok=True)
-    settings = asdict(command)
-    engines = engine_source_roots(command.engine_sources)
-    settings.update(
-        editable=str(root),
-        values=[],
-        engine_sources=[f"{name}={path}" for name, path in engines.items()],
-    )
-    from foretoken.platform.config import default_platform_config
-    from foretoken.platform.helm import Helm
-
-    platform = Helm(default_platform_config(command.oci_registry)).platform_configuration(kubectl)
-    if platform["metadata"].get("annotations", {}).get(_INSTALL_SOURCE) != "source":
-        raise DeploymentError("expected a source-installed Foretoken platform")
-    path = directory / "install.json"
-    previous = json.loads(path.read_text()) if path.is_file() else {}
-    applications = (build_state or {}).get("applications", {})
-    # Keep service-level source selections when installation adopts the same publication.
-    # Removing them would change immutable Group specs on the next unchanged deploy.
-    bundles = {
-        component: bundle
-        for component, bundle in previous.get("bundles", {}).items()
-        if previous.get("root") == str(root)
-        and bundle["revision"] == applications.get(component, {}).get("revision")
-    }
-    with _local_candidates(directory):
-        destination = directory / snapshot.name
-        snapshot.rename(destination)
-        _write_json(
-            path,
-            {
-                "root": str(root),
-                "engines": engines,
-                "build": build_state or {},
-                "context": _context_identity(kubectl),
-                "inputs": destination.name,
-                "platform_uid": platform["metadata"]["uid"],
-                "base_image": base_image,
-                "runtime": _runtime_settings(platform),
-                "command": settings,
-                "bundles": bundles,
-            },
-        )
-        (directory / "build.json").unlink(missing_ok=True)
+from foretoken.source_state import (
+    capture_build_inputs,
+    cluster_state_directory,
+    context_identity,
+    local_candidates,
+    write_source_state,
+)
 
 
 @dataclass(frozen=True)
@@ -548,36 +71,6 @@ class SourceImages:
     inputs: Path
     build_state: dict[str, Any]
     applications: dict[str, str]
-
-
-def image_tools_image(
-    arguments: dict[str, str],
-    registry_mirrors: dict[str, list[str]] | None = None,
-) -> str:
-    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
-    automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
-    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
-    return f"{registry}/library/debian:bookworm-slim"
-
-
-def build_configuration(
-    root: Path, values: Sequence[dict[str, Any]], image_registry: str
-) -> dict[str, str]:
-    """Resolve compiler storage and image choices from the chart's authoritative defaults."""
-    defaults = yaml.safe_load(
-        (root / "deploy/charts/foretoken/values.yaml").read_text()
-    )
-    configuration = dict(defaults["development"]["build"])
-    explicit_image = False
-    for value in values:
-        overrides = (value.get("development") or {}).get("build") or {}
-        explicit_image = explicit_image or "image" in overrides
-        configuration.update(overrides)
-    if image_registry and not explicit_image:
-        configuration["image"] = (
-            image_registry.rstrip("/") + "/" + configuration["image"].split("/", 1)[1]
-        )
-    return configuration
 
 
 def build_arguments(environment: dict[str, str]) -> dict[str, str]:
@@ -621,516 +114,6 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
     return result
 
 
-def prepare_build_storage(
-    kubectl: Kubectl,
-    namespace: str,
-    arguments: dict[str, str],
-    registry_mirrors: dict[str, list[str]],
-    pull_secrets: tuple[str, ...],
-    timeout: str,
-) -> None:
-    """Prepare node-local execution storage for installation, preserving artifact storage intent."""
-    automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
-    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
-    image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
-    ensure_build_storage(
-        kubectl, namespace, image_tools_image(arguments, registry_mirrors),
-        image, pull_secrets, timeout,
-    )
-
-
-def ensure_build_cache(
-    kubectl: Kubectl,
-    namespace: str,
-    name: str,
-    configuration: dict[str, str],
-    *,
-    binding: str,
-    timeout: str,
-    recorded_caches: Sequence[dict[str, Any]] = (),
-    owner: dict[str, str] | None = None,
-) -> dict[str, Any] | None:
-    """Prepare this binding's compiler volume and return its proven identity for retirement.
-
-    Superseded managed storage is reclaimed before rebuilding; legacy ownership
-    requires a binding-owned builder or its previously recorded claim UID.
-    """
-    if not kubectl.exists("namespace", namespace):
-        kubectl.run(["create", "namespace", namespace])
-    storage_class = configuration["storageClassName"] or SOURCE_BUILD_STORAGE_CLASS
-    existing = kubectl.get_if_exists("pvc", name, namespace)
-    owners = [owner] if owner is not None else []
-    if existing is not None:
-        if existing["metadata"].get("labels", {}).get(_BUILD_CACHE_LABEL) != "true":
-            raise DeploymentError(f"{namespace}/{name} is not a Foretoken build cache")
-        claim_binding = existing["metadata"].get("labels", {}).get(SOURCE_BUILD_BINDING_LABEL)
-        if claim_binding not in {None, binding}:
-            raise DeploymentError(f"{namespace}/{name} belongs to another source binding")
-        actual_class = existing["spec"].get("storageClassName", "")
-        if configuration["storageClassName"] and actual_class != configuration["storageClassName"]:
-            raise DeploymentError(
-                f"compiler cache {namespace}/{name} uses StorageClass {actual_class!r}; "
-                "an existing compiler volume cannot change its storage class"
-            )
-        storage_class = actual_class
-        recorded_legacy = any(
-            identity.get("legacy") is True and identity.get("binding") == binding
-            and all(identity.get(key) == existing["metadata"][key] for key in ("namespace", "name", "uid"))
-            for identity in recorded_caches
-        )
-        volume = superseded_build_volume(kubectl, existing)
-        if volume is not None:
-            consumers = [
-                pod for pod in kubectl.list_resources(("pods",), namespace)
-                if any(item.get("persistentVolumeClaim", {}).get("claimName") == name for item in pod["spec"].get("volumes", []))
-            ]
-            for pod in consumers:
-                labels = pod["metadata"].get("labels", {})
-                if labels.get(SOURCE_BUILD_POD_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
-                    raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
-            if claim_binding is None and not consumers and not recorded_legacy:
-                raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
-            print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
-            owners = existing["metadata"].get("ownerReferences", owners)
-            for resource, obj in [*(("pods", pod) for pod in consumers), ("persistentvolumeclaims", existing)]:
-                metadata = obj["metadata"]
-                kubectl.run(
-                    ["delete", "--raw", f"/api/v1/namespaces/{namespace}/{resource}/{metadata['name']}", "-f", "-"],
-                    input_text=json.dumps({"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": metadata["uid"]}}),
-                )
-                kubectl.wait_deleted(resource, metadata, timeout)
-            kubectl.wait_deleted("persistentvolume", {**volume["metadata"], "namespace": ""}, timeout)
-            existing = None
-    if (
-        storage_class == SOURCE_BUILD_STORAGE_CLASS
-        and (existing is None or existing.get("status", {}).get("phase") != "Bound")
-        and not kubectl.exists("storageclass", storage_class)
-    ):
-        raise DeploymentError(
-            "source build storage is not installed; update the source platform "
-            "with `foretoken install -e PATH` before deploying"
-        )
-    if existing is not None:
-        spec = {"resources": {"requests": {"storage": configuration["storageSize"]}}}
-        if any(existing["spec"].get(key) != value for key, value in spec.items()):
-            kubectl.run(
-                [
-                    "patch",
-                    "pvc",
-                    name,
-                    "-n",
-                    namespace,
-                    "--type=merge",
-                    "-p",
-                    json.dumps({"spec": spec}),
-                ]
-            )
-        if claim_binding is None and not recorded_legacy:
-            builders = kubectl.list_resources(
-                ("pods",), namespace,
-                label_selector=f"{SOURCE_BUILD_POD_LABEL}=true,{SOURCE_BUILD_BINDING_LABEL}={binding}",
-            )
-            if not any(
-                volume["name"] == "cache"
-                and volume.get("persistentVolumeClaim", {}).get("claimName") == name
-                for pod in builders
-                for volume in pod["spec"].get("volumes", [])
-            ):
-                return None
-        return {
-            "namespace": namespace, "name": name, "uid": existing["metadata"]["uid"],
-            "binding": binding,
-            **({"legacy": True} if claim_binding is None else {}),
-        }
-    spec: dict[str, Any] = {
-        "accessModes": ["ReadWriteOnce"],
-        "resources": {"requests": {"storage": configuration["storageSize"]}},
-        "storageClassName": storage_class,
-    }
-    created = kubectl.run(
-        ["create", "-f", "-", "-o", "json"],
-        input_text=yaml.safe_dump(
-            {
-                "apiVersion": "v1",
-                "kind": "PersistentVolumeClaim",
-                "metadata": {
-                    "name": name,
-                    "namespace": namespace,
-                    "labels": {
-                        _BUILD_CACHE_LABEL: "true",
-                        SOURCE_BUILD_BINDING_LABEL: binding,
-                    },
-                    **({"ownerReferences": owners} if owners else {}),
-                },
-                "spec": spec,
-            }
-        ),
-    )
-    metadata = json.loads(created.stdout)["metadata"]
-    return {"namespace": namespace, "name": name, "uid": metadata["uid"], "binding": binding}
-
-
-def ensure_build_volumes(
-    kubectl: Kubectl,
-    namespace: str,
-    name: str,
-    configuration: dict[str, str],
-    *,
-    binding: str,
-    timeout: str,
-    record_identity: Callable[[dict[str, Any]], None],
-    recorded_caches: Sequence[dict[str, Any]] = (),
-    owner: dict[str, str] | None = None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Prepare artifact and optional local execution PVCs for source build callers.
-
-    The source state owner records each UID before another PVC is created, so a
-    failed pair remains recoverable. Default local storage uses a single volume;
-    explicitly selected artifact storage receives a separate local execution PVC.
-    """
-    artifact = ensure_build_cache(
-        kubectl, namespace, name, configuration,
-        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
-    )
-    if artifact is not None:
-        record_identity(artifact)
-    # An omitted override preserves an existing volume's class, including NFS.
-    current = kubectl.get("pvc", name, namespace)
-    if current["spec"].get("storageClassName", "") in ("", SOURCE_BUILD_STORAGE_CLASS):
-        return artifact, None
-    if artifact is None:
-        raise DeploymentError(
-            f"cannot prepare execution storage: artifact PVC {namespace}/{name} has no proven source binding"
-        )
-    if artifact.get("legacy"):
-        metadata = current["metadata"]
-        labels = metadata.get("labels", {})
-        if metadata["uid"] != artifact["uid"] or labels.get(_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
-            raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
-        updated = json.loads(kubectl.run([
-            "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
-                {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
-                {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
-                {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
-            ]),
-        ]).stdout)["metadata"]
-        artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
-        artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
-        record_identity(artifact)
-    execution_name = "foretoken-execution-" + artifact["uid"][:20]
-    execution = ensure_build_cache(
-        kubectl, namespace, execution_name,
-        {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
-        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
-    )
-    if execution is None:
-        raise DeploymentError(
-            f"execution PVC {namespace}/{execution_name} has no proven source binding"
-        )
-    record_identity(execution)
-    return artifact, execution
-
-
-def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
-    """Read environment images selected by platform defaults, services and workload consumers."""
-    images: set[str] = set()
-    for document in documents:
-        if document.get("metadata", {}).get("labels", {}).get("foretoken.io/platform") == "configuration":
-            runtime = _runtime_settings(document)
-            images.update(filter(None, (
-                runtime["control_plane_image"], runtime["image"], runtime["model_image"],
-                runtime["omni_image"], runtime["nsight_image"],
-            )))
-        spec = document.get("spec", {})
-        status = document.get("status", {})
-        template = spec.get("template", {})
-        pod_spec = template.get("spec", spec)
-        selections = [
-            status.get("application", {}),
-            template.get("application", {}),
-            spec.get("runtime", {}),
-            status.get("plan", {}),
-            *status.get("poolApplications", {}).values(),
-        ]
-        for selection in selections:
-            if selection:
-                for key in ("image", "workerImage"):
-                    if selection.get(key):
-                        images.add(selection[key])
-        for key in ("containers", "initContainers", "ephemeralContainers"):
-            for container in pod_spec.get(key, []):
-                images.add(container["image"])
-                if container["name"] != "manager":
-                    continue
-                for argument in container.get("args", []):
-                    for prefix in (
-                        "--frontend-image=",
-                        "--inference-engine-image=",
-                        "--omni-inference-engine-image=",
-                        "--video-worker-image=",
-                        "--nsight-image=",
-                    ):
-                        if argument.startswith(prefix) and argument.removeprefix(
-                            prefix
-                        ):
-                            images.add(argument.removeprefix(prefix))
-    return images
-
-
-def reconcile_source_resources(
-    kubectl: Kubectl, timeout: str, *, uninstall: bool = False,
-    checkout: Path | None = None,
-) -> None:
-    """Reconcile source image pins and finish retired bindings under source_operation.
-
-    Checkout-scoped calls release only their own pins. Exclusive calls also collect
-    retired compiler volumes and runtime files. Uninstall releases all Foretoken pins;
-    the platform lifecycle owns its remaining storage and state cleanup.
-    """
-    from foretoken.node_images import node_image_store
-    from foretoken.platform.config import default_platform_config
-    from foretoken.platform.helm import Helm
-
-    if not uninstall and not _has_server_binding(kubectl):
-        return
-    directory = _state_directory(kubectl)
-    retired = {
-        path: json.loads(path.read_text())
-        for path in (directory / "retired").glob("*/retired.json")
-    }
-    retired_bindings = {record["binding"] for record in retired.values()}
-    directories = [directory, *(directory / "checkouts").glob("*")]
-    # Reference collection is cluster-wide even when one checkout owns this operation.
-    # Retired state is producer evidence, never a reason to keep all its old outputs.
-    states = {
-        str(path): json.loads(path.read_text())
-        for parent in directories if parent.is_dir() and parent.name not in retired_bindings
-        for name in ("build.json", "install.json")
-        if (path := parent / name).is_file()
-    }
-    bindings = {
-        state.get("build", {}).get("binding")
-        for path, state in states.items()
-        if (checkout is None or Path(path).parent == checkout)
-        and state.get("build", {}).get("borrowed_images") is not True
-    } - {None, ""}
-    completed_bindings = set()
-    if checkout is None and not uninstall:
-        for path, record in retired.items():
-            if _remove_retired_caches(kubectl, record, timeout):
-                completed_bindings.add(record["binding"])
-            abandoned = directory / "checkouts" / record["binding"]
-            if abandoned.is_dir():
-                shutil.rmtree(abandoned)
-        bindings.update(retired_bindings)
-    if not uninstall and not bindings:
-        return
-    producer_builds = [state.get("build", {}) for state in states.values()]
-    if checkout is None:
-        producer_builds.extend(build for record in retired.values() for build in record["builds"])
-    config = default_platform_config()
-    if checkout is None and not uninstall and retired:
-        try:
-            origin = ApplicationFiles(kubectl, config.namespace)
-            references = origin.references(Helm(config).application_history())
-            if references is None:
-                completed_bindings.clear()
-            else:
-                # Saved candidates may need an application before their next service submission.
-                references.update(
-                    revision
-                    for state in states.values()
-                    for bundles in (state.get("bundles", {}), state.get("build", {}).get("applications", {}))
-                    for bundle in bundles.values()
-                    for key in ("revision", "previous")
-                    if (revision := bundle.get(key))
-                )
-                origin.prepare(timeout)
-                for record in retired.values():
-                    if not origin.retire_source(record["binding"], references, timeout=timeout):
-                        completed_bindings.discard(record["binding"])
-        except DeploymentError as error:
-            completed_bindings.clear()
-            print(f"Source application cleanup deferred: {error}", flush=True)
-    installed_path = directory / "install.json"
-    installed = json.loads(installed_path.read_text()) if installed_path.is_file() else {}
-    build = installed.get("build", {}) or next(
-        (build for build in producer_builds if build), {}
-    )
-    tools = image_tools_image(
-        build.get("arguments", {}), build.get("registry_mirrors", {})
-    )
-    secrets = tuple(
-        installed.get("runtime", {}).get("pull_secrets", build.get("pull_secrets", []))
-    )
-    # Builders already describe node runtime access. Use those cluster-owned
-    # mounts during uninstall even when invoked from a different workstation.
-    access: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
-    for pod in kubectl.list_resources(
-        ("pods",),
-        config.namespace,
-        label_selector=SOURCE_BUILD_POD_LABEL + "=true",
-    ):
-        node = pod["spec"].get("nodeName")
-        socket = next(
-            (
-                volume["hostPath"]["path"]
-                for volume in pod["spec"].get("volumes", [])
-                if volume["name"] == "runtime-socket"
-            ),
-            None,
-        )
-        images = next(
-            (
-                container
-                for container in pod["spec"]["containers"]
-                if container["name"] == "images"
-            ),
-            None,
-        )
-        if node and socket and images:
-            access[node, socket] = (
-                images["image"],
-                tuple(item["name"] for item in pod["spec"].get("imagePullSecrets", [])),
-            )
-    sockets = {build.get("containerd_socket", "") for build in producer_builds} - {""}
-    # Registry-only builds have no node image store to reconcile. Existing
-    # builders and pending state still retain access after a delivery-mode change.
-    if not uninstall and not access and not sockets:
-        for path, record in retired.items():
-            if record["binding"] in completed_bindings:
-                shutil.rmtree(path.parent)
-        return
-    nodes = kubectl.list_resources(("nodes",), "")
-    if uninstall and not sockets:
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
-        for node in nodes:
-            socket = _node_containerd_socket(context, node)
-            if socket:
-                access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
-    for socket in sockets:
-        for node in nodes:
-            access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
-    retained: set[str] = set()
-    if not uninstall:
-        history = Helm(config).image_history()
-        if history is None:
-            return
-        retained.update(history)
-        consumers = application_consumers(kubectl)
-        retained.update(application_images(consumers))
-        # A service can select a publication before its controller has written the
-        # image into status. Preserve that manifest's environment across later builds.
-        if any(
-            obj.get("kind") in SERVICE_COMPONENTS
-            and obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
-            for obj in consumers
-        ):
-            try:
-                retained.update(ApplicationFiles(kubectl, config.namespace).source_images(consumers))
-            except DeploymentError as exc:
-                # An unavailable publication cannot prove its image unreferenced.
-                # Keep pins so platform repair and source deployment can still proceed.
-                print(f"Source image cleanup deferred: {exc}", flush=True)
-                return
-        retained.update(
-            image
-            for state in states.values()
-            for image in state.get("build", {}).get("images", {}).values()
-        )
-    for (node, socket), (tools, secrets) in access.items():
-        for binding in [""] if uninstall else sorted(bindings):
-            with node_image_store(
-                kubectl,
-                config.namespace,
-                node,
-                socket,
-                tools,
-                timeout,
-                binding=binding,
-                pull_secrets=secrets,
-            ) as store:
-                if not uninstall:
-                    # Persisted producer records authorize migrating an unlabeled source output.
-                    records = []
-                    for state in states.values():
-                        recorded = state.get("build", {})
-                        if (
-                            recorded.get("binding") != binding
-                            or recorded.get("borrowed_images") is True
-                        ):
-                            continue
-                        digests = recorded.get("digests", {}).get(node, {})
-                        for component, image in recorded.get("images", {}).items():
-                            if image in retained and component in digests:
-                                records.append((image, digests[component]))
-                    store.pin_records(records)
-                if store.release_except(retained):
-                    completed_bindings.discard(binding)
-    for path, record in retired.items():
-        if record["binding"] in completed_bindings:
-            shutil.rmtree(path.parent)
-
-
-def _node_containerd_socket(context: str, node: dict[str, Any]) -> str:
-    """Resolve the node-local runtime path supported by source import and cleanup."""
-    runtime = (
-        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
-    )
-    if context.startswith("k3d-") or "k3s" in runtime:
-        return "/run/k3s/containerd/containerd.sock"
-    if context.startswith("kind-"):
-        return "/run/containerd/containerd.sock"
-    return ""
-
-
-def remove_build_caches(kubectl: Kubectl, timeout: str) -> None:
-    """Release managed build Pods before their compiler volumes, leaving model caches intact."""
-    remove_build_pods(kubectl, timeout)
-    kubectl.run(
-        [
-            "delete",
-            "pvc",
-            "--all-namespaces",
-            "-l",
-            _BUILD_CACHE_LABEL + "=true",
-            "--ignore-not-found",
-            "--timeout=" + timeout,
-        ]
-    )
-
-
-def local_build_nodes(
-    kubectl: Kubectl, registry: str | None, socket: str = ""
-) -> list[tuple[str, str, str]]:
-    """Resolve node-local image stores for local and K3s clusters without a registry."""
-    if registry:
-        return [("", "", "foretoken-compiler-cache")]
-    nodes = [
-        node
-        for node in kubectl.list_resources(("nodes",), "")
-        if not node.get("spec", {}).get("unschedulable")
-    ]
-    if not nodes:
-        raise DeploymentError("source builds need a schedulable Kubernetes node")
-    if not socket:
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
-        sockets = {_node_containerd_socket(context, node) for node in nodes}
-        if "" in sockets or len(sockets) != 1:
-            raise DeploymentError(
-                "source installation on a remote cluster requires --registry"
-            )
-        socket = sockets.pop()
-    return [
-        (
-            node["metadata"]["name"],
-            socket,
-            "foretoken-compiler-cache-" + node["metadata"]["uid"][:8],
-        )
-        for node in nodes
-    ]
-
-
 @contextmanager
 def prepare_source_images(
     command: InstallCommand,
@@ -1154,17 +137,10 @@ def prepare_source_images(
     """
     cancellation = cancellation or BuildCancellation()
     cancellation.check()
-    root = Path(command.editable or "").expanduser().resolve()
-    if (
-        not (root / "Makefile").is_file()
-        or not (root / "deploy/charts/foretoken/Chart.yaml").is_file()
-    ):
-        raise DeploymentError(
-            f"--editable must reference a Foretoken source root: {root}"
-        )
+    root = source_checkout(command.editable)
     kubectl = Kubectl()
     engines = engine_source_roots(command.engine_sources)
-    state_directory = checkout if checkout is not None else _state_directory(kubectl)
+    state_directory = checkout if checkout is not None else cluster_state_directory(kubectl)
     state_path = state_directory / "install.json"
     previous = json.loads(state_path.read_text()) if state_path.is_file() else {}
     build = previous.get("build", {}) if previous.get("root") == str(root) else {}
@@ -1262,11 +238,11 @@ def prepare_source_images(
     # uninstall, without replacing an existing successful installation binding.
     # Null inputs precede the first sync; absent inputs in legacy pending state are unknown.
     state_directory.mkdir(parents=True, exist_ok=True)
-    _write_json(
+    write_source_state(
         pending_path,
         {
             "root": str(root),
-            "context": _context_identity(kubectl),
+            "context": context_identity(kubectl),
             **({"inputs": pending.get("inputs")} if not pending or "inputs" in pending else {}),
             "base_image": inference_engine_image,
             "build": {
@@ -1298,7 +274,7 @@ def prepare_source_images(
         """Persist each created volume before cancellation or another allocation can fail."""
         if identity not in caches:
             caches.append(identity)
-            _write_json(pending_path, pending_state)
+            write_source_state(pending_path, pending_state)
         cancellation.check()
 
     execution_claims = {}
@@ -1318,12 +294,12 @@ def prepare_source_images(
         root, engines, old, mooncake_version=mooncake_version,
     ) as snapshot, ExitStack() as build_contexts:
         # Pending inputs survive a failed build: compiler storage is never their only copy.
-        with _local_candidates(state_directory):
+        with local_candidates(state_directory):
             destination = state_directory / snapshot.name
             snapshot.rename(destination)
             snapshot = destination
             pending_state["inputs"] = snapshot.name
-            _write_json(pending_path, pending_state)
+            write_source_state(pending_path, pending_state)
         # Resolve automatic defaults from the same inputs used by the build, without
         # recording them as an explicit base selection in the installation binding.
         base_image = (
@@ -1522,7 +498,7 @@ def prepare_source_images(
                         key = "" if registry else builder.node
                         engine_caches[key] = f"{cache_prefix}-native-{base_digest}-{python_executable}"
                     pending_state["build"]["engine_caches"] = dict(engine_caches)
-                    _write_json(pending_path, pending_state)
+                    write_source_state(pending_path, pending_state)
                     selected = environments.build(
                         "engine-source", "deploy/inference-engines/source-build.Dockerfile",
                         target="environment", arguments=engine_arguments,
@@ -1537,20 +513,12 @@ def prepare_source_images(
                     )
                 application.result()
                 if component == "model-server" and engines:
-                    engine_output = publisher.root + "/applications/engine"
-                    publisher.build(
-                        "deploy/inference-engines/source-build.Dockerfile",
-                        target="source-export", destination=engine_output,
-                        arguments={
-                            **engine_build_arguments(arguments),
-                            "RUNTIME_IMAGE": selected["image"],
-                            "CACHE_ID": engine_caches["" if registry else origin.node],
-                            "BUILD_NATIVE": str(engine_native).lower(),
-                        },
+                    export_engine_source(
+                        publisher, payload, arguments,
+                        runtime_image=selected["image"],
+                        cache_id=engine_caches["" if registry else origin.node],
+                        build_native=engine_native,
                     )
-                    publisher.run([
-                        "sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", engine_output, payload,
-                    ], container=publisher.artifact_container)
                 return selected
 
         with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
