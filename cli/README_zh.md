@@ -215,7 +215,9 @@ foretoken stop examples/quickstart/multi-model
 
 使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
-## 导出图表
+## 上传已有结果与导出图表
+
+使用 `foretoken sync RESULT_DIR` 上传已有 W&B 结果，不重新测量。离线补传和跨机器搬迁结果的操作见 [W&B 输出](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
 
 评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
 

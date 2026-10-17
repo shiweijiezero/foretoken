@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -265,6 +266,8 @@ class WandbSink:
             "mode": "disabled" if requested_mode == "disabled" else "offline",
             "config": run_config,
             "dir": self.execution_dir,
+            # Automatic code artifacts would add non-portable staging references.
+            "save_code": False,
             "settings": wandb.Settings(
                 silent=True,
                 x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S,
@@ -283,20 +286,20 @@ class WandbSink:
             raise RuntimeError("W&B initialization returned no run")
         if requested_mode != "disabled":
             directory = Path(self._run.settings.sync_dir).resolve()
-            from benchmarks.results.recovery import publisher_name
+            from benchmarks.results.publication import publisher_name
 
             identity = {
                 "id": self._run.id, "project": self._run.project,
                 "entity": self._run.entity, "name": self.run_name, "group": self.group,
                 "base_url": self._run.settings.base_url,
-                "directory": os.path.relpath(directory, self.execution_dir),
+                "directory": Path(os.path.relpath(directory, self.execution_dir)).as_posix(),
                 "publisher": publisher_name(self.publisher),
             }
             write_json(self.execution_dir, "wandb.json", identity)
             print_result_location(f"W&B local run: {directory}")
             if requested_mode not in {"offline", "dryrun"}:
                 try:
-                    self._sync = start_sync(directory)
+                    self._sync = start_sync(Path(self.execution_dir), directory)
                 except OSError as error:
                     logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
 
@@ -312,49 +315,31 @@ class WandbSink:
         self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:
-        """Publish benchmark content through the adapter selected by ResultOutputs."""
+        """Record the outcome; the saved publication inputs own tables, media and artifacts."""
         if self._run is None:
             raise RuntimeError("W&B sink is not open")
-        try:
-            self.publisher(self._run, run)
-            if "warmup_metrics" in run.artifacts:
-                artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
-                for name in ("warmup_metrics", "warmup_raw_output"):
-                    artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
-                self._run.log_artifact(artifact)
-            if "plots" in run.artifacts:
-                directory = run.artifacts["plots"]
-                artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
-                artifact.add_dir(str(directory))
-                self._run.log_artifact(artifact)
-        except wandb.errors.Error:
-            logger.exception("W&B local recording failed")
-            raise
+        self._run.summary.update({"Foretoken/measurement_exit_code": run.exit_code})
 
     def close(self, *, exit_code: int = 0) -> None:
-        """Seal local records with the benchmark status and release sync without waiting for upload."""
+        """Seal portable native history and release background publication without blocking measurement."""
         run = self._run
         self._run = None
         if run is None:
             return
         try:
             try:
-                journals: dict[str, list[Path]] = {}
-                for path in sorted(Path(self.execution_dir).glob("*.jsonl")):
-                    kind = "responses" if path.name in {"responses.jsonl", "warmup_responses.jsonl"} else "records"
-                    journals.setdefault(kind, []).append(path)
-                for kind, paths in journals.items():
-                    artifact = wandb.Artifact(f"{kind}-{run.id}", type=f"benchmark-{kind}")
-                    for path in paths:
-                        artifact.add_file(str(path), name=path.name)
-                    run.log_artifact(artifact)
-                log_path = Path(self.execution_dir) / "run.log"
-                if log_path.is_file():
-                    artifact = wandb.Artifact(f"logs-{run.id}", type="benchmark-logs")
-                    artifact.add_file(str(log_path), name="run.log")
-                    run.log_artifact(artifact)
+                if not run.disabled:
+                    from benchmarks.results.publication import record_wandb_diagnostics
+
+                    record_wandb_diagnostics(Path(self.execution_dir))
             finally:
-                run.finish(exit_code=exit_code)
+                failed = sys.exc_info()[0] is not None
+                try:
+                    run.finish(exit_code=exit_code)
+                except (OSError, wandb.errors.Error):
+                    if not failed:
+                        raise
+                    logger.exception("W&B recorder cleanup also failed")
         except wandb.errors.Error:
             logger.exception("W&B local recording finalization failed")
             raise
@@ -866,8 +851,9 @@ class ResultOutputs:
             "record": run.record, "exit_code": run.exit_code if run.exit_code is not None else self._exit_code,
             "http_series_published": run.http_series_published,
             "has_measurements": run.measurements is not None,
-            "artifacts": {name: os.path.relpath(path, self.execution_dir) for name, path in run.artifacts.items()},
+            "artifacts": {name: Path(os.path.relpath(path, self.execution_dir)).as_posix() for name, path in run.artifacts.items()},
             "output": list(self.benchmark.outputs.destinations),
+            "publication_pending": self.benchmark.outputs.includes("wandb") and wandb.setup().settings.mode != "disabled",
         })
 
     def publish(self, run: BenchmarkRun) -> None:
