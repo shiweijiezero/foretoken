@@ -14,7 +14,7 @@ spec:
   resources:
     requests:
       cpu: "16"
-      memory: 256Gi
+      memory: 508Gi
       gpu:
         count: 4
     limits:
@@ -23,6 +23,9 @@ spec:
   timeouts:
     startup: 30m
     drain: 2m
+  kvCache:
+    offload:
+      cpuCacheSize: 500G
   engineArgs:
     dtype: bfloat16
     tensor-parallel-size: 4

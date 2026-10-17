@@ -4,7 +4,7 @@ English | [简体中文](qwen-decode_zh.md)
 
 ```text
 Models: Qwen3.5-35B-A3B
-Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token MTP, adjustable during optimization
+Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token MTP and 500G local CPU KV offload, adjustable during optimization
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Precision: fixed BF16
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
@@ -15,7 +15,7 @@ Minimum concurrently working subagents: 6
 Maximum concurrently working subagents: 20
 Minimum parallel experiments: 4 independent experiment groups across the two nodes
 Maximum parallel experiments: not fixed at four; determine and record the limit from actual GPU, CPU, memory, and storage needs, including smaller experiments
-Parallel scheduling: plan two four-GPU candidates per node, or more smaller experiments. If fewer than four groups can run, record and address the preparation or resource constraints.
+Parallel scheduling: reserve capacity for platform services, builds and benchmark clients, then place four-GPU candidates and smaller experiments according to their resource requests. If fewer than four groups can run, record and address the preparation or resource constraints.
 Evaluation workloads: measure concurrency 1 and 16 separately per service using random-length workloads and StudyChat conversations; see the full commands under "Evaluation commands" below
 Accuracy evaluation: run foretoken eval as needed for changes that may affect accuracy, at most once per 20 completed performance iterations
 Allowed changes: implementation and configuration at any layer, within the precision and resource constraints above
@@ -36,7 +36,9 @@ Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and reso
 
 ## Starting deployment
 
-The example enables four-token multi-token prediction (MTP): the model verifies draft tokens before returning them. It uses asynchronous scheduling and MetaX runtime settings while retaining graph acceleration and automatic KV cache sizing. The cache volume starts at 128Gi and can grow automatically to 256Gi when its StorageClass supports online expansion.
+The example enables four-token multi-token prediction (MTP): the model verifies draft tokens before returning them. It uses asynchronous scheduling and MetaX runtime settings while retaining graph acceleration and automatic GPU KV cache sizing.
+
+Local KV offload uses `500G` of host memory (500 GB, about 465.7 GiB) across the instance's four TP workers. The model requests and is limited to 508Gi, including this cache; the frontend has a 4Gi limit, keeping the combined limit at 512Gi. Account for model loading and steady-state memory use when evaluating this configuration. The separate volume for model files and runtime caches starts at 128Gi and can grow to 256Gi when its StorageClass supports online expansion.
 
 Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen3.5-35b-a3b --timeout 60m`, then evolve it within the task budget. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
