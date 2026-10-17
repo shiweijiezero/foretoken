@@ -1084,7 +1084,7 @@ def create_app(
             "rdma_failed_peers": [
                 peer.instance_id
                 for peer, connection in service.communication.peers.items()
-                if connection.invalid
+                if connection.close_task is not None
             ],
             "default_draft_tokens": service.default_draft_tokens,
             "max_candidate_tokens": service.max_candidate_tokens,

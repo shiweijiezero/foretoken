@@ -49,7 +49,8 @@ read/ACK 操作；成功完成后，调用方接管目标数据的 staging 生�
 和完成 fence 仍由 Worker transport 持有。
 
 关闭 session 会等待原生输入预处理和提交完成，再 abort 并等待 GPU 工作结束；
-checkpoint 接收 buffer 也保留到这一边界。神经 Draft 配对使用 preparation 冻结的
+checkpoint 接收 buffer 也保留到这一边界。输入拒绝只作为请求错误返回，关闭仍执行
+abort 和 GPU fencing；真实的清理失败继续向上传递。神经 Draft 配对使用 preparation 冻结的
 checkpoint revision，服务发现仍使用请求的模型身份；独立启动时使用原生配置解析的
 commit，本地路径必须对应同一份不可变权重。
 
@@ -175,7 +176,8 @@ artifact claim/read/ACK、GPU 内容校验和 buffer 回收。并发请求共享
 初始化时生成，对应该 GPU、NIC 配置和 backend；进程重启或引擎重建后即使 HTTP
 地址相同，身份也会改变。两端在发布和读取前校验预期身份，Draft 的 opened 事件
 再次返回身份，避免 status 与 session admission 之间重启造成误复用。通信 owner
-使旧 peer 失效但不取消其在途操作。不使用 TTL、设备扫描或每请求测速。
+通过单一 close task 退役被替换或失败的 peer：等待已启动操作，撤销未领取的 probe，
+已领取的 publication 继续保留 ACK 归属，不取消在途操作。不使用 TTL、设备扫描或每请求测速。
 
 固定 Mooncake Python adapter 提供 segment handle 和完成轮询，没有 peer 重连通知。
 `openSegmentNoCache` 刷新注册描述不代表重建 transport。RDMA read 失败会使该 peer

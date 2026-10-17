@@ -53,8 +53,9 @@ Target-to-Draft feature read; `round.transfer` retains proposal-read measurement
 ownership. The frontend closes the session explicitly on completion/cancellation;
 Target closes its Draft and joins native admission, abort and started operations.
 Admission includes asynchronous input preprocessing: close waits until submission
-finishes before aborting and fencing GPU work, including checkpoint consumption. A failed
-cleanup remains visible through `GET /sessions/{id}/state` (`open`, `closing`,
+finishes before aborting and fencing GPU work, including checkpoint consumption.
+An input rejection remains a request error; it does not prevent native abort/fencing
+or turn successful close into a role failure. Failed cleanup remains visible through `GET /sessions/{id}/state` (`open`, `closing`,
 `closed`, `failed`). A claimed source artifact still requires the consumer ACK.
 
 Each proposal and native submission carries

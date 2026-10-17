@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from functools import wraps
 
 from anyio import CancelScope
+from vllm.exceptions import VLLMClientError
 from vllm.sampling_params import RequestOutputKind
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core import EngineCore, EngineCoreProc
@@ -124,7 +125,12 @@ class ExternalAsyncLLM(AsyncLLM):
             if not internal and (
                 admission := self._external_admissions.get(request_id)
             ):
-                await asyncio.shield(admission)
+                try:
+                    await asyncio.shield(admission)
+                except VLLMClientError:
+                    # The generating caller still receives this input rejection.
+                    # Continue native abort/fencing; cleanup failures must propagate.
+                    pass
             await super().abort(request_id, internal)
             # Both messages use the same EngineCore socket and ordered input queue.
             # Native abort alone returns after sending, before the scheduler handles it.

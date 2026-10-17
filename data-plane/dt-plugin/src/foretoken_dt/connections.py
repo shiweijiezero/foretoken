@@ -40,7 +40,7 @@ class RdmaConnection:
         self.artifacts: set[str] = set()
         self.operations: set[asyncio.Task] = set()
         self.proof: asyncio.Task | None = None
-        self.invalid = False
+        self.close_task: asyncio.Task | None = None
 
     def start(self, operation) -> asyncio.Task:
         """Retain communication work independently of an HTTP caller's cancellation."""
@@ -50,21 +50,21 @@ class RdmaConnection:
         def completed(task):
             self.operations.discard(task)
             if task.cancelled() or task.exception() is not None:
-                self.invalid = True
+                self.retire()
 
         task.add_done_callback(completed)
         return task
 
     async def prepare(self, local_endpoint: str) -> None:
         """Share one bidirectional proof; a cancelled waiter does not cancel its owner."""
-        if self.invalid:
+        if self.close_task is not None:
             raise HTTPException(
                 503, "RDMA connection is invalid; peer re-establishment required"
             )
         if self.proof is None:
             self.proof = self.start(self._verify(local_endpoint))
         await asyncio.shield(self.proof)
-        if self.invalid:
+        if self.close_task is not None:
             raise HTTPException(
                 503, "RDMA connection was invalidated during verification"
             )
@@ -162,9 +162,18 @@ class RdmaConnection:
             await service.release_artifact(artifact_id)
             self.artifacts.discard(artifact_id)
 
+    def retire(self) -> asyncio.Task:
+        """Invalidate once and retain cleanup independently of peer replacement or request waiters."""
+        if self.close_task is None:
+            self.close_task = self.owner.start(self._close())
+        return self.close_task
+
     async def close(self) -> None:
-        """Join operations and initiate revocation; the existing Worker drain proves release."""
-        self.invalid = True
+        """Join the same retirement owner used by failure and peer replacement."""
+        await asyncio.shield(self.retire())
+
+    async def _close(self) -> None:
+        """Join started operations, revoke unclaimed probes and retain claimed storage for ACK."""
         while self.operations:
             await asyncio.gather(*tuple(self.operations), return_exceptions=True)
         for artifact_id in tuple(self.artifacts):
@@ -218,7 +227,7 @@ class RoleCommunication:
         endpoint = endpoint.rstrip("/")
         for identity, connection in tuple(self.peers.items()):
             if connection.endpoint == endpoint and identity != peer:
-                connection.invalid = True
+                connection.retire()
                 if not connection.operations and not connection.artifacts:
                     del self.peers[identity]
         connection = self.peers.get(peer)
@@ -227,7 +236,7 @@ class RoleCommunication:
             self.peers[peer] = connection
         elif connection.endpoint != endpoint:
             raise HTTPException(409, "RDMA peer control endpoint changed")
-        if connection.invalid:
+        if connection.close_task is not None:
             raise HTTPException(503, "RDMA peer connection is invalid")
         return connection
 
@@ -235,7 +244,7 @@ class RoleCommunication:
         """Borrow live peer readiness, including failures observed by its receiving Worker."""
         connection = self._get(RdmaIdentity.model_validate(status["rdma"]), endpoint)
         if self.identity.instance_id in status["rdma_failed_peers"]:
-            connection.invalid = True
+            connection.retire()
             raise HTTPException(503, "peer invalidated this RDMA connection")
         return connection
 
@@ -256,7 +265,7 @@ class RoleCommunication:
         """Invalidate proofs after a failed data transfer; never replay the in-flight read."""
         for connection in self.peers.values():
             if connection.peer.segment == segment:
-                connection.invalid = True
+                connection.retire()
 
     def start(self, operation) -> asyncio.Task:
         """Retain one network/transfer operation independently of a cancelled waiter."""

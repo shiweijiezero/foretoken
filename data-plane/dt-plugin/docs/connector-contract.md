@@ -213,7 +213,9 @@ segment. The identity is generated when that engine initializes, fixing its GPU,
 NIC configuration and backend. A restart/rebuild changes it even if the HTTP URL
 is unchanged. Both peers check expected identities before publishing or reading;
 Draft admission also returns its identity to close the status/open race. The
-communication owner retires replaced peers without cancelling their operations.
+communication owner retires replaced or failed peers through one retained close
+task. It joins started operations and revokes unclaimed probes; claimed publications
+keep their ACK ownership. Retirement never cancels an in-flight operation.
 No TTL, device scan or per-request speed test is used.
 
 The pinned Mooncake Python adapter exposes segment handles and completion polling,

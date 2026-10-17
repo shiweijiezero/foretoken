@@ -888,6 +888,17 @@ func effectiveModelAdmission(frontend inferencev1alpha1.FrontendServiceSpec, mod
 					return servingSnapshotAdmission{}, fmt.Errorf("roleRules %q allowedPools has no complete execution path: missing %s Pool", rule.Role, pool.Template.Role)
 				}
 			}
+			if slices.ContainsFunc(pools, func(pool compiler.ModelPool) bool {
+				return pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
+			}) && !slices.ContainsFunc(pools, func(pool compiler.ModelPool) bool {
+				return pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget &&
+					slices.Contains(rule.AllowedPools, pool.Name) &&
+					slices.ContainsFunc(pool.Template.DraftPools, func(draft string) bool {
+						return slices.Contains(rule.AllowedPools, draft)
+					})
+			}) {
+				return servingSnapshotAdmission{}, fmt.Errorf("roleRules %q allowedPools has no complete Draft/Target pair", rule.Role)
+			}
 			rule.AllowedPools = slices.Clone(rule.AllowedPools)
 			slices.Sort(rule.AllowedPools)
 			rule.AllowedPools = slices.Compact(rule.AllowedPools)
