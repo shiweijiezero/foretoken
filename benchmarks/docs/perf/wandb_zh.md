@@ -30,7 +30,7 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 ## 恢复上传
 
-离线运行结束或后台上传失败后，将终端打印的结果目录传给：
+评测时设置 `WANDB_MODE=offline`，即可只在本地记录、不尝试上传。之后需要补传，或后台上传失败时，将终端打印的结果目录传给：
 
 ```bash
 foretoken sync RESULT_DIR

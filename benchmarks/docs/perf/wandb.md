@@ -30,7 +30,7 @@ Warmup is excluded from performance metrics and panels. Its records remain in th
 
 ## Resume an upload
 
-To upload saved results after an offline run or a failed background upload, pass the result directory printed by the command:
+Set `WANDB_MODE=offline` when running a benchmark to record locally without attempting uploads. To upload later, or retry a failed background upload, pass the result directory printed by the command:
 
 ```bash
 foretoken sync RESULT_DIR
