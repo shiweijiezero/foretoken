@@ -56,7 +56,7 @@ def _recover_completed(
     """Recover completed HTTP, video or composed results before any service acquisition."""
     if not resume:
         return None
-    from benchmarks.results.recovery import recover_results
+    from benchmarks.results.publication import recover_results
     from benchmarks.results.wandb_sync import publication_lock
 
     source = Path(resume).resolve()

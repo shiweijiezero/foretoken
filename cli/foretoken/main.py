@@ -24,6 +24,7 @@ from foretoken.arguments import (
     ProfileViewCommand,
     StatusCommand,
     StopCommand,
+    SyncCommand,
     UninstallCommand,
     parse_arguments,
 )
@@ -207,6 +208,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             from benchmarks.plot import main as plot_main
 
             plot_main(command.arguments)
+        elif isinstance(command, SyncCommand):
+            from benchmarks.results.publication import main as sync_main
+
+            sync_main(command.result_directory)
         elif isinstance(command, ProfileViewCommand):
             view(command)
     except DeploymentError as exc:

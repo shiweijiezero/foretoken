@@ -23,6 +23,7 @@ from benchmarks.results.output import BenchmarkRun, ResultOutputs
 from benchmarks.results.video import (
     aggregate_video_results,
     create_video_benchmark_run,
+    video_result_record,
     video_result_sinks,
     video_run_record,
 )
@@ -73,7 +74,7 @@ async def _run_requests(
             result = await client.generate(request, index, output)
             # Retain completed requests before SDK publication so interruption
             # never discards their media paths, timings, or failure details.
-            writer.write(result.to_dict())
+            writer.write(video_result_record(result, Path(outputs.execution_dir)))
             return result
         finally:
             semaphore.release()
@@ -184,7 +185,7 @@ async def run_video_benchmark(
                 respect_config_duration=False,
             )
             outputs.record_warmup(
-                [item.to_dict() for item in warmup],
+                [video_result_record(item, run_dir) for item in warmup],
                 {**aggregate_video_results(warmup), "benchmark_time": time.perf_counter() - warmup_started},
             )
             if not warmup or any(not item.success for item in warmup):

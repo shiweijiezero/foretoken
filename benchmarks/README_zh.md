@@ -93,6 +93,6 @@ foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-测量已完成但输出失败时，使用 `foretoken perf --resume RESULT_DIR` 补齐结果，不重复发送请求，详见[结果恢复](docs/perf/wandb_zh.md#恢复上传)。
+使用 `foretoken sync RESULT_DIR` 上传已有 W&B 结果，不再请求模型；也可以将完整结果目录树搬到另一台机器后上传，详见[恢复上传](docs/perf/wandb_zh.md#恢复上传)。
 
 使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果。指标选择、图宽和输出位置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)。

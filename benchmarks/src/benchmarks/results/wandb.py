@@ -365,20 +365,6 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             )
             sdk_run.log(message)
 
-    observations = [
-        run.artifacts[name]
-        for name in (
-            "config", "metrics", "raw_output", "environment", "prometheus_observations",
-            "gpu_allocation", "gpu_allocation_csv"
-        )
-        if name in run.artifacts
-    ]
-    if observations:
-        artifact = wandb.Artifact("benchmark-observations", type="benchmark")
-        for path in observations:
-            artifact.add_file(str(path), name=path.name)
-        sdk_run.log_artifact(artifact)
-
     sdk_run.log(wandb_metric_fields(run.metrics))
     if "prometheus_observations" in run.artifacts:
         from benchmarks.results.plots.measurements import _prometheus_charts
@@ -431,11 +417,6 @@ def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         sdk_run.log({f"Sweep/{chart.name}": plot})
     sdk_run.summary.update({f"Sweep/{key}": run.metrics["sweep"][key]
                             for key in ("status", "tasks", "completed", "failed", "interrupted", "running", "pending")})
-    artifact = wandb.Artifact(f"sweep-{sdk_run.id}", type="benchmark")
-    for name in ("config", "metrics", "sweep_points", "sweep_summary", "sweep_summary_csv"):
-        path = run.artifacts[name]
-        artifact.add_file(str(path), name=path.name)
-    sdk_run.log_artifact(artifact)
 
 
 def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
@@ -463,7 +444,3 @@ def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             f"{prefix}/Last configured limit": group["last_max_concurrency"],
             f"{prefix}/Stop reason": group["stop_reason"],
         })
-    artifact = wandb.Artifact(f"slo-search-{sdk_run.id}", type="benchmark")
-    path = run.artifacts["slo_results"]
-    artifact.add_file(str(path), name=path.name)
-    sdk_run.log_artifact(artifact)

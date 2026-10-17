@@ -287,7 +287,7 @@ class EvaluationArtifactSink:
 
 
 def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
-    """Publish native-valued scalars, a complete score table, and downloadable run artifacts."""
+    """Publish native-valued scalars and a complete score table to the final online session."""
     columns = [
         *(["method"] if run.record.get("mode") == "evaluation_comparison" else []),
         "task",
@@ -326,15 +326,6 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
             summary[f"Evaluation/{key}"] = row["value"]
     summary["Evaluation/Execution"] = run.metrics["execution"]
     session.summary.update(summary)
-    artifact = wandb.Artifact(f"evaluation-{session.id}", type="evaluation")
-    for name, path in run.artifacts.items():
-        if name == "plots":
-            continue
-        if path.is_dir():
-            artifact.add_dir(str(path), name=name)
-        else:
-            artifact.add_file(str(path), name=path.name)
-    session.log_artifact(artifact)
     if session.url:
         logger.info("W&B results: %s", session.url)
 
