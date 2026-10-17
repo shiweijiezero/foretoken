@@ -26,7 +26,7 @@ The lead establishes the user-facing `report.md` and its writer at task start, f
 
 ## Set up the team and assignments
 
-The lead develops research directions, assigns questions and resources, and combines results to decide which approaches to retain. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
+The lead keeps the task moving toward its objectives: choosing research directions, assigning questions and resources, and turning promising findings into implementations and experiments. Results determine which approaches to retain, improve or stop. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
 
 [Advisors](roles/advisor.md) continually explore mechanisms, methods and new research questions, and help the team reassess its current direction. The lead assigns at least two Advisors to investigate independently. They may explore different questions or examine the same question from different angles, sharing findings as their research progresses.
 
@@ -50,13 +50,15 @@ Delivered code and the runtime environment stay unchanged during build and measu
 
 ## Advance each iteration
 
-At the start of an iteration, the lead, Advisors and Workers use code, research and earlier results to choose a useful question and discuss a comparison that can answer it. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
+At the start of an iteration, the lead, Advisors and Workers use code, research and earlier results to choose a useful question and discuss a comparison that can answer it. The lead prioritizes work by its potential benefit to the target workload, available evidence, and implementation and measurement costs, allocating resources to both deepen the current approach and test alternatives. Existing [recipes](../../../benchmarks/docs/recipes.md), examples and CLI help guide execution, with resources and comparison conditions arranged before the run.
+
+When preparation or measurement is blocked, the lead assigns an owner to resolve it while other members continue research, implementation or local validation that does not depend on that result. Candidates and validation methods can be prepared from available evidence before a full baseline or profile is available; measurements then determine whether to adopt them.
 
 The Worker implements and explains the approach, then the Experimenter builds and measures it, confirming that the intended change ran. Fixed workload groups and repetitions can run through sweeps. Results return directly to developers and reviewers so analysis, preparation and recording can continue while other evaluations run.
 
 Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload, using a quiet measurement window when required.
 
-New findings can change research priorities and resource needs, so the lead adjusts subsequent work accordingly. Recurring execution problems are addressed by the responsible member, and the affected workflow is checked before the team relies on the fix.
+The lead continually adjusts directions and resources as research and experiments advance. When an Advisor flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
 
 ## Collect GPU usage
 
