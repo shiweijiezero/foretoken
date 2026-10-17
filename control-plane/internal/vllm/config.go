@@ -153,8 +153,8 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 		if template.NodeCount != 1 || ranks != 1 || effective.Parallelism.DCP != 1 || effective.Parallelism.EP != nil {
 			return EffectiveConfig{}, fmt.Errorf("DT currently requires one GPU per Group; scale Pool replicas for additional role instances")
 		}
-		if template.KVCache != nil || template.ECProfile != "" || template.Profiling != nil || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
-			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, profiling, multimodal or structured output")
+		if template.KVCache != nil || template.ECProfile != "" || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
+			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, multimodal or structured output")
 		}
 		for _, option := range []string{"worker-extension-cls", "scheduler-cls"} {
 			if _, exists := args[option]; exists {

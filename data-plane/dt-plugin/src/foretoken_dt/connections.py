@@ -90,19 +90,22 @@ class RdmaConnection:
         response.raise_for_status()
         incoming = await self.read(response.json()["artifact_id"])
         artifact_id = await self.publish()
-        response = await self.owner.client.post(
-            f"{self.endpoint}/transport/rdma/probe/read",
-            json={**body, "artifact_id": artifact_id},
-            timeout=None,
-        )
-        response.raise_for_status()
-        logger.info(
-            "DT RDMA peer verified local=%s peer=%s incoming=%s outgoing=%s",
-            self.owner.identity.instance_id,
-            self.peer.instance_id,
-            incoming,
-            response.json(),
-        )
+        try:
+            response = await self.owner.client.post(
+                f"{self.endpoint}/transport/rdma/probe/read",
+                json={**body, "artifact_id": artifact_id},
+                timeout=None,
+            )
+            response.raise_for_status()
+            logger.info(
+                "DT RDMA peer verified local=%s peer=%s incoming=%s outgoing=%s",
+                self.owner.identity.instance_id,
+                self.peer.instance_id,
+                incoming,
+                response.json(),
+            )
+        finally:
+            await self.revoke(artifact_id)
 
     async def publish(self) -> str:
         """Retain a GPU probe until the existing artifact ACK or safe revocation releases it."""
@@ -111,10 +114,27 @@ class RdmaConnection:
         artifact_id = uuid4().hex
         self.artifacts.add(artifact_id)
         service = self.owner.service
-        await service.worker("dt_create_transport_probe", artifact_id)
-        while not (await service.worker("dt_publish", artifact_id, "rdma"))["ready"]:
-            await asyncio.sleep(0.001)
+        try:
+            await service.worker("dt_create_transport_probe", artifact_id)
+            while not (await service.worker("dt_publish", artifact_id, "rdma"))[
+                "ready"
+            ]:
+                await asyncio.sleep(0.001)
+        except BaseException:
+            await self.revoke(artifact_id)
+            raise
         return artifact_id
+
+    async def revoke(self, artifact_id: str) -> None:
+        """Join safe source revocation; a claimed probe remains owned until ACK or process exit."""
+        while True:
+            released = await self.owner.service.worker("dt_release", artifact_id)
+            if released is None:
+                return
+            if released:
+                self.artifacts.discard(artifact_id)
+                return
+            await asyncio.sleep(0.001)
 
     async def read(self, artifact_id: str) -> dict:
         """Validate this peer's GPU data and keep failed or uncertain storage quarantined."""
@@ -148,8 +168,7 @@ class RdmaConnection:
         while self.operations:
             await asyncio.gather(*tuple(self.operations), return_exceptions=True)
         for artifact_id in tuple(self.artifacts):
-            if await self.owner.service.worker("dt_release", artifact_id):
-                self.artifacts.discard(artifact_id)
+            await self.revoke(artifact_id)
 
 
 class RoleCommunication:

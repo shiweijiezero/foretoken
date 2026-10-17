@@ -41,7 +41,6 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
         && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
         && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
       fi \
-      && rm -rf data-plane/third_party/vllm \
       && mkdir -p data-plane/third_party/vllm \
       && if [ -d data-plane/third_party/vllm/rust ]; then \
         git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \

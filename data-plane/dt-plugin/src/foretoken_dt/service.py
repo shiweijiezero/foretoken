@@ -275,13 +275,13 @@ class RoleService:
             self.context_profile = {
                 "method": spec.method,
                 "target": identity.get("model", engine.model_config.model),
-                "target_revision": identity.get(
-                    "revision", engine.model_config.revision
-                ),
+                "target_revision": identity.get("resolved_revision")
+                or engine.model_config.hf_config._commit_hash
+                or engine.model_config.revision,
                 "draft": identity.get("draft_model", spec.draft_model_config.model),
-                "draft_revision": identity.get(
-                    "draft_revision", spec.draft_model_config.revision
-                ),
+                "draft_revision": identity.get("resolved_draft_revision")
+                or spec.draft_model_config.hf_config._commit_hash
+                or spec.draft_model_config.revision,
             }
 
     async def worker(self, method: str, *args):

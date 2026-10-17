@@ -64,6 +64,12 @@ struct DownloadedArtifacts {
 }
 
 impl PreparedArtifacts {
+    /// Returns the frozen provider checkpoint revision used to materialize these weights.
+    /// DT compatibility consumers compare it instead of the requested moving revision.
+    pub fn model_revision(&self) -> &str {
+        &self.source.model_revision
+    }
+
     /// Publishes the exact tokenizer source and files to frontend preparation.
     /// Only a persistent namespace/claim binding permits direct directory reuse.
     pub fn tokenizer_metadata(

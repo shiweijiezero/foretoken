@@ -3,6 +3,7 @@
 
 """Client tickets and narrow EngineCore hooks for the external scheduler."""
 
+import asyncio
 from contextlib import aclosing
 from dataclasses import dataclass
 from functools import wraps
@@ -29,14 +30,31 @@ class ExternalAsyncLLM(AsyncLLM):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._external_request_ids: dict[str, str] = {}
+        self._external_admissions: dict[str, asyncio.Task] = {}
 
     async def add_request(self, request_id, prompt, params, *args, **kwargs):
-        """Retain the engine-assigned identity until the owning generator closes."""
-        collector = await super().add_request(
-            request_id, prompt, params, *args, **kwargs
-        )
-        self._external_request_ids[request_id] = collector.request_id
-        return collector
+        """Own native admission through preprocessing; abort must join before fencing execution."""
+
+        async def admit():
+            """Publish the native identity even if the generating caller is cancelled."""
+            collector = await super(ExternalAsyncLLM, self).add_request(
+                request_id, prompt, params, *args, **kwargs
+            )
+            self._external_request_ids[request_id] = collector.request_id
+            return collector
+
+        task = asyncio.create_task(admit())
+        self._external_admissions[request_id] = task
+        try:
+            return await asyncio.shield(task)
+        except BaseException:
+            # A cancelled generator may still be inside native preprocessing.
+            # Join the retained admission before aborting, even without a collector.
+            with CancelScope(shield=True):
+                await self.abort(request_id)
+            raise
+        finally:
+            self._external_admissions.pop(request_id, None)
 
     async def generate(self, prompt, sampling_params, request_id, *args, **kwargs):
         """Attach tickets after native stop handling; preserve native abort cleanup."""
@@ -103,6 +121,10 @@ class ExternalAsyncLLM(AsyncLLM):
     async def abort(self, request_id, internal=False) -> None:
         """Confirm native cancellation and GPU completion before releasing session capacity."""
         with CancelScope(shield=True):
+            if not internal and (
+                admission := self._external_admissions.get(request_id)
+            ):
+                await asyncio.shield(admission)
             await super().abort(request_id, internal)
             # Both messages use the same EngineCore socket and ordered input queue.
             # Native abort alone returns after sending, before the scheduler handles it.

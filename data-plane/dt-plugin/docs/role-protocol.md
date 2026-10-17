@@ -51,7 +51,9 @@ RDMA transport incarnation and uses connection-owned proof endpoints. It retains
 `round.admitted` for ticket admission and `round.context_transfer` for the
 Target-to-Draft feature read; `round.transfer` retains proposal-read measurements. Keep the stream open for session
 ownership. The frontend closes the session explicitly on completion/cancellation;
-Target closes its Draft and joins native abort and started operations. A failed
+Target closes its Draft and joins native admission, abort and started operations.
+Admission includes asynchronous input preprocessing: close waits until submission
+finishes before aborting and fencing GPU work, including checkpoint consumption. A failed
 cleanup remains visible through `GET /sessions/{id}/state` (`open`, `closing`,
 `closed`, `failed`). A claimed source artifact still requires the consumer ACK.
 
@@ -145,7 +147,10 @@ must select models with matching token-ID semantics.
 ## Target context for neural Drafts
 
 For a neural Draft, `/status` advertises a non-null `context_profile` identifying
-the method and Target/Draft model pair. Selected roles must agree on this profile.
+the method and Target/Draft model pair. Managed roles use preparation's frozen
+checkpoint revisions in this profile, while discovery retains the requested model
+identity. Standalone roles use the loaded native config's commit identity; local
+checkpoint paths must identify the same immutable weights. Selected roles must agree on this profile.
 `propose` additionally carries `context_source: {endpoint, session_id}` for the
 current Target. Independent token-only Draft models ignore this field.
 

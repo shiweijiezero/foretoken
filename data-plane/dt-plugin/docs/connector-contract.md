@@ -133,7 +133,7 @@ successful registration on the actual Worker GPU; native TCP/MACA/NVLink overrid
 are scoped out during RDMA initialization and restored afterward. Forced RDMA fails
 startup if those checks fail. Programming errors and failures after transfer starts are not downgraded. Binding selection is logged with request/endpoints.
 Roles without tensor transport advertise `greedy_token_ids` and accept temperature zero only. Router checks Target availability using its referenced Draft pools and matching
-format, a common transport and context profiles,
+format, a common transport and context profiles; both members must also be in the caller's allowed pools,
 excluding token-only roles for random sampling. Target
 checks the routing-assigned Draft's live capabilities before execution. A selected pair must agree;
 there is no automatic reduction of a probability-bearing request to token-only
@@ -205,6 +205,8 @@ two probe publications, one in each direction. `/transport/rdma/probe` and
 validate GPU contents and release completed storage. Requests share one pending
 proof and reuse its successful result. They do not own probe resources; cancelling
 a waiter closes only that request's sessions.
+If verification fails, the connection revokes unclaimed probes and joins their
+local fences. A claimed probe retains its owner until ACK or process exit.
 
 `/status.rdma` identifies the actual Worker Mooncake engine incarnation and its
 segment. The identity is generated when that engine initializes, fixing its GPU,

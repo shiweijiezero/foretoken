@@ -519,8 +519,10 @@ class DraftTargetWorkerExtension:
         artifact.operation.result()
         io.staged[request_id] = (artifact_id, generation)
 
-    def dt_release(self, artifact_id: str, publication_id: str | None = None) -> bool:
-        """Revoke unclaimed storage; claimed sources wait for their reader ACK."""
+    def dt_release(
+        self, artifact_id: str, publication_id: str | None = None
+    ) -> bool | None:
+        """Revoke storage: True is released, False is fencing, None requires the reader ACK."""
         io = self.dt_io
         artifact = io.artifacts.get(artifact_id)
         if artifact is None:
@@ -532,7 +534,7 @@ class DraftTargetWorkerExtension:
                 io.requests.pop(req_id)
         if artifact.claimed and publication_id is None:
             # Target owns a descriptor and may still start or finish its read.
-            return False
+            return None
         if publication_id is not None:
             artifact.acknowledgement = publication_id
         if artifact.release is not None:

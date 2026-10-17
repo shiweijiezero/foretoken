@@ -100,8 +100,8 @@ func validateGroupRole(group *inferencev1alpha1.ModelGroup) error {
 		if group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || (group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget) {
 			return fmt.Errorf("speculation requires aggregate execution with draft or target responsibility")
 		}
-		if group.Spec.NodeCount != 1 || group.Spec.KVRuntime != nil || group.Spec.Runtime.Profiling != nil {
-			return fmt.Errorf("DT Groups require one node without KV transfer or profiling")
+		if group.Spec.NodeCount != 1 || group.Spec.KVRuntime != nil {
+			return fmt.Errorf("DT Groups require one node without KV transfer")
 		}
 	}
 	switch group.Spec.Role {

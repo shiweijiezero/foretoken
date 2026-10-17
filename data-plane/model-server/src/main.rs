@@ -594,6 +594,8 @@ struct PreparedEngineLaunch {
     pub arguments: Vec<String>,
     pub environment: Vec<(String, String)>,
     pub prepared_tokenizer: Option<PreparedTokenizer>,
+    pub resolved_revision: Option<String>,
+    pub resolved_draft_revision: Option<String>,
 }
 
 /// Prepares cache mode, source artifacts, Python environment and native engine arguments.
@@ -680,6 +682,8 @@ async fn prepare_engine_launch(
     }
     let mut prepared_tokenizer = None;
     let mut prepared_draft = None;
+    let mut resolved_revision = None;
+    let mut resolved_draft_revision = None;
     if config.launch.artifacts.source != ModelSource::Local && !legacy_acquisition {
         let scope = required_env(preparation::PREPARATION_SCOPE_ENV)
             .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
@@ -700,6 +704,11 @@ async fn prepare_engine_launch(
         })?
         .map_err(|error| classify_engine_startup_failure(cache, mode, error.to_string()))?;
         model = prepared.model.display().to_string();
+        resolved_revision = Some(prepared.model_revision().to_owned());
+        resolved_draft_revision = prepared
+            .draft
+            .as_ref()
+            .map(|draft| draft.model_revision().to_owned());
         prepared_draft = prepared
             .draft
             .as_ref()
@@ -772,6 +781,8 @@ async fn prepare_engine_launch(
         arguments,
         environment,
         prepared_tokenizer,
+        resolved_revision,
+        resolved_draft_revision,
     })
 }
 
@@ -796,6 +807,7 @@ async fn spawn_engine_attempt(
         arguments,
         environment,
         prepared_tokenizer,
+        ..
     } = prepare_engine_launch(config, cache, profiling, mode, startup_deadline).await?;
     let handshake_port = if config.member.is_some() {
         29700

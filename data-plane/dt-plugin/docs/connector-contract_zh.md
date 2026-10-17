@@ -48,6 +48,11 @@ engine ticket 校验，之后才 staging 或 admission。通信 owner 独立持�
 read/ACK 操作；成功完成后，调用方接管目标数据的 staging 生命周期。物理 buffer
 和完成 fence 仍由 Worker transport 持有。
 
+关闭 session 会等待原生输入预处理和提交完成，再 abort 并等待 GPU 工作结束；
+checkpoint 接收 buffer 也保留到这一边界。神经 Draft 配对使用 preparation 冻结的
+checkpoint revision，服务发现仍使用请求的模型身份；独立启动时使用原生配置解析的
+commit，本地路径必须对应同一份不可变权重。
+
 role 退出时，先保持 HTTP 连接池可用，等待请求关闭和共享通信操作完成，以便
 发送关闭消息及 ACK；随后执行既有 Worker drain。role lifespan 最后关闭连接池，
 再停止 engine。失败或完成不确定的传输继续沿用隔离与进程退出边界。连接池不另设
@@ -109,6 +114,7 @@ Router 要求有兼容的能力交集；GPU IPC 还要求 host identity 一致�
 request、两端地址及所选路径。TCP 描述符包含 Worker 实际绑定的端口。
 无 tensor 传输的角色公布 `greedy_token_ids`，只接受
 温度 0。Router 根据 Target 引用的 Draft pools、format、传输方式和 context profile 检查兼容性，
+Draft 和 Target 均须属于调用者允许的 Pool 范围；
 随机采样还会排除仅传 token 的角色。调度策略为选定的 Target 分配 Draft，Target 在执行前检查已分配 Draft 的实时能力，不会把需要概率张量的请求自动降级成仅传 token。
 当前每个角色使用单 GPU Worker、eager 执行、本地同步调度。
 
@@ -162,6 +168,8 @@ C API `openSegmentNoCache`，刷新该 peer 的注册信息，覆盖首次打开
 artifact claim/read/ACK、GPU 内容校验和 buffer 回收。并发请求共享一次正在执行的
 验证，后续请求复用成功结果。取消一个等待请求只关闭该请求的 session，不取消共享
 验证，也不释放它持有的资源。
+验证失败时，连接撤销未领取的 probe，并等待其本地完成 fence；已领取的 probe
+保留原归属，直到 ACK 或所属进程退出。
 
 `/status.rdma` 包含实际 Worker Mooncake engine 的实例身份和 segment。身份在引擎
 初始化时生成，对应该 GPU、NIC 配置和 backend；进程重启或引擎重建后即使 HTTP

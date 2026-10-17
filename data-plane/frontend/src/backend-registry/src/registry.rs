@@ -299,6 +299,8 @@ impl BackendRegistry {
                     && self.is_route_target_healthy(&route.route_target_id)
                     && self.model_routes.routes().iter().any(|draft| {
                         draft.role == ModelServerRole::Draft
+                            && (allowed_pools.is_empty()
+                                || allowed_pools.contains(&draft.target.name))
                             && draft.pipeline_scope_id.as_ref() == Some(pipeline_scope_id)
                             && self
                                 .draft_pools(&route.route_target_id)

@@ -187,8 +187,9 @@ async fn start_role(
             "tokenizer": artifacts.tokenizer,
             "tokenizer_revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.tokenizer_revision),
             "prepared_tokenizer": prepared.prepared_tokenizer,
+            "resolved_revision": prepared.resolved_revision,
+            "resolved_draft_revision": prepared.resolved_draft_revision,
             "draft_model": draft.map_or(&artifacts.model, |draft| &draft.model),
-            "draft_revision": draft.map_or(&artifacts.revision, |draft| &draft.revision),
         }).to_string())
         .args(["-m", "foretoken_dt.serve", "--role", config.launch.dt.as_ref().expect("DT launch selected").role.as_str()])
         .arg(format!("--model={}", prepared.model))

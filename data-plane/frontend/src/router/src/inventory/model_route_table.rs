@@ -61,8 +61,7 @@ impl ModelRouteTable {
             .filter(|route| {
                 route.ready
                     && route.model == request.model
-                    && (route.role == foretoken_model_protocol::ModelServerRole::Draft
-                        || request.allowed_pools.is_empty()
+                    && (request.allowed_pools.is_empty()
                         || request.allowed_pools.contains(&route.target.name))
                     && route
                         .max_input_tokens
