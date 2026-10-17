@@ -184,8 +184,8 @@ adapter, not physical link counters or GPU kernel time.
 Before submission, the Mooncake adapter (RDMA and MACA) uses Mooncake's public `openSegmentNoCache`
 C API with the Python engine's native pointer to refresh that peer's registrations.
 This includes allocations published after the segment was first opened; it does
-not retry or switch an already submitted transfer. The supported Mooncake build
-must export this API alongside its MACA backend.
+not retry or switch an already submitted transfer. The model-server CUDA build
+and MetaX runtime build both retain this C API when linking the pinned engine.
 Refresh and submission are serialized per peer so concurrent refreshes cannot
 replace the descriptor before its read submits. Copy completion polling remains
 concurrent, and other peers have independent submission locks.

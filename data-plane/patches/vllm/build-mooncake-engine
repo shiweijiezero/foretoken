@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Build the pinned CUDA Python engine with its public C API for model-server images.
+# The runtime stage retains the wheel's Python/Store files and installs this engine.
+set -euo pipefail
+
+mkdir -p /out/mooncake
+python=${FORETOKEN_VLLM_PYTHON:-python3}
+backend=$("$python" -c 'import torch; print(bool(torch.version.cuda) and not bool(getattr(torch.version, "maca", None)))')
+if [[ "$backend" != True ]]; then
+    exit 0
+fi
+
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential ca-certificates cmake git ninja-build pkg-config python3-dev \
+    libasio-dev libboost-dev libcurl4-openssl-dev libgflags-dev \
+    libgoogle-glog-dev libibverbs-dev libjsoncpp-dev libmsgpack-dev libnuma-dev \
+    libssl-dev liburing-dev libxxhash-dev libyaml-cpp-dev libzstd-dev
+
+version=$(cat "$(dirname "$0")/mooncake.version")
+origin=${FORETOKEN_GITHUB_MIRROR:-https://github.com}
+git -c "url.${origin%/}/.insteadOf=https://github.com/" clone \
+    --depth=1 --branch "v${version}" --recurse-submodules --shallow-submodules \
+    https://github.com/kvcache-ai/Mooncake.git /src/mooncake
+
+cmake -S /src/mooncake/extern/yalantinglibs -B /build/ylt \
+    -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF
+cmake --install /build/ylt
+# Link against the CUDA SDK's driver stub without making it a runtime search path.
+export LIBRARY_PATH="${CUDA_HOME:-/usr/local/cuda}/lib64/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}"
+cmake -S /src/mooncake -B /build/mooncake -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DENABLE_DEBUG_SYMBOLS=OFF \
+    -DCMAKE_MODULE_LINKER_FLAGS=-Wl,--undefined=openSegmentNoCache \
+    -DUSE_CUDA=ON -DUSE_TCP=ON -DUSE_ETCD=OFF -DUSE_HTTP=ON \
+    -DWITH_TE=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DWITH_EP=OFF \
+    -DBUILD_UNIT_TESTS=OFF -DBUILD_BENCHMARK=OFF -DBUILD_EXAMPLES=OFF \
+    -DPython3_EXECUTABLE="$python" -DPYTHON_EXECUTABLE="$python"
+cmake --build /build/mooncake --target engine --parallel "${BUILD_JOBS:-2}"
+engine=$(find /build/mooncake/mooncake-integration -maxdepth 1 -name 'engine.*.so')
+nm -D --defined-only "$engine" | awk '$3 == "openSegmentNoCache" { found=1 } END { exit !found }'
+install -m644 "$engine" /out/mooncake/engine.so
+install -m644 /build/mooncake/mooncake-common/libasio.so /out/mooncake/
+install -Dm644 /src/mooncake/LICENSE-APACHE /out/licenses/mooncake/LICENSE-APACHE
+install -Dm644 /src/mooncake/extern/pybind11/LICENSE /out/licenses/pybind11/LICENSE
+install -Dm644 /src/mooncake/extern/yalantinglibs/LICENSE /out/licenses/yalantinglibs/LICENSE
+install -Dm644 /src/mooncake/extern/yalantinglibs/NOTICE /out/licenses/yalantinglibs/NOTICE

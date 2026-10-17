@@ -153,8 +153,8 @@ kernel 时间。
 
 Mooncake adapter (RDMA and MACA) 在提交前，使用 Python engine 的 native pointer 调用 Mooncake 公共
 C API `openSegmentNoCache`，刷新该 peer 的注册信息，覆盖首次打开 segment 后
-新发布的 allocation；不会重试或切换已提交的传输。受支持的 Mooncake 构建需同时
-导出该 API 和 MACA backend。
+新发布的 allocation；不会重试或切换已提交的传输。model-server 的 CUDA 构建和
+MetaX runtime 构建都会在链接固定版本的 Mooncake engine 时保留该 C API。
 同一 peer 的刷新和提交串行交接，避免并发刷新在 read 提交前覆盖注册描述。
 拷贝完成轮询仍然并发，其他 peer 使用独立提交锁。
 

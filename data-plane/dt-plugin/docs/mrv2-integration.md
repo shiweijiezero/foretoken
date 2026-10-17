@@ -29,8 +29,11 @@ boundaries are version-sensitive, so role startup rejects other vLLM versions.
 
 The normal [engine environment](../../../deploy/inference-engines/vllm/source-environment.json)
 uses the official vLLM image. Its CUDA runtime and Foretoken's Mooncake dependency
-preparation supply the NVIDIA transport environment. MetaX retains its own runtime
-build. The [model-server image](../../model-server/Dockerfile) installs the DT
+preparation supply the NVIDIA transport environment. The CUDA image builds the
+pinned Mooncake engine with its public registration-refresh C API; the upstream
+wheel does not export it. Mooncake sources and added build dependencies stay in
+the build stage. MetaX retains its own runtime build. The
+[model-server image](../../model-server/Dockerfile) installs the DT
 distribution and its `vllm.general_plugins` entry point in the engine's Python
 environment. The launcher extends inherited plugin allowlists before spawning
 EngineCore. Source delivery carries the same package; no runtime source mount is
