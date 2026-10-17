@@ -93,4 +93,10 @@ After each run, append its directory or W&B link, the hypothesis tested, the com
 
 The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
-Use the [report template](templates/report-template.md) for the user-facing `report.md`: start with a comparison table of measured task metrics and changes from base, briefly describe each iteration, and finish with the retained approach and result links.
+## Maintain the user-facing report
+
+At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the report at the start of `notes/experiment.md` and keep the same report when resuming. The writer maintains the report; benchmark commands save the underlying evidence.
+
+Update the report after each measured iteration and whenever analysis changes a conclusion or the retained approach. Start with measured task metrics and changes from base, briefly explain the iterations, and describe the currently retained approach with result links. Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured. Keep execution details and decision history in the linked iteration notes.
+
+On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.

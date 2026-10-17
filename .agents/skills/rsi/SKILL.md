@@ -22,6 +22,8 @@ Before allocating resources, the lead checks every node in the task and its curr
 
 The lead establishes W&B naming before parallel experiments begin. An ongoing research topic uses one project, named with a `foretoken-` prefix and the model, hardware and objective, such as `foretoken-qwen35-metax-inference`. Each experiment uses a dated or named group, with run names distinguishing approaches, workloads and repetitions. Resumption keeps the original names, and experiment records retain the run links.
 
+The lead establishes the user-facing `report.md` and its writer at task start, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report). The writer keeps it current as measurements and decisions change.
+
 ## Set up the team and assignments
 
 The lead develops research directions, assigns questions and resources, and combines results to decide which approaches to retain. Members work on complete questions and continue within the agreed scope without waiting for individual commands. The [team guidance](roles/common.md) explains assignments and handoffs.
@@ -90,4 +92,4 @@ A stop marker, deadline, SIGINT or SIGTERM lets the collector exit after its cur
 
 On a user pause, stop or deadline, the lead stops scheduling new experiments and notifies the team. Each owner stops their processes and confirms exit. Unfinished work is preserved on pause; at task completion, required results are saved before unused resources are removed.
 
-The team completes the deliverables using the [experiment records guide](../../../rsi-playbooks/experiment-records.md). The lead checks retained changes and measurements, including sampling coverage and unresolved questions, and explains which objectives were achieved.
+The lead checks retained changes and measurements, including sampling coverage and unresolved questions. The writer updates the existing report to reflect the pause or end state and objectives actually achieved, following the [report workflow](../../../rsi-playbooks/experiment-records.md#maintain-the-user-facing-report), and shares its path with the user.

@@ -72,6 +72,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-Benchmark commands save configurations, metrics and original results, which the team uses to maintain an experiment overview and final report. The task file specifies delivery locations, and the [experiment records guide](experiment-records.md) explains how to organize them. Experiments using W&B also retain links to the corresponding runs.
+Read `report.md` for measured comparisons, conclusions and the currently retained approach. The team shares its path at experiment start and keeps it updated throughout the task, including when paused or stopped. The report links to iteration notes and original results; experiments using W&B also retain run links. Delivery locations and record organization follow the task file and [experiment records guide](experiment-records.md#maintain-the-user-facing-report).
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
