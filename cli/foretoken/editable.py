@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import copy
-import filecmp
 import json
+import os
 import shutil
 import time
 import uuid
@@ -43,8 +43,6 @@ from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.source import (
     _INSTALL_SOURCE,
-    _NON_BUILD_INPUTS,
-    _SNAPSHOT_METADATA,
     _has_server_binding,
     _inputs,
     _local_candidates,
@@ -53,6 +51,7 @@ from foretoken.source import (
     _state_directory,
     _write_json,
     build_sources,
+    changed_build_inputs,
     checkout_operation,
     checkout_state_directory,
     engine_source_roots,
@@ -153,13 +152,13 @@ class EditableDeployment:
                 self.state["platform_uid"] != self.platform["platform_uid"]
                 or self.state.get("platform_inputs") != self.platform["inputs"]
             )
-            self.build_arguments = self.state["build"]["arguments"]
+            self.build_arguments = dict(self.state["build"]["arguments"])
             if platform_changed:
                 # Refresh platform intent, retaining this checkout's input versions
                 # and effective outputs until the environment build succeeds.
                 self.state["command"] = copy.deepcopy(self.platform["command"])
                 self.state["base_image"] = self.platform.get("base_image")
-                self.build_arguments = self.platform["build"]["arguments"]
+                self.build_arguments = dict(self.platform["build"]["arguments"])
                 for key in ("configuration", "registry_mirrors", "runtime_backend", "build_metax_runtime"):
                     self.state["build"][key] = copy.deepcopy(self.platform["build"][key])
                 self.state["build"]["environments"] = copy.deepcopy(
@@ -182,7 +181,16 @@ class EditableDeployment:
             snapshot = self.directory / self.state["inputs"]
             manifest = snapshot / "engine/manifest.json"
             old_engines = set(json.loads(manifest.read_text())) if manifest.is_file() else set()
-            self.environment_changed = platform_changed or old_engines != engines.keys()
+            if self.state["build"].get("build_metax_runtime") and "MOONCAKE_VERSION" in os.environ:
+                self.build_arguments["MOONCAKE_VERSION"] = os.environ["MOONCAKE_VERSION"]
+            self.mooncake_version = (
+                self.build_arguments.get("MOONCAKE_VERSION", "")
+                if self.state["build"].get("build_metax_runtime") else None
+            )
+            self.environment_changed = (
+                platform_changed or old_engines != engines.keys()
+                or self.build_arguments != self.state["build"]["arguments"]
+            )
             self.state["engines"] = engines
             self.state["command"]["engine_sources"] = [
                 f"{name}={path}" for name, path in engines.items()
@@ -211,22 +219,9 @@ class EditableDeployment:
             self._rebuild(timeout)
             return
         engines = self.state.get("engines", {})
-        current = _inputs(self.root, engines)
         old = self.directory / self.state["inputs"]
-        previous = {
-            str(p.relative_to(old))
-            for p in old.rglob("*")
-            if p.is_file()
-            and str(p.relative_to(old)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
-        }
-        changed = {
-            name
-            for name in previous | current.keys()
-            if name not in previous
-            or name not in current
-            or not filecmp.cmp(old / name, current[name], shallow=False)
-            or (old / name).stat().st_mode != current[name].stat().st_mode
-        }
+        current = _inputs(self.root, engines, old, mooncake_version=self.mooncake_version)
+        changed = changed_build_inputs(old, current)
         if not changed:
             print(
                 "Source plan: reuse runtime artifacts (no source inputs changed)",
@@ -299,7 +294,7 @@ class EditableDeployment:
             snapshot,
             engines,
             previous=old,
-            unchanged=set(current).difference(changed),
+            unchanged=set(current.files).difference(changed),
             root=self.root,
         )
         self.state["build"]["versions"] = snapshot_versions(
@@ -645,7 +640,10 @@ class EditableDeployment:
                 ]
                 for future in pending_builds:
                     future.result()
-            validate_build_inputs(self.root, snapshot, self.state.get("engines", {}))
+            validate_build_inputs(
+                self.root, snapshot, self.state.get("engines", {}),
+                mooncake_version=self.mooncake_version,
+            )
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}

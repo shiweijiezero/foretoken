@@ -9,6 +9,7 @@ import filecmp
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -382,8 +383,31 @@ def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
     return roots
 
 
-def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path]:
-    """Select build inputs using Git's tracked and non-ignored source files."""
+@dataclass
+class BuildInputs:
+    """Keep selected source files and fixed-dependency provenance together until capture."""
+
+    files: dict[str, Path]
+    dependencies: dict[str, dict[str, Any]]
+    mooncake_version: str | None = None
+
+    def validate(self, snapshot: Path) -> None:
+        """Check captured bytes and fixed-source provenance before retaining a snapshot."""
+        lost_preparation = any(
+            recorded.get("prepared") and not self.dependencies.get(name, {}).get("prepared")
+            for name, recorded in _snapshot_dependencies(snapshot).items()
+        )
+        if changed_build_inputs(snapshot, self) or lost_preparation:
+            raise DeploymentError(
+                "source changed while preparing artifacts; rerun the source operation"
+            )
+
+
+def _inputs(
+    root: Path, engines: dict[str, str] | None = None,
+    previous: Path | None = None, *, mooncake_version: str | None = None,
+) -> BuildInputs:
+    """Select local inputs, borrowing only unchanged, prepared fixed dependencies."""
     command = [
         "git",
         "-C",
@@ -439,20 +463,14 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
     preparation = upstream / ".foretoken-patches.json"
     if preparation.is_file():
         files[str(preparation.relative_to(root))] = preparation
-    mooncake = root / "third_party/mooncake"
-    if (mooncake / ".git").exists():
-        result = subprocess.run(
-            ["git", "-C", str(mooncake), "ls-files", "--recurse-submodules", "-z"],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(result.stderr.decode().strip())
-        for raw in result.stdout.split(b"\0"):
-            if raw:
-                name = "third_party/mooncake/" + os.fsdecode(raw)
-                if (root / name).is_file():
-                    files[name] = root / name
+    dependencies = {}
+    if mooncake_version is not None:
+        dependency_files, dependency = _mooncake_inputs(root, previous, mooncake_version)
+        files.update(dependency_files)
+        dependencies["third_party/mooncake"] = dependency
+    elif (root / "third_party/mooncake/.git").exists():
+        dependency_files, _, _ = _git_dependency_inputs(root, "third_party/mooncake")
+        files.update(dependency_files)
     for engine, checkout in (engines or {}).items():
         result = subprocess.run(
             [
@@ -477,11 +495,171 @@ def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path
             path = Path(checkout) / name
             if path.is_file():
                 files[f"engine/{engine}/{name}"] = path
-    return files
+    return BuildInputs(files, dependencies, mooncake_version)
+
+
+def _snapshot_dependencies(snapshot: Path | None) -> dict[str, dict[str, Any]]:
+    """Read fixed-dependency provenance when a captured input set provides it."""
+    metadata = snapshot / _SOURCE_METADATA if snapshot is not None else None
+    if metadata is None or not metadata.is_file():
+        return {}
+    return json.loads(metadata.read_text()).get("dependencies", {})
+
+
+def _unmaterialized_submodule(path: Path) -> bool:
+    """Distinguish an absent checkout from local files that must not be replaced."""
+    return not path.is_symlink() and (not path.exists() or path.is_dir() and not any(path.iterdir()))
+
+
+def _git_dependency_inputs(
+    root: Path, prefix: str, reference: Path | None = None,
+    recorded_revisions: dict[str, str] | None = None,
+) -> tuple[dict[str, Path], dict[str, str], bool]:
+    """Read live dependency files, borrowing only absent submodules at recorded gitlinks."""
+    checkout = root / prefix
+    entries = subprocess.check_output([
+        "git", "-C", str(checkout), "ls-files", "--stage", "-z",
+    ])
+    links = {}
+    for entry in entries.split(b"\0"):
+        if entry:
+            metadata, name = entry.split(b"\t", 1)
+            mode, revision, _ = metadata.split()
+            if mode == b"160000":
+                links[os.fsdecode(name)] = revision.decode()
+    names = subprocess.check_output([
+        "git", "-C", str(checkout), "ls-files", "--cached", "--others", "--exclude-standard", "-z",
+    ])
+    files, revisions = {}, {}
+    complete = True
+    for raw in names.split(b"\0"):
+        if not raw:
+            continue
+        relative = os.fsdecode(raw)
+        name = prefix + "/" + relative
+        path = root / name
+        if relative not in links:
+            if path.is_file():
+                files[name] = path
+            continue
+        revisions[name] = links[relative]
+        if (path / ".git").exists():
+            nested, nested_revisions, ready = _git_dependency_inputs(
+                root, name, reference, recorded_revisions,
+            )
+            files.update(nested)
+            revisions.update(nested_revisions)
+            actual_revision = subprocess.check_output(
+                ["git", "-C", str(path), "rev-parse", "HEAD"], text=True,
+            ).strip()
+            complete = complete and ready and actual_revision == links[relative]
+        elif (
+            reference is not None and _unmaterialized_submodule(path)
+            and (recorded_revisions or {}).get(name) == links[relative]
+        ):
+            files.update({
+                str(item.relative_to(reference)): item
+                for item in (reference / name).rglob("*") if item.is_file()
+            })
+            revisions.update({
+                nested: revision for nested, revision in (recorded_revisions or {}).items()
+                if nested.startswith(name + "/")
+            })
+        else:
+            if not _unmaterialized_submodule(path):
+                raise DeploymentError(f"uninitialized dependency contains local files: {name}")
+            complete = False
+    return files, revisions, complete
+
+
+def _mooncake_inputs(
+    root: Path, previous: Path | None, version: str,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    """Resolve the preparer's fixed source choice without downloading or changing a checkout."""
+    prefix = "third_party/mooncake"
+    preparer = root / "deploy/mooncake/prepare-source"
+    environment = {**os.environ, "MOONCAKE_VERSION": version}
+    described = subprocess.run(
+        [str(preparer), "--describe"], cwd=root, env=environment,
+        capture_output=True, text=True, check=False,
+    )
+    if described.returncode:
+        raise DeploymentError(described.stderr.strip() or described.stdout.strip())
+    revision, *patches = described.stdout.splitlines()
+    previous_record = _snapshot_dependencies(previous).get(prefix, {})
+    reusable = (
+        previous is not None and previous_record.get("prepared") is True
+        and previous_record.get("revision") == revision
+        and previous_record.get("patches") == patches
+        and all(
+            (previous / name).is_file() and _same_source_file(root / name, previous / name)
+            for name in ["deploy/mooncake/prepare-source", *patches]
+        )
+    )
+    checkout = root / prefix
+    if not (checkout / ".git").exists():
+        if not _unmaterialized_submodule(checkout):
+            raise DeploymentError(f"uninitialized dependency contains local files: {prefix}")
+        if reusable:
+            return {
+                str(path.relative_to(previous)): path
+                for path in (previous / prefix).rglob("*") if path.is_file()
+            }, previous_record
+        return {}, {"revision": revision, "patches": patches, "submodules": {}, "prepared": False}
+    files, submodules, complete = _git_dependency_inputs(
+        root, prefix, previous if reusable else None, previous_record.get("submodules", {}),
+    )
+    checked = subprocess.run(
+        [str(preparer), "--check"], cwd=root, env=environment,
+        capture_output=True, text=True, check=False,
+    )
+    if checked.returncode not in (0, 1):
+        raise DeploymentError(checked.stderr.strip() or checked.stdout.strip())
+    return files, {
+        "revision": revision, "patches": patches, "submodules": submodules,
+        "prepared": complete and checked.returncode == 0,
+    }
+
+
+def _source_file_mode(path: Path) -> int:
+    """Use Git's executable-file distinction for private build snapshots."""
+    return 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
+
+
+def _same_source_file(left: Path, right: Path) -> bool:
+    """Compare build bytes and executable state independently of workstation metadata."""
+    # filecmp caches deep comparisons by mtime; restored timestamps must not hide edits.
+    filecmp.clear_cache()
+    return (
+        _source_file_mode(left) == _source_file_mode(right)
+        and filecmp.cmp(left, right, shallow=False)
+    )
+
+
+def changed_build_inputs(snapshot: Path, current: BuildInputs) -> set[str]:
+    """Identify added, removed or changed inputs for deployment and publication checks."""
+    previous = {
+        str(path.relative_to(snapshot))
+        for path in snapshot.rglob("*")
+        if path.is_file()
+        and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
+    }
+    changed = {
+        name for name in previous | current.files.keys()
+        if name not in previous or name not in current.files
+        or not _same_source_file(snapshot / name, current.files[name])
+    }
+    dependencies = _snapshot_dependencies(snapshot)
+    for name in dependencies.keys() | current.dependencies.keys():
+        old = {key: value for key, value in dependencies.get(name, {}).items() if key != "prepared"}
+        new = {key: value for key, value in current.dependencies.get(name, {}).items() if key != "prepared"}
+        if old != new:
+            changed.add(name)
+    return changed
 
 
 def _snapshot(
-    files: dict[str, Path],
+    inputs: BuildInputs,
     destination: Path,
     engines: dict[str, str] | None = None,
     previous: Path | None = None,
@@ -490,15 +668,21 @@ def _snapshot(
     root: Path,
 ) -> None:
     """Save build inputs and their checkout provenance before compilation begins."""
-    destination.mkdir(parents=True)
+    destination.mkdir(parents=True, mode=0o700)
+    files = inputs.files
     for name, source in files.items():
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         prior = previous / name if previous is not None else None
-        if prior is not None and unchanged is not None and name in unchanged:
+        mode = _source_file_mode(source)
+        if (
+            prior is not None and unchanged is not None and name in unchanged
+            and stat.S_IMODE(prior.stat().st_mode) == mode
+        ):
             os.link(prior, target)
         else:
-            shutil.copy2(source, target)
+            shutil.copyfile(source, target)
+            target.chmod(mode)
     if engines:
         manifest = {}
         deleted = {}
@@ -525,7 +709,13 @@ def _snapshot(
     _write_json(destination / _SOURCE_METADATA, {
         "foretoken": _checkout_source(root),
         "engines": {name: _checkout_source(Path(checkout)) for name, checkout in (engines or {}).items()},
+        "dependencies": inputs.dependencies,
     })
+    if inputs.dependencies:
+        # Verify against the original reference, never certify a new snapshot from itself.
+        _inputs(
+            root, engines, previous, mooncake_version=inputs.mooncake_version,
+        ).validate(destination)
 
 
 def _checkout_source(root: Path) -> dict[str, Any] | None:
@@ -543,6 +733,7 @@ def build_sources(snapshot: Path, component: str) -> dict[str, Any] | None:
     if not metadata.is_file():
         return None
     sources = json.loads(metadata.read_text())
+    sources.pop("dependencies", None)
     if component != "model-server":
         sources.pop("engines", None)
     return sources
@@ -563,12 +754,14 @@ def _write_json(path: Path, value: object) -> None:
 
 @contextmanager
 def capture_build_inputs(
-    root: Path, engines: dict[str, str] | None = None
+    root: Path, engines: dict[str, str] | None = None,
+    previous: Path | None = None, *, mooncake_version: str | None = None,
 ) -> Iterator[Path]:
     """Capture candidate inputs until their source owner adopts the snapshot into saved state."""
     destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
     try:
-        _snapshot(_inputs(root, engines), destination, engines, root=root)
+        inputs = _inputs(root, engines, previous, mooncake_version=mooncake_version)
+        _snapshot(inputs, destination, engines, previous=previous, root=root)
         yield destination
     finally:
         if destination.exists():
@@ -620,24 +813,11 @@ def forget_install(kubectl: Kubectl) -> None:
 
 
 def validate_build_inputs(
-    root: Path, snapshot: Path, engines: dict[str, str] | None = None
+    root: Path, snapshot: Path, engines: dict[str, str] | None = None,
+    *, mooncake_version: str | None = None,
 ) -> None:
-    """Reject a build whose checkout changed before its image or bundle was selected."""
-    current = _inputs(root, engines)
-    previous = {
-        str(path.relative_to(snapshot))
-        for path in snapshot.rglob("*")
-        if path.is_file()
-        and str(path.relative_to(snapshot)) not in _SNAPSHOT_METADATA | _NON_BUILD_INPUTS
-    }
-    if previous != current.keys() or any(
-        not filecmp.cmp(snapshot / name, path, shallow=False)
-        or (snapshot / name).stat().st_mode != path.stat().st_mode
-        for name, path in current.items()
-    ):
-        raise DeploymentError(
-            "source changed while preparing artifacts; rerun the source operation"
-        )
+    """Reject semantic source changes before selecting the completed image or application."""
+    _inputs(root, engines, snapshot, mooncake_version=mooncake_version).validate(snapshot)
 
 
 def snapshot_versions(
@@ -661,8 +841,7 @@ def snapshot_versions(
                 name in versions
                 and old is not None
                 and old.is_file()
-                and old.stat().st_mode == path.stat().st_mode
-                and filecmp.cmp(old, path, shallow=False)
+                and _same_source_file(old, path)
             )
         )
         result[name] = versions[name] if unchanged else revision
@@ -853,6 +1032,7 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
             "UV_IMAGE",
             "METAX_SDK_IMAGE",
             "MACA_PATH",
+            "MOONCAKE_VERSION",
             "UV_PYTHON",
             "FORETOKEN_VLLM_PYTHON",
             "BUILD_JOBS",
@@ -1457,16 +1637,20 @@ def prepare_source_images(
     else:
         environment.update(saved_arguments)
         arguments = dict(saved_arguments)
-    if build_metax_runtime:
-        prepared = cancellation.run(
-            [str(root / "deploy/mooncake/prepare-source")],
-            cwd=root,
-            env=environment,
-        )
-        if prepared.returncode:
-            raise DeploymentError(
-                "could not prepare the MetaX runtime's Mooncake source"
+    old = state_directory / previous["inputs"] if previous.get("inputs") else None
+    mooncake_version = arguments.get("MOONCAKE_VERSION", "") if build_metax_runtime else None
+    if mooncake_version is not None:
+        _, dependency = _mooncake_inputs(root, old, mooncake_version)
+        if not dependency["prepared"]:
+            prepared = cancellation.run(
+                [str(root / "deploy/mooncake/prepare-source")],
+                cwd=root,
+                env=environment,
             )
+            if prepared.returncode:
+                raise DeploymentError(
+                    "could not prepare the MetaX runtime's Mooncake source"
+                )
     arguments["VLLM_REVISION"] = pinned_rust_revision(root)
     configuration = build_configuration(
         root,
@@ -1567,7 +1751,9 @@ def prepare_source_images(
             },
         )
         execution_claims[claim] = execution["name"] if execution is not None else ""
-    with capture_build_inputs(root, engines) as snapshot, ExitStack() as build_contexts:
+    with capture_build_inputs(
+        root, engines, old, mooncake_version=mooncake_version,
+    ) as snapshot, ExitStack() as build_contexts:
         # Pending inputs survive a failed build: compiler storage is never their only copy.
         with _local_candidates(state_directory):
             destination = state_directory / snapshot.name
@@ -1606,7 +1792,6 @@ def prepare_source_images(
                 ),
             ]
         )
-        old = state_directory / previous["inputs"] if previous.get("inputs") else None
         versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
             str(path.relative_to(snapshot)): path
@@ -1889,7 +2074,7 @@ def prepare_source_images(
                 set(references.values()) | set(environment_images.values())
             )
         build_contexts.close()
-        validate_build_inputs(root, snapshot, engines)
+        validate_build_inputs(root, snapshot, engines, mooncake_version=mooncake_version)
         yield SourceImages(
             root,
             "registry" if registry else "import",
