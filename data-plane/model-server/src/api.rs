@@ -232,10 +232,10 @@ impl Drop for AdmissionPermit {
 }
 
 #[derive(Clone)]
-struct ExecutionStore {
-    ledger: Arc<foretoken_request_ledger::RequestLedger>,
-    pod_uid: String,
-    epoch: u64,
+pub(crate) struct ExecutionStore {
+    pub(crate) ledger: Arc<foretoken_request_ledger::RequestLedger>,
+    pub(crate) pod_uid: String,
+    pub(crate) epoch: u64,
 }
 
 /// Mutable process state shared by typed HTTP handlers.
@@ -486,6 +486,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
         version: 3,
+        draft_target_workload: None,
         request_cost: telemetry.request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -727,14 +728,15 @@ async fn stop_uncertain_execution(health: &RuntimeHealth) {
 }
 
 #[derive(Clone, Copy)]
-enum ReservationEnd {
+pub(crate) enum ReservationEnd {
     NotSubmitted,
+    AdmissionRefused,
     StageTerminated,
     RequestTerminated,
 }
 
 // Persist the execution owner's terminal evidence, retaining the reservation across storage outages.
-async fn finish_shared(
+pub(crate) async fn finish_shared(
     shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
     owner: &str,
     end: ReservationEnd,
@@ -746,6 +748,12 @@ async fn finish_shared(
     reference.final_stage |= matches!(end, ReservationEnd::RequestTerminated);
     loop {
         let result = match end {
+            ReservationEnd::AdmissionRefused => {
+                store
+                    .ledger
+                    .return_before_submission(&reference, owner)
+                    .await
+            }
             ReservationEnd::NotSubmitted => {
                 store
                     .ledger
@@ -822,7 +830,7 @@ fn status(healthy: bool) -> StatusCode {
 
 /// Fixed, wire-safe errors for the internal API.
 #[derive(Debug, Clone, Copy)]
-enum ApiError {
+pub(crate) enum ApiError {
     InvalidRequest,
     Unavailable,
     Busy,

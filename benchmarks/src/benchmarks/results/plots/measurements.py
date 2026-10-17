@@ -300,6 +300,8 @@ def _prometheus_charts(source: Path) -> list[Chart]:
         def display_label(label: str, *, name: str = name) -> str:
             """Show service, group, role and rank without printing raw JSON in figure titles."""
             values = json.loads(label)
+            if name.startswith("dt_"):
+                return " / ".join(str(values[key]) for key in ("model_name", "phase", "outcome", "stage"))
             if name.startswith(("cpu_", "memory_")):
                 same_pod = sum(
                     1 for metric, other in grouped
@@ -328,7 +330,10 @@ def _prometheus_charts(source: Path) -> list[Chart]:
         )
         if series:
             unit = (
-                "cores"
+                "rounds/s" if name == "dt_rounds_per_second"
+                else "bytes/s" if name == "dt_transfer_bytes_per_second"
+                else "wall seconds" if name == "dt_stage_mean_seconds"
+                else "cores"
                 if name.endswith("_cores")
                 else "bytes"
                 if name.endswith("_bytes")
@@ -362,8 +367,12 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 "spec_target_forward_time_share_ratio": "Target forward GPU-time share",
                 "spec_acceptance_ratio": "Draft acceptance",
                 "spec_accepted_tokens_per_draft": "Accepted tokens per draft",
+                "dt_rounds_per_second": "DT rounds",
+                "dt_tokens_per_second": "DT tokens",
+                "dt_stage_mean_seconds": "DT mean stage duration",
+                "dt_transfer_bytes_per_second": "DT transfer rate",
             }.get(name, f"Prometheus · {name.replace('_', ' ')}")
-            title = f"{label} · 1-minute rate" if name in {"cpu_usage_cores", "cpu_throttled_periods_ratio"} else label
+            title = f"{label} · trailing 1 minute" if name.startswith("dt_") or name in {"cpu_usage_cores", "cpu_throttled_periods_ratio"} else label
             charts.append(
                 Chart(
                     f"prometheus-{name}",

@@ -1,0 +1,53 @@
+--- a/vllm/model_executor/determinism/batch_invariant.py
++++ b/vllm/model_executor/determinism/batch_invariant.py
+@@ -330,6 +330,11 @@
+             "num_warps": 8,
+         },
+     }
++    config = _get_matmul_config(M, N, K, dtype, configs[dtype])
++    # The default 128x128 tile needs 96 KiB of shared memory. Keep the K
++    # reduction tile unchanged on devices limited to 64 KiB.
++    if get_max_shared_memory_bytes(a.device.index) < 96 * 1024:
++        config = {**config, "BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 64, "num_stages": 2}
+     matmul_kernel_persistent[grid](
+         a,
+         b,
+@@ -349,7 +354,7 @@
+         B_LARGE=b.numel() > 2**31,
+         C_LARGE=c.numel() > 2**31,
+         HAS_BIAS=bias is not None,
+-        **_get_matmul_config(M, N, K, dtype, configs[dtype]),
++        **config,
+     )
+     return c
+ 
+@@ -1061,10 +1066,11 @@
+     _batch_invariant_LIB = torch.library.Library("aten", "IMPL")
+ 
+     key = current_platform.dispatch_key
+-    if current_platform.is_cuda():
+-        if current_platform.is_device_capability_family(80):
+-            # SM80 (Ampere) cannot rely on cuBLASLt-only determinism; install the
+-            # triton persistent matmul overrides for mm/addmm/matmul/linear.
++    is_metax = bool(getattr(torch.version, "maca", None))
++    if current_platform.is_cuda() or is_metax:
++        if is_metax or current_platform.is_device_capability_family(80):
++            # MetaX and SM80 cannot use cuBLASLt-only determinism. Use the
++            # persistent kernels for native PyTorch linear/matmul calls too.
+             _batch_invariant_LIB.impl("aten::mm", mm_batch_invariant, key)
+             _batch_invariant_LIB.impl("aten::addmm", addmm_batch_invariant, key)
+             _batch_invariant_LIB.impl("aten::matmul", matmul_batch_invariant, key)
+@@ -1122,8 +1128,12 @@
+         )
+         torch.bmm = bmm_batch_invariant
+ 
++    # MACA has no cuBLASLt split-K control; the persistent kernels above
++    # provide fixed reductions without setting CUDA-only backend flags.
+     reduced_precision_val = (
+-        (False, False) if is_torch_equal_or_newer("2.10.0") else False
++        (False, False)
++        if is_torch_equal_or_newer("2.10.0") and not is_metax
++        else False
+     )
+     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = (
+         reduced_precision_val

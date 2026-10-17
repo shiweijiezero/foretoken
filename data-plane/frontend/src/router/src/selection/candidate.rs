@@ -33,6 +33,10 @@ pub struct RouteCandidate {
     pub revision: String,
     /// E/P/D route-set identity, if this routable ModelGroup participates in one.
     pub pipeline_scope_id: Option<String>,
+    /// Live candidate format, context, Target policy and actual method/engine capacity.
+    pub draft_target_capabilities: Option<foretoken_model_protocol::DraftTargetCapabilities>,
+    /// Draft pools associated with a Target by committed deployment configuration.
+    pub draft_pools: Vec<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
     /// Latest route-target gauges and available windowed statistics for this routing round.
@@ -57,14 +61,29 @@ impl RouteCandidate {
     /// Returns the required execution roles after this candidate for routing algorithms.
     pub fn future_stages(&self) -> &'static [ModelServerRole] {
         match self.role {
-            ModelServerRole::Aggregate | ModelServerRole::Decode => &[],
+            ModelServerRole::Aggregate | ModelServerRole::Decode | ModelServerRole::Draft => &[],
+            ModelServerRole::Target => &[],
             ModelServerRole::Prefill => &[ModelServerRole::Decode],
             ModelServerRole::Encoder => &[ModelServerRole::Prefill, ModelServerRole::Decode],
         }
     }
 
+    /// Checks whether this Draft can supply candidates to the selected Target.
+    pub fn is_draft_for(&self, target: &Self) -> bool {
+        self.role == ModelServerRole::Draft
+            && target.role == ModelServerRole::Target
+            && target.pipeline_scope_id.is_some()
+            && self.pipeline_scope_id == target.pipeline_scope_id
+            && self
+                .draft_target_capabilities
+                .as_ref()
+                .zip(target.draft_target_capabilities.as_ref())
+                .is_some_and(|(draft, target)| draft.supports_target(target))
+            && target.draft_pools.contains(&self.target.name)
+    }
+
     /// Converts this internal scored candidate into the execution decision exposed by Router.
-    pub(crate) fn decision(&self) -> crate::RouteDecision {
+    pub fn decision(&self) -> crate::RouteDecision {
         crate::RouteDecision {
             route_target_id: self.route_target_id.clone(),
             admission_targets: self.admission_targets.clone(),

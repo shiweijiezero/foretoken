@@ -161,7 +161,7 @@ Role rules require an authentication gateway. Requests without an authenticated 
 
 `ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. Set both `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
 
-A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
+A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage. For Draft/Target, the allowed set must include a Target and at least one Draft referenced by that Target's `speculation.draftPools`.
 
 ## Update serving settings
 

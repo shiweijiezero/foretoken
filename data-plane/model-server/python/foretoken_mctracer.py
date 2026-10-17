@@ -101,7 +101,7 @@ class Capture:
         )
 
 
-class Worker(GPUWorker):
+class WorkerMixin:
     """Prepare selected MetaX workers and expose captures to the runtime supervisor."""
 
     def init_device(self) -> None:
@@ -124,3 +124,7 @@ class Worker(GPUWorker):
         else:
             self._foretoken_mctracer_capture.stop()
             del self._foretoken_mctracer_capture
+
+
+class Worker(WorkerMixin, GPUWorker):
+    """Add mcTracer instrumentation to the ordinary native worker."""

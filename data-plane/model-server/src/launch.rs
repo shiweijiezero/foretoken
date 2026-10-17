@@ -27,6 +27,8 @@ pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
+    #[serde(default)]
+    pub dt: Option<DraftTargetPlan>,
     pub version: u8,
     /// Kubernetes nodes participating in this complete execution group.
     #[serde(rename = "nodeCount")]
@@ -43,6 +45,34 @@ pub struct LaunchPlanV1 {
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
     pub engine_args: BTreeMap<String, serde_json::Value>,
+}
+
+/// Selects the independent role application while retaining the shared engine argument renderer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftTargetPlan {
+    pub role: DraftTargetRole,
+    #[serde(default)]
+    pub rdma: bool,
+    #[serde(default, rename = "draftArtifacts")]
+    pub draft_artifacts: Option<Artifacts>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DraftTargetRole {
+    Draft,
+    Target,
+}
+
+impl DraftTargetRole {
+    /// Returns the role application's CLI value for the process launcher.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Target => "target",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,14 +301,19 @@ impl LaunchPlanV1 {
         if self.node_count == 0 {
             return Err("launch plan requires a positive node count".into());
         }
-        for (name, value) in [
-            ("model", &self.artifacts.model),
-            ("revision", &self.artifacts.revision),
-            ("tokenizer", &self.artifacts.tokenizer),
-            ("tokenizerRevision", &self.artifacts.tokenizer_revision),
-        ] {
-            if value.is_empty() {
-                return Err(format!("launch plan artifacts.{name} must be nonempty"));
+        let draft = self.dt.as_ref().and_then(|dt| dt.draft_artifacts.as_ref());
+        for (field, artifacts) in std::iter::once(("artifacts", &self.artifacts))
+            .chain(draft.map(|artifacts| ("dt.draftArtifacts", artifacts)))
+        {
+            for (name, value) in [
+                ("model", &artifacts.model),
+                ("revision", &artifacts.revision),
+                ("tokenizer", &artifacts.tokenizer),
+                ("tokenizerRevision", &artifacts.tokenizer_revision),
+            ] {
+                if value.is_empty() {
+                    return Err(format!("launch plan {field}.{name} must be nonempty"));
+                }
             }
         }
         let p = &self.parallelism;

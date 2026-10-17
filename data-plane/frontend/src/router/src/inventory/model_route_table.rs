@@ -35,6 +35,7 @@ impl ModelRouteTable {
     ) -> foretoken_model_protocol::ModelServerRole {
         use foretoken_model_protocol::ModelServerRole;
         match round {
+            crate::RoutingStage::Draft => return ModelServerRole::Draft,
             crate::RoutingStage::Prefill => return ModelServerRole::Prefill,
             crate::RoutingStage::Decode => return ModelServerRole::Decode,
             crate::RoutingStage::Initial => {}
@@ -43,6 +44,7 @@ impl ModelRouteTable {
         for route in self.routes.iter().filter(|route| route.model == model) {
             match route.role {
                 ModelServerRole::Encoder => return ModelServerRole::Encoder,
+                ModelServerRole::Target => return ModelServerRole::Target,
                 ModelServerRole::Prefill => role = ModelServerRole::Prefill,
                 _ => {}
             }
@@ -52,7 +54,7 @@ impl ModelRouteTable {
 
     /// Returns static routes whose model and input limit match one router request.
     ///
-    /// `PipelineRouter` further applies dynamic health and capability checks; references remain owned by this table.
+    /// `PipelineRouter` applies dynamic health and capability checks to these results.
     pub(crate) fn candidates(&self, request: &RouterRequest) -> Vec<&RouteTarget> {
         self.routes
             .iter()
@@ -63,7 +65,7 @@ impl ModelRouteTable {
                         || request.allowed_pools.contains(&route.target.name))
                     && route
                         .max_input_tokens
-                        .is_none_or(|limit| request.token_count() <= limit)
+                        .is_none_or(|limit| request.input_tokens <= limit)
             })
             .collect()
     }

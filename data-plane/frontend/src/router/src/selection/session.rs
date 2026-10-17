@@ -11,19 +11,21 @@ use crate::{RouteDecision, RouterRequest};
 /// Identifies the selection round visible to routing algorithms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoutingStage {
-    /// Selects the first route, which may be Aggregate, Prefill, or Encoder.
+    /// Selects the first route, which may be Aggregate, Prefill, Encoder, or Target.
     Initial,
     /// Selects Prefill after an Encoder when the selected topology requires it.
     Prefill,
     /// Selects Decode after Prefill.
     Decode,
+    /// Selects compatible Drafts after initial Target selection.
+    Draft,
 }
 
-/// Immutable E/P/D routing progress visible to algorithms for one selection round.
+/// Immutable split-workflow routing progress visible to algorithms for one selection round.
 ///
 /// `RouteSession` owns and constructs this view; Filter, Scorer, and Picker may read it but cannot
 /// mutate routing progress or treat it as client input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoutingProgress<'a> {
     /// Serving-snapshot version retained by this session; zero denotes an unversioned inventory.
     /// Shared algorithm state must not let older snapshots supersede newer observations.
@@ -34,10 +36,13 @@ pub struct RoutingProgress<'a> {
     pub completed_stages: &'a [ModelServerRole],
     /// E/P/D route-set identity bound by an earlier selection, if any.
     pub pipeline_scope_id: Option<&'a str>,
+    /// Selected Target, including compatibility and load observed when it was chosen.
+    pub selected_target: Option<&'a crate::RouteCandidate>,
 }
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
-/// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one E/P/D route set.
+/// P/D and E/P/D select sequential stages. DT binds a Target and compatible Draft set
+/// once, retaining routing load for both until the request finishes.
 pub trait RouteSession: Send {
     /// Releases prompt-token load when the first response reaches the frontend.
     fn response_started(&mut self) {}
@@ -45,8 +50,11 @@ pub trait RouteSession: Send {
     /// Releases the completed stage's load; dropping the session also releases outstanding stages.
     fn stage_complete(&mut self) {}
 
-    /// Selects one Aggregate, ordinary Prefill, or E/P/D Encoder from the current snapshot.
+    /// Selects one Aggregate, Prefill, Encoder, or Target from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;
+
+    /// Selects the compatible Draft set for the already selected Target; the binding is request-local.
+    fn select_drafts(&mut self) -> Result<Vec<RouteDecision>, RouteError>;
 
     /// Selects the Prefill in the Encoder-selected E/P/D route set.
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError>;
@@ -95,6 +103,9 @@ pub enum RouteError {
     /// Picker selected a position that is not present in its current scored slice.
     #[error("route picker selected out-of-range candidate index {index}")]
     InvalidPickerIndex { index: usize },
+    /// Draft assignment was requested without a selected Target.
+    #[error("draft assignment requires a selected target model server route")]
+    DraftBeforeTarget,
     /// Prefill selection was requested before an Encoder model-server route was selected.
     #[error("prefill selection requires a selected encoder model server route")]
     PrefillBeforeEncoder,

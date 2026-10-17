@@ -164,6 +164,10 @@ def install_mooncake_dependencies() -> None:
         ("libcurl.so.4", "libcurl4"),
         ("libibverbs.so.1", "libibverbs1"),
         ("libmlx5.so.1", "ibverbs-providers"),
+        ("libglog.so.1", "libgoogle-glog-dev"),
+        ("libgflags.so.2.2", "libgflags-dev"),
+        ("libjsoncpp.so.25", "libjsoncpp-dev"),
+        ("libnuma.so.1", "libnuma1"),
     ):
         try:
             ctypes.CDLL(library)

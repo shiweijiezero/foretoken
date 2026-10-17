@@ -33,6 +33,8 @@ After acceptance, the backend owns execution and completion. Cancellation reques
 
 Only definite nonacceptance permits retry: Router Busy, or backend `503` with `admission_busy` or `admission_unavailable`. Return the dispatch reservation while keeping the original waiting position and deadline. Once any batch child or stage is accepted, do not replay the initial request. Store unavailability prevents new bounded reservations; accepted work continues and completes its accounting when the store recovers.
 
+A DT Target can claim the reservation before binding its Draft. If the Draft explicitly refuses before Target prefill, the Target joins binding cleanup and atomically returns the unexecuted reservation before publishing `admission_closed`. This fences the refusing owner and lets frontend admission retry with the original request and deadline. Cancellation or uncertain cleanup terminates ownership instead of permitting replay.
+
 ## Disaggregated execution
 
 Prefill/Decode (P/D) and Encoder/Prefill/Decode (E/P/D) share one caller-concurrency reservation per generated sequence. Intermediate stages release their own instance capacity when they finish, while caller concurrency remains held through the next stage. Decode releases it after confirmed completion. Complete the ownership transfer before returning intermediate completion to the next stage. Connector-owned KV and media resources have their own cleanup lifecycle.

@@ -9,3 +9,8 @@
 data-plane/**/.git
 data-plane/target/
 data-plane/**/target/
+data-plane/**/__pycache__/
+data-plane/**/*.pyc
+data-plane/**/*.pyo
+data-plane/**/*.egg-info/
+data-plane/dt-plugin/build/

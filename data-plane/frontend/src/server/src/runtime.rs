@@ -111,6 +111,9 @@ pub struct Tokenization {
 pub enum GenerationError {
     #[error("request is invalid")]
     InvalidRequest,
+    /// Safe request guidance supplied by the execution adapter for public API callers.
+    #[error("{0}")]
+    UnsupportedRequest(&'static str),
     #[error("model was not found")]
     ModelNotFound,
     #[error("no backend is available")]
@@ -152,6 +155,7 @@ impl From<LlmFacadeError> for GenerationError {
     fn from(error: LlmFacadeError) -> Self {
         match error {
             LlmFacadeError::InvalidRequest => Self::InvalidRequest,
+            LlmFacadeError::UnsupportedRequest(message) => Self::UnsupportedRequest(message),
             LlmFacadeError::Busy => Self::BackendBusy,
             LlmFacadeError::Unavailable => Self::Unavailable,
             LlmFacadeError::Rejected => Self::BackendRejected,
@@ -520,7 +524,7 @@ struct ConfigurationStatus {
 #[derive(Clone)]
 pub struct RuntimeGeneration {
     slot: Arc<ArcSwapOption<RuntimeSlot>>,
-    publication: Arc<Mutex<()>>,
+    publication: Arc<Mutex<Vec<std::sync::Weak<RuntimeSlot>>>>,
     publication_updates: tokio::sync::watch::Sender<u64>,
     accepting: Arc<AtomicBool>,
     request_slot: Option<Arc<RuntimeSlot>>,
@@ -537,7 +541,7 @@ impl RuntimeGeneration {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: Arc::new(ArcSwapOption::empty()),
-            publication: Arc::new(Mutex::new(())),
+            publication: Arc::new(Mutex::new(Vec::new())),
             publication_updates,
             accepting: Arc::new(AtomicBool::new(true)),
             request_slot: None,
@@ -577,7 +581,7 @@ impl RuntimeGeneration {
         control: Arc<dyn RuntimeControl>,
         admission: PreparedAdmissions,
     ) -> bool {
-        let _publication = self
+        let mut publication = self
             .publication
             .lock()
             .expect("runtime publication lock poisoned");
@@ -593,12 +597,16 @@ impl RuntimeGeneration {
         }
         control.activate(version);
         self.admission.publish(version, admission);
-        self.slot.store(Some(Arc::new(RuntimeSlot {
+        // Active responses retain their original runtime and request processors.
+        publication.retain(|previous| previous.strong_count() != 0);
+        let slot = Arc::new(RuntimeSlot {
             version,
             models: control.configured_models().into(),
             state,
             control,
-        })));
+        });
+        publication.push(Arc::downgrade(&slot));
+        self.slot.store(Some(slot));
         self.record_configuration(Some(version), None);
         self.publication_updates.send_replace(version);
         true
@@ -636,10 +644,22 @@ impl RuntimeGeneration {
         self.slot.load_full().map(|slot| slot.version)
     }
 
-    /// Refreshes readiness for the currently loaded runtime slot and wakes queued admission checks.
+    /// Refreshes live runtime readiness, then wakes queued placement and admission checks.
     pub async fn refresh_backend_readiness(&self) {
+        let slots = self
+            .publication
+            .lock()
+            .expect("runtime publication lock poisoned")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect::<Vec<_>>();
+        futures::future::join_all(
+            slots
+                .iter()
+                .map(|slot| slot.control.refresh_backend_readiness()),
+        )
+        .await;
         if let Some(slot) = self.slot.load_full() {
-            slot.control.refresh_backend_readiness().await;
             self.publication_updates.send_replace(slot.version);
         }
     }
@@ -788,11 +808,12 @@ impl RuntimeGeneration {
             return Err(GenerationError::DeadlineExceeded);
         }
         let generate_request = prepared.generate_request;
+        let admission = Arc::new(admission);
         let mut busy_targets = Vec::new();
         // Preparation holds only waiting capacity. Dispatch grants cover the whole batch;
         // explicit initial nonacceptance returns that grant without resetting queue position.
         // Ambiguous submissions and failures after a stage was accepted never enter this loop.
-        let (decision, backend_stream, mut session) = loop {
+        let (decision, backend_stream, mut session, runtime_slot) = loop {
             // Readiness waiting cannot consume a dispatch reservation. After the caller's
             // turn, reload routing rather than binding prepared input to an earlier snapshot.
             self.generation_slot(&request.model, Some(&admission))
@@ -841,7 +862,7 @@ impl RuntimeGeneration {
                 Err(error) => return Err(error.into()),
             };
             match result {
-                Ok((decision, stream)) => break (decision, stream, session),
+                Ok((decision, stream)) => break (decision, stream, session, active),
                 Err(GenerationError::BackendBusy) => {
                     drop(session);
                     if !admission.retry().await? {
@@ -862,6 +883,7 @@ impl RuntimeGeneration {
         let stream = Box::pin(async_stream::stream! {
             use futures::StreamExt;
             let _admission = admission;
+            let _runtime_slot = runtime_slot;
             let mut backend_stream = backend_stream;
             let mut response_started = false;
             while let Some(output) = backend_stream.next().await {
@@ -916,7 +938,7 @@ impl AdmissionObservation {
         let error = match error {
             GenerationError::QueueTimeout => AdmissionError::QueueTimeout,
             GenerationError::DeadlineExceeded => AdmissionError::DeadlineExceeded,
-            GenerationError::InvalidRequest => {
+            GenerationError::InvalidRequest | GenerationError::UnsupportedRequest(_) => {
                 attempt.invalid_request();
                 return;
             }

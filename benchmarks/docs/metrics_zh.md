@@ -59,6 +59,26 @@ Kubernetes 服务具备 Prometheus 时，`metrics.json.resources` 和 W&B 展示
 
 `metrics.json` 与 W&B Summary 通过本次测量窗口内的 Prometheus 计数器增量估算这些值，并处理计数器重置。运行太短而缺少足够抓取样本，或服务没有猜测解码指标时，数值保持不可用，不填零。Prometheus 时间曲线则展示各采样时刻过去五分钟的速率，不代表整次测量的汇总。参数扫描保留逐轮估算值，在取得样本时汇总均值与标准差。
 
+## Draft/Target 观测
+
+通过 Kustomize 部署运行 DT 性能实验时，结果保存在 `metrics.json.draft_target`，同时进入终端摘要、W&B 和 sweep 对比。采集按部署的 frontend、namespace 和逻辑 model 筛选，包含这些范围内的全部流量。
+
+| 字段 | 含义 |
+| --- | --- |
+| `acceptance_ratio` | 所有 speculation rounds（含进度与终止输出） 的 accepted / verified candidate tokens，不含 correction/bonus tokens |
+| `accepted_tokens_per_round` | Accepted candidate tokens / 所有 speculation rounds（含进度与终止输出） |
+| `round_mean_seconds` | speculation round 的平均 wall time |
+| `draft_mean_seconds`、`target_mean_seconds` | Frontend 观测到的 Draft、Target 调用平均 wall time，包含准备、排队和 HTTP 开销 |
+| `transfer_read_mean_seconds`、`transfer_prepare_mean_seconds` | Proposal read 和 prepare 的平均 wall time；prepare 包含 read、ACK 和 staging |
+| `context_read_mean_seconds`、`context_prepare_mean_seconds` | Target→Draft features 读取和准备的平均 wall time |
+| `context_transfer_bytes_estimate` | Target→Draft features 读取字节数估计 |
+| `admitted_submissions_estimate`、`rejected_submissions_estimate` | Ticket 接纳结果，与候选 token 接受数量分开 |
+| `transfer_bytes_estimate` | 所有 speculation rounds（含进度与终止输出） 中 proposal 读取字节数的估计值，不含 features 和 KV migration |
+
+这些值使用正式测量窗口内的 Prometheus counter increase 估计。缺失数据和 scrape 样本不足时显示为不可用。阶段时间有重叠，不能相加，也不能当作 GPU execution time；加速效果应通过端到端延迟和吞吐衡量。
+
+`prometheus_observations.json` 保留查询和 phase/outcome/stage 标签，可区分 prefill、speculation、migration 和未完成的 round。时间曲线使用过去一分钟的数据，阶段平均时间与整次运行的摘要口径不同。保存的 experiment 和 sweep 对比会自动包含 DT 接受率、wall time 和传输指标。仅提供 URL 的 benchmark 没有 Kubernetes 观测范围，只报告客户端指标。
+
 ## SLO 结果
 
 启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。失败或缺少必要计时指标的请求计为不达标。达标率是满足全部条件的请求占实测请求的比例；请求 goodput 和 token goodput 分别是达标请求数及其输出 token 总数除以运行时长。设置逐请求条件后，一秒完成窗口的时间曲线也展示达标率、请求 goodput 和 token goodput。失败请求计入窗口达标率分母；没有完成请求的窗口不显示达标率。整次运行的汇总仍按全部实测请求计算，不平均各窗口达标率。加上 `--slo-search` 后启用 [SLO 并发搜索](perf/slo_zh.md)，按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。

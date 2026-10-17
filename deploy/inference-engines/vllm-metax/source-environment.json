@@ -30,7 +30,8 @@
       "patches/vllm-030/glm-5.3/metax-glm53-compressed-tensors-mla.patch",
       "patches/vllm-030/glm-5.3/glm53-aux-hidden-states.patch",
       "patches/vllm-030/glm-5.3/glm53-draft-kv-cache.patch",
-      "patches/vllm-030/dense-draft-dp-dummy.patch"
+      "patches/vllm-030/dense-draft-dp-dummy.patch",
+      "patches/vllm-030/metax-batch-invariant-matmul.patch"
     ],
     "installed": [
       "patches/vllm-030/glm-5.3/metax-paged-mqa-schedule.patch"

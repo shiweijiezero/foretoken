@@ -28,7 +28,9 @@ impl ApiError {
     /// Map execution failures without exposing internal addresses or backend diagnostics.
     pub fn generation(error: GenerationError) -> Self {
         let (status, code) = match error {
-            GenerationError::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request_error"),
+            GenerationError::InvalidRequest | GenerationError::UnsupportedRequest(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_request_error")
+            }
             GenerationError::ModelNotFound => (StatusCode::NOT_FOUND, "model_not_found"),
             GenerationError::Unavailable | GenerationError::BackendBusy => {
                 (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable")

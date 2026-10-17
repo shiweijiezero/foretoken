@@ -104,6 +104,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	settings, models, admission := configuration.Settings, configuration.Models, configuration.Admission
 	groups, pdComponents, pdPipelineScopes := configuration.Groups, configuration.PDComponents, configuration.PDPipelineScopes
 	epdComponents, epdPipelineScopes := configuration.EPDComponents, configuration.EPDPipelineScopes
+	dtComponents := configuration.DTComponents
 	var projectionErr error
 	if !preserveConfiguration {
 		requestTimeout, err := durationSeconds(frontend.Spec.Timeouts.Request)
@@ -135,7 +136,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 				routingServices = append(routingServices, service)
 			}
 		}
-		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr = reconciler.projectableRouting(ctx, frontend.Namespace, routingServices)
+		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, dtComponents, projectionErr = reconciler.projectableRouting(ctx, frontend.Namespace, routingServices)
 		if projectionErr != nil {
 			var splitProjectionError *splitRoutingProjectionError
 			if !errors.As(projectionErr, &splitProjectionError) {
@@ -149,7 +150,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		projectionErr = errors.Join(catalogErr, projectionErr)
 	}
 
-	snapshot := servingSnapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes}
+	snapshot := servingSnapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes, DTComponents: dtComponents}
 	if frontend.Status.ServingConfigVersion < frontendCacheIsolationConfigVersion && !preserveConfiguration && slices.ContainsFunc(models, func(model servingSnapshotModel) bool { return model.PrefixCacheIsolation != nil }) {
 		projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
 	}
@@ -161,7 +162,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	contentsChanged := true
 	if previousValid {
 		previousView := servingSnapshotForProtocol(previous, frontend.Status.ServingConfigVersion)
-		contentsChanged = !reflect.DeepEqual(previousView.Settings, snapshot.Settings) || !slices.Equal(previousView.FrontendInstances, snapshot.FrontendInstances) || !slices.Equal(previousView.BackendInstances, snapshot.BackendInstances) || !reflect.DeepEqual(previousView.Admission, snapshot.Admission) || !slices.EqualFunc(previousView.Models, snapshot.Models, equalScalingModel) || !slices.EqualFunc(previousView.Groups, snapshot.Groups, equalRoutingGroup) || !slices.EqualFunc(previousView.PDComponents, snapshot.PDComponents, equalRoutingPDComponent) || !slices.EqualFunc(previousView.PDPipelineScopes, snapshot.PDPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previousView.EPDComponents, snapshot.EPDComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previousView.EPDPipelineScopes, snapshot.EPDPipelineScopes, equalRoutingEPDPipelineScope)
+		contentsChanged = !reflect.DeepEqual(previousView.Settings, snapshot.Settings) || !slices.Equal(previousView.FrontendInstances, snapshot.FrontendInstances) || !slices.Equal(previousView.BackendInstances, snapshot.BackendInstances) || !reflect.DeepEqual(previousView.Admission, snapshot.Admission) || !slices.EqualFunc(previousView.Models, snapshot.Models, equalScalingModel) || !slices.EqualFunc(previousView.Groups, snapshot.Groups, equalRoutingGroup) || !slices.EqualFunc(previousView.PDComponents, snapshot.PDComponents, equalRoutingPDComponent) || !slices.EqualFunc(previousView.PDPipelineScopes, snapshot.PDPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previousView.EPDComponents, snapshot.EPDComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previousView.EPDPipelineScopes, snapshot.EPDPipelineScopes, equalRoutingEPDPipelineScope) || !slices.EqualFunc(previousView.DTComponents, snapshot.DTComponents, equalRoutingDTComponent)
 	}
 	if contentsChanged || missingConsumedView || primaryVersion < version || version == 0 {
 		version++
@@ -591,6 +592,12 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		} else {
 			// The same compilers used by the service and runtime resolve cold models before Pools or Groups exist.
 			for _, pool := range compiled {
+				if pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+					continue
+				}
+				if pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget {
+					topology = "D/T"
+				}
 				identity, err := configuredTemplateIdentity(pool.Template)
 				if err != nil {
 					return nil, nil, fmt.Errorf("resolve ModelService %q Pool %q catalog: %w", service.Name, pool.Name, err)
@@ -619,7 +626,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			providers[identity.Model] = contribution{service: service.Name, topology: topology, identity: identity}
 			admission[identity.Model] = config
 		}
-		targetSets := admissionTargetSetsForService(service, servicePools)
+		targetSets := admissionTargetSetsForService(service, servingRoutingPools(service, servicePools, groups.Items))
 		if targetSets == nil {
 			targetSets = make([][]servingSnapshotScalingTarget, 0)
 		}
@@ -663,6 +670,7 @@ func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []in
 	var identities []servingSnapshotGroup
 	var roles []inferencev1alpha1.ModelRole
 	var missing []string
+	isDT := false
 	for _, selected := range selectedRevisions {
 		found := false
 		for poolIndex := range pools {
@@ -676,6 +684,12 @@ func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []in
 					continue
 				}
 				found = true
+				if group.Spec.SpeculationRole != "" {
+					isDT = true
+				}
+				if group.Spec.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
+					continue
+				}
 				identity := routingGroupForService(service, pool, group)
 				if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
 					features := group.Spec.Features
@@ -691,6 +705,9 @@ func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []in
 		}
 	}
 	topology := catalogTopology(roles)
+	if isDT {
+		topology = "D/T"
+	}
 	if retained != nil {
 		// Missing stages keep their published topology; surviving stages must fit it.
 		if len(roles) > 0 && topology != retained.Topology && !(len(missing) > 0 && topology == "P/D" && retained.Topology == "E/P/D") {
@@ -871,6 +888,17 @@ func effectiveModelAdmission(frontend inferencev1alpha1.FrontendServiceSpec, mod
 					return servingSnapshotAdmission{}, fmt.Errorf("roleRules %q allowedPools has no complete execution path: missing %s Pool", rule.Role, pool.Template.Role)
 				}
 			}
+			if slices.ContainsFunc(pools, func(pool compiler.ModelPool) bool {
+				return pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
+			}) && !slices.ContainsFunc(pools, func(pool compiler.ModelPool) bool {
+				return pool.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget &&
+					slices.Contains(rule.AllowedPools, pool.Name) &&
+					slices.ContainsFunc(pool.Template.DraftPools, func(draft string) bool {
+						return slices.Contains(rule.AllowedPools, draft)
+					})
+			}) {
+				return servingSnapshotAdmission{}, fmt.Errorf("roleRules %q allowedPools has no complete Draft/Target pair", rule.Role)
+			}
 			rule.AllowedPools = slices.Clone(rule.AllowedPools)
 			slices.Sort(rule.AllowedPools)
 			rule.AllowedPools = slices.Compact(rule.AllowedPools)
@@ -906,6 +934,16 @@ func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pool
 		}
 		return [][]servingSnapshotScalingTarget{targets}
 	}
+	if poolsHaveDT(pools) {
+		if !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+			return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft
+		}) || !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+			return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
+		}) {
+			return nil
+		}
+		return [][]servingSnapshotScalingTarget{targets}
+	}
 	if poolsHavePD(pools) || len(pools) == 0 && serviceDeclaresPD(service) {
 		hasPrefill := slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
 			return pool.Spec.Template.Role == inferencev1alpha1.ModelRolePrefill
@@ -927,14 +965,14 @@ func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pool
 
 // projectableRouting follows only the Ready Service -> owned/Ready Pool -> owned/Ready
 // Group chain. A Service declaring a P/D Pool never contributes aggregate routes.
-func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Context, namespace string, services []inferencev1alpha1.ModelService) ([]servingSnapshotGroup, []servingSnapshotPDComponent, []servingSnapshotPDPipelineScope, []servingSnapshotEPDComponent, []servingSnapshotEPDPipelineScope, error) {
+func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Context, namespace string, services []inferencev1alpha1.ModelService) ([]servingSnapshotGroup, []servingSnapshotPDComponent, []servingSnapshotPDPipelineScope, []servingSnapshotEPDComponent, []servingSnapshotEPDPipelineScope, []servingSnapshotDTComponent, error) {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("list ModelPools for routing: %w", err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("list ModelPools for routing: %w", err)
 	}
 	var modelGroups inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &modelGroups, client.InNamespace(namespace)); err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("list ModelGroups for routing: %w", err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("list ModelGroups for routing: %w", err)
 	}
 
 	groups := make([]servingSnapshotGroup, 0, len(modelGroups.Items))
@@ -942,16 +980,26 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 	pdPipelineScopes := make([]servingSnapshotPDPipelineScope, 0)
 	epdComponents := make([]servingSnapshotEPDComponent, 0)
 	epdPipelineScopes := make([]servingSnapshotEPDPipelineScope, 0)
+	dtComponents := make([]servingSnapshotDTComponent, 0)
 	var projectionErr error
 	for serviceIndex := range services {
 		service := &services[serviceIndex]
 		if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !modelServiceReady(service) {
 			continue
 		}
-		servicePools := ownedRoutingPools(service, pools.Items)
+		servicePools := servingRoutingPools(service, ownedRoutingPools(service, pools.Items), modelGroups.Items)
 		servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 			return serviceServingRevision(service, pool) == ""
 		})
+		if poolsHaveDT(servicePools) {
+			components, err := projectServiceDTComponents(service, servicePools, modelGroups.Items)
+			if err != nil {
+				projectionErr = errors.Join(projectionErr, err)
+				continue
+			}
+			dtComponents = append(dtComponents, components...)
+			continue
+		}
 		if poolsHaveEPD(servicePools) {
 			components, pipelineScopes, err := projectServiceEPDComponents(service, servicePools, modelGroups.Items)
 			if err != nil {
@@ -981,22 +1029,49 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 			}
 			for groupIndex := range modelGroups.Items {
 				group := &modelGroups.Items[groupIndex]
-				if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != serviceServingRevision(service, pool) || !routingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+				if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != serviceServingRevision(service, pool) || !routingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || group.Spec.SpeculationRole != "" {
 					continue
 				}
 				groups = append(groups, routingGroupForService(service, pool, group))
 			}
 		}
 	}
+	slices.SortFunc(dtComponents, func(a, b servingSnapshotDTComponent) int { return compareStrings(a.RouteTargetID, b.RouteTargetID) })
 	slices.SortFunc(groups, compareRoutingGroups)
 	slices.SortFunc(pdComponents, compareRoutingPDComponents)
 	slices.SortFunc(pdPipelineScopes, compareRoutingPDPipelineScopes)
 	slices.SortFunc(epdComponents, compareRoutingEPDComponents)
 	slices.SortFunc(epdPipelineScopes, compareRoutingEPDPipelineScopes)
 	if err := validateRoutingIdentities(nil, groups, pdComponents, epdComponents); err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	return groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr
+	if err := validateDTModelTopology(groups, pdComponents, epdComponents, dtComponents); err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	return groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, dtComponents, projectionErr
+}
+
+// servingRoutingPools keeps routing roles pinned to the committed Group cohort while
+// desired Pool templates roll out a different execution or speculation configuration.
+func servingRoutingPools(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) []*inferencev1alpha1.ModelPool {
+	owned := slices.Clone(pools)
+	for index, pool := range owned {
+		revision := serviceServingRevision(service, pool)
+		if revision == "" {
+			continue
+		}
+		for groupIndex := range groups {
+			group := &groups[groupIndex]
+			if routingGroupOwnedBy(group, pool) && group.Spec.Revision == revision {
+				projected := pool.DeepCopy()
+				projected.Spec.Template.Role = group.Spec.Role
+				projected.Spec.Template.SpeculationRole = group.Spec.SpeculationRole
+				owned[index] = projected
+				break
+			}
+		}
+	}
+	return owned
 }
 
 func ownedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool) []*inferencev1alpha1.ModelPool {

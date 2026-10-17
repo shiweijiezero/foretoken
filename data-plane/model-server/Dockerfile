@@ -47,7 +47,7 @@ ARG VLLM_REVISION
 WORKDIR /workspace
 
 # Python adapters belong to the file export, not the Rust compilation input.
-COPY --exclude=model-server/python data-plane/ ./data-plane/
+COPY --exclude=model-server/python --exclude=dt-plugin data-plane/ ./data-plane/
 
 # Lock only upstream preparation so other components can compile independently.
 # Preserve captured Rust sources when completing the upstream tree for patch preparation.
@@ -106,6 +106,7 @@ RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo
 FROM scratch AS source-export
 COPY --from=builder /out/model-server /bin/foretoken-model-server
 COPY data-plane/model-server/python/ /python/
+COPY data-plane/dt-plugin/src/foretoken_dt/ /python/foretoken_dt/
 COPY LICENSE /LICENSE
 COPY <<EOF /complete.json
 {"component":"model-server"}
@@ -127,6 +128,15 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
 COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
 ENTRYPOINT ["foretoken-omni-model-server"]
 
+# The upstream CUDA wheel omits the C API archive object used to refresh dynamic
+# registrations. Build that same pinned engine without retaining compiler tools.
+FROM ${INFERENCE_ENGINE_IMAGE} AS mooncake-build
+ARG FORETOKEN_VLLM_PYTHON
+ARG FORETOKEN_GITHUB_MIRROR
+ARG BUILD_JOBS
+RUN --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    bash /tmp/vllm-patches/build-mooncake-engine
+
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime
 
 ARG FORETOKEN_VLLM_PYTHON
@@ -143,7 +153,9 @@ ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=from=mooncake-build,source=/out,target=/tmp/foretoken-mooncake \
     --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    --mount=type=bind,source=data-plane/dt-plugin,target=/tmp/dt-plugin,rw \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
@@ -155,10 +167,16 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     && "$python_path" -c 'from importlib.metadata import version; print("torch==" + version("torch")); print("vllm==" + version("vllm"))' > /tmp/foretoken-engine-constraints.txt \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
-      --default-index "${UV_DEFAULT_INDEX}" "$@" \
+      --default-index "${UV_DEFAULT_INDEX}" "$@" /tmp/dt-plugin \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
       'from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(); check_installed_dependencies()' \
+    && if [ -f /tmp/foretoken-mooncake/mooncake/engine.so ]; then \
+      mooncake_site=$("$python_path" -c 'import sysconfig; print(sysconfig.get_path("purelib"))') \
+      && cp -a /tmp/foretoken-mooncake/mooncake/. "$mooncake_site/mooncake/" \
+      && cp -a /tmp/foretoken-mooncake/licenses/. /usr/local/share/licenses/; \
+    fi \
     && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
+    && "$python_path" -c 'import foretoken_dt, shutil; shutil.rmtree(next(iter(foretoken_dt.__path__)))' \
     && rm /tmp/foretoken-engine-constraints.txt
 
 FROM engine-runtime AS environment
@@ -170,8 +188,10 @@ COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
 COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
 
 FROM environment AS runtime
+ENV PYTHONPATH=/opt/foretoken/python:${PYTHONPATH}
 COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
+COPY data-plane/dt-plugin/src/foretoken_dt/ /opt/foretoken/python/foretoken_dt/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its
 # security context, cache environment, and writable volume mounts.

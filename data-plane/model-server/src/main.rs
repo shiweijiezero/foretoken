@@ -32,6 +32,8 @@ use vllm_engine_core_client::{
 use vllm_llm::Llm;
 use vllm_managed_engine::allocate_handshake_port;
 
+mod draft_target;
+
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
@@ -84,6 +86,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if config.launch.dt.is_some() {
+        return draft_target::run(
+            &config,
+            cache_config.as_ref(),
+            profiling_config.as_ref(),
+            &mut cache_server,
+            cache_shutdown,
+            request_ledger,
+        )
+        .await;
+    }
     if config
         .member
         .as_ref()
@@ -129,62 +142,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The model-server owns one startup deadline across the persistent attempt and one
     // Pod-scoped temporary retry, including complete teardown of a failed child process.
-    let startup_deadline = Instant::now() + config.launch.startup_timeout();
-    let (engine, client, cache_mode, prepared_tokenizer) = match start_engine_attempt(
-        &config,
-        cache_config.as_ref(),
-        profiling_config.as_ref(),
-        runtime_cache::Mode::Persistent,
-        startup_deadline,
-        &mut cache_server,
-    )
-    .await
-    {
-        Ok((engine, client, prepared)) => {
-            (engine, client, runtime_cache::Mode::Persistent, prepared)
-        }
-        Err(EngineStartupFailure::PersistentCache { context, source }) => {
-            // Distributed members restart together; a local retry would reuse stale peers.
-            if config.member.is_some() {
-                return Err(io::Error::new(source.kind(), format!("{context}: {source}")).into());
-            }
-            let cache = cache_config
-                .as_ref()
-                .expect("persistent cache failure requires a mounted RuntimeCache");
-            warn!(
-                cache_mode = runtime_cache::Mode::Temporary.as_str(),
-                error = %source,
-                %context,
-                "persistent RuntimeCache became unavailable; retrying EngineCore with Pod-scoped temporary storage"
-            );
-            match start_engine_attempt(
+    let ((engine, client, prepared_tokenizer), cache_mode, startup_deadline) =
+        start_with_cache_fallback(&config, async |mode, deadline| {
+            start_engine_attempt(
                 &config,
-                Some(cache),
+                cache_config.as_ref(),
                 profiling_config.as_ref(),
-                runtime_cache::Mode::Temporary,
-                startup_deadline,
+                mode,
+                deadline,
                 &mut cache_server,
             )
             .await
-            {
-                Ok((engine, client, prepared)) => {
-                    info!(
-                        cache_mode = runtime_cache::Mode::Temporary.as_str(),
-                        "EngineCore started with Pod-scoped temporary cache storage"
-                    );
-                    (engine, client, runtime_cache::Mode::Temporary, prepared)
-                }
-                Err(failure) => {
-                    return Err(io::Error::other(format!(
-                        "temporary RuntimeCache retry failed: {}",
-                        failure.into_error()
-                    ))
-                    .into());
-                }
-            }
-        }
-        Err(failure) => return Err(failure.into_error().into()),
-    };
+        })
+        .await?;
     health.set_process_alive(true);
 
     let mut client_health = client.subscribe_health();
@@ -263,8 +233,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let mut profiler =
-        profiling.map(|config| profiling::Supervisor::new(config, Some(backend.clone())));
+    let mut profiler = profiling.map(|config| {
+        profiling::Supervisor::new(
+            config,
+            Some(profiling::CaptureBackend::Native(backend.clone())),
+        )
+    });
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let shutdown = Arc::new(Notify::new());
@@ -532,6 +506,45 @@ impl EngineStartupFailure {
     }
 }
 
+/// Retries one failed persistent-cache startup with Pod-scoped temporary storage.
+/// Returns the original deadline for startup metadata; both attempts share it and must stop failed children.
+async fn start_with_cache_fallback<T>(
+    config: &RuntimeConfig,
+    mut attempt: impl AsyncFnMut(runtime_cache::Mode, Instant) -> Result<T, EngineStartupFailure>,
+) -> io::Result<(T, runtime_cache::Mode, Instant)> {
+    let deadline = Instant::now() + config.launch.startup_timeout();
+    match attempt(runtime_cache::Mode::Persistent, deadline).await {
+        Ok(started) => Ok((started, runtime_cache::Mode::Persistent, deadline)),
+        Err(EngineStartupFailure::PersistentCache { context, source }) => {
+            // Distributed members restart together; a local retry would reuse stale peers.
+            if config.member.is_some() {
+                return Err(io::Error::new(
+                    source.kind(),
+                    format!("{context}: {source}"),
+                ));
+            }
+            warn!(
+                cache_mode = runtime_cache::Mode::Temporary.as_str(), error = %source, %context,
+                "persistent RuntimeCache became unavailable; retrying with Pod-scoped temporary storage"
+            );
+            let started = attempt(runtime_cache::Mode::Temporary, deadline)
+                .await
+                .map_err(|failure| {
+                    io::Error::other(format!(
+                        "temporary RuntimeCache retry failed: {}",
+                        failure.into_error()
+                    ))
+                })?;
+            info!(
+                cache_mode = runtime_cache::Mode::Temporary.as_str(),
+                "engine started with Pod-scoped temporary cache storage"
+            );
+            Ok((started, runtime_cache::Mode::Temporary, deadline))
+        }
+        Err(failure) => Err(failure.into_error()),
+    }
+}
+
 fn cache_mode_failure(
     mode: runtime_cache::Mode,
     context: impl Into<String>,
@@ -575,22 +588,25 @@ async fn wait_cache_write_failure(
     cache.wait_until_unwritable(mode).await
 }
 
-// Prepare cache, profiling and native arguments once for both leader and worker processes.
-async fn spawn_engine_attempt(
+/// Materialized inputs shared by native EngineCore and the DT role supervisor.
+struct PreparedEngineLaunch {
+    pub model: String,
+    pub arguments: Vec<String>,
+    pub environment: Vec<(String, String)>,
+    pub prepared_tokenizer: Option<PreparedTokenizer>,
+    pub resolved_revision: Option<String>,
+    pub resolved_draft_revision: Option<String>,
+}
+
+/// Prepares cache mode, source artifacts, Python environment and native engine arguments.
+/// The caller owns the process; this stage never starts a child or resets its startup deadline.
+async fn prepare_engine_launch(
     config: &RuntimeConfig,
     cache: Option<&runtime_cache::Config>,
     profiling: Option<&profiling::Config>,
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
-) -> Result<
-    (
-        ManagedEngine,
-        EngineCoreProtocol,
-        u16,
-        Option<PreparedTokenizer>,
-    ),
-    EngineStartupFailure,
-> {
+) -> Result<PreparedEngineLaunch, EngineStartupFailure> {
     let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
@@ -607,7 +623,8 @@ async fn spawn_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.member.is_some()
+    if config.launch.dt.is_some()
+        || config.member.is_some()
         || config.launch.shared_prefix_lookup()
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
@@ -654,20 +671,19 @@ async fn spawn_engine_attempt(
                 .to_string(),
         ));
     }
-    let handshake_port = if config.member.is_some() {
-        29700
-    } else {
-        allocate_handshake_port(LOOPBACK_HOST)
-            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
-    };
-    let mut managed_engine = config
+    let mut model = config.launch.artifacts.model.clone();
+    let mut arguments = config
         .launch
-        .managed_engine(handshake_port, config.member.as_ref())
-        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+        .managed_engine(0, config.member.as_ref())
+        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
+        .python_args;
     if let Some(member) = &config.member {
         environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
     }
     let mut prepared_tokenizer = None;
+    let mut prepared_draft = None;
+    let mut resolved_revision = None;
+    let mut resolved_draft_revision = None;
     if config.launch.artifacts.source != ModelSource::Local && !legacy_acquisition {
         let scope = required_env(preparation::PREPARATION_SCOPE_ENV)
             .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
@@ -687,11 +703,20 @@ async fn spawn_engine_attempt(
             ))
         })?
         .map_err(|error| classify_engine_startup_failure(cache, mode, error.to_string()))?;
-        managed_engine.model = prepared.model.display().to_string();
-        managed_engine.python_args.retain(|argument| {
+        model = prepared.model.display().to_string();
+        resolved_revision = Some(prepared.model_revision().to_owned());
+        resolved_draft_revision = prepared
+            .draft
+            .as_ref()
+            .map(|draft| draft.model_revision().to_owned());
+        prepared_draft = prepared
+            .draft
+            .as_ref()
+            .map(|draft| draft.model.display().to_string());
+        arguments.retain(|argument| {
             !argument.starts_with("--revision=") && !argument.starts_with("--tokenizer-revision=")
         });
-        for argument in &mut managed_engine.python_args {
+        for argument in &mut arguments {
             if argument.starts_with("--tokenizer=") {
                 *argument = format!("--tokenizer={}", prepared.tokenizer.display());
             }
@@ -704,27 +729,98 @@ async fn spawn_engine_attempt(
     }
     // Local source is strict: both identifiers must resolve before any engine process starts.
     if config.launch.artifacts.source == ModelSource::Local {
-        let model = local_artifact_path(&config.launch.artifacts.model)
+        model = local_artifact_path(&config.launch.artifacts.model)
             .map_err(EngineStartupFailure::Other)?;
         let tokenizer = local_artifact_path(&config.launch.artifacts.tokenizer)
             .map_err(EngineStartupFailure::Other)?;
-        managed_engine.model = model;
-        for argument in &mut managed_engine.python_args {
+        for argument in &mut arguments {
             if argument.starts_with("--tokenizer=") {
                 *argument = format!("--tokenizer={tokenizer}");
+            }
+        }
+    }
+    if let Some(draft) = config
+        .launch
+        .dt
+        .as_ref()
+        .and_then(|dt| dt.draft_artifacts.as_ref())
+    {
+        if draft.source == ModelSource::Local {
+            prepared_draft =
+                Some(local_artifact_path(&draft.model).map_err(EngineStartupFailure::Other)?);
+        }
+        if let Some(model) = prepared_draft {
+            // The published Draft snapshot follows the same source/cache lifecycle as Target.
+            // Its native config must consume that snapshot instead of reacquiring weights.
+            for argument in &mut arguments {
+                if let Some(value) = argument.strip_prefix("--speculative-config=") {
+                    let mut speculative: serde_json::Value = serde_json::from_str(value)
+                        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+                    let object = speculative.as_object_mut().ok_or_else(|| {
+                        EngineStartupFailure::Other(io::Error::other(
+                            "speculative-config must be an object",
+                        ))
+                    })?;
+                    object.insert("model".into(), serde_json::Value::String(model.clone()));
+                    object.remove("revision");
+                    *argument = format!("--speculative-config={speculative}");
+                }
             }
         }
     }
     if mode == runtime_cache::Mode::Persistent
         && let Some(profile) = profiling
     {
-        managed_engine.python_args.push(profile.engine_argument());
+        arguments.push(profile.engine_argument());
         if config.launch.profiling.engine == profiling::Engine::Mctracer {
-            managed_engine
-                .python_args
-                .push("--worker-cls=foretoken_mctracer.Worker".into());
+            arguments.push("--worker-cls=foretoken_mctracer.Worker".into());
         }
     }
+    Ok(PreparedEngineLaunch {
+        model,
+        arguments,
+        environment,
+        prepared_tokenizer,
+        resolved_revision,
+        resolved_draft_revision,
+    })
+}
+
+// Transport bootstrap stays with the native EngineCore path after shared preparation.
+async fn spawn_engine_attempt(
+    config: &RuntimeConfig,
+    cache: Option<&runtime_cache::Config>,
+    profiling: Option<&profiling::Config>,
+    mode: runtime_cache::Mode,
+    startup_deadline: Instant,
+) -> Result<
+    (
+        ManagedEngine,
+        EngineCoreProtocol,
+        u16,
+        Option<PreparedTokenizer>,
+    ),
+    EngineStartupFailure,
+> {
+    let PreparedEngineLaunch {
+        model,
+        arguments,
+        environment,
+        prepared_tokenizer,
+        ..
+    } = prepare_engine_launch(config, cache, profiling, mode, startup_deadline).await?;
+    let handshake_port = if config.member.is_some() {
+        29700
+    } else {
+        allocate_handshake_port(LOOPBACK_HOST)
+            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
+    };
+    let mut managed_engine = config
+        .launch
+        .managed_engine(handshake_port, config.member.as_ref())
+        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    managed_engine.model = model;
+    managed_engine.python_args = arguments;
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
         return Err(EngineStartupFailure::Other(io::Error::other(

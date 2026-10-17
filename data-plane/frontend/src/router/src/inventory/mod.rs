@@ -20,6 +20,19 @@ pub trait RouteInventory: Send + Sync {
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
 
+    /// Returns a Target's compatible Draft pools; an empty list permits no Draft assignments.
+    fn draft_pools(&self, _route_target_id: &RouteTargetId) -> &[String] {
+        &[]
+    }
+
+    /// Returns live DT method limits and Target policy for binding compatibility.
+    fn draft_target_capabilities(
+        &self,
+        _route_target_id: &RouteTargetId,
+    ) -> Option<foretoken_model_protocol::DraftTargetCapabilities> {
+        None
+    }
+
     /// Resolves the HTTP endpoint of a selected aggregate route; selection stays with the Router.
     fn http_endpoint(&self, _decision: &RouteDecision) -> Option<String> {
         None

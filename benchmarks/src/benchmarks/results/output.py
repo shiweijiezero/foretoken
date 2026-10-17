@@ -943,6 +943,11 @@ class ResultOutputs:
                     key: value for key, value in observations["speculative_decoding"].items()
                     if key not in {"queries", "window_end_unix_seconds"}
                 }
+            if observations["draft_target"] is not None:
+                run.metrics["draft_target"] = {
+                    key: value for key, value in observations["draft_target"].items()
+                    if key not in {"queries", "window_end_unix_seconds"}
+                }
             run.artifacts["prometheus_observations"] = write_json(
                 self.execution_dir,
                 "prometheus_observations.json",

@@ -5,6 +5,7 @@
 
 mod admission;
 mod api;
+pub mod draft_target;
 
 pub use admission::AdmissionOrigin;
 mod http;

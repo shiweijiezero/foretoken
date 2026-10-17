@@ -319,11 +319,45 @@ async fn control(
     }
 }
 
+/// Selects the native control adapter while Supervisor retains capture and publication ownership.
+#[derive(Clone)]
+pub enum CaptureBackend {
+    Native(Arc<VllmBackend>),
+    DraftTarget {
+        endpoint: String,
+        client: reqwest::Client,
+    },
+}
+
+impl CaptureBackend {
+    /// Runs one native utility; Supervisor retains uncertain operations until engine exit.
+    async fn control(
+        &self,
+        start: bool,
+        directory: Option<&Path>,
+        prefix: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Native(backend) => match directory {
+                Some(directory) => backend.set_mctracer(start, directory).await,
+                None => backend.set_profiling(start, prefix).await,
+            },
+            Self::DraftTarget { endpoint, client } => {
+                client.post(format!("{endpoint}/profiling"))
+                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy()), "profile_prefix": prefix}))
+                    .send().await.map_err(|error| error.to_string())?
+                    .error_for_status().map_err(|error| error.to_string())?;
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Owns native operations through stop/flush; an uncertain operation requires engine termination.
 pub struct Supervisor {
     handle: Handle,
     receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
-    backend: Option<Arc<VllmBackend>>,
+    backend: Option<CaptureBackend>,
     native: Option<JoinHandle<Result<(), String>>>,
     publication: Option<JoinHandle<io::Result<Record>>>,
 }
@@ -331,7 +365,7 @@ pub struct Supervisor {
 impl Supervisor {
     /// Creates a supervisor after engine startup. RPC profilers require an engine client;
     /// Nsight controls the local instrumented process tree without one.
-    pub fn new(config: Config, backend: Option<Arc<VllmBackend>>) -> Self {
+    pub fn new(config: Config, backend: Option<CaptureBackend>) -> Self {
         assert!(backend.is_some() || config.engine == Engine::Nsight);
         let (sender, receiver) = mpsc::unbounded_channel();
         Self {
@@ -407,14 +441,14 @@ impl Supervisor {
                     let prefix = format!("{}/capture", config.runtime_id);
                     backend
                         .expect("RPC profiler has an engine client")
-                        .set_profiling(start, &prefix)
+                        .control(start, None, &prefix)
                         .await
                 }
                 Engine::Nsight => nsight::set_recording(&config, start).await,
                 Engine::Mctracer => {
                     backend
                         .expect("RPC profiler has an engine client")
-                        .set_mctracer(start, &config.staging())
+                        .control(start, Some(&config.staging()), "")
                         .await
                 }
             }

@@ -34,6 +34,7 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
+	DT                                    *LaunchDTPlan                      `json:"dt,omitempty"`
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
 	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
@@ -44,6 +45,13 @@ type LaunchPlanV1 struct {
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
+}
+
+// LaunchDTPlan selects the independently installed DT role application.
+type LaunchDTPlan struct {
+	Role           inferencev1alpha1.SpeculationRole `json:"role"`
+	RDMA           bool                              `json:"rdma"`
+	DraftArtifacts *LaunchArtifacts                  `json:"draftArtifacts,omitempty"`
 }
 
 type LaunchArtifacts struct {
@@ -138,6 +146,22 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if capacity != ranks {
 		return EffectiveConfig{}, fmt.Errorf("vLLM topology requires %d workers but the Pool provides %d accelerators", ranks, capacity)
 	}
+	if template.SpeculationRole != "" {
+		if template.Role != inferencev1alpha1.ModelRoleAggregate || (template.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && template.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget) {
+			return EffectiveConfig{}, fmt.Errorf("speculation requires aggregate execution with draft or target responsibility")
+		}
+		if template.NodeCount != 1 || ranks != 1 || effective.Parallelism.DCP != 1 || effective.Parallelism.EP != nil {
+			return EffectiveConfig{}, fmt.Errorf("DT currently requires one GPU per Group; scale Pool replicas for additional role instances")
+		}
+		if template.KVCache != nil || template.ECProfile != "" || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
+			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, multimodal or structured output")
+		}
+		for _, option := range []string{"worker-extension-cls", "scheduler-cls"} {
+			if _, exists := args[option]; exists {
+				return EffectiveConfig{}, fmt.Errorf("DT owns %s", option)
+			}
+		}
+	}
 	return effective, nil
 }
 
@@ -191,7 +215,29 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	var dt *LaunchDTPlan
+	if group.SpeculationRole != "" {
+		dt = &LaunchDTPlan{Role: group.SpeculationRole, RDMA: group.RDMA != nil}
+
+		if profile, exists := group.Runtime.EngineArgs["speculative-config"]; exists {
+			var config struct {
+				Model    string `json:"model"`
+				Revision string `json:"revision"`
+			}
+			if err := json.Unmarshal(profile.Raw, &config); err != nil {
+				return LaunchPlanV1{}, fmt.Errorf("decode neural Draft profile: %w", err)
+			}
+			if config.Model != "" {
+				revision := config.Revision
+				if revision == "" {
+					revision = group.Artifacts.ModelRevision
+				}
+				dt.DraftArtifacts = &LaunchArtifacts{Model: config.Model, Source: group.Artifacts.Source, Revision: revision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}
+			}
+		}
+		kv.Events = false
+	}
+	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -331,7 +377,7 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 	}
 	for name := range names {
 		switch name {
-		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "mm-processor-cache-gb", "mm-encoder-only", "distributed-executor-backend", "data-parallel-backend":
+		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "enable-prefix-caching", "mm-processor-cache-gb", "mm-encoder-only", "distributed-executor-backend", "data-parallel-backend":
 			continue
 		}
 		var leftValue, rightValue any
@@ -399,6 +445,11 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		"kv-events-config":                     "the model-server owns the publisher and subscriber configuration",
 		"kv-transfer-config":                   "select KV transfer through kvCache or split modelPools so routing and storage share the same configuration",
 		"ec-transfer-config":                   "select encoder transfer through ecProfile and E/P/D modelPools",
+	}
+	if template.SpeculationRole != "" {
+		for _, name := range []string{"role", "rdma-host", "rdma-nic", "tensor-transport", "zmq-endpoint", "worker-cls", "scheduler-cls"} {
+			reserved[name] = "the DT role adapter owns execution and transport setup"
+		}
 	}
 	if template.RuntimeCache != nil {
 		reserved["profiler-config"] = "Foretoken profiling owns capture configuration and output storage"

@@ -19,10 +19,11 @@ use prometheus_client::registry::Registry;
 
 use crate::{RouteCandidate, RouteError, RouteInventory, RoutingStage};
 
-const ROUTING_STAGES: [RoutingStage; 3] = [
+const ROUTING_STAGES: [RoutingStage; 4] = [
     RoutingStage::Initial,
     RoutingStage::Prefill,
     RoutingStage::Decode,
+    RoutingStage::Draft,
 ];
 const OUTCOMES: [&str; 8] = [
     "selected",
@@ -294,9 +295,11 @@ impl RouterMetricsScope {
             Err(RouteError::EmptyPickerResult | RouteError::InvalidPickerIndex { .. }) => {
                 "invalid_picker"
             }
-            Err(RouteError::PrefillBeforeEncoder | RouteError::DecodeBeforePrefill) => {
-                "invalid_sequence"
-            }
+            Err(
+                RouteError::PrefillBeforeEncoder
+                | RouteError::DecodeBeforePrefill
+                | RouteError::DraftBeforeTarget,
+            ) => "invalid_sequence",
         };
         let labels = OutcomeLabels {
             model_name: model_name.to_owned(),
@@ -401,6 +404,7 @@ fn round_name(round: RoutingStage) -> &'static str {
         RoutingStage::Initial => "initial",
         RoutingStage::Prefill => "prefill",
         RoutingStage::Decode => "decode",
+        RoutingStage::Draft => "draft",
     }
 }
 
@@ -410,6 +414,8 @@ fn role_name(role: ModelServerRole) -> &'static str {
         ModelServerRole::Encoder => "encoder",
         ModelServerRole::Prefill => "prefill",
         ModelServerRole::Decode => "decode",
+        ModelServerRole::Draft => "draft",
+        ModelServerRole::Target => "target",
     }
 }
 

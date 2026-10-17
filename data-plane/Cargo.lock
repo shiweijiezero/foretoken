@@ -1221,6 +1221,7 @@ dependencies = [
  "futures",
  "reqwest 0.12.28",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -1293,6 +1294,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "vllm-llm",
 ]
 
@@ -1302,8 +1304,11 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "foretoken-admission",
+ "foretoken-model-protocol",
  "foretoken-router",
+ "prometheus-client",
  "serde",
+ "tracing",
  "vllm-metrics",
 ]
 

@@ -29,6 +29,29 @@ pub struct ServingSnapshot {
     pub epd_components: Vec<SnapshotEpdComponent>,
     #[serde(default)]
     pub epd_pipeline_scopes: Vec<SnapshotEpdPipelineScope>,
+    #[serde(default)]
+    pub dt_components: Vec<SnapshotDtComponent>,
+}
+/// One independently routable DT role; `model` names the public Target service.
+/// Physical engine identity is separate because Draft may load different weights.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotDtComponent {
+    /// Committed Draft-pool references for a Target; empty for Draft components.
+    #[serde(default)]
+    pub draft_pools: Vec<String>,
+    #[serde(default)]
+    pub max_input_tokens: Option<usize>,
+    pub service_uid: String,
+    pub pool_uid: String,
+    pub pool_name: String,
+    pub route_target_id: RouteTargetId,
+    pub pipeline_scope_id: String,
+    pub role: ModelServerRole,
+    pub model: String,
+    pub engine_model: String,
+    pub engine_revision: Option<String>,
+    pub endpoint: String,
 }
 /// Frontend rules published with discovery and applied at one generation boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +225,7 @@ impl ServingSnapshot {
             && self.pd_pipeline_scopes == other.pd_pipeline_scopes
             && self.epd_components == other.epd_components
             && self.epd_pipeline_scopes == other.epd_pipeline_scopes
+            && self.dt_components == other.dt_components
     }
 
     /// Resolves model routing once and rejects conflicting policies for a shared public model name.
@@ -362,6 +386,8 @@ pub enum SnapshotError {
     ConflictingRouting(String),
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
+    #[error("routing snapshot has an invalid DT component or scope: {0}")]
+    InvalidDtComponent(String),
     #[error("routing snapshot has an incomplete model or tokenizer identity")]
     IncompleteModelIdentity,
     #[error("routing snapshot has an incomplete logical scaling model {0:?}")]

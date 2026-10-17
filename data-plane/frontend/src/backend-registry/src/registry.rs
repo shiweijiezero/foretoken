@@ -9,8 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
+use foretoken_llm_facade::draft_target::{RoleClient, RoleStatus};
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse};
+use foretoken_model_protocol::{
+    DRAFT_TARGET_PROTOCOL_VERSION, DraftTargetCapabilities, PreparedTokenizer,
+    RuntimeMetadataResponse, TelemetryResponse,
+};
 
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
@@ -29,7 +33,7 @@ pub struct BackendRegistry {
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
     stats: Mutex<RegistryStats>,
-    metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
+    metadata: Mutex<BTreeMap<RouteTargetId, BackendMetadata>>,
     health_client: reqwest::Client,
 }
 #[derive(Default)]
@@ -38,7 +42,22 @@ struct RegistryStats {
     request_length_targets: BTreeSet<RouteTargetId>,
 }
 
+/// One validated role probe and its engine-neutral capabilities.
+struct BackendMetadata {
+    runtime: RuntimeMetadataResponse,
+    draft_target: Option<DraftTargetCapabilities>,
+}
 pub(crate) enum Component {
+    DraftTarget {
+        draft_pools: Vec<String>,
+        endpoint: String,
+        client: RoleClient,
+        role: ModelServerRole,
+        model: String,
+        revision: Option<String>,
+        tokenizer: String,
+        tokenizer_revision: Option<String>,
+    },
     Aggregate {
         endpoint: String,
         facade: Arc<HttpFacade>,
@@ -58,7 +77,8 @@ pub(crate) enum Component {
 impl Component {
     fn endpoint(&self) -> &str {
         match self {
-            Self::Aggregate { endpoint, .. }
+            Self::DraftTarget { endpoint, .. }
+            | Self::Aggregate { endpoint, .. }
             | Self::Encoder { endpoint, .. }
             | Self::Prefill { endpoint, .. }
             | Self::Decode { endpoint, .. } => endpoint,
@@ -68,7 +88,10 @@ impl Component {
     fn bootstrap(&self) -> Option<&str> {
         match self {
             Self::Prefill { bootstrap, .. } => Some(bootstrap),
-            Self::Aggregate { .. } | Self::Encoder { .. } | Self::Decode { .. } => None,
+            Self::Aggregate { .. }
+            | Self::Encoder { .. }
+            | Self::Decode { .. }
+            | Self::DraftTarget { .. } => None,
         }
     }
 }
@@ -123,7 +146,11 @@ impl BackendRegistry {
     }
 
     fn metadata(&self, id: &RouteTargetId) -> Option<RuntimeMetadataResponse> {
-        self.metadata.lock().ok()?.get(id).cloned()
+        self.metadata
+            .lock()
+            .ok()?
+            .get(id)
+            .map(|metadata| metadata.runtime.clone())
     }
 
     /// Reports whether any configured model currently has an executable backend path.
@@ -267,6 +294,28 @@ impl BackendRegistry {
             let Some(pipeline_scope_id) = &route.pipeline_scope_id else {
                 continue;
             };
+            if matches!(route.role, ModelServerRole::Draft | ModelServerRole::Target) {
+                if route.role == ModelServerRole::Target
+                    && self.is_route_target_healthy(&route.route_target_id)
+                    && self.model_routes.routes().iter().any(|draft| {
+                        draft.role == ModelServerRole::Draft
+                            && (allowed_pools.is_empty()
+                                || allowed_pools.contains(&draft.target.name))
+                            && draft.pipeline_scope_id.as_ref() == Some(pipeline_scope_id)
+                            && self
+                                .draft_pools(&route.route_target_id)
+                                .contains(&draft.target.name)
+                            && self.is_route_target_healthy(&draft.route_target_id)
+                            && self
+                                .draft_target_capabilities(&draft.route_target_id)
+                                .zip(self.draft_target_capabilities(&route.route_target_id))
+                                .is_some_and(|(draft, target)| draft.supports_target(&target))
+                    })
+                {
+                    models.insert(route.model.clone());
+                }
+                continue;
+            }
             let roles = pipeline_scopes
                 .entry((route.model.clone(), pipeline_scope_id.clone()))
                 .or_default();
@@ -275,7 +324,9 @@ impl BackendRegistry {
                     ModelServerRole::Encoder => roles.0 = true,
                     ModelServerRole::Prefill => roles.1 = true,
                     ModelServerRole::Decode => roles.2 = true,
-                    ModelServerRole::Aggregate => {}
+                    ModelServerRole::Aggregate
+                    | ModelServerRole::Draft
+                    | ModelServerRole::Target => {}
                 }
             }
         }
@@ -293,9 +344,62 @@ impl BackendRegistry {
     }
     /// Health, runtime metadata, and telemetry are per physical component.
     pub async fn refresh_backend_readiness(&self) {
-        // Probe components concurrently, but retain metadata and telemetry only for components
-        // proven healthy in this pass so replaced backends cannot leave stale routing signals.
+        // Validate each probe anew. A draining DT role remains compatible with its owned
+        // sessions even though it no longer admits new bindings.
         let probes = self.components.iter().map(|(id, c)| async move {
+            if let Component::DraftTarget {
+                role,
+                model,
+                revision,
+                tokenizer,
+                tokenizer_revision,
+                ..
+            } = c
+            {
+                let (status, stats) = tokio::join!(
+                    role_status(&self.health_client, c.endpoint()),
+                    telemetry(&self.health_client, c.endpoint()),
+                );
+                let status = status.filter(|status| {
+                    status.protocol_version == DRAFT_TARGET_PROTOCOL_VERSION
+                        && status.candidates.is_valid_for(*role)
+                        && status.max_model_len > 0
+                        && status.role
+                            == if *role == ModelServerRole::Draft {
+                                "draft"
+                            } else {
+                                "target"
+                            }
+                        && status.model == *model
+                        && status.revision == *revision
+                        && status.tokenizer == *tokenizer
+                        && status.tokenizer_revision == *tokenizer_revision
+                });
+                let healthy = status.as_ref().is_some_and(|status| status.accepting);
+                let route = self
+                    .model_routes
+                    .routes()
+                    .iter()
+                    .find(|route| route.route_target_id == *id)
+                    .expect("component has a route");
+                let metadata = status.map(|status| BackendMetadata {
+                    draft_target: Some(status.candidates),
+                    runtime: RuntimeMetadataResponse {
+                        version: 1,
+                        model: foretoken_model_protocol::RuntimeModelIdentity {
+                            model: route.model.clone(),
+                            revision: route.revision.clone(),
+                        },
+                        model_dtype: None,
+                        effective_max_model_len: status.max_model_len,
+                        prepared_tokenizer: status.prepared_tokenizer,
+                        max_logprobs: Some(0),
+                        ec_transfer: None,
+                        capabilities: BTreeSet::new(),
+                    },
+                });
+                return (id.clone(), healthy, metadata, stats);
+            }
             let ready = ready(&self.health_client, c.endpoint()).await;
             let metadata = metadata(&self.health_client, c.endpoint()).await;
             let metadata_matches = metadata
@@ -311,10 +415,14 @@ impl BackendRegistry {
             };
             let stats = telemetry(&self.health_client, c.endpoint()).await;
             let accepting = stats.as_ref().is_some_and(|stats| stats.accepting);
+            let healthy = ready && bootstrap && metadata_matches && accepting;
             (
                 id.clone(),
-                ready && bootstrap && metadata_matches && accepting,
-                metadata,
+                healthy,
+                metadata.filter(|_| healthy).map(|runtime| BackendMetadata {
+                    runtime,
+                    draft_target: None,
+                }),
                 stats,
             )
         });
@@ -326,7 +434,7 @@ impl BackendRegistry {
                 .get(&id)
                 .expect("component health")
                 .store(healthy, Ordering::Release);
-            if healthy {
+            if let Some(metadata) = metadata {
                 if let Some(stats) = stats {
                     let request_lengths = registry_stats.request_length_targets.contains(&id);
                     registry_stats
@@ -339,7 +447,7 @@ impl BackendRegistry {
                 } else {
                     registry_stats.histories.remove(&id);
                 }
-                next_metadata.insert(id, metadata.expect("validated above"));
+                next_metadata.insert(id, metadata);
             } else {
                 registry_stats.histories.remove(&id);
             }
@@ -361,6 +469,15 @@ impl LlmFacadeResolver for BackendRegistry {
             | (RouteStage::Prefill, Component::Prefill { endpoint, .. })
             | (RouteStage::Decode, Component::Decode { endpoint, .. }) => {
                 Some(Arc::new(HttpFacade::new(endpoint.clone()).ok()?))
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_draft_target(&self, decision: &RouteDecision) -> Option<RoleClient> {
+        match self.components.get(&decision.route_target_id)? {
+            Component::DraftTarget { client, role, .. } if *role == decision.role => {
+                Some(client.clone())
             }
             _ => None,
         }
@@ -393,6 +510,22 @@ impl RouteInventory for BackendRegistry {
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
 
+    fn draft_pools(&self, id: &RouteTargetId) -> &[String] {
+        match self.components.get(id) {
+            Some(Component::DraftTarget { draft_pools, .. }) => draft_pools,
+            _ => &[],
+        }
+    }
+
+    fn draft_target_capabilities(&self, id: &RouteTargetId) -> Option<DraftTargetCapabilities> {
+        self.metadata
+            .lock()
+            .expect("metadata mutex")
+            .get(id)?
+            .draft_target
+            .clone()
+    }
+
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
             .model_routes
@@ -415,7 +548,7 @@ impl RouteInventory for BackendRegistry {
             .iter()
             .filter(|capability| {
                 !requires_runtime_observation(capability)
-                    || observed.capabilities.contains(*capability)
+                    || observed.runtime.capabilities.contains(*capability)
             })
             .cloned()
             .collect()
@@ -469,4 +602,21 @@ async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<Telemetry
 }
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())
+}
+
+// Role readiness has a separate wire contract from the Rust model server. Use the registry's
+// bounded probe client; generation clients retain the caller-owned streaming deadline.
+async fn role_status(client: &reqwest::Client, endpoint: &str) -> Option<RoleStatus> {
+    let response = client
+        .get(format!(
+            "{}/status?observations=false",
+            endpoint.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.json().await.ok()
 }

@@ -216,7 +216,8 @@ impl RuntimeBuilder {
 
         let has_physical_backends = !snapshot.groups.is_empty()
             || !snapshot.pd_components.is_empty()
-            || !snapshot.epd_components.is_empty();
+            || !snapshot.epd_components.is_empty()
+            || !snapshot.dt_components.is_empty();
         let BackendRegistryBuild {
             registry,
             kv_runtime_config,
