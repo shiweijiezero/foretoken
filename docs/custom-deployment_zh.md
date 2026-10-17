@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 Helm，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
+准备 Python 3.11+、Git、kubectl 和 [Helm 4](../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git

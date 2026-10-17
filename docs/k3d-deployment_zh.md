@@ -16,7 +16,7 @@ k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在�
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
 - 可使用 NVIDIA 运行时的 Docker；
-- k3d、kubectl 和 Helm。
+- k3d、kubectl 和 [Helm 4](../cli/README_zh.md#开始前)。
 
 ## 1. 准备 Linux GPU 主机
 
@@ -47,7 +47,7 @@ sudo nvidia-ctk runtime configure --runtime=docker
 
 ```bash
 curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
 curl -fsSL https://dl.k8s.io/release/stable.txt -o /tmp/kubectl-version
 curl -fsSLO "https://dl.k8s.io/release/$(cat /tmp/kubectl-version)/bin/linux/amd64/kubectl"
 sudo install -m 0755 kubectl /usr/local/bin/kubectl

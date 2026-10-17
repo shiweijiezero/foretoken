@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and Helm, and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
+Prepare Python 3.11+, Git, kubectl and [Helm 4](../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git

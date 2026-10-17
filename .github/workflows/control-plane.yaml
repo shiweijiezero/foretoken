@@ -57,7 +57,7 @@ jobs:
       - uses: azure/setup-helm@v5.0.1
         if: steps.changes.outputs.run == 'true'
         with:
-          version: v4.2.3
+          version: v4.3.1
       - name: Verify control plane
         if: steps.changes.outputs.run == 'true'
         run: make -C control-plane verify

@@ -9,7 +9,7 @@ kind 适合创建本地 Kubernetes 开发集群。kind 的 Kubernetes 节点运�
 
 ## 1. 安装工具并创建集群
 
-安装 Docker、kind、kubectl、Python 3.11+ 和 Helm，并从 Foretoken 仓库根目录执行：
+安装 Docker、kind、kubectl、Python 3.11+ 和 [Helm 4](../cli/README_zh.md#开始前)，并从 Foretoken 仓库根目录执行：
 
 ```bash
 pip install -e .

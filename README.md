@@ -69,7 +69,7 @@ foretoken install -e .
 
 Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
 
-The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
+The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](cli/README.md#before-you-start), and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
 

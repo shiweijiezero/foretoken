@@ -107,8 +107,9 @@ class HelmClient:
                 self.run(
                     [
                         "list",
-                        "--all",
                         "--all-namespaces",
+                        "--max",
+                        "0",
                         "--filter",
                         f"^{re.escape(self._config.envoy_gateway.release_name)}$",
                         "--selector",
@@ -182,7 +183,6 @@ class HelmClient:
         """List one fixed release, optionally filtered by Helm metadata labels."""
         args = [
             "list",
-            "--all",
             "--namespace",
             release.namespace,
             "--filter",

@@ -325,17 +325,12 @@ class Helm(HelmClient):
     def deployment_releases(self) -> tuple[ReleaseRef, ...]:
         """Find deployment releases, including failed submissions that still consume platform resources."""
         key, value = self._config.management_label
-        releases = []
-        page_size = 256
-        while True:
-            listed = json.loads(self.run([
-                "list", "--all", "--all-namespaces", "--max", str(page_size),
-                "--offset", str(len(releases)), "--output", "json",
-                "--selector", f"{key}={value},foretoken.io/scope=deployment",
-            ]).stdout)
-            releases.extend(ReleaseRef(item["name"], item["namespace"]) for item in listed)
-            if len(listed) < page_size:
-                return tuple(releases)
+        # Same-named releases across namespaces have no stable offset-page order.
+        listed = json.loads(self.run([
+            "list", "--all-namespaces", "--max", "0", "--output", "json",
+            "--selector", f"{key}={value},foretoken.io/scope=deployment",
+        ]).stdout)
+        return tuple(ReleaseRef(item["name"], item["namespace"]) for item in listed)
 
     def install_deployment(
         self, release: ReleaseRef, values: dict[str, Any], timeout: str, *, source_root: Path | None = None,

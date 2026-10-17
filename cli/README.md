@@ -11,7 +11,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 
 ## Before you start
 
-You need Python 3.11 or later, `kubectl`, and Helm. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
+You need Python 3.11 or later, `kubectl`, and the latest patch release of Helm 4.3 or 4.2. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
 
 ## Install the command-line tool
 

@@ -9,7 +9,7 @@ Use kind for a local Kubernetes development cluster. kind runs Kubernetes nodes 
 
 ## 1. Install the tools and create a cluster
 
-Install Docker, kind, kubectl, Python 3.11+, and Helm. From the Foretoken repository root:
+Install Docker, kind, kubectl, Python 3.11+, and [Helm 4](../cli/README.md#before-you-start). From the Foretoken repository root:
 
 ```bash
 pip install -e .

@@ -18,7 +18,7 @@ kubectl get nodes
 
 The cluster needs:
 
-- Kubernetes access through `kubectl` and Helm;
+- Kubernetes access through `kubectl` and [Helm 4](../cli/README.md#before-you-start);
 - a default StorageClass for platform persistent storage;
 - GPU drivers and the vendor device plugin when deploying GPU models; and
 - a registry reachable by the Build Pods and every node when using source-built images.

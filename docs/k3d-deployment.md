@@ -16,7 +16,7 @@ The host needs:
 - an NVIDIA driver;
 - NVIDIA Container Toolkit;
 - Docker configured to use the NVIDIA runtime; and
-- k3d, kubectl, and Helm.
+- k3d, kubectl, and [Helm 4](../cli/README.md#before-you-start).
 
 ## 1. Prepare a Linux GPU host
 
@@ -47,7 +47,7 @@ Install k3d, kubectl, and Helm using their official installers, then verify the 
 
 ```bash
 curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
 curl -fsSL https://dl.k8s.io/release/stable.txt -o /tmp/kubectl-version
 curl -fsSLO "https://dl.k8s.io/release/$(cat /tmp/kubectl-version)/bin/linux/amd64/kubectl"
 sudo install -m 0755 kubectl /usr/local/bin/kubectl
