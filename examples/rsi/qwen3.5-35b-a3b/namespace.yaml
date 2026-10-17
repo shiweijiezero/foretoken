@@ -4,4 +4,4 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rsi-qwen-decode
+  name: rsi-qwen3-5-35b-a3b

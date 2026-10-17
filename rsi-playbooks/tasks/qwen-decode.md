@@ -4,7 +4,7 @@ English | [简体中文](qwen-decode_zh.md)
 
 ```text
 Models: Qwen3.5-35B-A3B
-Starting configuration: examples/rsi/qwen-decode; an editable BF16 TP4 starting point, not a fixed optimization strategy
+Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token MTP, adjustable during optimization
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Precision: fixed BF16
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
@@ -36,7 +36,9 @@ Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and reso
 
 ## Starting deployment
 
-Use the [four-GPU starting configuration](../../examples/rsi/qwen-decode/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen-decode --timeout 60m`, then evolve it within the task budget. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+The example enables four-token multi-token prediction (MTP): the model verifies draft tokens before returning them. It uses asynchronous scheduling and MetaX runtime settings while retaining graph acceleration and automatic KV cache sizing.
+
+Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a MetaX-enabled Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Deploy with `foretoken deploy examples/rsi/qwen3.5-35b-a3b --timeout 60m`, then evolve it within the task budget. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
 ## Evaluation commands
 
@@ -46,7 +48,7 @@ Run the random workload once with `--max-concurrency 1` and again with `16`; kee
 
 ```bash
 # Every performance iteration: vary input and output lengths.
-foretoken perf examples/rsi/qwen-decode --dataset random \
+foretoken perf examples/rsi/qwen3.5-35b-a3b --dataset random \
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency 16 --num-prompts 160 --warmup-requests 4 \
@@ -54,14 +56,14 @@ foretoken perf examples/rsi/qwen-decode --dataset random \
   --output-dir results/qwen-decode --iteration baseline
 
 # Required for the final retained approach; optional during iterations: StudyChat conversations.
-foretoken perf examples/rsi/qwen-decode \
+foretoken perf examples/rsi/qwen3.5-35b-a3b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 16 --num-prompts 128 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 
 # Accuracy evaluation as needed.
-foretoken eval examples/rsi/qwen-decode \
+foretoken eval examples/rsi/qwen3.5-35b-a3b \
   --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 ```

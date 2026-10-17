@@ -4,10 +4,10 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: FrontendService
 metadata:
-  name: qwen-decode-frontend
+  name: qwen3-5-35b-a3b-frontend
 spec:
   replicas: 1
-  hostname: qwen-decode.rsi.example.com
+  hostname: qwen3-5-35b-a3b.rsi.example.com
   resources:
     requests:
       cpu: "1"

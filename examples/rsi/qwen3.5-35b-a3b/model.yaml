@@ -4,7 +4,7 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:
-  name: qwen-decode
+  name: qwen3-5-35b-a3b
 spec:
   model: Qwen/Qwen3.5-35B-A3B
   source: hf
@@ -29,3 +29,13 @@ spec:
     max-model-len: 131072
     max-num-seqs: 16
     max-num-batched-tokens: 4096
+    async-scheduling: true
+    speculative-config:
+      method: mtp
+      num_speculative_tokens: 4
+  env:
+    # Use queued MACA dispatch to avoid direct-dispatch memory faults.
+    MACA_DIRECT_DISPATCH: "0"
+    MACA_CPU_THREAD_POLICY: "-1"
+    VLLM_USE_V2_MODEL_RUNNER: "1"
+    VLLM_GDN_DECODE_KERNEL: triton

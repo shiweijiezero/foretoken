@@ -4,7 +4,7 @@
 
 ```text
 模型：Qwen3.5-35B-A3B
-起始配置：examples/rsi/qwen-decode；可修改的 BF16 TP4 起点，不固定后续优化策略
+起始配置：examples/rsi/qwen3.5-35b-a3b；BF16 TP4、四步 MTP，可在优化中调整
 优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 精度：固定 BF16
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
@@ -36,7 +36,9 @@
 
 ## 起始部署
 
-[四卡起始配置](../../examples/rsi/qwen-decode/)需要已配置兼容运行环境的沐曦 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。执行 `foretoken deploy examples/rsi/qwen-decode --timeout 60m` 部署，再在任务预算内演进。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+示例启用四步多 token 预测（MTP），由模型验证草稿 token 后输出，并配置异步调度和沐曦运行参数，保留图加速与自动 KV 缓存容量计算。
+
+[四卡起始配置](../../examples/rsi/qwen3.5-35b-a3b/)需要已配置兼容运行环境的沐曦 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。执行 `foretoken deploy examples/rsi/qwen3.5-35b-a3b --timeout 60m` 部署，再在任务预算内演进。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
 
 ## 评测命令
 
@@ -46,7 +48,7 @@
 
 ```bash
 # 每轮速度迭代：不同输入输出长度
-foretoken perf examples/rsi/qwen-decode --dataset random \
+foretoken perf examples/rsi/qwen3.5-35b-a3b --dataset random \
   --min-prompt-length 128 --max-prompt-length 4096 \
   --min-output-length 128 --max-output-length 512 \
   --max-concurrency 16 --num-prompts 160 --warmup-requests 4 \
@@ -54,14 +56,14 @@ foretoken perf examples/rsi/qwen-decode --dataset random \
   --output-dir results/qwen-decode --iteration baseline
 
 # 最终保留方案必跑，中间按需：StudyChat 对话
-foretoken perf examples/rsi/qwen-decode \
+foretoken perf examples/rsi/qwen3.5-35b-a3b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 16 --num-prompts 128 --max-tokens 2048 \
   --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 
 # 按需精度评测
-foretoken eval examples/rsi/qwen-decode \
+foretoken eval examples/rsi/qwen3.5-35b-a3b \
   --tasks gsm8k --num_fewshot 0 --limit 20 --output experiment,plot,wandb \
   --output-dir results/qwen-decode --iteration baseline
 ```
