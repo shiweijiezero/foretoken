@@ -44,27 +44,26 @@ from foretoken.platform.helm import Helm
 from foretoken.source import (
     _INSTALL_SOURCE,
     _has_server_binding,
-    _inputs,
     _local_candidates,
     _runtime_settings,
-    _snapshot,
     _state_directory,
     _write_json,
-    build_sources,
-    changed_build_inputs,
     checkout_operation,
     checkout_state_directory,
-    engine_source_roots,
     ensure_build_volumes,
     image_tools_image,
     local_build_nodes,
-    pinned_rust_revision,
     prepare_source_images,
     reconcile_source_resources,
     record_source_deployment,
-    snapshot_versions,
     source_checkout,
-    validate_build_inputs,
+)
+from foretoken.source_inputs import (
+    BuildInputs,
+    build_sources,
+    engine_source_roots,
+    pinned_rust_revision,
+    snapshot_versions,
 )
 
 _APPLICATION_PARTS = {
@@ -220,8 +219,8 @@ class EditableDeployment:
             return
         engines = self.state.get("engines", {})
         old = self.directory / self.state["inputs"]
-        current = _inputs(self.root, engines, old, mooncake_version=self.mooncake_version)
-        changed = changed_build_inputs(old, current)
+        current = BuildInputs.select(self.root, engines, old, mooncake_version=self.mooncake_version)
+        changed = current.changed(old)
         if not changed:
             print(
                 "Source plan: reuse runtime artifacts (no source inputs changed)",
@@ -289,14 +288,7 @@ class EditableDeployment:
         else:
             print("Source plan: update source snapshot only", flush=True)
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
-        _snapshot(
-            current,
-            snapshot,
-            engines,
-            previous=old,
-            unchanged=set(current.files).difference(changed),
-            root=self.root,
-        )
+        current.capture(snapshot, previous=old, unchanged=set(current.files).difference(changed))
         self.state["build"]["versions"] = snapshot_versions(
             snapshot, old, self.state["build"]["versions"], changed
         )
@@ -640,10 +632,10 @@ class EditableDeployment:
                 ]
                 for future in pending_builds:
                     future.result()
-            validate_build_inputs(
-                self.root, snapshot, self.state.get("engines", {}),
+            BuildInputs.select(
+                self.root, self.state.get("engines", {}), snapshot,
                 mooncake_version=self.mooncake_version,
-            )
+            ).validate(snapshot)
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}
