@@ -38,6 +38,8 @@ foretoken perf video \
 
 Generated videos are saved under `--output-dir`. Use `--warmup-requests N` to run N requests before measurement, or `--duration 5min` to send requests for up to five minutes; requests already sent are allowed to finish. To compare generation and load settings, add `--sweep benchmarks/examples/video-sweep.jsonl`.
 
+With W&B enabled, each completed request updates the success/failure counts and client latency. Generated media and aggregate metrics are published when the run finishes. See [saved results](../../README.md#read-and-save-results) for file locations and output options.
+
 ![TI2V aggregate benchmark summary](../imgs/video-ti2v-benchmark-summary.png)
 
 ![TI2V per-request metrics in W&B](../imgs/video-ti2v-wandb-requests.png)

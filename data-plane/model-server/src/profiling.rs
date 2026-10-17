@@ -12,19 +12,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::{
-    Json, Router,
-    extract::{Query, State as HttpState},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::get,
-};
+use axum::extract::{Query, State as HttpState};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::api::RuntimeHealth;
 use crate::backend::VllmBackend;
 
 /// Profiler instrumentation selected before the engine process starts.
@@ -87,18 +84,17 @@ impl Config {
     }
 
     fn staging(&self) -> PathBuf {
-        // One group-local supervisor starts and seals captures across every engine.
-        // All members mount the same cache and write into this group-owned staging directory.
-        self.profile_root().join(".staging").join(&self.group_uid)
+        // The control runtime owns its output scope, including files written by remote RPC workers.
+        self.profile_root().join(".staging").join(&self.runtime_id)
     }
 
-    /// Prepares the group-owned staging directory before any member starts its engine.
+    /// Prepares capture storage before the instrumented engine starts.
     pub fn prepare(&self) -> io::Result<()> {
         // The persistent mount must already exist; never substitute Pod-local storage.
         fs::metadata(&self.data_root)?;
         let profile_root = self.profile_root();
         fs::create_dir_all(profile_root.join("runs"))?;
-        fs::create_dir_all(self.staging())?;
+        fs::create_dir_all(profile_root.join(".staging"))?;
         File::open(profile_root)?.sync_all()
     }
 
@@ -112,7 +108,7 @@ impl Config {
             "--profiler-config={}",
             serde_json::json!({
                 "profiler": "torch",
-                "torch_profiler_dir": self.staging(),
+                "torch_profiler_dir": self.profile_root().join(".staging"),
                 "torch_profiler_use_gzip": false,
                 "torch_profiler_dump_cuda_time_total": false,
                 "torch_profiler_with_stack": false,
@@ -150,6 +146,8 @@ pub struct Record {
     pub engine: Engine,
     pub run_uid: String,
     pub phase: String,
+    /// Confirms that this capture has no outstanding native work in its control scope.
+    pub native_stopped: bool,
     pub duration_ms: u64,
     pub started_at_unix_ms: Option<u64>,
     pub recording_ended_at_unix_ms: Option<u64>,
@@ -169,6 +167,7 @@ impl Record {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
+    protocol: u8,
     engine: Engine,
     runtime_id: String,
     pod_uid: String,
@@ -185,6 +184,7 @@ struct Entry {
 struct State {
     entries: HashMap<String, Entry>,
     active: Option<String>,
+    accepting: bool,
 }
 
 /// HTTP-side control handle; native work belongs to the process supervisor, not request tasks.
@@ -192,15 +192,23 @@ struct State {
 pub struct Handle {
     config: Config,
     state: Arc<Mutex<State>>,
-    health: Arc<RuntimeHealth>,
     sender: mpsc::UnboundedSender<(String, watch::Receiver<Action>)>,
 }
 
 impl Handle {
+    /// Closes capture intake when the owning runtime retires; accepted captures remain supervised.
+    pub fn close(&self) {
+        self.state
+            .lock()
+            .expect("capture state lock poisoned")
+            .accepting = false;
+    }
+
     /// Returns identity and previously observed state without probing or restarting native capture.
     pub fn observe(&self, uid: Option<&str>) -> Observation {
         let state = self.state.lock().expect("capture state lock poisoned");
         Observation {
+            protocol: 1,
             engine: self.config.engine,
             runtime_id: self.config.runtime_id.clone(),
             pod_uid: self.config.pod_uid.clone(),
@@ -237,8 +245,7 @@ impl Handle {
             }
             return Ok(());
         }
-        if request.action == Action::Capture && (state.active.is_some() || !self.health.accepting())
-        {
+        if request.action == Action::Capture && (state.active.is_some() || !state.accepting) {
             return Err("runtime is busy or unavailable".into());
         }
         let (action, receiver) = watch::channel(request.action);
@@ -251,6 +258,7 @@ impl Handle {
                     engine: self.config.engine,
                     run_uid: uid.clone(),
                     phase: if capture { "Starting" } else { "Cancelled" }.into(),
+                    native_stopped: true,
                     duration_ms: request.duration_ms,
                     started_at_unix_ms: None,
                     recording_ended_at_unix_ms: None,
@@ -272,23 +280,21 @@ impl Handle {
     }
 }
 
-/// Builds the shared capture API for native and DT model-server supervisors.
-pub fn router(handle: Option<Handle>) -> Router {
-    Router::new()
-        .route(
-            "/v1/internal/profiling",
-            get(profile_observation).post(profile_control),
-        )
-        .with_state(handle)
-}
-
 #[derive(Deserialize)]
 struct ProfileQuery {
     run_uid: Option<String>,
 }
 
-// Return runtime identity even before a run exists, so the reconciler can persist a fixed plan.
-async fn profile_observation(
+/// Builds capture control for the existing internal listener on leaders and Nsight workers.
+/// The router borrows a handle; native operations remain owned by the runtime supervisor.
+pub fn router(handle: Option<Handle>) -> Router {
+    Router::new()
+        .route("/v1/internal/profiling", get(observation).post(control))
+        .with_state(handle)
+}
+
+// Return runtime identity before capture so the controller can persist its execution plan.
+async fn observation(
     HttpState(handle): HttpState<Option<Handle>>,
     Query(query): Query<ProfileQuery>,
 ) -> Response {
@@ -298,8 +304,8 @@ async fn profile_observation(
     }
 }
 
-// The handler acknowledges acceptance only; polling exposes the independently supervised result.
-async fn profile_control(
+// Acceptance is distinct from the native result observed through subsequent polling.
+async fn control(
     HttpState(handle): HttpState<Option<Handle>>,
     Json(request): Json<Request>,
 ) -> Response {
@@ -325,15 +331,20 @@ pub enum CaptureBackend {
 
 impl CaptureBackend {
     /// Runs one native utility; Supervisor retains uncertain operations until engine exit.
-    async fn control(&self, start: bool, directory: Option<&Path>) -> Result<(), String> {
+    async fn control(
+        &self,
+        start: bool,
+        directory: Option<&Path>,
+        prefix: &str,
+    ) -> Result<(), String> {
         match self {
             Self::Native(backend) => match directory {
                 Some(directory) => backend.set_mctracer(start, directory).await,
-                None => backend.set_profiling(start).await,
+                None => backend.set_profiling(start, prefix).await,
             },
             Self::DraftTarget { endpoint, client } => {
                 client.post(format!("{endpoint}/profiling"))
-                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy())}))
+                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy()), "profile_prefix": prefix}))
                     .send().await.map_err(|error| error.to_string())?
                     .error_for_status().map_err(|error| error.to_string())?;
                 Ok(())
@@ -346,23 +357,25 @@ impl CaptureBackend {
 pub struct Supervisor {
     handle: Handle,
     receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
-    backend: CaptureBackend,
+    backend: Option<CaptureBackend>,
     native: Option<JoinHandle<Result<(), String>>>,
     publication: Option<JoinHandle<io::Result<Record>>>,
 }
 
 impl Supervisor {
-    /// Creates shared API state and the single supervisor driven by model-server's main loop.
-    pub fn new(config: Config, backend: CaptureBackend, health: Arc<RuntimeHealth>) -> Self {
+    /// Creates a supervisor after engine startup. RPC profilers require an engine client;
+    /// Nsight controls the local instrumented process tree without one.
+    pub fn new(config: Config, backend: Option<CaptureBackend>) -> Self {
+        assert!(backend.is_some() || config.engine == Engine::Nsight);
         let (sender, receiver) = mpsc::unbounded_channel();
         Self {
             handle: Handle {
                 config,
-                health,
                 sender,
                 state: Arc::new(Mutex::new(State {
                     entries: HashMap::new(),
                     active: None,
+                    accepting: true,
                 })),
             },
             receiver,
@@ -423,9 +436,21 @@ impl Supervisor {
         let config = self.handle.config.clone();
         self.native = Some(tokio::spawn(async move {
             match config.engine {
-                Engine::Pytorch => backend.control(start, None).await,
+                Engine::Pytorch => {
+                    // vLLM passes this prefix to Torch's trace handler on every rank.
+                    let prefix = format!("{}/capture", config.runtime_id);
+                    backend
+                        .expect("RPC profiler has an engine client")
+                        .control(start, None, &prefix)
+                        .await
+                }
                 Engine::Nsight => nsight::set_recording(&config, start).await,
-                Engine::Mctracer => backend.control(start, Some(&config.staging())).await,
+                Engine::Mctracer => {
+                    backend
+                        .expect("RPC profiler has an engine client")
+                        .control(start, Some(&config.staging()), "")
+                        .await
+                }
             }
         }));
         let budget = if start { START_TIMEOUT } else { STOP_TIMEOUT };
@@ -474,6 +499,7 @@ impl Supervisor {
             self.update(uid, |record| record.phase = "Cancelled".into());
             return Ok(());
         }
+        self.update(uid, |record| record.native_stopped = false);
         self.native_operation(true).await?;
         self.update(uid, |record| {
             record.phase = "Capturing".into();
@@ -497,7 +523,10 @@ impl Supervisor {
         });
         let export_deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
         self.native_operation(false).await?;
-        self.update(uid, |record| record.exported_at_unix_ms = Some(now_ms()));
+        self.update(uid, |record| {
+            record.native_stopped = true;
+            record.exported_at_unix_ms = Some(now_ms());
+        });
         let mut record = self
             .handle
             .observe(Some(uid))

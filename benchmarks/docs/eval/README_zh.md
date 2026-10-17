@@ -107,6 +107,8 @@ foretoken eval examples/quickstart \
 
 ## 查看评分
 
+运行期间，W&B 实时展示 lm-evaluation-harness 已完成的生成或似然评分窗口数，以及 EvalScope 已保存的预测和评分数。恢复 lm-evaluation-harness 时，复用的结果单独计数。任务得分在框架完成评分后发布。
+
 打开命令打印的结果目录：
 
 | 文件或目录 | 内容 |
@@ -114,6 +116,7 @@ foretoken eval examples/quickstart \
 | `metrics.json` | 任务得分、子集、答案提取方式、样本数，以及框架提供的不确定性或执行状态 |
 | `native/` | 框架报告及其生成的逐样本记录 |
 | `evaluator.log` | 评测框架的运行日志 |
+| `evaluation_progress.jsonl` | 按时间记录实际完成数量，中断后仍保留 |
 
 结果保存位置见[输出设置](../../README_zh.md#查看和保存结果)。
 

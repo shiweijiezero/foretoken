@@ -26,6 +26,7 @@ async def run_schedule(
     seed: int,
     trace_start: float | None = None,
     before_first: Callable[[], Awaitable[None]] | None = None,
+    on_start: Callable[[float], None] | None = None,
 ) -> tuple[list[Result], float, float]:
     """Admit episodes by arrival time, drain admitted work, and return the measured window.
 
@@ -44,6 +45,8 @@ async def run_schedule(
         # remain in the trace records. Capture setup precedes the real clock.
         trace_start = first.trace.timestamp_seconds
     started = time.perf_counter()
+    if on_start is not None:
+        on_start(started)
     deadline = (
         started + load.duration_seconds if load.duration_seconds is not None else None
     )

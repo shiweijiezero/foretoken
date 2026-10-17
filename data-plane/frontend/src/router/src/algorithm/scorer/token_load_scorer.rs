@@ -63,7 +63,6 @@ impl RouteScorer for TokenLoadScorer {
                 };
                 RouteScore {
                     preference: score,
-                    ..RouteScore::default()
                 }
             })
             .collect()

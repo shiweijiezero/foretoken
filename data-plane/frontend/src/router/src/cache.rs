@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Complete-block prefix observations for request-specific routing costs.
+//! Reusable prefix-token observations for request-specific routing costs.
 
 use crate::{RouteCandidate, RouterRequest};
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};
-use foretoken_model_protocol::{KvCacheLocality, ModelServerRole};
+use foretoken_model_protocol::{KvCacheLocality, KvStorageTier, ModelServerRole};
 
 pub(crate) struct CacheMatch {
-    pub(crate) matched_blocks: usize,
-    pub(crate) total_blocks: usize,
-    pub(crate) block_size: usize,
+    pub(crate) matched_tokens: usize,
+    pub(crate) device_tokens: usize,
+    pub(crate) total_tokens: usize,
 }
 
-/// Reads complete-block counts from the exact route binding, preserving block units.
+/// Reads reusable token counts from the exact route binding for routing costs.
+/// The observation owner applies cache-layout alignment and final-token recomputation.
 pub(crate) fn cache_match(
     request: &RouterRequest,
     candidate: &RouteCandidate,
@@ -31,18 +32,22 @@ pub(crate) fn cache_match(
     let KvPrefixQueryResult::Matches(matches) = kv.prefix_matches(lookup) else {
         return None;
     };
-    let block_size = matches.block_size()? as usize;
     let mut info = CacheMatch {
-        matched_blocks: 0,
-        total_blocks: request.token_count() / block_size,
-        block_size,
+        matched_tokens: 0,
+        device_tokens: 0,
+        total_tokens: request.token_count(),
     };
     for matched in matches {
         if matched.placement.locality == KvCacheLocality::Unspecified {
             continue;
         }
-        let count = (matched.matched_tokens / block_size).min(info.total_blocks);
-        info.matched_blocks = info.matched_blocks.max(count);
+        let count = matched.matched_tokens.min(info.total_tokens);
+        info.matched_tokens = info.matched_tokens.max(count);
+        if matched.placement.tier == KvStorageTier::Device
+            && matched.placement.locality == KvCacheLocality::Local
+        {
+            info.device_tokens = info.device_tokens.max(count);
+        }
     }
     Some(info)
 }

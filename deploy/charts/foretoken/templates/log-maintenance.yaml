@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Kubernetes schedules independent observations of shared log-storage capacity.
+{{- if and (eq .Values.scope "platform") .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
+{{- $store := splitList "/" .Values.observability.logs.managedStatefulSet }}
+{{- $name := include "foretoken.compactName" (printf "%s-log-maintenance" .Release.Name) }}
+{{- $application := index (include "foretoken.applications" . | fromJson) "control-plane" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ index $store 0 }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    resourceNames: [{{ index $store 1 | quote }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ index $store 0 }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "foretoken.platformName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    foretoken.io/platform-task: "true"
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "foretoken.labels" . | nindent 12 }}
+          {{- if $application }}
+          annotations:
+            inference.foretoken.io/application-url: {{ $application | quote }}
+          {{- end }}
+        spec:
+          {{- include "foretoken.platformJobPod" (dict "root" . "binary" "manager" "args" (list "maintain-log-storage" (printf "--namespace=%s" (index $store 0)) (printf "--statefulset=%s" (index $store 1)) (printf "--max-size=%s" .Values.observability.logs.maxSize) "--timeout=30s")) | nindent 10 }}
+{{- end }}

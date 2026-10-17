@@ -3,7 +3,7 @@
 
 {{/* Makes the English and Chinese Foretoken system dashboards discoverable by Grafana sidecars. */}}
 
-{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+{{- if and (eq .Values.scope "platform") (eq (include "foretoken.observabilityEnabled" .) "true") }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

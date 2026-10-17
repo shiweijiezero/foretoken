@@ -103,8 +103,8 @@ spec:
                         minLength: 1
                         type: string
                       directoryOwner:
-                        description: DirectoryOwner preserves a locally discovered
-                          directory identity across cache consumers.
+                        description: DirectoryOwner preserves the discovered directory
+                          identity across cache consumers.
                         properties:
                           gid:
                             format: int64
@@ -222,6 +222,24 @@ spec:
                     maxLength: 253
                     minLength: 1
                     type: string
+                  sharedStorageIdentity:
+                    description: SharedStorageIdentity fixes the claim's filesystem
+                      identity for this execution cohort.
+                    properties:
+                      gid:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 0
+                        type: integer
+                      uid:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 1
+                        type: integer
+                    required:
+                    - gid
+                    - uid
+                    type: object
                   sharedStoragePath:
                     description: SharedStoragePath is the fixed in-container connector
                       path.
@@ -840,6 +858,10 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  prefixCacheIsolation:
+                    description: PrefixCacheIsolation pins the cache namespace and
+                      request policy for this instance.
+                    type: boolean
                   preparationVersion:
                     description: |-
                       PreparationVersion selects the source-publication contract for this immutable cohort.

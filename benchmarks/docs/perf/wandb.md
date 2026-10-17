@@ -12,12 +12,28 @@ foretoken perf examples/quickstart \
   --wandb-run-name quickstart
 ```
 
-`--wandb-entity` selects the account or team. Group and run name are independent. Sweeps and multi-dataset runs generate a group if none is supplied; child labels are appended to their run names. Single runs are ungrouped by default.
+Open the run link printed by the command; it also appears in quiet mode. Use `--wandb-entity` to select an account or team. Set the same `--wandb-group` for runs you want to compare in a group's Workspace. Sweeps and multi-dataset runs generate a group when none is supplied; single runs are ungrouped by default.
 
-The W&B page shows final aggregate metrics, P50/P95/P99 percentile metrics, and time-based, cumulative, and per-request series. When `--warmup-requests` is set, a separate Warmup section shows warmup request curves and a warmup-versus-measurement comparison; warmup remains outside formal performance metrics. Mixed workloads add dataset, model, and request-class breakdown tables and time curves on the same elapsed-time axis, plus a request table with labels and target/actual output tokens. Kustomize runs also show replica-count changes and, when the controller status can be sampled for the full benchmark window, allocated GPU-seconds and GPU-hours by device resource name. Coverage is shown separately; partial samples remain diagnostic and are not presented as total cost. Open a group's Workspace to compare runs; Summary retains the final values. See [Result metrics](../metrics.md#curves) for window definitions.
+## Follow progress and compare results
 
-With a Kustomize model service and Prometheus, speculative-decoding runs also show [acceptance and stage-time observations](../metrics.md#speculative-decoding-observations). Sweep comparison runs plot the same measured-window summaries.
+Use request-order curves to inspect individual requests, cumulative curves to follow overall progress, and one-second completion windows to compare throughput and P50/P95/P99 latency over time. These views update during HTTP measurement; windows may wait for earlier unfinished requests. Final aggregate metrics appear when measurement finishes and remain in Summary.
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
 
-Choose destinations with the shared [output settings](../../README.md#read-and-save-results). When W&B is explicitly selected, an initialization, publication, or finalization failure makes the command fail and preserves any artifacts already produced.
+Mixed workloads include breakdowns by dataset, model, and request class. Kustomize runs add replica and GPU-allocation observations; services with Prometheus can also report resource usage and speculative decoding. See [Performance metrics](../metrics.md) for definitions, units, and observation coverage.
+
+## Download records
+
+Open the run's Artifacts to download configuration, metrics, request records, and logs. For sweeps and comparisons, use the parent run's log to inspect shared service preparation and cleanup. File contents and output choices are listed in [saved results](../../README.md#read-and-save-results).
+
+Warmup is excluded from performance metrics and panels. Its records remain in the `benchmark-warmup` artifact. Adding `plot` to `--output local,wandb` saves exported figures locally and in the `benchmark-plots` artifact.
+
+## Resume an upload
+
+If measurement finished but saving plots or publishing results failed, use the printed result directory:
+
+```bash
+foretoken perf --resume RESULT_DIR --output local,wandb,plot
+```
+
+This rebuilds outputs from the saved measurements and completes the same W&B run without sending new model requests. Keep the original result directory. In offline mode, local outputs are rebuilt and W&B publication remains pending; repeat the command online to upload.

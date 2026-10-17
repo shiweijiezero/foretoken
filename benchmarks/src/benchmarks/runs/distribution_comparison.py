@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +147,7 @@ def _score_reference(
     source: ModelServiceSource,
     comparison: DistributionComparisonConfig,
     checkpoint: DistributionComparisonCheckpoint,
+    outputs: ResultOutputs,
 ) -> dict[str, Any]:
     """Prepare fixed corpus windows once and complete their reference probabilities before candidates."""
     from transformers import AutoConfig, AutoTokenizer
@@ -154,6 +156,8 @@ def _score_reference(
     completed = checkpoint.reference_done()
     if len(completed) == comparison.num_windows:
         logger.info("Reusing all %d reference windows", len(completed))
+        outputs.capture_source_evidence(saved["environment"])
+        outputs.start_measurement()
         return saved
     with resolve_model_service(source) as reference:
         if saved is None:
@@ -177,9 +181,11 @@ def _score_reference(
             checkpoint.put("reference", saved)
         elif reference.model != saved["model"]:
             raise ValueError("Reference model differs from the saved comparison")
+        outputs.capture_source_evidence(saved["environment"])
         vocabulary_size = saved["protocol"]["model_vocab_size"]
         score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
         logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)
+        outputs.start_measurement()
         with CompletionComparisonClient(reference, timeout=source.timeout_seconds) as client:
             for index, tokens in enumerate(saved["windows"]):
                 if index in completed:
@@ -214,12 +220,30 @@ def run_distribution_comparison(
         outputs.open(record)
         directory = Path(outputs.execution_dir)
         protocol = comparison.protocol()
+
+        def measured_run(error: BaseException | None) -> BenchmarkRun:
+            """Project only actual scored candidates onto the retained quality report."""
+            metrics = {
+                "duration_seconds": time.monotonic() - started,
+                "scores": _score_rows(points, comparison.top_k),
+                "execution": {"distribution_comparison": {
+                    "requested": len(comparison.candidates), "succeeded": len(points),
+                    "errored": int(error is not None), "incomplete": error is not None,
+                }},
+                "distribution_comparison": {
+                    "reference_model": reference_model, "protocol": protocol,
+                    "candidates": points, "positions": positions,
+                },
+            }
+            return BenchmarkRun(record, metrics, None, {}, exit_code=130 if isinstance(error, KeyboardInterrupt) else int(error is not None))
+
+        run: BenchmarkRun | None = None
         try:
             score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
             with DistributionComparisonCheckpoint(
                 directory, config.resume, comparison.checkpoint_settings(config.service),
             ) as checkpoint:
-                reference = _score_reference(reference_source, comparison, checkpoint)
+                reference = _score_reference(reference_source, comparison, checkpoint, outputs)
                 reference_model = reference["model"]
                 protocol = reference["protocol"]
                 windows = reference["windows"]
@@ -229,8 +253,9 @@ def run_distribution_comparison(
                 for candidate_index, candidate in enumerate(comparison.candidates):
                     saved = checkpoint.get(f"candidate/{candidate_index}")
                     completed = checkpoint.candidate_windows(candidate_index)
-                    if len(completed) < len(windows):
-                        with resolve_model_service(candidate.service) as service:
+                    with ExitStack() as resources:
+                        if len(completed) < len(windows):
+                            service = resources.enter_context(resolve_model_service(candidate.service))
                             metadata = candidate.metadata(service.model)
                             if not candidate.method and service.deployment is not None:
                                 methods = set()
@@ -244,53 +269,47 @@ def run_distribution_comparison(
                                 raise ValueError("Candidate model or method differs from the saved comparison")
                             saved = {"metadata": metadata, "environment": serving_environment(service)}
                             checkpoint.put(f"candidate/{candidate_index}", saved)
+                            outputs.capture_source_evidence(saved["environment"])
                             logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
-                            with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
-                                for window_index, tokens in enumerate(windows):
-                                    if window_index in completed:
-                                        continue
-                                    reference_values = checkpoint.reference(window_index, (comparison.score_tokens, vocabulary_size))
-                                    rows = []
-                                    for score_index, position in enumerate(score_positions):
-                                        values = client.logprobs(tokens[:position], vocabulary_size)
-                                        rows.append({
-                                            "candidate": metadata["label"], "window": window_index,
-                                            "position": position, "scored_index": window_index * comparison.score_tokens + score_index,
-                                            **compare_logprobs(reference_values[score_index], values, tokens[position], comparison.top_k),
-                                        })
-                                    checkpoint.save_candidate(candidate_index, window_index, rows)
-                                    completed[window_index] = rows
-                    metadata = saved["metadata"]
-                    if metadata["label"] in labels:
-                        raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
-                    labels.add(metadata["label"])
-                    environments["candidates"].append({"label": metadata["label"], **saved["environment"]})
-                    candidate_rows = [row for index in sorted(completed) for row in completed[index]]
-                    positions.extend(candidate_rows)
-                    points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, comparison.top_k)})
+                            client = resources.enter_context(CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds))
+                            for window_index, tokens in enumerate(windows):
+                                if window_index in completed:
+                                    continue
+                                reference_values = checkpoint.reference(window_index, (comparison.score_tokens, vocabulary_size))
+                                rows = []
+                                for score_index, position in enumerate(score_positions):
+                                    values = client.logprobs(tokens[:position], vocabulary_size)
+                                    rows.append({
+                                        "candidate": metadata["label"], "window": window_index,
+                                        "position": position, "scored_index": window_index * comparison.score_tokens + score_index,
+                                        **compare_logprobs(reference_values[score_index], values, tokens[position], comparison.top_k),
+                                    })
+                                checkpoint.save_candidate(candidate_index, window_index, rows)
+                                completed[window_index] = rows
+                        else:
+                            outputs.capture_source_evidence(saved["environment"])
+                        metadata = saved["metadata"]
+                        if metadata["label"] in labels:
+                            raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
+                        labels.add(metadata["label"])
+                        environments["candidates"].append({"label": metadata["label"], **saved["environment"]})
+                        candidate_rows = [row for index in sorted(completed) for row in completed[index]]
+                        positions.extend(candidate_rows)
+                        points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, comparison.top_k)})
+                        if len(points) == len(comparison.candidates):
+                            run = measured_run(None)
+                            outputs.save_measurement(run)
         except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Distribution comparison stopped: %s", error)
-        metrics = {
-            "duration_seconds": time.monotonic() - started,
-            "scores": _score_rows(points, comparison.top_k),
-            "execution": {"distribution_comparison": {
-                "requested": len(comparison.candidates), "succeeded": len(points),
-                "errored": int(failure is not None), "incomplete": failure is not None,
-            }},
-            "distribution_comparison": {
-                "reference_model": reference_model, "protocol": protocol,
-                "candidates": points, "positions": positions,
-            },
-        }
-        artifacts = {
-            "serving_environments": write_json(str(directory), "serving_environments.json", environments),
-        }
+            if not points:
+                raise
+        if run is None:
+            run = measured_run(failure)
+            outputs.save_measurement(run)
+        run.artifacts["serving_environments"] = write_json(str(directory), "serving_environments.json", environments)
+        outputs.publish(run)
         exit_code = 130 if isinstance(failure, KeyboardInterrupt) else int(failure is not None)
-        outputs.publish(BenchmarkRun(
-            record=record, metrics=metrics, measurements=None, artifacts=artifacts,
-            exit_code=exit_code,
-        ))
         if failure is not None:
             raise SystemExit(exit_code) from failure
 
@@ -344,6 +363,32 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
     ) as outputs:
         outputs.open(record)
         directory = Path(outputs.execution_dir)
+
+        def measured_run(error: BaseException | None) -> BenchmarkRun:
+            """Retain actual compared samples independently of transport and service cleanup."""
+            failed_samples = sum(row["error"] is not None for row in samples)
+            metrics = {
+                "duration_seconds": time.monotonic() - started,
+                "scores": [{
+                    "task": point["label"], "level": "task", "subset": "", "filter": "greedy",
+                    "metric": "exact_sequence_match", "value": point["exact_match_rate"],
+                    "stderr": None, "samples": point["valid_samples"], "direction": "higher",
+                    "display_multiplier": 100, "display_unit": "%", "primary": True,
+                } for point in points],
+                "execution": {"greedy_comparison": {
+                    "requested": len(comparison.candidates) * comparison.num_windows,
+                    "succeeded": sum(row["error"] is None for row in samples),
+                    "errored": failed_samples, "incomplete": error is not None,
+                }},
+                "greedy_comparison": {
+                    "reference_model": reference_model, "protocol": protocol,
+                    "prompt_windows": prompt_windows,
+                    "candidates": points, "samples": samples,
+                },
+            }
+            return BenchmarkRun(record, metrics, None, {}, exit_code=130 if isinstance(error, KeyboardInterrupt) else int(error is not None or failed_samples > 0))
+
+        run: BenchmarkRun | None = None
         try:
             from transformers import AutoTokenizer
 
@@ -354,6 +399,8 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                 reference_model = reference.model
                 protocol = {**protocol, "tokenizer": tokenizer_id, "bos_token_id": tokenizer.bos_token_id}
                 environments["reference"] = serving_environment(reference)
+                outputs.capture_source_evidence(environments["reference"])
+                outputs.start_measurement()
                 with CompletionComparisonClient(reference, timeout=reference_source.timeout_seconds) as client:
                     reference_samples = []
                     for tokens in prompt_windows:
@@ -370,6 +417,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                         raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
                     labels.add(metadata["label"])
                     environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
+                    outputs.capture_source_evidence(environments["candidates"][-1])
                     with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
                         for index, (tokens, reference_sample) in enumerate(zip(prompt_windows, reference_samples)):
                             if "error" in reference_sample:
@@ -380,44 +428,33 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                                 except (httpx.HTTPError, ValueError) as error:
                                     candidate_sample = {"error": str(error)}
                             samples.append(_greedy_sample(reference_sample, candidate_sample, index, metadata["label"]))
-                candidate_rows = [row for row in samples if row["candidate"] == metadata["label"]]
-                valid = [row for row in candidate_rows if row["error"] is None]
-                exact_matches = sum(row["exact_sequence_match"] for row in valid)
-                points.append({
-                    **metadata,
-                    "valid_samples": len(valid),
-                    "failed_samples": len(candidate_rows) - len(valid),
-                    "exact_matches": exact_matches,
-                    "exact_match_rate": exact_matches / len(valid) if valid else None,
-                })
+                        candidate_rows = [row for row in samples if row["candidate"] == metadata["label"]]
+                        valid = [row for row in candidate_rows if row["error"] is None]
+                        exact_matches = sum(row["exact_sequence_match"] for row in valid)
+                        points.append({
+                            **metadata,
+                            "valid_samples": len(valid),
+                            "failed_samples": len(candidate_rows) - len(valid),
+                            "exact_matches": exact_matches,
+                            "exact_match_rate": exact_matches / len(valid) if valid else None,
+                        })
+                        if len(points) == len(comparison.candidates):
+                            run = measured_run(None)
+                            outputs.save_measurement(run)
         except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Greedy comparison stopped: %s", error)
+            if not samples:
+                raise
         failed_samples = sum(row["error"] is not None for row in samples)
         if failed_samples:
             first_error = next(row["error"] for row in samples if row["error"] is not None)
             logger.error("%d greedy comparison samples failed; first error: %s", failed_samples, first_error)
-        metrics = {
-            "duration_seconds": time.monotonic() - started,
-            "scores": [{
-                "task": point["label"], "level": "task", "subset": "", "filter": "greedy",
-                "metric": "exact_sequence_match", "value": point["exact_match_rate"],
-                "stderr": None, "samples": point["valid_samples"], "direction": "higher",
-                "display_multiplier": 100, "display_unit": "%", "primary": True,
-            } for point in points],
-            "execution": {"greedy_comparison": {
-                "requested": len(comparison.candidates) * comparison.num_windows,
-                "succeeded": sum(row["error"] is None for row in samples),
-                "errored": failed_samples, "incomplete": failure is not None,
-            }},
-            "greedy_comparison": {
-                "reference_model": reference_model, "protocol": protocol,
-                "prompt_windows": prompt_windows,
-                "candidates": points, "samples": samples,
-            },
-        }
-        artifacts = {"serving_environments": write_json(str(directory), "serving_environments.json", environments)}
+        if run is None:
+            run = measured_run(failure)
+            outputs.save_measurement(run)
+        run.artifacts["serving_environments"] = write_json(str(directory), "serving_environments.json", environments)
+        outputs.publish(run)
         exit_code = 130 if isinstance(failure, KeyboardInterrupt) else int(failure is not None or failed_samples > 0)
-        outputs.publish(BenchmarkRun(record, metrics, None, artifacts, exit_code=exit_code))
         if exit_code:
             raise SystemExit(exit_code) from failure

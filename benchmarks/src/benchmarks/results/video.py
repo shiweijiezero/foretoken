@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import statistics
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +136,7 @@ def video_run_record(config: VideoBenchmarkConfig) -> dict[str, Any]:
     """Build the shared result record for one video benchmark run."""
     return {
         "mode": "video_generation",
+        "name": config.name,
         "dataset": config.dataset_source,
         "max_concurrency": config.concurrency,
         "num_prompts": len(config.requests),
@@ -162,11 +162,12 @@ def create_video_benchmark_run(
         metrics=metrics,
         measurements=None,
         artifacts={"raw_results": raw_results},
+        exit_code=0 if metrics["success_num"] else 1,
     )
 
 
 class VideoArtifactSink:
-    """Materialize video configuration and summary files in the execution directory."""
+    """Materialize video configuration beside the run's shared metrics."""
 
     def __init__(self, config: VideoBenchmarkConfig, run_dir: Path) -> None:
         self.config = config
@@ -184,9 +185,6 @@ class VideoArtifactSink:
         if self.config_path is None:
             raise RuntimeError("video artifact sink is not open")
         run.artifacts["config"] = self.config_path
-        run.artifacts["metrics"] = write_json(
-            str(self.run_dir), "metrics.json", run.metrics
-        )
 
     def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
@@ -237,8 +235,7 @@ def video_result_sinks(
     """Build video adapters for destinations managed by ResultOutputs."""
     run_dir = Path(execution_dir)
     sinks: list[ResultSink] = [VideoArtifactSink(config, run_dir)]
-    if not config.outputs.includes("quiet"):
-        sinks.append(VideoConsoleSink(config))
+    sinks.append(VideoConsoleSink(config))
     if config.outputs.saves_local:
         sinks.append(VideoLocalSink(run_dir))
     if config.outputs.includes("wandb"):
@@ -248,7 +245,7 @@ def video_result_sinks(
                 execution_dir=str(run_dir),
                 run_name=config.wandb.run_name.strip() or run_dir.name,
                 group=config.wandb.group.strip(),
-                publisher=partial(publish_video_wandb, config),
+                publisher=publish_video_wandb,
                 run_config={
                     **config.to_dict(),
                     "metric_scopes": {

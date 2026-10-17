@@ -13,6 +13,10 @@ Reserve waiting capacity → wait for readiness and prepare input
 → backend acceptance → execution → confirmed completion
 ```
 
+## Gateway integration
+
+The gateway authenticates requests and overwrites `x-role` and `x-caller-id` before forwarding them. Use a stable, non-secret identity for caller accounting and prefix cache isolation; frontend access must be restricted to the trusted gateway. Authentication, authorization, and RPM/token quotas remain gateway responsibilities.
+
 ## Capacity ownership
 
 | Phase | Waiting capacity | Caller concurrency |

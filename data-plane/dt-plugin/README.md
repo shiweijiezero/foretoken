@@ -107,6 +107,8 @@ including values inherited from a model's `generation_config.json`. For models
 that enable repetition penalties by default, explicitly send
 `"repetition_penalty": 1.0` if that is the intended sampling behavior. The current
 DT path cannot preserve a non-default penalty; it does not silently discard it.
+The DT adapter also rejects `prefixCacheIsolation` configuration and explicit
+`cache_salt`; caller-specific prefix-cache namespaces are not supported.
 
 ## Automatic tensor transport
 

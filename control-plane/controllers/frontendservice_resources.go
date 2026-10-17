@@ -23,12 +23,36 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService) string {
+// frontendServingConfigMapName keeps each application's immutable Pod volume on its supported protocol.
+func frontendServingConfigMapName(frontend *inferencev1alpha1.FrontendService, version uint32) string {
 	name := frontend.Name + "-serving"
-	if len(name) <= 63 {
-		return name
+	if len(name) > 63 {
+		name = kvChildName(name, string(frontend.UID))
 	}
-	return kvChildName(name, string(frontend.UID))
+	if version > frontendAdmissionConfigVersion {
+		name += fmt.Sprintf("-v%d", version)
+	}
+	return name
+}
+
+// frontendServingConfigVersions lists the selected protocol first and older views retained during rollout.
+// Publication, membership watches, and drain share the same ConfigMap identity range.
+func frontendServingConfigVersions(frontend *inferencev1alpha1.FrontendService) []uint32 {
+	versions := []uint32{frontend.Status.ServingConfigVersion}
+	for version := frontend.Status.ServingConfigVersion; version > frontendAdmissionConfigVersion; version-- {
+		versions = append(versions, version-1)
+	}
+	return versions
+}
+
+// frontendPodServingConfigMapName reads the Pod's actual serving mount independently of protocol annotations.
+func frontendPodServingConfigMapName(pod *corev1.Pod) string {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == "serving" && volume.ConfigMap != nil {
+			return volume.ConfigMap.Name
+		}
+	}
+	return ""
 }
 
 // Derive the frontend workload, stable Service, and optional gateway route as one desired-state
@@ -54,12 +78,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	automountToken := false
 	enableServiceLinks := true
-	runAsNonRoot := true
-	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	terminationGracePeriodSeconds := drainSeconds + 5
-	servingConfigMap := frontendServingConfigMapName(frontend)
+	servingConfigMap := frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)
 	if frontend.Spec.RouterPipeline.Filter.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Scorer.Algorithm == "" ||
 		frontend.Spec.RouterPipeline.Picker.Algorithm == "" {
@@ -80,7 +102,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 	}
-	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontendServingConfigVersion)}
+	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontend.Status.ServingConfigVersion)}
 	if profile.ApplicationURL != "" {
 		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: profile.ApplicationFiles.Directory()})
 	}
@@ -130,7 +152,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_FRONTEND_UID", Value: string(frontend.UID)},
 		)
 		volumes = append(volumes, corev1.Volume{Name: "video-task-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: storage.ClaimName}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount})
+		mounts = append(mounts,
+			corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount + "/tasks", SubPath: "tasks"},
+			corev1.VolumeMount{Name: "video-task-storage", MountPath: videoTaskOutputMount + "/inputs", SubPath: "inputs", ReadOnly: true},
+		)
 	}
 
 	deployment := &appsv1.Deployment{
@@ -148,11 +173,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 					ImagePullSecrets:              slices.Clone(profile.ImagePullSecrets),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					Volumes:                       volumes,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:   &runAsNonRoot,
-						FSGroup:        &fileSystemGroup,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
 					Containers: []corev1.Container{{
 						Name:            "frontend",
 						Image:           profile.Image,
@@ -173,12 +193,19 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			},
 		},
 	}
-	if cache := profile.RuntimeCache; cache != nil && cache.DirectoryOwner != nil {
-		securityContext := deployment.Spec.Template.Spec.SecurityContext
-		securityContext.RunAsUser = &cache.DirectoryOwner.UID
-		securityContext.RunAsGroup = &cache.DirectoryOwner.GID
-	}
 	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
+	cacheAccess := runtimeconfig.CacheStorageAccess(profile.RuntimeCache)
+	accesses := []runtimeconfig.VolumeAccess{cacheAccess}
+	if frontend.Spec.VideoTasks != nil {
+		if profile.VideoStorageIdentity == nil {
+			return nil, nil, nil, fmt.Errorf("video storage identity was not resolved")
+		}
+		accesses = append(accesses, runtimeconfig.VolumeAccess{
+			Name: "video-task-storage", Identity: *profile.VideoStorageIdentity,
+			Directories: []string{"tasks", "inputs"},
+		})
+	}
+	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, profile.ApplicationFiles.Image, cacheAccess.Identity, accesses...)
 	serviceType := corev1.ServiceTypeClusterIP
 	if profile.Gateway == nil {
 		serviceType = corev1.ServiceTypeLoadBalancer

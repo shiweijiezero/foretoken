@@ -19,7 +19,7 @@ from foretoken.accelerators._exporter import (
     pod_ready,
     service_selects_pods,
 )
-from foretoken.kubernetes import Kubectl, resource_ref
+from foretoken.kubernetes import Kubectl, KubernetesServiceUnavailableError, resource_ref
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.observability import (
     PrometheusRef,
@@ -180,12 +180,19 @@ class ExporterDiscovery:
                 if timeout_seconds > 0:
                     remaining = max(1, ceil(deadline - time.monotonic()))
                     request_timeout = f"{remaining}s"
-                results = prometheus_query(
-                    self._kubectl,
-                    prometheus,
-                    expression,
-                    request_timeout,
-                )
+                try:
+                    results = prometheus_query(
+                        self._kubectl,
+                        prometheus,
+                        expression,
+                        request_timeout,
+                    )
+                except KubernetesServiceUnavailableError as exc:
+                    if timeout_seconds <= 0:
+                        raise
+                    # Operator-managed Prometheus Pods can still be rolling after Helm returns.
+                    failed.append((exporter_name, exporter, str(exc)))
+                    continue
                 values_by_pod: dict[str, list[str]] = {
                     pod: [] for pod in exporter.target_pods
                 }

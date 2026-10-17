@@ -55,11 +55,21 @@ class DeployCommand:
     kustomize_path: str
     timeout: str
     profile: ProfileCommand | None = None
+    editable: str | None = None
+    engine_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class DeleteCommand:
     """Delete the resources rendered by one Kustomize deployment."""
+
+    kustomize_path: str
+    timeout: str
+
+
+@dataclass(frozen=True)
+class StopCommand:
+    """Suspend deployment execution while preserving its configuration and storage."""
 
     kustomize_path: str
     timeout: str
@@ -155,6 +165,7 @@ ParsedCommand = (
     | ClusterCommand
     | DeployCommand
     | DeleteCommand
+    | StopCommand
     | StatusCommand
     | EndpointCommand
     | PerformanceCommand
@@ -225,19 +236,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install = subparsers.add_parser(
         "install",
-        help="Install or update the Foretoken Kubernetes control plane",
+        help="Prepare Foretoken's shared Kubernetes infrastructure",
         description=(
-            "Install or update Foretoken CRDs and the controller, discover the cluster "
-            "LoadBalancer, configure shared metrics and persistent logs, and create Gateway resources "
-            "when Gateway mode is selected. "
-            "Model services are deployed separately with 'foretoken deploy'."
+            "Prepare Foretoken CRDs, discover the cluster LoadBalancer, configure shared "
+            "metrics and persistent logs, and create Gateway resources when Gateway mode "
+            "is selected. Deploy namespace controllers and model services with 'foretoken deploy'."
         ),
     )
     install.add_argument(
         "-e",
         "--editable",
         metavar="PATH",
-        help="build Foretoken images and bind this workstation's source root for subsequent deploy updates",
+        help="build the shared Foretoken platform and runtime defaults from this checkout",
     )
     install.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
@@ -317,6 +327,14 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Kustomize root containing one frontend and one or more models",
     )
+    deploy.add_argument(
+        "-e", "--editable", metavar="PATH",
+        help="build this checkout's controller and serving applications (defaults to the current Foretoken checkout on a source-installed platform)",
+    )
+    deploy.add_argument(
+        "--engine-source", action="append", metavar="[ENGINE=]PATH",
+        help="select an engine checkout for this source worktree; repeat for vllm-metax",
+    )
     _add_wait_timeout_argument(deploy, "serving readiness or capture completion")
     add_profile_arguments(deploy)
     deploy.add_argument("--model", help="model to profile when PATH contains several models")
@@ -331,6 +349,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Kustomize root whose resources should be deleted",
     )
     _add_wait_timeout_argument(delete, "resource deletion")
+
+    stop = subparsers.add_parser(
+        "stop", help="Stop a deployment while keeping its configuration and storage",
+    )
+    stop.add_argument("kustomize_path", metavar="PATH", help="Kustomize root whose services should stop")
+    _add_wait_timeout_argument(stop, "service shutdown")
 
     status = subparsers.add_parser(
         "status",
@@ -477,9 +501,14 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             )
             if parsed_args.profile else None
         )
-        return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout, capture)
+        return DeployCommand(
+            parsed_args.kustomize_path, parsed_args.timeout, capture,
+            parsed_args.editable, tuple(parsed_args.engine_source or ()),
+        )
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "stop":
+        return StopCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "profile":
         return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
     if parsed_args.command == "status":

@@ -1,29 +1,18 @@
 diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
 --- a/vllm/v1/engine/core.py
 +++ b/vllm/v1/engine/core.py
-@@ -92,5 +92,5 @@
- )
+@@ -89,3 +89,3 @@
  from vllm.v1.metrics.stats import SchedulerIterationDetails, SchedulerStats
 -from vllm.v1.outputs import ModelRunnerOutput
 +from vllm.v1.outputs import ModelRunnerOutput, SpecDecodeTimingResult
  from vllm.v1.request import Request, RequestStatus
- from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder, bytestr
-@@ -175,4 +175,8 @@
-         self._initialize_effective_attention_block_size()
+@@ -171,2 +171,6 @@
          self.use_spec_decode = vllm_config.speculative_config is not None
 +        self._spec_decode_timing_pending = False
 +        self._spec_decode_timing_future: (
 +            Future[list[SpecDecodeTimingResult | None]] | None
 +        ) = None
          self.check_for_draft_tokens = (
-             self.use_spec_decode or vllm_config.model_config.is_diffusion
-@@ -1563,5 +1567,5 @@
-
-     def _process_engine_step(self) -> bool:
--        """Called only when there are unfinished local requests."""
-+        """Process inference work and completed telemetry without extra GPU work."""
-         # Step the engine core.
-         outputs, model_executed = self.step_fn()
 @@ -2356,5 +2360,7 @@
                  elif not self.model_executor.is_sleeping:
                      with self.capture_iteration_details(None) as iteration_details:
@@ -92,12 +81,10 @@ diff --git a/vllm/v1/executor/multiproc_executor.py b/vllm/v1/executor/multiproc
 diff --git a/vllm/v1/metrics/stats.py b/vllm/v1/metrics/stats.py
 --- a/vllm/v1/metrics/stats.py
 +++ b/vllm/v1/metrics/stats.py
-@@ -206,4 +206,5 @@
-
+@@ -206,2 +206,3 @@
      spec_decoding_stats: SpecDecodingStats | None = None
 +    spec_decode_timings: list[SpecDecodeTiming] = field(default_factory=list)
      kv_connector_stats: dict[str, Any] | None = None
-     ec_connector_stats: dict[str, Any] | None = None
 diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
 --- a/vllm/v1/outputs.py
 +++ b/vllm/v1/outputs.py
@@ -185,12 +172,10 @@ diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runne
 diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
 --- a/vllm/v1/worker/gpu_model_runner.py
 +++ b/vllm/v1/worker/gpu_model_runner.py
-@@ -48,4 +48,5 @@
- from vllm.distributed.parallel_state import (
+@@ -50,2 +50,3 @@
      get_dcp_group,
 +    get_pcp_group,
      get_pp_group,
-     get_tp_group,
 @@ -926,4 +927,22 @@
          self.runner_only_attn_layers: set[str] = set()
 

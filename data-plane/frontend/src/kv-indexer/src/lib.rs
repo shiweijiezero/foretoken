@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Controller-owned, best-effort, typed KV locality indexing.
+//! Frontend-owned KV locality indexing and request-specific prefix observations.
 mod config;
 mod index;
 mod sync;
@@ -13,24 +13,14 @@ pub use sync::*;
 
 /// Deterministic prefix facts for one exact route-to-source binding.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KvPrefixMatches(Vec<KvPrefixMatch>, Option<u32>);
+pub struct KvPrefixMatches(Vec<KvPrefixMatch>);
 
 impl KvPrefixMatches {
-    /// Sorts facts into a stable order before exposing them to a scorer.
+    /// Keeps positive prefix matches in a stable order for routing consumers.
     pub fn new(mut matches: Vec<KvPrefixMatch>) -> Self {
+        matches.retain(|hit| hit.matched_tokens > 0);
         matches.sort();
-        Self(matches, None)
-    }
-
-    /// Attaches the source partition's block size, including on a confirmed cache miss.
-    pub(crate) fn with_block_size(mut self, block_size: Option<u32>) -> Self {
-        self.1 = block_size;
-        self
-    }
-
-    /// Returns observed block granularity; None means the source has not advertised a partition.
-    pub fn block_size(&self) -> Option<u32> {
-        self.1
+        Self(matches)
     }
 }
 
@@ -44,34 +34,36 @@ impl IntoIterator for KvPrefixMatches {
 }
 
 /// Borrowed inputs for one route- and rank-specific prefix lookup.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct KvPrefixLookup<'a> {
-    /// Routable ModelGroup identity used to resolve the event-source binding.
+    /// Routing identity used to resolve the candidate's cache observation source.
     pub route_target_id: &'a str,
     /// Exact data-parallel replica represented by the routing candidate.
     pub data_parallel_rank: u32,
-    /// Prompt tokens hashed by the selected locality index.
+    /// Processed prompt tokens used for cache lookup.
     pub prompt_token_ids: &'a [u32],
     /// Cache identity already attached to the generation request; not an authentication claim.
     pub cache_salt: Option<&'a str>,
+    pub lora_name: Option<&'a str>,
+    pub lora_path: Option<&'a str>,
+    pub multimodal: Vec<foretoken_model_protocol::KvMultimodalIdentity>,
 }
 
 impl<'a> KvPrefixLookup<'a> {
-    pub const fn new(
-        route_target_id: &'a str,
-        data_parallel_rank: u32,
-        prompt_token_ids: &'a [u32],
-    ) -> Self {
-        Self {
-            route_target_id,
-            data_parallel_rank,
-            prompt_token_ids,
-            cache_salt: None,
+    /// Copies the processed cache identity into the model-server observation request.
+    pub(crate) fn to_request(&self) -> foretoken_model_protocol::KvPrefixRequest {
+        foretoken_model_protocol::KvPrefixRequest {
+            prompt_token_ids: self.prompt_token_ids.to_vec(),
+            dp_rank: self.data_parallel_rank,
+            cache_salt: self.cache_salt.map(str::to_owned),
+            lora_name: self.lora_name.map(str::to_owned),
+            lora_path: self.lora_path.map(str::to_owned),
+            multimodal: self.multimodal.clone(),
         }
     }
 }
 
-/// Route-local typed facts. `Unavailable` is fail-closed: it is not a confirmed cache miss.
+/// Route-local prefix observations; an unavailable result is distinct from a confirmed miss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KvPrefixQueryResult {
     Matches(KvPrefixMatches),
@@ -82,13 +74,14 @@ pub enum KvPrefixUnavailableReason {
     Disabled,
     SourceUnhealthy,
     MissingBinding,
+    UnsupportedLayout,
     UnsupportedRequest,
     RankMismatch,
 }
 #[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
-    /// Prepares request-local observations when lookup requires an external backend.
-    /// Event-only implementations need no preparation and retain their existing reader.
+    /// Prepares request-local observations from engines and connectors before synchronous scoring.
+    /// Event-only implementations may retain their existing reader.
     async fn prepare(
         &self,
         _lookups: &[KvPrefixLookup<'_>],

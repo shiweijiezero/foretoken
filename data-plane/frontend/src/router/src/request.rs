@@ -66,7 +66,7 @@ impl RouterRequest {
             .map_or(&[], |request| &request.prompt_token_ids)
     }
 
-    /// Supplies token and salt identity, excluding unsupported multimodal and adapter semantics.
+    /// Supplies the processed cache identity without transferring media tensors.
     pub fn kv_prefix_lookup<'a>(
         &'a self,
         route_target_id: &'a str,
@@ -76,9 +76,11 @@ impl RouterRequest {
             .generate_request
             .as_ref()
             .ok_or(KvPrefixUnavailableReason::UnsupportedRequest)?;
-        if request.lora_request.is_some()
-            || request.mm_features.is_some()
-            || request.sampling_params.skip_reading_prefix_cache == Some(true)
+        // Native sampling defaults skip cache reads when prompt logprobs are requested.
+        if request
+            .sampling_params
+            .skip_reading_prefix_cache
+            .unwrap_or(request.sampling_params.prompt_logprobs.is_some())
         {
             return Err(KvPrefixUnavailableReason::UnsupportedRequest);
         }
@@ -91,6 +93,24 @@ impl RouterRequest {
                 .cache_salt
                 .as_deref()
                 .filter(|salt| !salt.is_empty()),
+            lora_name: request
+                .lora_request
+                .as_ref()
+                .map(|lora| lora.lora_name.as_str()),
+            lora_path: request
+                .lora_request
+                .as_ref()
+                .map(|lora| lora.lora_path.as_str()),
+            multimodal: request
+                .mm_features
+                .iter()
+                .flatten()
+                .map(|feature| foretoken_model_protocol::KvMultimodalIdentity {
+                    identifier: feature.identifier.clone(),
+                    offset: feature.mm_position.offset,
+                    length: feature.mm_position.length,
+                })
+                .collect(),
         })
     }
 

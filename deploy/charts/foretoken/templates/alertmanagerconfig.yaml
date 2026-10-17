@@ -2,7 +2,7 @@
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
 {{- $notifications := .Values.observability.notifications }}
-{{- if $notifications.slack.webhookSecret.name }}
+{{- if and (eq .Values.scope "platform") $notifications.slack.webhookSecret.name }}
 {{- if ne (include "foretoken.observabilityEnabled" .) "true" }}
 {{- fail "Slack notifications require observability to be enabled" }}
 {{- end }}

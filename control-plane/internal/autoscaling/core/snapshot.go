@@ -60,6 +60,20 @@ type MetricsSnapshot struct {
 	WaitingRequests int64
 	RunningRequests int64
 	ActiveRequests  int64
+	// EngineLoads preserves complete scheduler observations instead of averaging ranks.
+	EngineLoads []EngineLoad
+}
+
+// EngineLoad is one controller-attributed scheduler sample consumed by token-load policies.
+// Counts describe engine work, including queued demand, rather than physical cache occupancy.
+type EngineLoad struct {
+	GroupUID                string
+	DataParallelRank        uint32
+	QueuedPrefillTokens     uint64
+	ScheduledDecodeKVTokens uint64
+	QueuedDecodeKVTokens    uint64
+	ContextLength           uint64
+	KVCapacityTokens        uint64
 }
 
 type ReplicaState struct {

@@ -8,11 +8,14 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
+
+import yaml
 
 from foretoken.manifest import (
     DeploymentError,
@@ -20,7 +23,9 @@ from foretoken.manifest import (
     ResourceRef,
     deployment_path,
     parse_deployment,
+    service_requires_execution,
 )
+from foretoken.namespace_mutation import mutation_lock_fds
 from foretoken.tools import resolve_tool
 
 _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
@@ -41,13 +46,13 @@ class FrontendEndpoint:
 
 @dataclass(frozen=True)
 class ResourceProgress:
-    """Current-generation readiness reported by one Foretoken service."""
+    """Current service state and convergence of its requested running or stopped intent."""
 
     resource: ResourceRef
     state: str
     reason: str
     message: str
-    ready: bool
+    converged: bool
 
     @property
     def detail(self) -> str:
@@ -55,12 +60,30 @@ class ResourceProgress:
         return self.message or self.reason
 
 
-class Kubectl:
-    """Run kubectl commands using the caller's active Kubernetes context."""
+class KubernetesServiceUnavailableError(DeploymentError):
+    """Identify API-server unavailability for callers that own a readiness deadline."""
 
-    def __init__(self, context: str | None = None) -> None:
+
+class KubernetesVersionConflictError(DeploymentError):
+    """Identify failed API version preconditions without reclassifying field ownership errors."""
+
+
+class Kubectl:
+    """Run kubectl in the selected context, optionally sharing one monotonic operation deadline."""
+
+    def __init__(self, context: str | None = None, *, deadline: float | None = None) -> None:
         self.context = context
+        self.deadline = deadline
         self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
+
+    def _timeout(self, timeout: float | None) -> float | None:
+        """Apply one caller-owned monotonic deadline to every command in an operation."""
+        if self.deadline is None:
+            return timeout
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise DeploymentError("Kubernetes operation deadline exceeded")
+        return remaining if timeout is None else min(timeout, remaining)
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
@@ -73,13 +96,75 @@ class Kubectl:
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        output: BinaryIO | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
         command = self.command(args)
+        timeout = self._timeout(timeout)
         try:
             completed = subprocess.run(
                 command,
                 input=input_text,
+                text=True,
+                stdout=output if output is not None else subprocess.PIPE,
+                pass_fds=mutation_lock_fds.get(),
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DeploymentError(
+                f"{' '.join(command)} timed out after {timeout:g}s"
+            ) from exc
+        if completed.returncode:
+            detail = (
+                completed.stderr.strip() or (completed.stdout or "").strip()
+                or f"exit status {completed.returncode}"
+            )
+            message = f"{' '.join(command)} failed: {detail}"
+            if detail.startswith("Error from server (ServiceUnavailable):"):
+                raise KubernetesServiceUnavailableError(message)
+            if (
+                "the object has been modified; please apply your changes to the latest version" in detail
+                or "metadata.resourceVersion: Invalid value: 0: must be specified for an update" in detail
+            ):
+                raise KubernetesVersionConflictError(message)
+            raise DeploymentError(message)
+        return completed
+
+    def get_raw(self, path: str, request_timeout: str) -> str:
+        """Return a bounded Kubernetes API or resource-proxy response as text."""
+        return self.run(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path],
+            timeout=timeout_seconds(request_timeout) or None,
+        ).stdout
+
+    def download_raw(self, path: str, destination: Path, request_timeout: str) -> None:
+        """Save a binary API response atomically without decoding it or exposing partial output."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+            temporary = Path(output.name)
+            try:
+                self.run(
+                    ["get", f"--request-timeout={request_timeout}", "--raw", path],
+                    timeout=timeout_seconds(request_timeout) or None,
+                    output=output,
+                )
+                output.close()
+                temporary.replace(destination)
+            finally:
+                output.close()
+                temporary.unlink(missing_ok=True)
+
+    def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
+        """Read a raw endpoint and return None only for the API server's NotFound response."""
+        command = self.command(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        )
+        timeout = self._timeout(timeout_seconds(request_timeout))
+        try:
+            completed = subprocess.run(
+                command,
                 text=True,
                 capture_output=True,
                 check=False,
@@ -89,40 +174,18 @@ class Kubectl:
             raise DeploymentError(
                 f"{' '.join(command)} timed out after {timeout:g}s"
             ) from exc
-        if completed.returncode:
-            detail = completed.stderr.strip() or completed.stdout.strip()
-            raise DeploymentError(f"{' '.join(command)} failed: {detail}")
-        return completed
-
-    def get_raw(self, path: str, request_timeout: str) -> str:
-        """Return a bounded Kubernetes API or resource-proxy response as text."""
-        return self.run(
-            ["get", f"--request-timeout={request_timeout}", "--raw", path]
-        ).stdout
-
-    def get_raw_if_not_found(self, path: str, request_timeout: str) -> str | None:
-        """Read a raw endpoint and return None only for the API server's NotFound response."""
-        command = self.command(
-            ["get", f"--request-timeout={request_timeout}", "--raw", path]
-        )
-        try:
-            completed = subprocess.run(
-                command,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=timeout_seconds(request_timeout),
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise DeploymentError(
-                f"{' '.join(command)} timed out after {request_timeout}"
-            ) from exc
         if completed.returncode == 0:
             return completed.stdout
         detail = completed.stderr.strip() or completed.stdout.strip()
         if detail.startswith("Error from server (NotFound):"):
             return None
         raise DeploymentError(f"{' '.join(command)} failed: {detail}")
+
+    def current_namespace(self) -> str:
+        """Resolve the selected context's namespace for namespace-local deployment ownership."""
+        return self.run([
+            "config", "view", "--minify", "-o", "jsonpath={.contexts[0].context.namespace}",
+        ]).stdout.strip() or "default"
 
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
@@ -148,14 +211,39 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True) -> None:
+        """Conditionally delete one observed UID/version; callers may wait outside a mutation lock."""
+        metadata = value["metadata"]
+        version = value["apiVersion"]
+        base = f"/api/{version}" if "/" not in version else f"/apis/{version}"
+        resources = json.loads(self.get_raw(base, timeout))["resources"]
+        resource = next(item for item in resources if item["kind"] == value["kind"] and "/" not in item["name"])
+        path = base
+        if resource["namespaced"]:
+            path += "/namespaces/" + metadata["namespace"]
+        path += "/" + resource["name"] + "/" + metadata["name"]
+        self.run(
+            ["delete", "--raw", path, "--filename=-"],
+            input_text=json.dumps({
+                "apiVersion": "v1", "kind": "DeleteOptions",
+                "preconditions": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
+                "propagationPolicy": "Foreground",
+            }),
+            timeout=timeout_seconds(timeout),
+        )
+        if wait:
+            self.wait_deleted(value["kind"], metadata, timeout)
+
     def wait_deleted(
         self, resource: str, metadata: dict[str, Any], timeout: str
     ) -> None:
         """Wait for one owned UID to disappear without waiting on a reused resource name."""
-        name, namespace, uid = metadata["name"], metadata["namespace"], metadata["uid"]
+        name, namespace, uid = metadata["name"], metadata.get("namespace", ""), metadata["uid"]
         deadline = time.monotonic() + timeout_seconds(timeout)
         while True:
-            current = self.get_if_exists(resource, name, namespace)
+            current = self.get_if_exists(
+                resource, name, namespace, timeout=max(1, deadline - time.monotonic())
+            )
             if current is None or current["metadata"]["uid"] != uid:
                 return
             if time.monotonic() >= deadline:
@@ -268,13 +356,13 @@ class Kubectl:
         )
 
     def get_if_exists(
-        self, kind: str, name: str, namespace: str = ""
+        self, kind: str, name: str, namespace: str = "", *, timeout: float | None = None
     ) -> dict[str, Any] | None:
         """Return one Kubernetes object, or None while it does not exist."""
         args = ["get", kind, name, "--ignore-not-found"]
         if namespace:
             args.extend(["--namespace", namespace])
-        output = self.run([*args, "-o", "json"]).stdout.strip()
+        output = self.run([*args, "-o", "json"], timeout=timeout).stdout.strip()
         return _decode_object(output) if output else None
 
     def get_resources(
@@ -377,9 +465,17 @@ def _decode_resource_list(output: str) -> tuple[dict[str, Any], ...]:
 
 
 def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
-    """Render and identify one Kustomize deployment for CLI or benchmark use."""
+    """Render a deployment and resolve its services to the active Kubernetes namespace."""
     path = deployment_path(path_value)
-    return parse_deployment(path, kubectl.kustomize(path))
+    deployment = parse_deployment(path, kubectl.kustomize(path))
+    if deployment.namespace:
+        return deployment
+    config = json.loads(kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout)
+    namespace = config["contexts"][0]["context"].get("namespace") or "default"
+    for obj in deployment.objects:
+        if obj.get("kind") in {"ModelService", "FrontendService"}:
+            obj["metadata"]["namespace"] = namespace
+    return parse_deployment(path, yaml.safe_dump_all(deployment.objects, sort_keys=False))
 
 
 def resource_ref(value: dict[str, Any]) -> ResourceRef:
@@ -450,19 +546,9 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
 
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
-    """Find services and remaining serving workloads before their platform is removed."""
+    """Find Foretoken reconciliation resources and workloads before migrating or removing their platform."""
     supported = set(kubectl.api_resource_names())
-    kinds = tuple(
-        name
-        for name in (
-            "frontendservices.inference.foretoken.io",
-            "modelservices.inference.foretoken.io",
-            "kvservices.inference.foretoken.io",
-            "modelpools.inference.foretoken.io",
-            "modelgroups.inference.foretoken.io",
-        )
-        if name in supported
-    )
+    kinds = tuple(sorted(name for name in supported if name.endswith(".inference.foretoken.io")))
     objects = list(kubectl.list_all_resources(kinds)) if kinds else []
     workloads = ("pods", "jobs", "replicasets", "deployments", "statefulsets")
     if "leaderworkersets.leaderworkerset.x-k8s.io" in supported:
@@ -513,6 +599,8 @@ def resource_progress(
     generation = int(metadata.get("generation") or 0)
     observed_generation = int(status.get("observedGeneration") or 0)
     conditions = status.get("conditions") or []
+    execution_required = service_requires_execution(value)
+    suspended = (value.get("spec") or {}).get("suspend", False)
     alerts = ((value.get("spec") or {}).get("observability") or {}).get("alerts") or {}
     alerts_selected = bool(alerts.get("rules"))
     alerts_condition = next(
@@ -522,7 +610,7 @@ def resource_progress(
         alerts_condition is not None
         and int(alerts_condition.get("observedGeneration") or 0) == generation
     )
-    if alerts_current and alerts_condition.get("status") == "False":
+    if not suspended and alerts_current and alerts_condition.get("status") == "False":
         return ResourceProgress(
             resource, "Failed", str(alerts_condition.get("reason") or "AlertsFailed"),
             str(alerts_condition.get("message") or "Service alerts are not configured"), False,
@@ -564,7 +652,29 @@ def resource_progress(
             if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
                 message += "\nThe previous generation remains available."
             return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
-    if condition_status == "True":
+        if (
+            condition_status == "True"
+            and target is not None
+            and int(target.get("observedGeneration") or 0) == generation
+            and target.get("status") != "True"
+        ):
+            return ResourceProgress(
+                resource, "Progressing", str(target["reason"]), str(target["message"]), False
+            )
+    stopped = (
+        condition_status == "False"
+        and reason == "ScaledToZero"
+        and not execution_required
+        and (
+            resource.kind == "FrontendService"
+            or resource.kind == "ModelService"
+            and target is not None
+            and target.get("observedGeneration") == generation
+            and target.get("status") == "True"
+            and target.get("reason") == "ScaledToZero"
+        )
+    )
+    if condition_status == "True" or stopped:
         if (
             resource.kind == "ModelService"
             and int(status.get("servingGeneration") or 0) != generation
@@ -573,19 +683,19 @@ def resource_progress(
                 resource, "Progressing", "Updating",
                 "Waiting for the current ModelService generation to serve", False,
             )
-        if not alerts_selected and alerts_condition is not None:
+        if not suspended and not alerts_selected and alerts_condition is not None:
             return ResourceProgress(
                 resource, "Progressing", "AlertsRemoving",
                 "Waiting for service alert removal", False,
             )
-        if alerts_selected and (
+        if not suspended and alerts_selected and (
             not alerts_current or alerts_condition.get("status") != "True"
         ):
             return ResourceProgress(
                 resource, "Progressing", "AlertsReconciling",
                 "Waiting for the selected service alerts", False,
             )
-        return ResourceProgress(resource, "Ready", reason, message, True)
+        return ResourceProgress(resource, "Stopped" if stopped else "Ready", reason, message, True)
     if condition_status == "False" and reason in {
         "InvalidIntent", "ConfigurationRejected", "DeploymentRequired",
     }:
@@ -648,7 +758,7 @@ def wait_for_resources(
     observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
     expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
-    """Wait until every service reports Ready for its current generation."""
+    """Wait until every service reaches its requested running or stopped state."""
     timeout_value = timeout_seconds(timeout)
     started = time.monotonic()
     deadline = started + timeout_value
@@ -664,7 +774,7 @@ def wait_for_resources(
                 if previous.get(progress.resource) != signature:
                     report(elapsed, progress)
                     previous[progress.resource] = signature
-        if all(progress.ready for progress in latest):
+        if all(progress.converged for progress in latest):
             return latest
         if any(progress.state == "Failed" for progress in latest):
             failed = next(progress for progress in latest if progress.state == "Failed")
@@ -675,7 +785,7 @@ def wait_for_resources(
             pending = "; ".join(
                 f"{item.resource.display_name}: {item.detail or item.state}"
                 for item in latest
-                if not item.ready
+                if not item.converged
             )
             raise DeploymentError(
                 f"timed out after {timeout} waiting for Foretoken services: {pending}"
@@ -691,7 +801,7 @@ def _wait_for_object(
     deadline: float,
     description: str,
 ) -> dict[str, Any]:
-    """Poll one endpoint dependency before the command deadline."""
+    """Poll a Kubernetes dependency until its readiness callback succeeds or the deadline passes."""
     while time.monotonic() < deadline:
         value = fetch()
         if ready(value):

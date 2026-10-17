@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 import wandb
 
 from benchmarks.results.metrics import percentile_summary
-from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
@@ -92,6 +91,15 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _SUCCESS_RATE: round(float(metrics["success_rate"]) * 100.0, 4),
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
     }
+    for source, label in (
+        ("planned_num", "Prepared requests"),
+        ("admitted_num", "Admitted requests"),
+        ("not_executed_num", "Not executed requests"),
+    ):
+        if metrics.get(source) is not None:
+            message[label] = metrics[source]
+    for reason, count in metrics.get("not_executed_reasons", {}).items():
+        message[f"Not executed/{reason}"] = count
     throughput_fields = (
         ("prompt_tokens_per_second", _INPUT_TOKENS_PER_SECOND),
         ("generation_tokens_per_second", _GENERATION_TOKENS_PER_SECOND),
@@ -251,6 +259,12 @@ def _trace_bucket_rows(
 
 def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     """Publish one completed HTTP benchmark to an already-open W&B SDK run."""
+    if run.metrics.get("failure_reasons"):
+        sdk_run.log({"Request failure reasons": wandb.Table(
+            columns=["HTTP status", "Error", "Requests"],
+            data=[[row["status_code"], row["error"], row["request_num"]]
+                  for row in run.metrics["failure_reasons"]],
+        )})
     replica_observations = None
     replica_path = run.artifacts.get("replica_observations")
     if replica_path is not None:
@@ -266,16 +280,16 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         sdk_run.define_metric(REQUEST_INDEX)
         request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
         elapsed_rows = [
-            *time_series(
+            *(time_series(
                 run.measurements,
                 duration=float(run.metrics["benchmark_time"]),
                 stream=bool(run.metrics["stream"]),
                 slo_met=request_slo_met,
-            ),
-            *cumulative_series(
+            ) if not run.http_series_published else ()),
+            *(cumulative_series(
                 run.measurements,
                 stream=bool(run.metrics["stream"]),
-            ),
+            ) if not run.http_series_published else ()),
         ]
         for field, group_name in (("dataset", "datasets"), ("model", "models"), ("request_class", "request_classes")):
             groups = run.metrics.get(group_name) or {}
@@ -327,7 +341,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                     run.measurements,
                     stream=bool(run.metrics["stream"]),
                     slo_met=request_slo_met,
-                ),
+                ) if not run.http_series_published else (),
             ),
         )
         if any(run.metrics.get(name) for name in ("datasets", "models", "request_classes")) or any(
@@ -352,20 +366,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
-    warmup_raw = run.artifacts.get("warmup_raw_output")
-    warmup_metrics_path = run.artifacts.get("warmup_metrics")
-    if warmup_raw is not None:
-        raw = json.loads(warmup_raw.read_text(encoding="utf-8"))
-        warmup_measurements = load_http_measurements(raw)
-        duration = float(json.loads(warmup_metrics_path.read_text(encoding="utf-8"))["benchmark_time"]) if warmup_metrics_path is not None else max((item.started_at + item.latency for item in warmup_measurements), default=0.0)
-        sdk_run.log({"Warmup/Requests": wandb.Table(
-            columns=["Request index", "E2EL (s)", "TTFT (s)", "TPOT (ms)", "Success"],
-            data=[[index, item.latency, item.ttft, item.tpot * 1000 if item.tpot is not None else None, item.succeeded] for index, item in enumerate(warmup_measurements, 1)],
-        )})
-        for row in time_series(warmup_measurements, duration=duration, stream=bool(run.metrics["stream"])):
-            sdk_run.log({f"Warmup/{key}": value for key, value in row.items()})
-
-    if raw_output is not None:
+    if raw_output is not None and run.record["mode"] == "arrival_trace":
         rows = _trace_bucket_rows(
             json.loads(raw_output.read_text(encoding="utf-8"))
         )
@@ -386,7 +387,8 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     observations = [
         run.artifacts[name]
         for name in (
-            "environment", "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
+            "config", "metrics", "raw_output", "environment", "prometheus_observations",
+            "gpu_allocation", "gpu_allocation_csv"
         )
         if name in run.artifacts
     ]
@@ -446,8 +448,10 @@ def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 title=f"{chart.title} — {chart.ylabel}",
             )
         sdk_run.log({f"Sweep/{chart.name}": plot})
+    sdk_run.summary.update({f"Sweep/{key}": run.metrics["sweep"][key]
+                            for key in ("status", "tasks", "completed", "failed", "interrupted", "running", "pending")})
     artifact = wandb.Artifact(f"sweep-{sdk_run.id}", type="benchmark")
-    for name in ("config", "sweep_points", "sweep_summary", "sweep_summary_csv"):
+    for name in ("config", "metrics", "sweep_points", "sweep_summary", "sweep_summary_csv"):
         path = run.artifacts[name]
         artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)
@@ -479,8 +483,6 @@ def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             f"{prefix}/Stop reason": group["stop_reason"],
         })
     artifact = wandb.Artifact(f"slo-search-{sdk_run.id}", type="benchmark")
-    for name in ("slo_results", "console_log"):
-        if name in run.artifacts:
-            path = run.artifacts[name]
-            artifact.add_file(str(path), name=path.name)
+    path = run.artifacts["slo_results"]
+    artifact.add_file(str(path), name=path.name)
     sdk_run.log_artifact(artifact)

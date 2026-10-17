@@ -39,6 +39,7 @@ const (
 )
 
 // RouterStage selects one compiled algorithm and its algorithm-owned parameters.
+// +mapType=atomic
 type RouterStage struct {
 	// +kubebuilder:validation:MinLength=1
 	Algorithm RouterAlgorithm `json:"algorithm"`
@@ -61,6 +62,34 @@ type RouterPipeline struct {
 	Picker RouterStage `json:"picker"`
 }
 
+// RouterPipelineOverride replaces selected routing slots while omitted slots inherit.
+// Each supplied stage replaces both its algorithm and parameters.
+type RouterPipelineOverride struct {
+	// +optional
+	Filter *RouterStage `json:"filter,omitempty"`
+
+	// +optional
+	Scorer *RouterStage `json:"scorer,omitempty"`
+
+	// +optional
+	Picker *RouterStage `json:"picker,omitempty"`
+}
+
+// ModelRouterPipeline overrides frontend routing defaults for a model and its execution stages.
+// Stage-specific slots inherit the model selection unless explicitly replaced.
+type ModelRouterPipeline struct {
+	RouterPipelineOverride `json:",inline"`
+
+	// +optional
+	Encoder *RouterPipelineOverride `json:"encoder,omitempty"`
+
+	// +optional
+	Prefill *RouterPipelineOverride `json:"prefill,omitempty"`
+
+	// +optional
+	Decode *RouterPipelineOverride `json:"decode,omitempty"`
+}
+
 // VideoTaskStorage configures the dedicated PVC shared by the frontend and video workers.
 type VideoTaskStorage struct {
 	// +kubebuilder:validation:MinLength=1
@@ -76,6 +105,10 @@ type FrontendServiceSpec struct {
 	// DeploymentRevision requests current platform applications on an explicit deployment.
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
+
+	// Suspend stops frontend execution while retaining its configured replicas and storage.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
 
 	// +optional
 	// +kubebuilder:default=1

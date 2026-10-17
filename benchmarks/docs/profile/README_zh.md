@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/metax-deployment_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
 
-需使用[源码安装](../../../docs/custom-deployment_zh.md)的 CLI 和平台。快速开始示例已配置持久 RuntimeCache 存储，用于保存采集结果。W&B 登录见[通用准备](../../README_zh.md#开始使用)。
+采集结果保存在持久存储（RuntimeCache）中，快速开始示例已配置。更新平台后，先对已有模型服务执行 `foretoken deploy`，再开始采集。CLI 安装与 W&B 登录见[通用准备](../../README_zh.md#开始使用)。
 
 ## 同时运行 benchmark 和采集
 
@@ -65,11 +65,11 @@ Nsight Systems 采集 CUDA 和 NVTX 时间线。在模型启动前通过 `ModelS
 
 ### 准备诊断镜像
 
-完成源码安装后，用本机构建的 model-server 镜像制作 Linux x86_64 诊断镜像。将 `NSIGHT_IMAGE` 设为有推送权限、且集群可以拉取的镜像地址：
+使用与模型服务匹配的 NVIDIA model-server 镜像制作 Linux x86_64 诊断镜像。将 `MODEL_SERVER_IMAGE` 设为该基础镜像，`NSIGHT_IMAGE` 设为有推送权限、且集群可以拉取的目标镜像地址：
 
 ```bash
 docker build -f deploy/inference-engines/nsight/Dockerfile \
-  --build-arg MODEL_SERVER_IMAGE=foretoken-dev-model-server \
+  --build-arg MODEL_SERVER_IMAGE="$MODEL_SERVER_IMAGE" \
   -t "$NSIGHT_IMAGE" deploy/inference-engines/nsight
 docker push "$NSIGHT_IMAGE"
 ```
@@ -82,7 +82,7 @@ runtime:
     nsightImage: YOUR_NSIGHT_IMAGE
 ```
 
-在此集群原有的源码安装命令后加上 `--values nsight-values.yaml` 应用配置。只有选择 Nsight 的模型使用诊断镜像。
+在此集群原有的安装命令后加上 `--values nsight-values.yaml` 应用配置。只有选择 Nsight 的模型使用诊断镜像。
 
 ### 采集
 

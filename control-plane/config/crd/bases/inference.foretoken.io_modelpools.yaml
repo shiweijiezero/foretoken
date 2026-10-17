@@ -529,6 +529,10 @@ spec:
                       constraint for this Pool.
                     maxProperties: 16
                     type: object
+                  prefixCacheIsolation:
+                    description: PrefixCacheIsolation pins the model's cache policy
+                      for this execution cohort.
+                    type: boolean
                   profiling:
                     description: Profiling is the service-selected instrumentation
                       for this Pool's processes.
@@ -641,8 +645,8 @@ spec:
                         minLength: 1
                         type: string
                       directoryOwner:
-                        description: DirectoryOwner preserves a locally discovered
-                          directory identity across cache consumers.
+                        description: DirectoryOwner preserves the discovered directory
+                          identity across cache consumers.
                         properties:
                           gid:
                             format: int64

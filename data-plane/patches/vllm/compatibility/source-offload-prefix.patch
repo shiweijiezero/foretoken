@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+@@ -686,2 +686,5 @@
+         start_chunk_idx: int,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
+     ) -> int | None:
+@@ -720,2 +723,4 @@
+         req_context: ReqContext,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
+     ) -> int | None:
+@@ -780,3 +785,9 @@
+ 
+-    def _lookup_complete_chunks(self, req_status: RequestOffloadState) -> int | None:
++    def _lookup_complete_chunks(
++        self,
++        req_status: RequestOffloadState,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
++    ) -> int | None:
+         """
+@@ -876,2 +887,3 @@
+                         req_status.req_context,
++                        block_lookup=block_lookup,
+                     )
+@@ -961,4 +973,13 @@
+ 
+-    def _lookup(self, req_status: RequestOffloadState) -> int | None:
+-        complete_hit = self._lookup_complete_chunks(req_status)
++    def _lookup(
++        self,
++        req_status: RequestOffloadState,
++        *,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult] | None = None,
++        record_events: bool = True,
++    ) -> int | None:
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
++        complete_hit = self._lookup_complete_chunks(
++            req_status, block_lookup=block_lookup, record_events=record_events
++        )
+         req_status.partial_tail_boundary = None
+@@ -1009,2 +1030,15 @@
+         return complete_hit
++
++    def _query_prefix_match(
++        self,
++        state: RequestOffloadState,
++        block_lookup: Callable[[OffloadKey, ReqContext], LookupResult],
++        max_num_new_tokens: int | None,
++    ) -> int | None:
++        """Run the native matcher with the connector's load bound and no event writes."""
++        return self._lookup(
++            state,
++            block_lookup=block_lookup,
++            record_events=False,
++        )
+ 
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
+@@ -49,2 +49,8 @@
+ class OffloadingConnector(KVConnectorBase_V1, SupportsHMA):
++    def _max_loadable_tokens(
++        self, request: "Request", num_computed_tokens: int
++    ) -> int | None:
++        """All cache groups participate in this native connector's offload layout."""
++        return None
++
+     @property
+--- a/vllm/v1/kv_offload/cpu/manager.py
++++ b/vllm/v1/kv_offload/cpu/manager.py
+@@ -130,8 +130,3 @@
+                 self.counts[key] = 1
+-        block = self._policy.get(key)
+-        if block is None:
+-            return LookupResult.MISS
+-        if not block.is_ready:
+-            return LookupResult.HIT_PENDING
+-        return LookupResult.HIT
++        return self.peek(key, req_context)
+ 

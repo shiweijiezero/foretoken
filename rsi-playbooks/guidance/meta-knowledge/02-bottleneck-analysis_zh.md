@@ -1,0 +1,54 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+-->
+
+# 02｜定位瓶颈
+
+[English](02-bottleneck-analysis.md) | 简体中文
+
+通过 benchmark、性能剖析、运行指标和日志了解实际表现，结合源码与局部实验查清耗时原因，找到值得优化的位置。
+
+## 查看运行结果
+
+- Benchmark、W&B 和 CSV：比较不同长度、并发和请求分布下的性能，查看逐请求结果、时间曲线与异常时段。
+- 运行指标：查看 GPU 利用率、显存、CPU、内存、队列、运行批次和缓存命中。
+- 日志：了解实际启动配置、编译与图捕获、调度事件、错误和状态变化。
+- Profile：查看 CPU／GPU 事件、算子、通信、同步和数据复制的耗时、次数与执行顺序。
+
+按待研究的问题选择相关结果，核对请求长度、实际批量、缓存和生成设置。指标定义见[评测指标](../../../benchmarks/docs/metrics_zh.md)，观测入口见[可观测性](../../../observability/README_zh.md)，产物布局见[实验记录手册](../../experiment-records_zh.md)。
+
+## 使用 Foretoken 采集与查看
+
+- [PyTorch Profiler](https://docs.pytorch.org/tutorials/beginner/profiler.html)：采集模型执行中的 CPU／GPU 事件，查看算子耗时与时间线，使用 `--profile-engine pytorch`。
+- [Nsight Systems](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)：查看 NVIDIA 平台上的任务提交、CUDA 调用、通信与执行重叠，使用 `--profile-engine nsight`。
+- [mcTracer](https://developer.metax-tech.com/doc?category_ids=61)：采集沐曦设备的执行时间线，使用 `--profile-engine mctracer`。
+
+准备、采集和查看步骤见[性能剖析指南](../../../benchmarks/docs/profile/README_zh.md)。运行 `foretoken profile view` 后，PyTorch trace 和兼容格式的 mcTracer JSON 使用 Perfetto，Nsight 时间线使用 NVIDIA 查看器。
+
+采集时注意：
+
+- 先选少量代表性样本，用 `--profile-duration` 控制时长。研究并发或混合负载时，保留所需的批次特征，缩短观察窗口。
+- 稳态分析在模型加载、编译、图捕获和预热完成后采集；启动耗时结合启动日志单独分析。确认 trace 覆盖了要观察的阶段。
+- 重复输入可能命中前缀缓存，冷预填充与缓存复用分别选择负载。记录生成设置与图执行方式，便于解释差异。
+- 剖析会增加执行和写盘开销。性能对照使用相同负载的普通运行，trace 用于解释原因。
+- 多卡数据按进程、rank、设备和同一轮工作对应，跨节点比较时处理时钟偏差。查看计算与通信、不同 stream 的重叠，再判断耗时影响。
+- 大 trace 先查看大小和事件概况，再按时间段、进程或算子筛选。保留原文件，通过查看器或查询工具提取需要的统计与片段。
+
+## 沿热点读源码
+
+从事件和算子名称找到实际实现，阅读输入规模、数据布局、调用频率及前后依赖，再追查开销怎样产生。
+
+- 算子耗时高：分析对应形状下的计算、访存和并行度，比较已有实现的工作划分。
+- 短算子或调用很多：检查重复计算、格式转换、分配和提交，寻找合并工作或复用数据的机会。
+- GPU 有空档：对照 CPU 提交和同步事件，查明下一项工作在等待什么。
+- 通信耗时长：比较各 rank 的前序计算、进入时间、消息大小和拓扑，区分负载不均、同步等待与传输开销。
+- 特定负载退化：结合实际批量、KV 长度、每专家 token 数和缓存状态，分析实现为何在这些条件下变慢。
+
+## 用局部实验继续调查
+
+对值得深入的热点，提取真实输入形状、数据类型、布局和状态，复用上游测试或编写针对当前问题的小型实验。根据需要保留前后相邻操作、同步方式或循环状态，使实验能够解释实际执行中的问题。
+
+局部实验可以比较不同实现、查看中间结果、定位数值差异，或验证一种工作划分为什么更快。缺少现成脚本时，沿实际调用路径构造输入与参考结果，逐步搭起所需实验。
+
+将发现说明到具体位置：哪段实现存在什么开销，在什么条件下发生，什么改动可能改善它。保留输入构造、测量方法和结果，交给后续设计继续使用；候选实现接回服务后，再确认目标负载下的实际效果。

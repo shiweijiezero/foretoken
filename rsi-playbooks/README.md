@@ -1,0 +1,77 @@
+# RSI Playbooks
+
+English | [简体中文](README_zh.md)
+
+These playbooks help agents use Foretoken to investigate and improve inference systems: change code, deploy an approach, measure its effects, and use the results to guide further work. Task files define the model, resources, budget and deliverables. The [guidance library](guidance/README.md) provides research methods and findings from earlier work.
+
+## Start an optimization task
+
+Get the repository's tasks and examples:
+
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+```
+
+The examples below use the [Qwen throughput and decode latency task](tasks/qwen-decode.md). Check that its required resources are available before starting. For your own task, use the [task template](templates/task-template.md) and replace the file path in the prompt.
+
+### Claude Code
+
+Start an interactive session with Agent Teams enabled:
+
+```bash
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
+```
+
+Enter:
+
+```text
+/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen-decode.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+```
+
+To pause, use `/goal clear` to end automatic continuation and ask the team to stop this task's experiments and collectors.
+
+### Codex
+
+Open Codex in the repository and enter:
+
+```text
+/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen-decode.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+```
+
+Use `/goal pause` to pause the goal and ask members to stop experiments and collectors. Use `/goal resume` to continue.
+
+## Agent roles
+
+The lead coordinates the task, choosing research directions and allocating resources from the evidence available. It combines the team's findings, decides which changes to retain, and organizes final validation and delivery.
+
+Advisors continually investigate mechanisms and optimization methods, uncover new questions and reassess the current direction. Their research can deepen an existing investigation or explore ideas beyond the current candidate list.
+
+Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results. Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+
+Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations. Small tasks may combine roles, while important conclusions selected for retention are checked by someone who did not implement or run the corresponding candidate.
+
+See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
+
+## Steps
+
+The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
+
+Once workload groups are defined, the team can run them continuously through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results and continuing the research.
+
+## Choose evaluations
+
+| Goal | Entry point |
+| --- | --- |
+| Measure latency and throughput | [`foretoken perf`](../benchmarks/docs/perf/README.md) |
+| Evaluate answer quality | [`foretoken eval`](../benchmarks/docs/eval/README.md) |
+| Locate execution bottlenecks | [`foretoken perf --profile`](../benchmarks/docs/profile/README.md) |
+| Compare concurrency, input lengths and other conditions | [Sweeps and experiment commands](../benchmarks/docs/recipes.md) |
+
+Inspect options with `foretoken perf --help` and `foretoken eval --help`.
+
+## Read results
+
+Benchmark commands save configurations, metrics and original results, which the team uses to maintain an experiment overview and final report. The task file specifies delivery locations, and the [experiment records guide](experiment-records.md) explains how to organize them. Experiments using W&B also retain links to the corresponding runs.
+
+See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.

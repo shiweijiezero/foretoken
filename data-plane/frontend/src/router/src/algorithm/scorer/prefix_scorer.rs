@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Scoring by complete cached prompt blocks and matched prefix length.
+//! Scoring by reusable prompt-token ratio and matched prefix length.
 
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 use foretoken_kv_indexer::KvPrefixIndexer;
 use serde::Deserialize;
 
-/// Scores complete cache blocks by hit ratio and an optional squared match-length term.
+/// Scores reusable prompt tokens by hit ratio and an optional squared match-length term.
 #[derive(Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrefixScorer {
@@ -38,8 +38,7 @@ impl RouteScorer for PrefixScorer {
         }
         if config.match_length_weight > 0.0 && config.match_length_scale_tokens <= 0 {
             return Err(
-                "matchLengthScaleTokens must be positive when matchLengthWeight is positive"
-                    .into(),
+                "matchLengthScaleTokens must be positive when matchLengthWeight is positive".into(),
             );
         }
         *self = config;
@@ -63,13 +62,13 @@ impl RouteScorer for PrefixScorer {
                 else {
                     return RouteScore::default();
                 };
-                if info.total_blocks == 0 {
+                if info.total_tokens == 0 {
                     return RouteScore::default();
                 }
-                let ratio = info.matched_blocks as f64 / info.total_blocks as f64;
+                let ratio = info.matched_tokens as f64 / info.total_tokens as f64;
                 let mut length = 0.0;
-                if self.match_length_weight > 0.0 && info.block_size > 0 {
-                    let normalized = (info.matched_blocks as f64 * info.block_size as f64
+                if self.match_length_weight > 0.0 {
+                    let normalized = (info.matched_tokens as f64
                         / self.match_length_scale_tokens as f64)
                         .min(1.0);
                     length = normalized * normalized;
@@ -77,7 +76,6 @@ impl RouteScorer for PrefixScorer {
                 RouteScore {
                     preference: self.match_length_weight * length
                         + (1.0 - self.match_length_weight) * ratio,
-                    ..RouteScore::default()
                 }
             })
             .collect()

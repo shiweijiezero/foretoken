@@ -15,6 +15,7 @@ from typing import Any
 from benchmarks.results.itl import ITLStatistics, ITLSummary
 from benchmarks.results.metrics import RequestMeasurement
 from benchmarks.results.plots.data import Chart, Series, _numeric
+from benchmarks.results.records import read_request_records
 from benchmarks.results.replicas import gpu_allocation_history_rows
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
@@ -73,7 +74,7 @@ def _saved_itl_summary(row: dict[str, Any]) -> ITLSummary:
 
 
 def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement]:
-    """Restore saved HTTP requests for plotting and phase-specific W&B curves."""
+    """Restore saved HTTP requests for plotting."""
     return [
         RequestMeasurement(
             started_at=float(row["start_time"]),
@@ -112,10 +113,9 @@ def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement
 
 def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False) -> list[Chart]:
     """Plot each HTTP phase on its own elapsed clock and request index."""
-    raw_path = source / ("warmup_raw_output.json" if warmup else "raw_output.json")
-    if not raw_path.is_file():
+    raw = read_request_records(source, "warmup_raw_output" if warmup else "raw_output")
+    if not raw:
         return []
-    raw = json.loads(raw_path.read_text(encoding="utf-8"))
     measurements = load_http_measurements(raw)
     slo_met = (
         [bool(row["slo_met"]) for row in raw]

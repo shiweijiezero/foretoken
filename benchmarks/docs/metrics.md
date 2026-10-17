@@ -8,7 +8,11 @@ Results include aggregate metrics and per-request records.
 
 | Metric | Meaning |
 | --- | --- |
-| Success rate | Successful requests divided by attempted requests |
+| Recorded requests (`request_num`) | Requests with a recorded success or failure; requests still in flight when a run is interrupted may have no record |
+| Prepared requests (`planned_num`) | HTTP requests prepared before measurement, counting each conversation turn separately; this may differ from `num_prompts`. Unavailable when the run is limited only by duration |
+| Admitted requests (`admitted_num`) | Independent requests admitted by the scheduler, or the total turns in admitted conversations |
+| Not executed (`not_executed_num`) | Prepared requests without a result record; when the total request count is unbounded, counts only remaining turns in admitted conversations |
+| Success rate | `success_num / request_num`; skipped turns are not failed HTTP requests |
 | Concurrency limit (`max_concurrency`) | Configured limit: requests for single-turn and trace workloads, conversations for multi-turn workloads |
 | Observed request concurrency (`request_concurrency`) | `peak`: highest simultaneous active request count; `mean`: total request duration divided by measured run duration, including failed requests |
 | End-to-end latency (E2EL) | Request duration; successful streamed requests end at the last chunk with non-empty `choices` |
@@ -22,6 +26,10 @@ Results include aggregate metrics and per-request records.
 | Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
+
+A failed conversation turn skips the remaining turns without replacement. `not_executed_reasons` distinguishes these skips (`failed_predecessor`) from requests excluded by the time limit (`duration`). `failure_reasons` groups recorded failures by HTTP status and error message.
+
+Conversation workloads also report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation starts per second. Successful requests and successfully completed conversations are counted separately.
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 
@@ -76,8 +84,6 @@ These are Prometheus counter-increase estimates over the measured request window
 When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Failed requests and requests missing required timing metrics count as not meeting the SLO. Attainment is the fraction of measured requests meeting all conditions; request goodput divides their count by run duration, and token goodput divides their output token total by the same duration. When request-level criteria are set, one-second completion-window curves also show attainment and request/token goodput on the elapsed-time axis. Each window counts failed requests in its attainment denominator; windows without completions have no attainment value. The run summary still scores all measured requests together, not an average of window fractions. Adding `--slo-search` enables [SLO concurrency search](perf/slo.md), which evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
-
-Conversation workloads report attempted and completed conversations, HTTP turns, average turns per conversation, and conversation start throughput. A failed turn stops that conversation; successful turns are not successful conversations.
 
 Charts use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds. Trace results also include replay delay when a request is sent after its scheduled arrival.
 

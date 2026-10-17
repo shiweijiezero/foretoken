@@ -30,31 +30,49 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
-// reconcileServingSnapshot publishes routing, settings, and execution membership at one version boundary.
-// Rejected intent retains the previous configuration while Pod membership continues to release abandoned work.
+// reconcileServingSnapshot publishes routing, settings, and membership at one version boundary.
+// It reports whether all protocol views were published; preserved configuration still refreshes membership.
 func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (bool, error) {
-	name := frontendServingConfigMapName(frontend)
-	current := new(corev1.ConfigMap)
+	name := frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)
+	protocols := frontendServingConfigVersions(frontend)
+	type servingPublication struct {
+		snapshot  servingSnapshot
+		configMap *corev1.ConfigMap
+	}
+	publications := make(map[uint32]servingPublication, len(protocols))
 	reader := reconciler.APIReader
 	if reader == nil {
 		reader = reconciler.Client
 	}
-	err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: name}, current)
-	if err == nil && !metav1.IsControlledBy(current, frontend) {
-		return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", name)
-	}
-	if err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
-	}
 	var previous servingSnapshot
-	previousValid := false
-	if err == nil {
-		previous, previousValid, err = readServingPublication([]byte(current.Data[servingSnapshotKey]))
+	var primaryVersion uint64
+	previousFound, previousValid := false, false
+	for index, protocol := range protocols {
+		publicationName := frontendServingConfigMapName(frontend, protocol)
+		current := new(corev1.ConfigMap)
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: publicationName}, current); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
+		}
+		if !metav1.IsControlledBy(current, frontend) {
+			return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", publicationName)
+		}
+		snapshot, valid, err := readServingPublication([]byte(current.Data[servingSnapshotKey]))
 		if err != nil {
 			return false, fmt.Errorf("decode published serving snapshot: %w", err)
 		}
+		// A partial publication can leave the legacy view with newer cohort and member
+		// provenance. At equal versions, retain the primary view's complete routes.
+		if !previousFound || snapshot.Version > previous.Version {
+			previous, previousValid, previousFound = snapshot, valid, true
+		}
+		publications[protocol] = servingPublication{snapshot: snapshot, configMap: current}
+		if index == 0 {
+			primaryVersion = snapshot.Version
+		}
 	}
-	if preserveConfiguration && (!previousValid || frontend.Status.ServingConfigVersion != frontendServingConfigVersion) {
+	if preserveConfiguration && (!previousValid || frontend.Status.ServingConfigVersion < frontendAdmissionConfigVersion) {
 		return false, nil
 	}
 	instancePods, err := reconciler.frontendInstancePods(ctx, frontend, previous.FrontendInstances)
@@ -62,18 +80,31 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		return false, err
 	}
 	frontendInstances := make([]string, 0, len(instancePods))
+	consumedViews := make(map[string]bool)
 	for _, pod := range instancePods {
 		frontendInstances = append(frontendInstances, string(pod.UID))
+		if pod.DeletionTimestamp.IsZero() {
+			consumedViews[frontendPodServingConfigMapName(&pod)] = true
+		}
 	}
 	slices.Sort(frontendInstances)
+	// Recreated mounts need a fresh acknowledgement even when their projected contents are unchanged.
+	missingConsumedView := slices.ContainsFunc(protocols, func(protocol uint32) bool {
+		_, exists := publications[protocol]
+		return !exists && consumedViews[frontendServingConfigMapName(frontend, protocol)]
+	})
 	backendInstances, err := reconciler.backendInstances(ctx, frontend.Namespace, previous.BackendInstances)
 	if err != nil {
 		return false, err
 	}
-	settings, models, admission := previous.Settings, previous.Models, previous.Admission
-	groups, pdComponents, pdPipelineScopes := previous.Groups, previous.PDComponents, previous.PDPipelineScopes
-	epdComponents, epdPipelineScopes := previous.EPDComponents, previous.EPDPipelineScopes
-	dtComponents := previous.DTComponents
+	configuration := previous
+	if primary, exists := publications[frontend.Status.ServingConfigVersion]; preserveConfiguration && exists {
+		configuration = primary.snapshot
+	}
+	settings, models, admission := configuration.Settings, configuration.Models, configuration.Admission
+	groups, pdComponents, pdPipelineScopes := configuration.Groups, configuration.PDComponents, configuration.PDPipelineScopes
+	epdComponents, epdPipelineScopes := configuration.EPDComponents, configuration.EPDPipelineScopes
+	dtComponents := configuration.DTComponents
 	var projectionErr error
 	if !preserveConfiguration {
 		requestTimeout, err := durationSeconds(frontend.Spec.Timeouts.Request)
@@ -119,35 +150,24 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		projectionErr = errors.Join(catalogErr, projectionErr)
 	}
 
+	snapshot := servingSnapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes, DTComponents: dtComponents}
+	if frontend.Status.ServingConfigVersion < frontendCacheIsolationConfigVersion && !preserveConfiguration && slices.ContainsFunc(models, func(model servingSnapshotModel) bool { return model.PrefixCacheIsolation != nil }) {
+		projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
+	}
+
+	snapshot = servingSnapshotForProtocol(snapshot, frontend.Status.ServingConfigVersion)
 	// A restored payload below the durable floor cannot prove what consumers applied
 	// at that version. Allocate a fresh version even when it matches current intent.
-	version := frontend.Status.ServingSnapshotVersion
-	if previous.Version > version {
-		version = previous.Version
-	}
+	version := max(frontend.Status.ServingSnapshotVersion, previous.Version)
 	contentsChanged := true
 	if previousValid {
-		contentsChanged = !reflect.DeepEqual(previous.Settings, settings) || !slices.Equal(previous.FrontendInstances, frontendInstances) || !slices.Equal(previous.BackendInstances, backendInstances) || !reflect.DeepEqual(previous.Admission, admission) || !slices.EqualFunc(previous.Models, models, equalScalingModel) || !slices.EqualFunc(previous.Groups, groups, equalRoutingGroup) || !slices.EqualFunc(previous.PDComponents, pdComponents, equalRoutingPDComponent) || !slices.EqualFunc(previous.PDPipelineScopes, pdPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previous.EPDComponents, epdComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previous.EPDPipelineScopes, epdPipelineScopes, equalRoutingEPDPipelineScope) || !slices.EqualFunc(previous.DTComponents, dtComponents, equalRoutingDTComponent)
+		previousView := servingSnapshotForProtocol(previous, frontend.Status.ServingConfigVersion)
+		contentsChanged = !reflect.DeepEqual(previousView.Settings, snapshot.Settings) || !slices.Equal(previousView.FrontendInstances, snapshot.FrontendInstances) || !slices.Equal(previousView.BackendInstances, snapshot.BackendInstances) || !reflect.DeepEqual(previousView.Admission, snapshot.Admission) || !slices.EqualFunc(previousView.Models, snapshot.Models, equalScalingModel) || !slices.EqualFunc(previousView.Groups, snapshot.Groups, equalRoutingGroup) || !slices.EqualFunc(previousView.PDComponents, snapshot.PDComponents, equalRoutingPDComponent) || !slices.EqualFunc(previousView.PDPipelineScopes, snapshot.PDPipelineScopes, equalRoutingPDPipelineScope) || !slices.EqualFunc(previousView.EPDComponents, snapshot.EPDComponents, equalRoutingEPDComponent) || !slices.EqualFunc(previousView.EPDPipelineScopes, snapshot.EPDPipelineScopes, equalRoutingEPDPipelineScope) || !slices.EqualFunc(previousView.DTComponents, snapshot.DTComponents, equalRoutingDTComponent)
 	}
-	if contentsChanged || previous.Version < frontend.Status.ServingSnapshotVersion || version == 0 {
+	if contentsChanged || missingConsumedView || primaryVersion < version || version == 0 {
 		version++
 	}
-	payload, err := json.Marshal(servingSnapshot{Version: version, Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes, DTComponents: dtComponents})
-	if err != nil {
-		return false, fmt.Errorf("encode routing snapshot: %w", err)
-	}
-	desired := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: frontend.Namespace,
-			Labels:    map[string]string{frontendServiceLabel: frontend.Name},
-		},
-		Data: map[string]string{servingSnapshotKey: string(payload)},
-	}
-	if err := controllerutil.SetControllerReference(frontend, desired, reconciler.Scheme()); err != nil {
-		return false, fmt.Errorf("set serving snapshot ConfigMap owner: %w", err)
-	}
+	snapshot.Version = version
 	// Reserve the version before it becomes visible to consumers, including across
 	// a controller restart between publication and the later readiness observation.
 	if frontend.Status.ServingSnapshotVersion < version {
@@ -159,8 +179,26 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 			return false, fmt.Errorf("reserve serving snapshot version: %w", err)
 		}
 	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(frontendServiceFieldOwner), client.ForceOwnership); err != nil {
-		return false, fmt.Errorf("apply serving snapshot ConfigMap: %w", err)
+	// Protocol-specific routes share one version and identical ledger inputs. Updating the
+	// legacy mount first also keeps withdrawal acknowledgements valid across a rolling update.
+	for _, protocol := range protocols[1:] {
+		publication, exists := publications[protocol]
+		if !exists && !consumedViews[frontendServingConfigMapName(frontend, protocol)] {
+			continue
+		}
+		view := snapshot
+		if preserveConfiguration && exists {
+			view = publication.snapshot
+			view.Version = snapshot.Version
+			view.FrontendInstances = frontendInstances
+			view.BackendInstances = backendInstances
+		}
+		if err := reconciler.publishServingSnapshot(ctx, frontend, frontendServingConfigMapName(frontend, protocol), servingSnapshotForProtocol(view, protocol), publication.configMap); err != nil {
+			return false, err
+		}
+	}
+	if err := reconciler.publishServingSnapshot(ctx, frontend, name, snapshot, publications[frontend.Status.ServingConfigVersion].configMap); err != nil {
+		return false, err
 	}
 	// Updating Pod metadata prompts kubelet to refresh the projected ConfigMap.
 	// Consumer acknowledgements still come from the frontend's active generation.
@@ -177,13 +215,101 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 		}
 		pod.Annotations[refreshAnnotation] = refreshVersion
 		if err := reconciler.Patch(ctx, pod, client.MergeFrom(base)); err != nil && !apierrors.IsNotFound(err) {
-			return false, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
+			return true, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
 		}
 	}
-	if projectionErr != nil {
-		return false, projectionErr
+	return true, projectionErr
+}
+
+// servingSnapshotForProtocol projects only settings and routes understood by the selected application.
+// All protocol views retain the same publication version and admission membership.
+func servingSnapshotForProtocol(snapshot servingSnapshot, protocol uint32) servingSnapshot {
+	if protocol < frontendModelRoutingConfigVersion {
+		snapshot.Models = slices.Clone(snapshot.Models)
+		for index := range snapshot.Models {
+			snapshot.Models[index].RouterPipeline = nil
+		}
 	}
-	return len(models) > 0 || len(groups) > 0 || len(pdComponents) > 0 || len(epdComponents) > 0 || len(dtComponents) > 0, nil
+	if protocol < frontendCacheIsolationConfigVersion {
+		snapshot = admissionOnlyServingSnapshot(snapshot)
+	}
+	return snapshot
+}
+
+var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
+
+// admissionOnlyServingSnapshot excludes routes whose cache policy an admission-only application cannot enforce.
+// Catalog provenance and ledger inputs stay identical to the current protocol's publication.
+func admissionOnlyServingSnapshot(snapshot servingSnapshot) servingSnapshot {
+	snapshot.Groups = slices.DeleteFunc(slices.Clone(snapshot.Groups), func(group servingSnapshotGroup) bool {
+		return group.PrefixCacheIsolation != nil
+	})
+	blocked := make(map[string]bool)
+	snapshot.PDComponents = slices.DeleteFunc(slices.Clone(snapshot.PDComponents), func(component servingSnapshotPDComponent) bool {
+		if component.PrefixCacheIsolation == nil {
+			return false
+		}
+		blocked[component.RouteTargetID] = true
+		return true
+	})
+	snapshot.EPDComponents = slices.DeleteFunc(slices.Clone(snapshot.EPDComponents), func(component servingSnapshotEPDComponent) bool {
+		if component.PrefixCacheIsolation == nil {
+			return false
+		}
+		blocked[component.RouteTargetID] = true
+		return true
+	})
+	isBlocked := func(target string) bool { return blocked[target] }
+	snapshot.PDPipelineScopes = slices.DeleteFunc(slices.Clone(snapshot.PDPipelineScopes), func(scope servingSnapshotPDPipelineScope) bool {
+		return slices.ContainsFunc(scope.PrefillRouteTargetIDs, isBlocked) || slices.ContainsFunc(scope.DecodeRouteTargetIDs, isBlocked)
+	})
+	snapshot.EPDPipelineScopes = slices.DeleteFunc(slices.Clone(snapshot.EPDPipelineScopes), func(scope servingSnapshotEPDPipelineScope) bool {
+		return slices.ContainsFunc(scope.EncoderRouteTargetIDs, isBlocked) || slices.ContainsFunc(scope.PrefillRouteTargetIDs, isBlocked) || slices.ContainsFunc(scope.DecodeRouteTargetIDs, isBlocked)
+	})
+	return snapshot
+}
+
+// publishServingSnapshot writes one protocol view against the object read for this candidate.
+// The FrontendService owns each view; a deleted or concurrently changed view must be reconciled again.
+func (reconciler *FrontendServiceReconciler) publishServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, name string, snapshot servingSnapshot, current *corev1.ConfigMap) error {
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("encode routing snapshot: %w", err)
+	}
+	if current == nil {
+		desired := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: frontend.Namespace,
+				Labels:    map[string]string{frontendServiceLabel: frontend.Name},
+			},
+			Data: map[string]string{servingSnapshotKey: string(payload)},
+		}
+		if err := controllerutil.SetControllerReference(frontend, desired, reconciler.Scheme()); err != nil {
+			return fmt.Errorf("set serving snapshot ConfigMap owner: %w", err)
+		}
+		if err := reconciler.Create(ctx, desired); err != nil {
+			return fmt.Errorf("create serving snapshot ConfigMap: %w", err)
+		}
+		return nil
+	}
+	if current.Data[servingSnapshotKey] == string(payload) && current.Labels[frontendServiceLabel] == frontend.Name {
+		return nil
+	}
+	updated := current.DeepCopy()
+	if updated.Data == nil {
+		updated.Data = make(map[string]string)
+	}
+	updated.Data[servingSnapshotKey] = string(payload)
+	if updated.Labels == nil {
+		updated.Labels = make(map[string]string)
+	}
+	updated.Labels[frontendServiceLabel] = frontend.Name
+	// Retain UID and resourceVersion so deletion cannot silently recreate a view at an already-acknowledged version.
+	if err := reconciler.Update(ctx, updated); err != nil {
+		return fmt.Errorf("update serving snapshot ConfigMap: %w", err)
+	}
+	return nil
 }
 
 // readServingPublication separates admission-schema migration from published identity provenance.
@@ -485,7 +611,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		}
 		identity := identities[0]
 		for _, other := range identities[1:] {
-			if !matchingRoutingArtifacts(identity, other) {
+			if !matchingRoutingIdentity(identity, other) {
 				return nil, nil, &routingIdentityConflictError{reason: fmt.Sprintf("ModelService %q has conflicting configured model identities", service.Name)}
 			}
 			identity.Capabilities = append(identity.Capabilities, other.Capabilities...)
@@ -493,8 +619,8 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		slices.Sort(identity.Capabilities)
 		identity.Capabilities = slices.Compact(identity.Capabilities)
 		if previous, exists := providers[identity.Model]; exists {
-			if previous.topology != topology || !matchingRoutingArtifacts(previous.identity, identity) || !reflect.DeepEqual(admission[identity.Model], config) {
-				return nil, nil, &routingIdentityConflictError{reason: fmt.Sprintf("public model %q has conflicting identity, topology or admission settings in ModelServices %q and %q", identity.Model, previous.service, service.Name)}
+			if previous.topology != topology || !matchingRoutingIdentity(previous.identity, identity) || !reflect.DeepEqual(admission[identity.Model], config) {
+				return nil, nil, &routingIdentityConflictError{reason: fmt.Sprintf("public model %q has conflicting identity, topology, admission or prefix-cache settings in ModelServices %q and %q", identity.Model, previous.service, service.Name)}
 			}
 		} else {
 			providers[identity.Model] = contribution{service: service.Name, topology: topology, identity: identity}
@@ -512,6 +638,8 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 			Revision:              identity.Revision,
 			Tokenizer:             identity.Tokenizer,
 			TokenizerRevision:     identity.TokenizerRevision,
+			PrefixCacheIsolation:  identity.PrefixCacheIsolation,
+			RouterPipeline:        service.Spec.RouterPipeline.DeepCopy(),
 			SelectedPoolRevisions: sortedServingPoolRevisions(service.Status.ServingPoolRevisions),
 			Topology:              topology,
 			Capabilities:          identity.Capabilities,
@@ -589,6 +717,7 @@ func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []in
 		published := servingSnapshotGroup{
 			Model: retained.Model, Source: retained.Source, Revision: retained.Revision,
 			Tokenizer: retained.Tokenizer, TokenizerRevision: retained.TokenizerRevision,
+			PrefixCacheIsolation: retained.PrefixCacheIsolation,
 		}
 		if len(missing) > 0 {
 			published.Capabilities = slices.Clone(retained.Capabilities)
@@ -599,7 +728,7 @@ func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []in
 	if len(identities) > 0 {
 		identity := identities[0]
 		for _, other := range identities[1:] {
-			if !matchingRoutingArtifacts(identity, other) {
+			if !matchingRoutingIdentity(identity, other) {
 				return servingSnapshotGroup{}, "", &routingIdentityConflictError{reason: fmt.Sprintf("ModelService %q has conflicting selected model identities", service.Name)}
 			}
 			identity.Capabilities = append(identity.Capabilities, other.Capabilities...)
@@ -652,7 +781,7 @@ func (err *modelCatalogProjectionError) Error() string {
 
 // configuredTemplateIdentity uses the runtime's backend compiler for pre-serving discovery.
 func configuredTemplateIdentity(template inferencev1alpha1.NormalizedPoolTemplate) (servingSnapshotGroup, error) {
-	identity := servingSnapshotGroup{}
+	identity := servingSnapshotGroup{PrefixCacheIsolation: template.PrefixCacheIsolation}
 	features := template.Features
 	if template.Role == inferencev1alpha1.ModelRolePrefill || template.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
@@ -1168,7 +1297,7 @@ func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 }
 
 func compatibleEncoderPrefill(encoder, prefill *inferencev1alpha1.ModelGroup) bool {
-	return matchingRoutingArtifacts(routingGroup(encoder), routingGroup(prefill)) &&
+	return matchingRoutingIdentity(routingGroup(encoder), routingGroup(prefill)) &&
 		completeECRuntime(encoder.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) && completeECRuntime(prefill.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) &&
 		matchingECRuntime(encoder.Spec.ECRuntime, prefill.Spec.ECRuntime)
 }
@@ -1194,23 +1323,24 @@ func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferen
 		features.Multimodal = nil
 	}
 	component := servingSnapshotEPDComponent{
-		RouteTargetID:     string(group.UID),
-		ServiceUID:        string(service.UID),
-		PoolUID:           group.Spec.ModelPoolRef.UID,
-		PoolName:          pool.Spec.PoolName,
-		Role:              string(group.Spec.Role),
-		Model:             group.Spec.Artifacts.Model,
-		Source:            group.Spec.Artifacts.Source,
-		Revision:          group.Spec.Artifacts.ModelRevision,
-		Tokenizer:         group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		MaxInputTokens:    copyOptionalInt32(pool.Spec.MaxInputTokens),
-		Capabilities:      routingCapabilities(features),
-		Endpoint:          modelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:         kvScopeID(group),
-		KVLookupScope:     sharedKVLookupScope(group),
-		DataParallelSize:  group.Spec.Parallelism.DP,
-		Parallelism:       routingParallelism(group),
+		RouteTargetID:        string(group.UID),
+		ServiceUID:           string(service.UID),
+		PoolUID:              group.Spec.ModelPoolRef.UID,
+		PoolName:             pool.Spec.PoolName,
+		Role:                 string(group.Spec.Role),
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
+		Capabilities:         routingCapabilities(features),
+		Endpoint:             modelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            kvScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
+		Parallelism:          routingParallelism(group),
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 		component.PrefillBootstrapEndpoint = modelGroupEndpoint(group, group.Spec.PDRuntime.BootstrapPort)
@@ -1280,17 +1410,18 @@ func (err *splitRoutingProjectionError) Error() string {
 
 func routingGroup(group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 	return servingSnapshotGroup{
-		RouteTargetID:     string(group.UID),
-		Model:             group.Spec.Artifacts.Model,
-		Source:            group.Spec.Artifacts.Source,
-		Revision:          group.Spec.Artifacts.ModelRevision,
-		Tokenizer:         group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		Capabilities:      routingCapabilities(group.Spec.Features),
-		Endpoint:          modelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:         kvScopeID(group),
-		KVLookupScope:     sharedKVLookupScope(group),
-		DataParallelSize:  group.Spec.Parallelism.DP,
+		RouteTargetID:        string(group.UID),
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		Capabilities:         routingCapabilities(group.Spec.Features),
+		Endpoint:             modelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            kvScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
 	}
 }
 func routingGroupForService(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
@@ -1338,7 +1469,7 @@ func routingCapabilities(features inferencev1alpha1.ModelFeatures) []string {
 }
 
 func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {
-	return matchingRoutingArtifacts(routingGroup(prefill), routingGroup(decode)) && vllmconfig.CompatibleKVTransfer(prefill.Spec, decode.Spec) && matchingPDRuntime(prefill.Spec.PDRuntime, decode.Spec.PDRuntime)
+	return matchingRoutingIdentity(routingGroup(prefill), routingGroup(decode)) && vllmconfig.CompatibleKVTransfer(prefill.Spec, decode.Spec) && matchingPDRuntime(prefill.Spec.PDRuntime, decode.Spec.PDRuntime)
 }
 
 func completePDRuntime(runtime *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
@@ -1356,28 +1487,29 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 	// it from P/D routes, including objects created before API validation existed.
 	features.Multimodal = nil
 	component := servingSnapshotPDComponent{
-		RouteTargetID:     string(group.UID),
-		ServiceUID:        string(service.UID),
-		PoolUID:           group.Spec.ModelPoolRef.UID,
-		PoolName:          pool.Spec.PoolName,
-		Role:              string(group.Spec.Role),
-		PipelineScopeID:   pipelineScopeID,
-		Model:             group.Spec.Artifacts.Model,
-		Source:            group.Spec.Artifacts.Source,
-		Revision:          group.Spec.Artifacts.ModelRevision,
-		Tokenizer:         group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
-		MaxInputTokens:    copyOptionalInt32(pool.Spec.MaxInputTokens),
-		ProfileName:       pd.ProfileName,
-		ProfileRevision:   pd.ProfileRevision,
-		Connector:         pd.Connector,
-		Protocol:          pd.Protocol,
-		Capabilities:      routingCapabilities(features),
-		Endpoint:          modelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:         kvScopeID(group),
-		KVLookupScope:     sharedKVLookupScope(group),
-		DataParallelSize:  group.Spec.Parallelism.DP,
-		Parallelism:       routingParallelism(group),
+		RouteTargetID:        string(group.UID),
+		ServiceUID:           string(service.UID),
+		PoolUID:              group.Spec.ModelPoolRef.UID,
+		PoolName:             pool.Spec.PoolName,
+		Role:                 string(group.Spec.Role),
+		PipelineScopeID:      pipelineScopeID,
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
+		ProfileName:          pd.ProfileName,
+		ProfileRevision:      pd.ProfileRevision,
+		Connector:            pd.Connector,
+		Protocol:             pd.Protocol,
+		Capabilities:         routingCapabilities(features),
+		Endpoint:             modelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            kvScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
+		Parallelism:          routingParallelism(group),
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 		component.PrefillBootstrapEndpoint = modelGroupEndpoint(group, pd.BootstrapPort)
@@ -1396,6 +1528,7 @@ func validateRoutingIdentities(models []servingSnapshotModel, groups []servingSn
 	type identity struct {
 		topology, routeTargetID, revision, tokenizer, tokenizerRevision string
 		source                                                          inferencev1alpha1.ModelSource
+		prefixCacheIsolation                                            *bool
 	}
 	byModel := make(map[string]identity)
 	add := func(model string, current identity) error {
@@ -1407,7 +1540,7 @@ func validateRoutingIdentities(models []servingSnapshotModel, groups []servingSn
 		if previous.topology != "" && current.topology != "" && previous.topology != current.topology {
 			return &routingIdentityConflictError{reason: fmt.Sprintf("public model %q is provided by both %s and %s routes", model, previous.topology, current.topology)}
 		}
-		if previous.source != current.source || previous.revision != current.revision || previous.tokenizer != current.tokenizer || previous.tokenizerRevision != current.tokenizerRevision {
+		if previous.source != current.source || previous.revision != current.revision || previous.tokenizer != current.tokenizer || previous.tokenizerRevision != current.tokenizerRevision || !reflect.DeepEqual(previous.prefixCacheIsolation, current.prefixCacheIsolation) {
 			return &routingIdentityConflictError{reason: fmt.Sprintf("public model %q has conflicting %s route identities %q and %q", model, current.topology, previous.routeTargetID, current.routeTargetID)}
 		}
 		if previous.topology == "" && current.topology != "" {
@@ -1416,36 +1549,36 @@ func validateRoutingIdentities(models []servingSnapshotModel, groups []servingSn
 		return nil
 	}
 	for _, model := range models {
-		if err := add(model.Model, identity{topology: model.Topology, routeTargetID: model.ServiceUID, source: model.Source, revision: model.Revision, tokenizer: model.Tokenizer, tokenizerRevision: model.TokenizerRevision}); err != nil {
+		if err := add(model.Model, identity{topology: model.Topology, routeTargetID: model.ServiceUID, source: model.Source, revision: model.Revision, tokenizer: model.Tokenizer, tokenizerRevision: model.TokenizerRevision, prefixCacheIsolation: model.PrefixCacheIsolation}); err != nil {
 			return err
 		}
 	}
 	for _, group := range groups {
-		if err := add(group.Model, identity{topology: "aggregate", routeTargetID: group.RouteTargetID, source: group.Source, revision: group.Revision, tokenizer: group.Tokenizer, tokenizerRevision: group.TokenizerRevision}); err != nil {
+		if err := add(group.Model, identity{topology: "aggregate", routeTargetID: group.RouteTargetID, source: group.Source, revision: group.Revision, tokenizer: group.Tokenizer, tokenizerRevision: group.TokenizerRevision, prefixCacheIsolation: group.PrefixCacheIsolation}); err != nil {
 			return err
 		}
 	}
 	for _, component := range components {
-		if err := add(component.Model, identity{topology: "P/D", routeTargetID: component.RouteTargetID, source: component.Source, revision: component.Revision, tokenizer: component.Tokenizer, tokenizerRevision: component.TokenizerRevision}); err != nil {
+		if err := add(component.Model, identity{topology: "P/D", routeTargetID: component.RouteTargetID, source: component.Source, revision: component.Revision, tokenizer: component.Tokenizer, tokenizerRevision: component.TokenizerRevision, prefixCacheIsolation: component.PrefixCacheIsolation}); err != nil {
 			return err
 		}
 	}
 	for _, component := range epdComponents {
-		if err := add(component.Model, identity{topology: "E/P/D", routeTargetID: component.RouteTargetID, source: component.Source, revision: component.Revision, tokenizer: component.Tokenizer, tokenizerRevision: component.TokenizerRevision}); err != nil {
+		if err := add(component.Model, identity{topology: "E/P/D", routeTargetID: component.RouteTargetID, source: component.Source, revision: component.Revision, tokenizer: component.Tokenizer, tokenizerRevision: component.TokenizerRevision, prefixCacheIsolation: component.PrefixCacheIsolation}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func matchingRoutingArtifacts(left, right servingSnapshotGroup) bool {
-	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision
+func matchingRoutingIdentity(left, right servingSnapshotGroup) bool {
+	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation)
 }
 func equalScalingModel(left, right servingSnapshotModel) bool {
-	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
+	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) && reflect.DeepEqual(left.RouterPipeline, right.RouterPipeline) && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []servingSnapshotScalingTarget) bool { return slices.Equal(left, right) })
 }
 
 func equalRoutingGroup(left, right servingSnapshotGroup) bool {
-	return left.RouteTargetID == right.RouteTargetID && left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName && matchingRoutingArtifacts(left, right) && equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && left.Endpoint == right.Endpoint && left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope && left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
+	return left.RouteTargetID == right.RouteTargetID && left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName && matchingRoutingIdentity(left, right) && equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && left.Endpoint == right.Endpoint && left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope && left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
 }
 func equalRoutingPDComponent(left, right servingSnapshotPDComponent) bool {
 	return left.RouteTargetID == right.RouteTargetID &&
@@ -1453,6 +1586,7 @@ func equalRoutingPDComponent(left, right servingSnapshotPDComponent) bool {
 		left.Role == right.Role && left.PipelineScopeID == right.PipelineScopeID &&
 		left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision &&
 		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
+		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&
 		equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) &&
 		left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
 		left.Connector == right.Connector && left.Protocol == right.Protocol &&
@@ -1490,6 +1624,7 @@ func equalRoutingEPDComponent(left, right servingSnapshotEPDComponent) bool {
 		left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName &&
 		left.Role == right.Role && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision &&
 		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
+		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&
 		equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && slices.Equal(left.Capabilities, right.Capabilities) &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&

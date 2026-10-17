@@ -46,7 +46,7 @@ pub(super) async fn run(
     };
     let port = allocate_handshake_port("127.0.0.1")?;
     let endpoint = format!("http://127.0.0.1:{port}");
-    let (engine, mode) = super::start_with_cache_fallback(config, async |mode, deadline| {
+    let (engine, mode, _) = super::start_with_cache_fallback(config, async |mode, deadline| {
         start_role(
             config,
             cache,
@@ -65,11 +65,12 @@ pub(super) async fn run(
         .map(|config| {
             foretoken_model_server::profiling::Supervisor::new(
                 config.clone(),
-                foretoken_model_server::profiling::CaptureBackend::DraftTarget {
-                    endpoint: endpoint.clone(),
-                    client: profile_client,
-                },
-                health.clone(),
+                Some(
+                    foretoken_model_server::profiling::CaptureBackend::DraftTarget {
+                        endpoint: endpoint.clone(),
+                        client: profile_client,
+                    },
+                ),
             )
         });
     let app = dt_ingress::router(

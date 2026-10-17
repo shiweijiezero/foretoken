@@ -27,6 +27,71 @@ from benchmarks.results.output import (
 logger = logging.getLogger(__name__)
 
 
+def read_quality_conditions(evaluator: str, directory: Path) -> dict[str, Any] | None:
+    """Read recorded task choices for saved-result grouping without loading an evaluator or changing its reports."""
+    generation_fields = (
+        "max_tokens", "max_new_tokens", "max_gen_toks", "temperature", "top_p", "top_k",
+        "do_sample", "n", "seed", "stop", "stop_seqs", "until", "repetition_penalty",
+        "frequency_penalty", "presence_penalty", "reasoning_effort", "reasoning_tokens",
+    )
+    if evaluator == "lm-eval":
+        reports = []
+        for path in sorted(directory.glob("**/results_*.json")):
+            report = json.loads(path.read_text(encoding="utf-8"))
+            config = report.get("config", {})
+            reports.append({
+                **{key: config[key] for key in (
+                    "limit", "random_seed", "numpy_seed", "torch_seed", "fewshot_seed",
+                ) if key in config},
+                **{key: report[key] for key in (
+                    "system_instruction", "fewshot_as_multiturn", "chat_template",
+                ) if key in report},
+                "model_options": {key: config.get("model_args", {})[key] for key in (
+                    "tokenizer", "tokenizer_backend", "revision", "max_length", "max_gen_toks",
+                    "seed", "truncate", "eos_string",
+                ) if key in config.get("model_args", {})},
+                "tasks": {name: {
+                    **{key: task[key] for key in (
+                        "dataset_path", "dataset_name", "test_split", "validation_split",
+                        "fewshot_split", "output_type", "repeats",
+                    ) if key in task},
+                    "num_fewshot": report.get("n-shot", {}).get(name),
+                    "generation": {key: task["generation_kwargs"][key] for key in generation_fields
+                                   if key in (task.get("generation_kwargs") or {})},
+                    "prompt_format": (task.get("metadata") or {}).get("foretoken", {}).get("prompt_format"),
+                    "version": report.get("versions", {}).get(name),
+                } for name, task in report.get("configs", {}).items()},
+            })
+        return {"reports": reports} if reports else None
+    path = directory / "configs/task_config.yaml"
+    if not path.is_file():
+        return None
+    import yaml
+
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {
+        **{key: config[key] for key in (
+            "datasets", "limit", "seed", "repeats", "dataset_hub", "chat_template",
+        ) if key in config},
+        "generation": {key: config["generation_config"][key] for key in generation_fields
+                       if key in (config.get("generation_config") or {})},
+        "judge": {
+            **{key: config["judge"][key] for key in (
+                "strategy", "repeats", "aggregation",
+            ) if key in (config.get("judge") or {})},
+            "models": [model["model_id"] for model in (config.get("judge") or {}).get("models", [])],
+        },
+        "tasks": {name: {
+            **{key: task[key] for key in (
+                "dataset_id", "dataset_revision", "subset_list", "few_shot_num", "few_shot_random",
+                "train_split", "eval_split", "shuffle", "shuffle_choices", "prompt_template",
+                "system_prompt", "few_shot_prompt_template", "query_template",
+            ) if key in task},
+            "evaluation_version": config.get("evaluation_identity", {}).get("benchmarks", {}).get(name, {}).get("evaluation_version"),
+        } for name, task in config.get("resolved_benchmarks", config.get("dataset_args", {})).items()},
+    }
+
+
 def read_quality_metrics(evaluator: str, directory: Path) -> dict[str, Any]:
     """Read every native task report; retain subset, filter, sample count, and uncertainty."""
     rows: list[dict[str, Any]] = []
@@ -145,6 +210,14 @@ def _display(row: dict[str, Any]) -> str:
     return "—" if value is None else str(value)
 
 
+def _execution_lines(execution: dict[str, Any]) -> list[str]:
+    """Format native task completion counts for single evaluations and method comparisons."""
+    return [
+        f"{task}: {status.get('succeeded')} / {status.get('requested')} samples scored; {status.get('errored')} errors; incomplete={status.get('incomplete')}"
+        for task, status in execution.items()
+    ]
+
+
 class EvaluationConsoleSink:
     """Print a readable task summary while keeping all detailed metrics in artifacts."""
 
@@ -189,10 +262,7 @@ class EvaluationConsoleSink:
             lines.append(
                 "Category and subset scores are included in metrics.json and W&B Scores."
             )
-        for task, status in run.metrics["execution"].items():
-            lines.append(
-                f"{task}: {status.get('succeeded')} / {status.get('requested')} samples scored; {status.get('errored')} errors; incomplete={status.get('incomplete')}"
-            )
+        lines.extend(_execution_lines(run.metrics["execution"]))
         logger.info("\n%s", "\n".join(lines))
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -200,7 +270,7 @@ class EvaluationConsoleSink:
 
 
 class EvaluationArtifactSink:
-    """Save invocation identity and the complete display projection beside native artifacts."""
+    """Save evaluation invocation identity beside native artifacts and shared metrics."""
 
     def __init__(self, config: EvaluationConfig, directory: str) -> None:
         self.config = config
@@ -210,9 +280,6 @@ class EvaluationArtifactSink:
         write_json(self.directory, "config.json", {**self.config.to_dict(), **record})
 
     def publish(self, run: BenchmarkRun) -> None:
-        run.artifacts["metrics"] = write_json(
-            self.directory, "metrics.json", run.metrics
-        )
         run.artifacts["config"] = Path(self.directory) / "config.json"
 
     def close(self, *, exit_code: int = 0) -> None:
@@ -303,7 +370,13 @@ class EvaluationComparisonConsoleSink:
 
     def publish(self, run: BenchmarkRun) -> None:
         for method in run.metrics["evaluation_comparison"]["methods"]:
-            logger.info("Method %s (%s): %s", method["label"], method["model"], method["status"])
+            native = run.metrics["execution"]["methods"].get(method["label"], {})
+            status = method["status"]
+            if status == "completed" and any(task.get("incomplete") for task in native.values()):
+                status = "completed with incomplete results"
+            logger.info("Method %s (%s): %s", method["label"], method["model"], status)
+            for line in _execution_lines(native):
+                logger.info("  %s", line)
         for row in run.metrics["scores"]:
             if row["level"] == "task":
                 logger.info("%s · %s · %s/%s: %s", row["method"], row["task"],
@@ -345,8 +418,7 @@ def evaluation_sinks(
 ) -> list[ResultSink]:
     """Use the existing publication lifecycle with evaluation-specific presentation."""
     sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
-    if not config.outputs.includes("quiet"):
-        sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
+    sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
     if config.outputs.saves_local:
         sinks.append(LocalDirectorySink(directory))
     if config.outputs.includes("wandb"):

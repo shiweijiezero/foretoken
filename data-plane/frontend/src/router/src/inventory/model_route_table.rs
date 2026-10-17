@@ -27,6 +27,31 @@ impl ModelRouteTable {
         &self.routes
     }
 
+    /// Resolves the execution role before running the current round's selection algorithms.
+    pub(crate) fn selection_role(
+        &self,
+        model: &str,
+        round: crate::RoutingStage,
+    ) -> foretoken_model_protocol::ModelServerRole {
+        use foretoken_model_protocol::ModelServerRole;
+        match round {
+            crate::RoutingStage::Draft => return ModelServerRole::Draft,
+            crate::RoutingStage::Prefill => return ModelServerRole::Prefill,
+            crate::RoutingStage::Decode => return ModelServerRole::Decode,
+            crate::RoutingStage::Initial => {}
+        }
+        let mut role = ModelServerRole::Aggregate;
+        for route in self.routes.iter().filter(|route| route.model == model) {
+            match route.role {
+                ModelServerRole::Encoder => return ModelServerRole::Encoder,
+                ModelServerRole::Target => return ModelServerRole::Target,
+                ModelServerRole::Prefill => role = ModelServerRole::Prefill,
+                _ => {}
+            }
+        }
+        role
+    }
+
     /// Returns static routes whose model and input limit match one router request.
     ///
     /// `PipelineRouter` applies dynamic health and capability checks to these results.

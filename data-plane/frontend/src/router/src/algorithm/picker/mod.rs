@@ -22,8 +22,8 @@ declare_router_algorithms! {
 /// empty result for a nonempty slice as a routing error.
 ///
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `scored_candidates`: current-stage candidates with route target metadata and numeric or
-///   lexicographic `RouteScore` preferences.
+/// - `scored_candidates`: current-stage candidates with route target metadata and numeric
+///   `RouteScore` preferences.
 /// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
 /// - `customized_context`: user-defined `C`, created per request and shared across E/P/D rounds.
 ///

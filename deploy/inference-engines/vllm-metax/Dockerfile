@@ -10,11 +10,6 @@ FROM ${UV_IMAGE} AS uv
 
 FROM ${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04 AS metax-sdk
 
-ARG BUILD_JOBS=2
-ARG FORETOKEN_GITHUB_MIRROR
-ARG UV_DEFAULT_INDEX
-ARG UV_EXTRA_INDEX_URL
-
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake curl git gnupg ninja-build pkg-config \
@@ -24,7 +19,7 @@ RUN apt-get update \
 COPY --from=uv /uv /usr/local/bin/uv
 COPY deploy/inference-engines/vllm-metax/prepare-sdk.sh \
      deploy/inference-engines/vllm-metax/torch_cpu_config.py \
-     deploy/inference-engines/vllm-metax/source-environment.json \
+     deploy/inference-engines/vllm-metax/sdk-environment.json \
      /usr/local/lib/foretoken/
 
 ENV MACA_PATH=/opt/maca \
@@ -32,7 +27,15 @@ ENV MACA_PATH=/opt/maca \
     MACA_CLANG_PATH=/opt/maca/mxgpu_llvm/bin \
     PATH=/opt/foretoken-sdk/.venv/bin:/opt/maca/bin:/opt/maca/mxgpu_llvm/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/maca/lib64:/opt/maca/lib:/opt/maca/ompi/lib:/opt/maca/mxgpu_llvm/lib
-RUN bash /usr/local/lib/foretoken/prepare-sdk.sh /opt/foretoken-sdk
+RUN bash /usr/local/lib/foretoken/prepare-sdk.sh packages /opt/foretoken-sdk
+
+ARG UV_DEFAULT_INDEX
+ARG UV_EXTRA_INDEX_URL
+RUN bash /usr/local/lib/foretoken/prepare-sdk.sh torch /opt/foretoken-sdk
+
+ARG BUILD_JOBS=2
+ARG FORETOKEN_GITHUB_MIRROR
+RUN bash /usr/local/lib/foretoken/prepare-sdk.sh audio /opt/foretoken-sdk
 
 FROM ${METAX_SDK_IMAGE} AS mooncake-build
 

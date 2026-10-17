@@ -11,5 +11,6 @@ func Descriptors() []core.DecisionDescriptor {
 		manualDescriptor,
 		queueDescriptor,
 		queueThresholdDescriptor,
+		tokenLoadDescriptor,
 	}
 }

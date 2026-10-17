@@ -31,7 +31,7 @@ declare_router_algorithms! {
 /// Returns indexes of candidates that may continue to scoring. Out-of-range or duplicate indexes
 /// are reported as routing errors.
 pub trait RouteFilter<C: Send + 'static = ()>: Send + Sync {
-    /// Requests live shared-prefix observations before the synchronous routing round.
+    /// Declares that filtering consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
         false
     }

@@ -83,12 +83,12 @@ func run(ctx context.Context) error {
 	// Kubernetes may replace a lost Job Pod before its predecessor is known to have stopped.
 	// Claim this task once on durable storage; an uncertain attempt is never retried automatically.
 	parentPath := filepath.Dir(outputPath)
-	if err := root.MkdirAll(parentPath, 0o750); err != nil {
+	if err := prepareTaskDirectory(root, parentPath); err != nil {
 		return err
 	}
 	claim, err := root.OpenFile(filepath.Join(parentPath, "execution.started"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
-		return fmt.Errorf("claim video execution: %w", err)
+		return fmt.Errorf("claim video execution in %q as UID %d: %w", parentPath, os.Geteuid(), err)
 	}
 	if err := errors.Join(claim.Sync(), claim.Close()); err != nil {
 		return err
@@ -151,6 +151,34 @@ func run(ctx context.Context) error {
 	return publishResult(ctx, root, outputPath, response.Body)
 }
 
+// prepareTaskDirectory shares owned task directories with the frontend without changing other users' files.
+func prepareTaskDirectory(root *os.Root, directory string) error {
+	for _, path := range []string{"tasks", directory} {
+		if err := root.Mkdir(path, 0o770); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("create video directory %q as UID %d: %w", path, os.Geteuid(), err)
+		}
+		info, err := root.Stat(path)
+		if err != nil {
+			return fmt.Errorf("read video directory %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("video storage path %q is not a directory", path)
+		}
+		stat := info.Sys().(*syscall.Stat_t)
+		if stat.Uid == uint32(os.Geteuid()) {
+			if stat.Gid != uint32(os.Getegid()) {
+				if err := root.Chown(path, -1, os.Getegid()); err != nil {
+					return fmt.Errorf("set video directory %q group: %w", path, err)
+				}
+			}
+			if err := root.Chmod(path, os.ModeSetgid|0o770); err != nil {
+				return fmt.Errorf("share video directory %q: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
 // cleanup removes only the controller-owned task directory from the shared output mount.
 func cleanup() error {
 	id := os.Getenv("FORETOKEN_VIDEO_TASK_ID")
@@ -163,15 +191,15 @@ func cleanup() error {
 		return err
 	}
 	defer root.Close()
-	return root.RemoveAll(filepath.Join("tasks", id))
+	if err := root.RemoveAll(filepath.Join("tasks", id)); err != nil {
+		return fmt.Errorf("remove video task %q as UID %d: %w", id, os.Geteuid(), err)
+	}
+	return nil
 }
 
 // publishResult syncs a private file before atomically exposing the completed artifact.
 func publishResult(ctx context.Context, root *os.Root, outputPath string, body io.Reader) error {
 	parentPath := filepath.Dir(outputPath)
-	if err := root.MkdirAll(parentPath, 0o750); err != nil {
-		return err
-	}
 	parent, err := root.OpenRoot(parentPath)
 	if err != nil {
 		return err
@@ -188,6 +216,9 @@ func publishResult(ctx context.Context, root *os.Root, outputPath string, body i
 		return err
 	}
 	defer parent.Remove(temporary)
+	if err := output.Chmod(0o640); err != nil {
+		return errors.Join(fmt.Errorf("share video result: %w", err), output.Close())
+	}
 	written, copyErr := io.Copy(output, body)
 	if copyErr == nil && written == 0 {
 		copyErr = fmt.Errorf("video backend returned an empty result")

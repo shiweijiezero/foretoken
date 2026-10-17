@@ -14,7 +14,8 @@ use foretoken_backend_registry::{
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_router::{
-    PipelineRouter, RouteInventory, Router, RouterPipeline, RouterPipelineConfigError,
+    PipelineRouter, RouteInventory, RouteTargetId, Router, RouterPipelineConfigError,
+    RouterPipelines,
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
@@ -51,7 +52,7 @@ struct CachedBackends {
 pub struct RuntimeBuilder {
     logging: Arc<foretoken_tracing::LogControl>,
     backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
-    router_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
+    router_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
     kv_credential: KvIndexCredential,
     routing_load: foretoken_router::RoutingLoadState,
 }
@@ -110,10 +111,13 @@ impl RuntimeBuilder {
                 .router_pipeline
                 .lock()
                 .expect("router pipeline lock poisoned");
-            match published.as_deref() {
-                Some(previous) => settings.router_pipeline.rebuild(previous)?,
-                None => settings.router_pipeline.build()?,
-            }
+            RouterPipelines::build(
+                &settings.router_pipeline,
+                snapshot
+                    .model_routing()
+                    .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
+                published.as_deref(),
+            )?
         });
         let identities = snapshot
             .model_identities()
@@ -142,14 +146,29 @@ impl RuntimeBuilder {
             published_backends: self.backends.clone(),
             pipeline: pipeline.clone(),
             published_pipeline: self.router_pipeline.clone(),
+            request_length_targets: registry
+                .model_routes()
+                .routes()
+                .iter()
+                .filter(|route| pipeline.needs_request_length_history(&route.model, route.role))
+                .map(|route| route.route_target_id.clone())
+                .collect(),
         });
         let models = backends
             .models
             .iter()
-            .map(|(model, cached)| (model.clone(), ModelRuntime::new(cached.bundle.clone())))
+            .map(|(model, cached)| {
+                (
+                    model.clone(),
+                    ModelRuntime::new(
+                        cached.bundle.clone(),
+                        cached.identity.prefix_cache_isolation,
+                    ),
+                )
+            })
             .collect();
         let router: Arc<dyn Router> = Arc::new(
-            PipelineRouter::with_pipeline(registry.clone(), pipeline)
+            PipelineRouter::with_pipelines(registry.clone(), pipeline)
                 .with_snapshot_version(version)
                 .with_load_state(self.routing_load.clone())
                 .with_kv_prefix_indexer(kv_indexer)
@@ -323,10 +342,11 @@ pub enum RuntimeBuildError {
 }
 
 struct RegistryRuntimeControl {
+    request_length_targets: BTreeSet<RouteTargetId>,
     logging: Arc<foretoken_tracing::LogControl>,
     log_level: tracing::level_filters::LevelFilter,
-    pipeline: Arc<RouterPipeline>,
-    published_pipeline: Arc<Mutex<Option<Arc<RouterPipeline>>>>,
+    pipeline: Arc<RouterPipelines>,
+    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
     backends: Arc<CachedBackends>,
     published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }
@@ -335,6 +355,9 @@ struct RegistryRuntimeControl {
 impl RuntimeControl for RegistryRuntimeControl {
     fn activate(&self, version: u64) {
         self.pipeline.activate(version);
+        self.backends
+            .registry
+            .set_request_length_targets(self.request_length_targets.clone());
         self.logging.apply(self.log_level);
         *self
             .published_backends

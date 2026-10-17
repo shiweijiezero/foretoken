@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Grants the control-plane service account and required RBAC permissions.
-
+{{- $deployment := eq .Values.scope "deployment" }}
+{{- $account := ternary (include "foretoken.fullname" .) (include "foretoken.platformName" .) $deployment }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "foretoken.fullname" . }}
+  name: {{ $account }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 ---
-# RBAC cannot restrict create by resource name; the bootstrapper validates packaged CRD manifests.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -19,22 +18,21 @@ metadata:
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 rules:
-  {{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
-  # Kubelet volume observations are read through the API server's authenticated node proxy.
+  {{- if $deployment }}
   - apiGroups: [""]
-    resources: ["nodes/proxy"]
-    verbs: ["get"]
-  {{- end }}
-  - apiGroups:
-      - apiextensions.k8s.io
-    resources:
-      - customresourcedefinitions
-    verbs:
-      - create
-  - apiGroups:
-      - apiextensions.k8s.io
-    resources:
-      - customresourcedefinitions
+    resources: [nodes]
+    verbs: [list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [{{ .Release.Namespace | quote }}]
+    verbs: [get]
+  {{- else }}
+  # CRD bootstrap alone owns cluster API installation and upgrades.
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [create]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
     resourceNames:
       - frontendservices.inference.foretoken.io
       - kvservices.inference.foretoken.io
@@ -46,386 +44,13 @@ rules:
       - modelgroups.inference.foretoken.io
       - profileruns.inference.foretoken.io
       - videotasks.inference.foretoken.io
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - monitoring.coreos.com
-    resources:
-      - prometheusrules
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
-  - apiGroups:
-      - monitoring.coreos.com
-    resources:
-      - prometheuses
-    verbs:
-      - get
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - get
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - frontendservices
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - profileruns
-      - profileruns/status
-      - profileruns/finalizers
-    verbs:
-      - get
-      - list
-      - watch
-      - update
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - videotasks
-      - videotasks/status
-      - videotasks/finalizers
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-  - apiGroups:
-      - apps
-    resources:
-      - replicasets
-    verbs:
-      - get
-  {{- if .Values.frontend.enabled }}
-  - apiGroups:
-      - ""
-    resources:
-      - serviceaccounts
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
-  - apiGroups:
-      - rbac.authorization.k8s.io
-    resources:
-      - roles
-      - rolebindings
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - frontendservices/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - gateway.networking.k8s.io
-    resources:
-      - httproutes
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
+    verbs: [get, patch]
+  {{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
+  - apiGroups: [""]
+    resources: [nodes/proxy]
+    verbs: [get]
   {{- end }}
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - ""
-    resources:
-      - serviceaccounts
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-  - apiGroups:
-      - rbac.authorization.k8s.io
-    resources:
-      - roles
-      - rolebindings
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-  # Kubernetes cannot name-restrict create; reconciliation creates only foretoken-kv-indexer.
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - create
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    resourceNames:
-      - foretoken-kv-indexer
-    verbs:
-      - get
-      - update
-      - patch
-  - apiGroups:
-      - ""
-    resources:
-      - persistentvolumeclaims
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvservices
-    verbs:
-      - get
-      - list
-      - watch
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvservices/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvpools
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvpools/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvgroups
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - kvgroups/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - runtimecaches
-    verbs:
-      - get
-      - list
-      - watch
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - runtimecaches/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelservices
-    verbs:
-      - get
-      - list
-      - watch
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelservices/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelpools
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelpools/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelgroups
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
-  - apiGroups:
-      - inference.foretoken.io
-    resources:
-      - modelgroups/status
-    verbs:
-      - get
-      - patch
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-      - statefulsets
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-    verbs:
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-      - patch
-      - delete
-  - apiGroups:
-      - ""
-    resources:
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - leaderworkerset.x-k8s.io
-    resources:
-      - leaderworkersets
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - networkpolicies
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -439,41 +64,110 @@ roleRef:
   name: {{ include "foretoken.clusterName" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "foretoken.fullname" . }}
+    name: {{ $account }}
     namespace: {{ .Release.Namespace }}
+{{- if $deployment }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "foretoken.fullname" . }}
+  name: {{ $account }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 rules:
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
+  - apiGroups: [inference.foretoken.io]
+    resources: [frontendservices, frontendservices/status, frontendservices/finalizers, modelservices, modelservices/status, modelservices/finalizers, runtimecaches, runtimecaches/status, runtimecaches/finalizers, kvservices, kvservices/status, kvservices/finalizers]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [inference.foretoken.io]
+    resources: [modelpools, modelpools/status, modelpools/finalizers, modelgroups, modelgroups/status, modelgroups/finalizers, kvpools, kvpools/status, kvpools/finalizers, kvgroups, kvgroups/status, kvgroups/finalizers, profileruns, profileruns/status, profileruns/finalizers, videotasks, videotasks/status, videotasks/finalizers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps, serviceaccounts, persistentvolumeclaims, services]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [foretoken-kv-indexer]
+    verbs: [get, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [leaderworkerset.x-k8s.io]
+    resources: [leaderworkersets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheusrules]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "foretoken.fullname" . }}
+  name: {{ $account }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "foretoken.fullname" . }}
+  name: {{ $account }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "foretoken.fullname" . }}
+    name: {{ $account }}
     namespace: {{ .Release.Namespace }}
+{{- with .Values.observability.prometheus }}
+{{- $prometheus := splitList "/" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "foretoken.clusterName" $ }}
+  namespace: {{ index $prometheus 0 }}
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheuses]
+    resourceNames: [{{ index $prometheus 1 | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "foretoken.clusterName" $ }}
+  namespace: {{ index $prometheus 0 }}
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "foretoken.clusterName" $ }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $account }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

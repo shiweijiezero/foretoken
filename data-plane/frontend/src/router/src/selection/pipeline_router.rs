@@ -15,8 +15,8 @@ use crate::inventory::supports_request;
 use crate::route_target_stats::NoopRouteTargetStatsReader;
 use crate::{
     RouteCandidate, RouteDecision, RouteError, RouteInventory, RouteSession,
-    RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, RoutingProgress, RoutingStage,
-    ScoredCandidate,
+    RouteTargetStatsReader, Router, RouterPipeline, RouterPipelines, RouterRequest,
+    RoutingProgress, RoutingStage, ScoredCandidate,
 };
 
 /// Observation window used for every route target in one routing round.
@@ -28,7 +28,7 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     snapshot_version: u64,
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
-    pipeline: Arc<RouterPipeline<C>>,
+    pipelines: Arc<RouterPipelines<C>>,
     routing_load: Arc<Mutex<RoutingReservations>>,
     metrics: Arc<crate::metrics::RouterMetricsScope>,
 }
@@ -38,20 +38,36 @@ impl<C: Send + 'static> PipelineRouter<C> {
         inventory: Arc<dyn RouteInventory>,
         pipeline: impl Into<Arc<RouterPipeline<C>>>,
     ) -> Self {
-        let pipeline = pipeline.into();
+        Self::with_pipelines(inventory, Arc::new(RouterPipelines::new(pipeline)))
+    }
+
+    /// Creates a Router from one atomically prepared set of model and execution-role algorithms.
+    pub fn with_pipelines(
+        inventory: Arc<dyn RouteInventory>,
+        pipelines: Arc<RouterPipelines<C>>,
+    ) -> Self {
         let metrics = Arc::new(crate::metrics::RouterMetricsScope::new(
             inventory.as_ref(),
-            pipeline.algorithm_names,
+            |model, round| {
+                let role = inventory.model_routes().selection_role(model, round);
+                pipelines.get(model, role).algorithm_names
+            },
         ));
         Self {
             inventory,
             snapshot_version: 0,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
-            pipeline,
+            pipelines,
             routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
             metrics,
         }
+    }
+
+    /// Resolves the current execution role independently of which candidate wins selection.
+    fn pipeline(&self, model: &str, round: RoutingStage) -> &Arc<RouterPipeline<C>> {
+        let role = self.inventory.model_routes().selection_role(model, round);
+        self.pipelines.get(model, role)
     }
 
     /// Associates this inventory with its serving-snapshot version for shared algorithm state.
@@ -201,7 +217,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         let started = Instant::now();
         let metrics = &self.metrics;
         let round = routing_progress.current_stage;
-        let [filter_name, scorer_name, picker_name] = self.pipeline.algorithm_names;
+        let pipeline = self.pipeline(&request.model, round);
+        let [filter_name, scorer_name, picker_name] = pipeline.algorithm_names;
         // Keep every early return inside the round so failed candidate discovery or invalid
         // algorithm output is counted as well as successful selections.
         let result = (|| {
@@ -221,7 +238,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 return Err(error);
             }
             let stage_started = Instant::now();
-            let filtered_indexes = self.pipeline.filter.filter(
+            let filtered_indexes = pipeline.filter.filter(
                 request,
                 &candidates,
                 self.kv_prefix_indexer.as_ref(),
@@ -260,7 +277,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             let crate::algorithm::ScoringOutcome {
                 scores,
                 on_selected,
-            } = self.pipeline.scorer.score_for_selection(
+            } = pipeline.scorer.score_for_selection(
                 request,
                 &filtered,
                 self.kv_prefix_indexer.as_ref(),
@@ -302,12 +319,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 return Err(RouteError::Busy);
             }
             let stage_started = Instant::now();
-            let picked = self.pipeline.picker.pick(
-                request,
-                &selectable,
-                routing_progress,
-                customized_context,
-            );
+            let picked =
+                pipeline
+                    .picker
+                    .pick(request, &selectable, routing_progress, customized_context);
             metrics.stage(
                 &request.model,
                 round,
@@ -643,52 +658,63 @@ impl<C: Send + 'static> RouteSession for Session<C> {
 #[async_trait::async_trait]
 impl<C: Send + 'static> Router for PipelineRouter<C> {
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
-        let kv_prefix_indexer =
-            if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
-                let candidates = {
-                    let reservations = self
-                        .routing_load
-                        .lock()
-                        .expect("routing load lock poisoned");
-                    self.candidates(&request, &reservations)
-                };
-                let lookups = candidates
-                    .iter()
-                    .filter(|candidate| {
-                        matches!(
-                            candidate.role,
-                            ModelServerRole::Aggregate
-                                | ModelServerRole::Prefill
-                                | ModelServerRole::Decode
-                        )
-                    })
-                    .filter_map(|candidate| {
-                        request
-                            .kv_prefix_lookup(
-                                candidate.route_target_id.as_str(),
-                                candidate.data_parallel_rank,
-                            )
-                            .ok()
-                    })
-                    .collect::<Vec<_>>();
-                self.kv_prefix_indexer
-                    .prepare(&lookups)
-                    .await
-                    .unwrap_or_else(|| self.kv_prefix_indexer.clone())
-            } else {
-                self.kv_prefix_indexer.clone()
+        let needs_prefix = self
+            .inventory
+            .model_routes()
+            .routes()
+            .iter()
+            .filter(|route| route.model == request.model)
+            .any(|route| {
+                let pipeline = self.pipelines.get(&request.model, route.role);
+                pipeline.filter.needs_kv_prefix() || pipeline.scorer.needs_kv_prefix()
+            });
+        let kv_prefix_indexer = if needs_prefix {
+            let candidates = {
+                let reservations = self
+                    .routing_load
+                    .lock()
+                    .expect("routing load lock poisoned");
+                self.candidates(&request, &reservations)
             };
+            let lookups = candidates
+                .iter()
+                .filter(|candidate| {
+                    matches!(
+                        candidate.role,
+                        ModelServerRole::Aggregate
+                            | ModelServerRole::Prefill
+                            | ModelServerRole::Decode
+                    )
+                })
+                .filter_map(|candidate| {
+                    request
+                        .kv_prefix_lookup(
+                            candidate.route_target_id.as_str(),
+                            candidate.data_parallel_rank,
+                        )
+                        .ok()
+                })
+                .collect::<Vec<_>>();
+            self.kv_prefix_indexer
+                .prepare(&lookups)
+                .await
+                .unwrap_or_else(|| self.kv_prefix_indexer.clone())
+        } else {
+            self.kv_prefix_indexer.clone()
+        };
         Box::new(Session {
             router: Self {
                 inventory: self.inventory.clone(),
                 snapshot_version: self.snapshot_version,
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
-                pipeline: self.pipeline.clone(),
+                pipelines: self.pipelines.clone(),
                 routing_load: self.routing_load.clone(),
                 metrics: self.metrics.clone(),
             },
-            customized_context: (self.pipeline.customized_context_factory)(&request),
+            customized_context: (self
+                .pipeline(&request.model, RoutingStage::Initial)
+                .customized_context_factory)(&request),
             request,
             stage: SessionStage::Initial,
             selected: Vec::new(),

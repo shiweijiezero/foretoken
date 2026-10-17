@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from importlib import resources
 from typing import Any, BinaryIO, Self
 from urllib.error import URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -30,7 +30,6 @@ from foretoken.profiling.reader import (
     capture_path,
     capture_token,
 )
-
 from foretoken.storage import DirectoryVolumes
 
 logger = logging.getLogger(__name__)
@@ -188,7 +187,7 @@ class ProfileStorage:
         if claim.get("status", {}).get("phase") != "Bound":
             raise DeploymentError("capture storage is not bound")
         node = self._placement(namespace, claim)
-        uid, gid = DirectoryVolumes.read_directory_owner(claim) or (65532, 65532)
+        uid, gid = DirectoryVolumes.read_directory_owner(claim) or (1000, 1000)
         name = f"foretoken-profile-view-{uuid4().hex[:16]}"
         reader = _Reader(name, claim["metadata"]["uid"], secrets.token_hex(32))
         labels = {
@@ -350,16 +349,17 @@ class ProfileStorage:
         key = namespace, reader.claim_uid, report
         if key in self._nsight_sessions:
             return self._nsight_sessions[key]
-        # The reader already enforces PVC placement and verifies its identity. Co-locate
-        # the native viewer so an occupied RWO claim remains on the same node.
-        reader_pod = self._object("pod", reader.name, namespace)
-        if reader_pod is None:
-            raise DeploymentError("capture reader was removed; restart the viewer")
+        # The authenticated reader owns source access; the official viewer receives only
+        # a session-local copy and keeps its image's startup identity.
         config = self._object("configmap", reader.name, namespace)
         if config is None:
             raise DeploymentError(
                 "capture reader configuration was removed; restart the viewer"
             )
+        query = urlsplit(
+            self._path(reader, namespace, "file", directory, filename)
+        ).query
+        report_url = f"http://{reader.name}.{namespace}.svc:{READER_PORT}/file?{query}"
         name = f"foretoken-nsight-{uuid4().hex[:16]}"
         labels = {
             "app.kubernetes.io/name": "foretoken-nsight-view",
@@ -414,6 +414,7 @@ class ProfileStorage:
                     "stringData": {
                         "turn-password": turn_password,
                         "default.conf": proxy_config,
+                        "report-url": report_url,
                     },
                 },
                 "secrets",
@@ -477,30 +478,61 @@ class ProfileStorage:
                     "kind": "Pod",
                     "metadata": metadata,
                     "spec": {
-                        "affinity": {
-                            "nodeAffinity": {
-                                "requiredDuringSchedulingIgnoredDuringExecution": {
-                                    "nodeSelectorTerms": [
-                                        {
-                                            "matchFields": [
-                                                {
-                                                    "key": "metadata.name",
-                                                    "operator": "In",
-                                                    "values": [
-                                                        reader_pod["spec"]["nodeName"]
-                                                    ],
-                                                }
-                                            ]
-                                        }
-                                    ],
-                                }
-                            }
-                        },
                         "automountServiceAccountToken": False,
                         "restartPolicy": "Never",
                         "imagePullSecrets": json.loads(
                             self.viewer_config["imagePullSecrets"]
                         ),
+                        "initContainers": [
+                            {
+                                "name": "report-copy",
+                                "image": self.image,
+                                "command": [
+                                    "python",
+                                    "-I",
+                                    "-B",
+                                    "-c",
+                                    """import os, shutil, sys
+from urllib.error import URLError
+from urllib.request import urlopen
+
+try:
+    with urlopen(os.environ['FORETOKEN_PROFILE_REPORT_URL'], timeout=float(sys.argv[1])) as source:
+        with open('/reports/selected.nsys-rep', 'xb') as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+            if target.tell() != int(source.headers['Content-Length']):
+                raise OSError('incomplete report transfer')
+            os.fchmod(target.fileno(), 0o444)
+except (URLError, OSError) as error:
+    raise SystemExit(f'Unable to copy the selected report: {error}')
+""",
+                                    str(self.seconds),
+                                ],
+                                "env": [
+                                    {
+                                        "name": "FORETOKEN_PROFILE_REPORT_URL",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "name": name,
+                                                "key": "report-url",
+                                            }
+                                        },
+                                    }
+                                ],
+                                "securityContext": {
+                                    "runAsNonRoot": True,
+                                    "runAsUser": 1000,
+                                    "runAsGroup": 1000,
+                                    "allowPrivilegeEscalation": False,
+                                    "readOnlyRootFilesystem": True,
+                                    "capabilities": {"drop": ["ALL"]},
+                                    "seccompProfile": {"type": "RuntimeDefault"},
+                                },
+                                "volumeMounts": [
+                                    {"name": "report", "mountPath": "/reports"}
+                                ],
+                            },
+                        ],
                         "containers": [
                             {
                                 "name": "viewer",
@@ -542,7 +574,7 @@ class ProfileStorage:
                                     {
                                         "name": "report",
                                         "mountPath": "/reports/selected.nsys-rep",
-                                        "subPath": report,
+                                        "subPath": "selected.nsys-rep",
                                         "readOnly": True,
                                     },
                                     {"name": "shm", "mountPath": "/dev/shm"},
@@ -564,13 +596,7 @@ class ProfileStorage:
                             },
                         ],
                         "volumes": [
-                            {
-                                "name": "report",
-                                "persistentVolumeClaim": {
-                                    "claimName": claim_name,
-                                    "readOnly": True,
-                                },
-                            },
+                            {"name": "report", "emptyDir": {}},
                             {"name": "shm", "emptyDir": {"medium": "Memory"}},
                             {
                                 "name": "access",

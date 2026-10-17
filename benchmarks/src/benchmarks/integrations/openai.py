@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -155,6 +155,7 @@ class OpenAILoadClient:
         conversation_id: str | None,
         turn: int | None,
         retain_history: bool = False,
+        on_start: Callable[[str, float], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prepared request and measure its timing, usage, and protocol failures."""
         request_fields = request.body
@@ -163,6 +164,8 @@ class OpenAILoadClient:
         target_length = request.output_tokens
         model = request_fields["model"]
         started_at = time.perf_counter()
+        if on_start is not None:
+            on_start(request_id, started_at)
         timing = ChatStreamTiming()
         input_tokens: int | None = None
         output_tokens: int | None = None
@@ -201,6 +204,10 @@ class OpenAILoadClient:
                     completion=completion,
                 )
             transport_completed = True
+            # HTTP EOF can precede generation completion; retain partial content and usage.
+            if not content.is_complete(request_fields.get("n") or 1):
+                success = False
+                error_message = "Response ended before every requested choice received a finish_reason"
         except (APIError, httpx.HTTPError) as exc:
             success = False
             status_code = getattr(exc, "status_code", None)

@@ -82,7 +82,7 @@ kubectl get pods --namespace foretoken-demo
 foretoken delete examples/quickstart
 ```
 
-该示例包含 namespace，删除时会清理其中的服务和 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。示例使用独立 namespace，共享平台由管理员维护。
+示例需使用独立 namespace。删除时先等待服务完成清理，再移除控制器、namespace 及其中的 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。共享平台仍由管理员维护。
 
 ## 请求未成功时
 

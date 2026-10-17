@@ -155,14 +155,7 @@ spec:
 
 可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持调用方内部的请求顺序。并发已满的调用方不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
 
-配置可信网关，为每个文本请求覆盖以下请求头，填入已认证的角色和稳定的调用方标识：
-
-```http
-x-role: role1
-x-caller-id: caller-a
-```
-
-缺少调用方标识或角色不匹配的请求会被拒绝。身份认证、授权和 RPM/token 配额由网关负责；前端仅向该可信网关开放。
+角色规则需要接入认证网关，缺少已认证身份或角色不匹配的请求会被拒绝。网关接入方式见[准入生命周期](../../docs/development/admission-rules_zh.md#网关接入)，缓存共享方式见[前缀缓存隔离](../../docs/inference-parameters_zh.md#前缀缓存隔离)。
 
 ### 为单个模型覆盖配置
 

@@ -23,7 +23,7 @@ from build import ProjectBuilder
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-from vllm_patches import apply_patch, engine_patches
+from vllm_patches import apply_patches, engine_patches
 
 PATCH_ROOT = Path("/opt/foretoken-engine-build/patches")
 METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
@@ -32,17 +32,16 @@ METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
 def synchronize_source(
     source: Path, workspace: Path, files: list[str], deleted: list[str]
 ) -> set[str]:
-    """Update the persistent builder checkout from the CLI's authoritative source manifest."""
+    """Synchronize authoritative inputs without changing the last prepared builder checkout."""
     manifest = workspace.parent / f"{workspace.name}-files.json"
     originals = workspace.parent / f"{workspace.name}-inputs"
     previous = set(json.loads(manifest.read_text())) if manifest.exists() else set()
     current = set(files)
     previous.update(deleted)
     for name in previous - current:
-        for directory in (workspace, originals):
-            path = directory / name
-            if path.is_file() or path.is_symlink():
-                path.unlink()
+        path = originals / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
     for name in sorted(current):
         origin, original = source / name, originals / name
         if (
@@ -50,12 +49,10 @@ def synchronize_source(
             or not filecmp.cmp(origin, original, shallow=False)
             or origin.stat().st_mode != original.stat().st_mode
         ):
-            # Compare unpatched inputs, not the checkout modified by upstream generation.
-            for destination in (original, workspace / name):
-                if destination.is_dir():
-                    shutil.rmtree(destination)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(origin, destination)
+            if original.is_dir():
+                shutil.rmtree(original)
+            original.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(origin, original)
     known = previous | current
     manifest.write_text(json.dumps(sorted(known)) + "\n")
     return known - current
@@ -64,33 +61,92 @@ def synchronize_source(
 def prepare_patches(
     core: Path, plugin: Path | None, version: str, metax: bool
 ) -> dict[Path, set[str]]:
-    """Apply engine backports and return their package files for payload export."""
-    patches = []
-    if metax:
-        configuration = json.loads((METAX_ROOT / "source-environment.json").read_text())
-        for target, directory in (("core", core), ("metax", plugin)):
-            if directory is not None:
-                patches.extend(
-                    (directory, METAX_ROOT / name)
-                    for name in configuration["patches"][target]
-                )
-    patches.extend((core, patch) for patch in engine_patches(core, version, PATCH_ROOT))
-    # A changed input may reset one file of a multi-file patch. Restore all patch
-    # inputs together before applying the ordered series to avoid mixed states.
-    patched_files: dict[Path, set[str]] = {}
-    for directory, patch in patches:
-        originals = directory.parent / f"{directory.name}-inputs"
-        for line in patch.read_text().splitlines():
-            if line.startswith("+++ b/"):
-                name = line.split()[1].removeprefix("b/")
-                patched_files.setdefault(directory, set()).add(name)
-                if (originals / name).is_file():
-                    shutil.copy2(originals / name, directory / name)
-                else:
-                    (directory / name).unlink(missing_ok=True)
-    for directory, patch in patches:
-        apply_patch(directory, patch)
-    return patched_files
+    """Validate complete patch stacks, then publish owned sources without deleting generated files."""
+    directories = [core] if plugin is None else [core, plugin]
+    staging = Path(tempfile.mkdtemp(prefix="engine-patches-", dir=core.parent))
+    completed = False
+    try:
+        patches: dict[Path, list[Path]] = {directory: [] for directory in directories}
+        for directory in directories:
+            originals = directory.parent / f"{directory.name}-inputs"
+            shutil.copytree(originals, staging / directory.name)
+        if metax:
+            configuration = json.loads(
+                (METAX_ROOT / "source-environment.json").read_text()
+            )
+            # SDK backports target the manifest's core version. Custom runtimes
+            # provide their own matching SDK adaptations.
+            if (
+                Version(version).base_version
+                == Version(configuration["core"]["version"]).base_version
+            ):
+                for target, directory in (("core", core), ("metax", plugin)):
+                    if directory is not None:
+                        patches[directory].extend(
+                            METAX_ROOT / name
+                            for name in configuration["patches"][target]
+                        )
+        patches[core].extend(engine_patches(staging / core.name, version, PATCH_ROOT))
+        patched_files = {
+            directory: {
+                str(name)
+                for name in apply_patches(staging / directory.name, patches[directory])
+            }
+            for directory in directories
+        }
+        # CMake also generates files inside the source tree. Publish only captured
+        # inputs and patch outputs, retaining generated files and unchanged mtimes.
+        for directory in directories:
+            prepared = staging / directory.name
+            manifest = directory.parent / f"{directory.name}-prepared-files.json"
+            inputs = directory.parent / f"{directory.name}-files.json"
+            previous = set(json.loads(inputs.read_text()))
+            if manifest.exists():
+                previous.update(json.loads(manifest.read_text()))
+            else:
+                # Trees prepared before file ownership was recorded may have lost
+                # generated sources. Reconfigure once without discarding objects.
+                (directory.parent / "native-build/CMakeCache.txt").unlink(missing_ok=True)
+            current = {
+                str(path.relative_to(prepared))
+                for path in prepared.rglob("*") if path.is_file()
+            }
+            # Record every possible publication before writes, so a retry can also
+            # remove files introduced by an interrupted, subsequently changed stack.
+            pending = staging / manifest.name
+            pending.write_text(json.dumps(sorted(previous | current)) + "\n")
+            pending.replace(manifest)
+            for name in sorted(previous - current, reverse=True):
+                path = directory / name
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                parent = path.parent
+                while parent != directory and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+            for name in sorted(current):
+                origin, target = prepared / name, directory / name
+                if (
+                    target.is_file()
+                    and target.stat().st_mode == origin.stat().st_mode
+                    and filecmp.cmp(origin, target, shallow=False)
+                ):
+                    continue
+                if target.is_dir():
+                    target.rmdir()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # Restoring an older input must still invalidate compiled consumers.
+                origin.touch()
+                origin.replace(target)
+            pending.write_text(json.dumps(sorted(current)) + "\n")
+            pending.replace(manifest)
+        completed = True
+        return patched_files
+    finally:
+        if completed:
+            shutil.rmtree(staging)
+        else:
+            print(f"engine patch preparation retained at {staging}", file=sys.stderr)
 
 
 def package_directory(name: str) -> Path:
@@ -119,6 +175,24 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
         FETCHCONTENT_BASE_DIR=str(cache / "dependencies"),
         CCACHE_DIR=str(cache / "ccache"),
     )
+    if getattr(torch.version, "maca", None):
+        # The SDK CMake wrapper must preserve failures before its cleanup commands.
+        environment["BASH_ERREXIT"] = "1"
+    elif torch.version.cuda:
+        # Runtime wheels can supply CUDA library headers outside CUDA_HOME.
+        # System include paths keep explicit toolkit paths ahead of wheel headers.
+        includes = set()
+        for distribution in importlib.metadata.distributions():
+            if not canonicalize_name(distribution.metadata["Name"]).startswith("nvidia-"):
+                continue
+            for file in distribution.files or ():
+                if "include" in file.parts:
+                    directory = Path(*file.parts[:file.parts.index("include") + 1])
+                    includes.add(str(distribution.locate_file(directory)))
+        if includes:
+            environment["CPLUS_INCLUDE_PATH"] = os.pathsep.join(
+                filter(None, (environment.get("CPLUS_INCLUDE_PATH"), *sorted(includes)))
+            )
     if not environment.get("TORCH_CUDA_ARCH_LIST"):
         # Upstream CMake selects its supported architectures for CPU-only builds.
         environment.pop("TORCH_CUDA_ARCH_LIST", None)
@@ -163,12 +237,21 @@ def export_overlay(
         # A namespace package would let Python select the image's old regular package.
         raise RuntimeError(f"engine source must provide {package}/__init__.py")
     runtime = package_directory(package)
+    # Keep package assets, including hidden native libraries, but not repository metadata.
+    excluded = {
+        ".git",
+        ".gitkeep",
+        ".gitignore",
+        ".gitattributes",
+        ".gitmodules",
+        "__pycache__",
+    }
     # Ordinary Python modules come only from source. The image supplies native
     # libraries and generated/vendor packages.
     for path in runtime.rglob("*"):
-        if not path.is_file() or "__pycache__" in path.parts:
-            continue
         relative = path.relative_to(runtime)
+        if not path.is_file() or any(part in excluded for part in relative.parts):
+            continue
         if (
             path.name in {"_version.py", "vllm-rs"}
             or path.name.endswith(".so")
@@ -180,7 +263,12 @@ def export_overlay(
             shutil.copy2(path, target)
     native = cache / "native-install"
     if (native / package).is_dir():
-        shutil.copytree(native / package, destination / package, dirs_exist_ok=True)
+        shutil.copytree(
+            native / package,
+            destination / package,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(*excluded),
+        )
         known = json.loads((cache / "native-files.json").read_text())
         for name in known:
             if not (native / name).is_file():
@@ -195,6 +283,8 @@ def export_overlay(
         }
         files.update(name for name in patched_files if name.startswith(package + "/"))
         for name in sorted(files):
+            if any(part in excluded for part in Path(name).parts):
+                continue
             target = destination / name
             if target.is_dir():
                 shutil.rmtree(target)

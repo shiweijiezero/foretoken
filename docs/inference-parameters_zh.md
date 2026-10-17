@@ -19,7 +19,7 @@ spec:
     gpu-memory-utilization: 0.85
 ```
 
-值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
+值直接使用 YAML 布尔值、数字、字符串、列表或对象。省略选项或填写 `null` 即使用默认值。具体取值需与引擎镜像、模型及硬件匹配。
 
 ## 模型环境变量
 
@@ -87,6 +87,27 @@ spec:
 
 修改后，用 `foretoken deploy` 重新部署模型所在的配置目录。限额在线生效，已接收的工作继续执行；满额时停止接收新工作，直到占用降到上限以下。省略 `instanceAdmission` 表示不限流。
 
+## 前缀缓存隔离
+
+前缀缓存复用相同提示词前缀的计算结果。要按已认证的调用方隔离缓存，在 ModelService YAML 中添加：
+
+```yaml
+spec:
+  prefixCacheIsolation: true
+```
+
+该设置统一用于模型的所有 Pool 和前端，覆盖 Chat Completions、文本补全、Responses 和 Messages，支持 vLLM 的文本与图片输入生成。
+
+| 取值 | 缓存共享方式 |
+| --- | --- |
+| `true` | 按已认证的调用方隔离前缀缓存，忽略请求 body 中的 `cache_salt`。 |
+| `false` | 不加盐，允许调用方共享相同前缀，忽略请求 body 中的 `cache_salt`。 |
+| 省略或 `null` | 沿用请求 body 中的 `cache_salt`；body 省略该字段、填写 `null` 或空字符串时不加盐。 |
+
+启用隔离需要接入认证网关。该设置仅改变缓存共享范围，前缀缓存开关和准入规则保持不变。
+
+对包含模型和前端配置的目录执行 `foretoken deploy <配置目录>`。修改该设置会替换模型实例，并切换到独立的缓存域，持久化共享缓存也按模式分开。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |
@@ -98,7 +119,8 @@ spec:
 | `gpu-memory-utilization` | 每个引擎实例可使用的显存比例 |
 | `max-num-seqs` | 每轮调度的最大序列数 |
 | `max-num-batched-tokens` | 每轮调度的最大 token 数 |
-| `enforce-eager` | `true` 时禁用计算图捕获 |
+| `enforce-eager` | `true` 时禁用计算图捕获；Encoder Pool 默认为 `true` |
+| `enable-prefix-caching` | `true` 开启 KV 前缀缓存，`false` 关闭；Encoder Pool 固定为 `false` |
 | `speculative-config` | 推测解码的原生配置字典 |
 | `tensor-parallel-size` | 张量并行度（TP） |
 | `pipeline-parallel-size` | 流水线并行度（PP） |
@@ -135,4 +157,6 @@ spec:
 
 ## 平台管理的选项
 
-模型标识、启动端点、传输连接器和性能剖析由 Foretoken 管理，其余原生选项交给所选引擎解释。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)；当前已实现的 backend 为 vLLM。
+模型、tokenizer、节点数量和缓存传输分别通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
+
+其余原生选项交给 vLLM，包括 `ec-manager-config`，以及未使用 mcTracer 时的自定义 worker。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)。

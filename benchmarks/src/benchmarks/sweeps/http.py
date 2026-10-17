@@ -19,7 +19,7 @@ from benchmarks.config.benchmark import (
     normalize_output_token_limit,
     parse_duration_seconds,
 )
-from benchmarks.model_service import resolve_benchmark_service
+from benchmarks.model_service import ModelService, resolve_benchmark_service
 from benchmarks.results.console import format_benchmark_config, log_sweep_results
 from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
@@ -176,29 +176,33 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         label: str,
         wandb_group: str,
         dry_run: bool,
-    ) -> dict[str, Any]:
+    ) -> BenchmarkRun:
         point_config = replace(
             config, sweep=ParameterSweepConfig(),
             wandb=replace(config.wandb, group=wandb_group),
         )
-        allow_multiple = bool(config.trace.trace_selector or config.is_multi_turn)
-        selection = (config.service, allow_multiple)
-        if selection != self.selection:
-            self.resources.close()
-            self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
-            self.selection = selection
-        logger.info("%s", format_benchmark_config(point_config, self.service))
+        selection = (config.service, bool(config.trace.trace_selector or config.is_multi_turn))
+
+        def prepare_service() -> ModelService:
+            """Reuse the service across adjacent sweep points with the same selection."""
+            if selection != self.selection:
+                self.resources.close()
+                self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
+                self.selection = selection
+            logger.info("%s", format_benchmark_config(point_config, self.service))
+            return self.service
+
         if point_config.slo.search:
             result = SloAutoTuneBenchmark(
                 point_config,
-                self.service,
+                prepare_service,
                 label=label,
                 output_dir=output_dir,
             ).run()
         else:
             result = HttpBenchmark(
                 point_config,
-                self.service,
+                prepare_service(),
                 label=label,
                 output_dir=output_dir,
                 wandb_group=wandb_group,
@@ -206,11 +210,12 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         metrics = dict(result.metrics)
         metrics["gpu_count"] = (
             self.service.gpu_count
-            if metrics["throughput"].get("generation_tokens_per_second_per_gpu") is not None
-            else None
+            if self.service is not None and self.selection == selection
+            and metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
+            else metrics.get("gpu_count")
         )
         metrics["label"] = label
-        return metrics
+        return replace(result, metrics=metrics)
 
 
 class ParameterSweepBenchmark:
@@ -222,34 +227,35 @@ class ParameterSweepBenchmark:
     def run(self) -> BenchmarkRun:
         """Run HTTP repetitions and return the aggregate completion result."""
         sweep = self.benchmark.sweep
-        with ExitStack() as resources:
-            adapter = _HttpSweepAdapter(resources)
-            definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name)
-            if sweep.path:
-                combinations = load_core_sweep_points(definition, adapter)
-            else:
-                definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison")
-                combinations = [
-                    {
-                        _BENCHMARK_NAME: f"service-{choice['name']}",
-                        _PARAMETER_GROUP: "service-comparison",
-                        "service": choice,
-                    }
-                    for choice in self.benchmark.service_choices
-                ]
-            # Complete all workloads for a method before releasing its temporary service.
-            methods: dict[str, ModelServiceSource] = {}
-            for point in combinations:
-                source = adapter.apply_point(self.benchmark, point).service
-                if source.name in methods and methods[source.name] != source:
-                    raise ValueError(f"Sweep service name {source.name!r} refers to different services")
-                methods[source.name] = source
-            order = {name: index for index, name in enumerate(methods)}
-            combinations.sort(key=lambda point: order[adapter.apply_point(self.benchmark, point).service.name])
-            execution = run_sweep(
-                self.benchmark, definition, adapter,
-                mode="parameter_sweep", combinations=combinations,
-            )
+        resources = ExitStack()
+        adapter = _HttpSweepAdapter(resources)
+        definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume)
+        if sweep.path:
+            combinations = load_core_sweep_points(definition, adapter)
+        else:
+            definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison", sweep.resume)
+            combinations = [
+                {
+                    _BENCHMARK_NAME: f"service-{choice['name']}",
+                    _PARAMETER_GROUP: "service-comparison",
+                    "service": choice,
+                }
+                for choice in self.benchmark.service_choices
+            ]
+        # Complete all workloads for a method before releasing its temporary service.
+        methods: dict[str, ModelServiceSource] = {}
+        for point in combinations:
+            source = adapter.apply_point(self.benchmark, point).service
+            if source.name in methods and methods[source.name] != source:
+                raise ValueError(f"Sweep service name {source.name!r} refers to different services")
+            methods[source.name] = source
+        order = {name: index for index, name in enumerate(methods)}
+        combinations.sort(key=lambda point: order[adapter.apply_point(self.benchmark, point).service.name])
+        execution = run_sweep(
+            self.benchmark, definition, adapter,
+            mode="parameter_sweep", combinations=combinations,
+            service_resources=resources,
+        )
         if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
             log_sweep_results(execution.points)
         return execution.run

@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
 from benchmarks.results.plots.measurements import (
     _http_charts,
@@ -27,6 +28,7 @@ from benchmarks.results.plots.measurements import (
     phase_summary_charts,
 )
 from benchmarks.results.plots.saved_results import read_saved_results
+from benchmarks.results.tasks import task_source
 
 _PALETTE = (
     "#2a78d6",
@@ -422,9 +424,9 @@ def _pareto(
     return exported
 
 
-def default_output_directory(source: Path, *others: Path) -> Path:
+def default_output_directory(source: Path, *others: Path, base: Path | None = None) -> Path:
     """Choose the shared default for the standalone CLI and automatic result exporter."""
-    return Path("plots") if others else Path(source) / "plots"
+    return Path("plots") if others or base is not None else Path(source) / "plots"
 
 
 def render_results(
@@ -434,6 +436,7 @@ def render_results(
     columns: int = 1,
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
+    base: Path | None = None,
 ) -> dict[str, Path]:
     """Render saved results from one or more directories into figures and comparison tables.
 
@@ -442,12 +445,19 @@ def render_results(
     changes the existing JSON or native evaluator outputs.
     """
     source = Path(source)
-    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others)
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
-    direct = not others and ((source / "config.json").is_file() or (source / "slo_results.json").is_file())
-    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods)
-    if comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
+    if base is None and not others:
+        source = task_source(source)
+    direct = base is None and not others and (
+        (source / "slo_results.json").is_file()
+        or (source / "config.json").is_file() and any(
+            (source / name).is_file() for name in ("metrics.json", "sweep_points.json")
+        )
+    )
+    comparison_results = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
+    if base is None and comparison_results is not None and (source / "generated/context.json").is_file() and len(comparison_results.runs) == 1:
         measured = comparison_results.runs[0].get("result")
         collection_metrics = {row["metric"] for row in comparison_results.summary} | {
             chart.metric for chart in comparison_results.native
@@ -469,6 +479,7 @@ def render_results(
     identities: list[str] = []
     points_path = source / "sweep_points.json"
     if comparison_results is not None:
+        base_rows = compare_to_base(comparison_results, base, metrics=metrics) if base is not None else None
         points = comparison_results.points
         summary = comparison_results.summary
         scalar_metrics = {row["metric"] for row in summary}
@@ -483,7 +494,10 @@ def render_results(
         charts += [chart for chart in comparison_results.native if not metrics or chart.metric in metrics]
         out.mkdir(parents=True, exist_ok=True)
         result = _pareto(points, summary, out, (), columns) if points else {}
-        for name, rows in (("comparison-runs", comparison_results.runs), ("comparison-summary", summary)):
+        run_rows = [{key: value for key, value in row.items() if key != "environment_settings"}
+                    for row in comparison_results.runs]
+        for name, rows in (("comparison-runs", run_rows), ("comparison-summary", summary),
+                           ("comparison-base", base_rows)):
             if not rows:
                 continue
             file = _table(out / name, rows)
@@ -548,6 +562,12 @@ def render_results(
             charts += gpu_allocation_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
+        if "evaluation_comparison" in run_metrics or (source / "context.json").is_file():
+            runs = read_saved_results((source,), methods=methods).runs
+            file = _table(out / "comparison-runs", [
+                {key: value for key, value in row.items() if key != "environment_settings"} for row in runs
+            ])
+            result[file.name] = file
         if "scores" in run_metrics:
             file = _table(out / "quality-scores", run_metrics["scores"])
             result[file.name] = file

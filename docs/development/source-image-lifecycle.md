@@ -1,28 +1,32 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Source update lifecycle
+# Source deployment lifecycle
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-Installation and update commands are in [Deploy Foretoken from Source](../custom-deployment.md). The following constraints apply when maintaining the update path.
+This guide describes the behavior to preserve when maintaining source deployments. For commands and examples, see [Deploy Foretoken from Source](../custom-deployment.md).
 
-## Build and publish
+## Installation and updates
 
-Source operations from one workstation are serialized per cluster. Synchronization includes file deletions; engine updates must not restore deleted source from the runtime image. Compilation uses caches separate from model data and preserves compatibility with the selected runtime's Python and accelerator libraries.
+Platform installation owns shared CRDs, dependencies and runtime defaults, and prepares initial application builds. Deployment builds controller, frontend and model-server code from the selected checkout and updates the submitted namespace. Each namespace has a controller that reconciles only its resources, so controller code changes use the same deployment path as serving code. CRD changes still require platform installation.
 
-Rust-only vLLM inputs are replaced with the complete pinned upstream tree before repository patches are applied. Installed Python engine patches target the resolved package directory, including editable installations.
+Source updates reuse compatible runtime environments and rebuild them automatically when dependency or base-image inputs change. The CLI remembers engine directories separately for each Foretoken source directory. Engine source must remain compatible with the selected Python, PyTorch and accelerator libraries.
 
-A complete application version is published before use and remains immutable. Stop a build's abandoned publishers before reusing its output. The platform owns application storage independently of compiler and model caches.
+## Builds and publication
 
-## Select and recover
+Go controller executables, Rust serving executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs, replacing each updated group in full, including deletions. Reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Publish the complete application before updating services; running services must not depend on writable compiler caches.
 
-Controllers save the selected runtime and application version before creating workloads. Model preparation and serving use the same version; restarts and scaling retain it. Platform installation updates defaults, while explicit redeployment updates existing services.
+Compiler caches persist across builder replacement. An explicitly selected build StorageClass holds completed artifacts, while execution state stays on automatically managed local storage. Publication reads only completed exports; source archives are read from the corresponding local workspace. Both build volumes follow the same binding's cleanup. Application and model storage retain their own configuration and lifecycle.
 
-Deployment success requires the selected version and serving routes to be ready. Existing controllers own rollout and request draining.
+Independent source directories can build concurrently. Serialize source preparation and submission within one source directory, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 
-## Clean up
+Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining.
 
-Keep versions referenced by services, workload templates, running or terminating workloads, saved tasks and Helm rollback history. Remove only the publisher's unreferenced versions, leaving other publishers' work intact.
+## Cleanup
 
-Helm owns application storage. Source uninstall removes managed compiler caches and the workstation binding while preserving model data.
+Failed or cancelled builds stop their builders and publishers while retaining compiler caches for retry. Cleanup preserves applications still needed by deployments, builds or rollback and saves recoverable build inputs before releasing unused resources.
+
+`foretoken delete` waits for service and workload cleanup before removing an unused namespace controller. A namespace included in the submitted configuration is deleted last. It also cleans up build resources no longer in use, preserving source directories, experiment results and source archives.
+
+Uninstall the shared platform after its deployments have been deleted, reclaiming compiler volumes before removing their provisioner. Model data and archived inputs are retained.

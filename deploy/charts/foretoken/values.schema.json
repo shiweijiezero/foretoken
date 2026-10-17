@@ -16,6 +16,7 @@
     "runtime"
   ],
   "properties": {
+    "scope": {"type": "string", "enum": ["platform", "deployment"]},
     "admissionStore": {
       "type": "object",
       "required": ["image", "storageClass", "storageSize", "externalURL", "externalURLSecret"],
@@ -60,6 +61,7 @@
       "type": "object",
       "required": ["serverImage", "clientImage", "storageClassName", "storageSize"],
       "properties": {
+        "origin": {"type": "string"},
         "releaseURL": {"type": "string"},
         "revision": {
           "type": "string",

@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Existing applications retain their store when the default connection changes.
+{{- if eq .Values.scope "platform" }}
 {{- $name := include "foretoken.admissionStoreName" . }}
 {{- $existing := lookup "apps/v1" "StatefulSet" .Release.Namespace $name }}
 {{- $metadata := get $existing "metadata" | default dict }}
@@ -165,4 +166,5 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+{{- end }}
 {{- end }}

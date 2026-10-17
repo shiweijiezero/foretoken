@@ -5,15 +5,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
-import uuid
 from collections.abc import Sequence
 from urllib.parse import urlsplit
-
-import yaml
 
 from foretoken.arguments import (
     ClusterCommand,
@@ -27,11 +23,12 @@ from foretoken.arguments import (
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
+    StopCommand,
     UninstallCommand,
     parse_arguments,
 )
 from foretoken.cluster import run as run_cluster
-from foretoken.editable import EditableDeployment
+from foretoken.deployment import DeploymentLifecycle
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -40,15 +37,14 @@ from foretoken.kubernetes import (
     read_progress,
     resolve_frontend_endpoint,
     timeout_seconds,
-    wait_for_resources,
 )
-from foretoken.manifest import DeploymentError, ResourceRef, parse_deployment
+from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
+from foretoken.service_execution import stop_deployment
 from foretoken.source import source_operation
-from foretoken.storage import DirectoryVolumes
 
 
 def _deployment_resources(
@@ -84,86 +80,17 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
 
 
 def _deploy(
-    kustomize_path: str, timeout: str, profile: ProfileCommand | None = None
+    kustomize_path: str, timeout: str, profile: ProfileCommand | None = None,
+    *, editable: str | None = None, engine_sources: tuple[str, ...] = (),
 ) -> None:
-    """Apply and wait for serving readiness, then optionally capture external traffic."""
-    started = time.monotonic()
+    """Apply service intent, then optionally capture external traffic."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
-    timeout_seconds(timeout)
-    capture = None
-    if profile is not None:
-        # Resolve the selected model before changing the deployment.
-        capture = ProfileRun(profile, deployment=deployment)
-    source = EditableDeployment.discover(kubectl)
-    if source is not None:
-        prepared_at = time.monotonic()
-        source.prepare(timeout)
-        print(
-            f"Source preparation completed in {time.monotonic() - prepared_at:.1f}s",
-            flush=True,
-        )
-        published_at = time.monotonic()
-        deployment = source.apply(deployment, timeout)
-        print(
-            f"Source application publication completed in {time.monotonic() - published_at:.1f}s",
-            flush=True,
-        )
-    # A deployment explicitly selects current platform applications; reconciliation and
-    # capacity changes retain the controller's persisted selection.
-    schema = json.loads(
-        kubectl.get_raw("/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout)
+    # Resolve profiling intent before changing the deployment.
+    capture = ProfileRun(profile, deployment=deployment) if profile is not None else None
+    DeploymentLifecycle(kubectl).apply(
+        deployment, timeout, editable=editable, engine_sources=engine_sources,
     )
-    selection_kinds = set()
-    for definition in schema["components"]["schemas"].values():
-        for identity in definition.get("x-kubernetes-group-version-kind", []):
-            if (
-                identity["kind"] in {"ModelService", "FrontendService"}
-                and "deploymentRevision"
-                in definition["properties"]["spec"]["properties"]
-            ):
-                selection_kinds.add(identity["kind"])
-    revision = uuid.uuid4().hex
-    for obj in deployment.objects:
-        if obj.get("kind") in selection_kinds:
-            obj["spec"]["deploymentRevision"] = revision
-    deployment = parse_deployment(
-        deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
-    )
-    namespace = deployment.namespace or "<current>"
-    print(f"Applying {deployment.path} to namespace {namespace}")
-    DirectoryVolumes(kubectl).apply(deployment, timeout)
-    print(f"Waiting up to {timeout} for Foretoken services")
-    rollout_started = time.monotonic()
-    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
-        try:
-            wait_for_resources(
-                deployment.service_refs(),
-                kubectl,
-                timeout,
-                report=_report_progress,
-                observe=startup.poll,
-                expected_revisions={
-                    ref: revision for ref in deployment.service_refs()
-                    if ref.kind in selection_kinds
-                },
-            )
-        except DeploymentError:
-            # Capture the final container attempt even when the normal polling interval has not elapsed.
-            startup.poll(
-                deployment.service_refs(), time.monotonic() - rollout_started,
-                follow_logs=False, force=True,
-            )
-            raise
-        if source is not None:
-            source.verify(
-                deployment,
-                timeout,
-                observe=lambda: startup.poll(
-                    deployment.service_refs(), time.monotonic() - rollout_started
-                ),
-            )
-    print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
             capture.start()
@@ -180,7 +107,7 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     timeout_seconds(timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
-    DirectoryVolumes(kubectl).delete(deployment, timeout)
+    DeploymentLifecycle(kubectl).delete(deployment, timeout)
     print("Foretoken deployment deleted")
 
 
@@ -251,10 +178,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             with source_operation(Kubectl(), command.timeout):
                 PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):
-            with source_operation(Kubectl(), command.timeout):
-                _deploy(command.kustomize_path, command.timeout, command.profile)
+            _deploy(
+                command.kustomize_path, command.timeout, command.profile,
+                editable=command.editable, engine_sources=command.engine_sources,
+            )
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)
+        elif isinstance(command, StopCommand):
+            stop_deployment(command)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

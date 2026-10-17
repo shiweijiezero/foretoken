@@ -2,6 +2,7 @@
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
 {{/* Provisions the platform log endpoint for Grafana's datasource sidecar. */}}
+{{- if eq .Values.scope "platform" }}
 {{- with .Values.observability.logs.datasourceURL }}
 apiVersion: v1
 kind: ConfigMap
@@ -23,4 +24,5 @@ data:
         url: {{ . | quote }}
         isDefault: false
         editable: false
+{{- end }}
 {{- end }}

@@ -28,6 +28,17 @@ class SharedStorageConnector(ECExampleConnector):
             "ec_items": [{"mm_hash": feature.identifier} for feature in request.mm_features]
         }
 
+    def _generate_filename_debug(self, mm_hash: str) -> str:
+        """Share newly owned entry directories across workers using the volume's group."""
+        filename = super()._generate_filename_debug(mm_hash)
+        directory = os.open(Path(filename).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            if os.fstat(directory).st_uid == os.geteuid():
+                os.fchmod(directory, 0o2770)
+        finally:
+            os.close(directory)
+        return filename
+
     def save_caches(self, encoder_cache, mm_hash, **kwargs) -> None:
         """Publish a complete tensor before another worker can discover its cache key."""
         if not self.is_producer:
@@ -36,7 +47,12 @@ class SharedStorageConnector(ECExampleConnector):
         tensors = {"ec_cache": encoder_cache[mm_hash].detach().cpu()}
         # TP workers and simultaneous requests may publish the same cache entry.
         # A private file on the same filesystem keeps readers away from partial writes.
-        with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
-            source = Path(temporary) / destination.name
+        descriptor, temporary = tempfile.mkstemp(dir=destination.parent)
+        os.close(descriptor)
+        source = Path(temporary)
+        try:
             safetensors.torch.save_file(tensors, str(source))
+            source.chmod(0o640)
             os.replace(source, destination)
+        finally:
+            source.unlink(missing_ok=True)

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py
+@@ -2207,8 +2207,17 @@
+         if not completed_saves:
+             return None
+         return MooncakeStoreWorkerMetadata(completed_saves=completed_saves)
+
++    def lookup_prefix(
++        self, num_tokens: int, block_hashes: Sequence[BlockHash]
++    ) -> int:
++        """Return reusable tokens for observation callers without loading cache.
++
++        The native lookup owns group convergence and the sampling boundary.
++        """
++        return MooncakeStoreWorker.lookup(self, num_tokens, block_hashes).hit_length
++
+     def lookup(
+         self, num_tokens: int, block_hashes: Sequence[BlockHash]
+     ) -> MooncakeLookupResult:
+         """Check how many prefix tokens exist in the store.

@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib.resources import files
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -21,7 +23,10 @@ from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ResourceRef
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
+SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
 _BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
+_SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
+_SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
 
 def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
@@ -32,6 +37,13 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
         template = spec.get("template", {})
         metadata = obj["metadata"]
         template_metadata = template.get("metadata", {})
+        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
+            values = json.loads(obj["data"]["deploymentValues"])
+            references.update(filter(None, (
+                values["controller"]["applicationURL"],
+                values["frontend"]["applicationURL"],
+                values["runtime"]["vllm"]["applicationURL"],
+            )))
         references.update(
             selection["applicationURL"]
             for selection in obj.get("status", {}).get("poolApplications", {}).values()
@@ -69,6 +81,46 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
                     if argument.startswith(prefix):
                         references.add(argument.removeprefix(prefix))
     return references
+
+
+def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
+    """Read current service selections and present workloads, including terminating consumers."""
+    available = kubectl.api_resource_names("inference.foretoken.io")
+    kinds = tuple(
+        kind
+        for kind in (
+            "modelservices",
+            "frontendservices",
+            "modelpools",
+            "modelgroups",
+            "videotasks",
+        )
+        if kind + ".inference.foretoken.io" in available
+    )
+    # Read independent consumer classes concurrently, completing every query before
+    # callers can retire unreferenced applications or image pins.
+    with ThreadPoolExecutor() as queries:
+        pending = [queries.submit(kubectl.list_all_resources, kinds)] if kinds else []
+        pending.append(queries.submit(
+            kubectl.list_all_resources, ("configmaps",),
+            label_selector="foretoken.io/platform=configuration",
+        ))
+        pending.extend(
+            queries.submit(
+                kubectl.list_all_resources,
+                ("pods", "jobs", "replicasets", "deployments"),
+                label_selector=label,
+            )
+            for label in (
+                "app.kubernetes.io/name=foretoken-control-plane",
+                "inference.foretoken.io/model-group",
+                "inference.foretoken.io/frontend-service",
+                "inference.foretoken.io/model-preparation-group",
+                "foretoken.io/application-files=consumer",
+                _SOURCE_CONSUMER_LABEL + "=true",
+            )
+        )
+        return [obj for future in pending for obj in future.result()]
 
 
 def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
@@ -158,9 +210,87 @@ class ApplicationFiles:
         return manifest
 
     def read_sources(self, application_url: str) -> dict[str, Any] | None:
-        """Read published build provenance for a benchmark without starting a publisher."""
+        """Read retained build provenance for a current or retired application without publishing."""
         manifest = self.read_manifest(application_url)
-        return None if manifest is None else manifest.get("sources")
+        if manifest is None:
+            prefix = self.endpoint.rstrip("/") + "/"
+            if not application_url.startswith(prefix):
+                return None
+            relative = PurePosixPath(unquote(application_url.removeprefix(prefix).rstrip("/")))
+            if len(relative.parts) != 2 or relative.is_absolute() or ".." in relative.parts:
+                return None
+            path = (
+                f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+                + quote(relative.as_posix(), safe="/") + ".json"
+            )
+            raw = self.kubectl.get_raw_if_not_found(path, "5s")
+            if raw is None:
+                return None
+            try:
+                manifest = json.loads(raw)
+            except json.JSONDecodeError as error:
+                raise DeploymentError("source evidence manifest returned invalid JSON") from error
+            if not isinstance(manifest, dict):
+                raise DeploymentError("source evidence manifest must be an object")
+        sources = manifest.get("sources")
+        if sources is None:
+            return None
+        if not isinstance(sources, dict):
+            raise DeploymentError("application source provenance must be an object")
+        if "parts" in sources:
+            if not isinstance(sources["parts"], dict):
+                raise DeploymentError("application source parts must be an object")
+            for part in sources["parts"].values():
+                if part is None:
+                    continue
+                if not isinstance(part, dict):
+                    raise DeploymentError("application source part must be an object or null")
+                if "archive" in part and (not isinstance(part["archive"], str) or not part["archive"]):
+                    raise DeploymentError("application source archive must be a nonempty URL")
+        return sources
+
+    def download_source_archive(self, archive_url: str, directory: Path, *, timeout: str) -> Path:
+        """Copy source evidence from this origin into a caller-owned directory without extracting it."""
+        prefix = self.endpoint.rstrip("/") + "/sources/"
+        if not archive_url.startswith(prefix):
+            raise DeploymentError("source archive is outside the installed application origin")
+        relative = PurePosixPath(unquote(archive_url.removeprefix(prefix)))
+        if (
+            not relative.parts or relative.is_absolute() or ".." in relative.parts
+            or any(character in relative.as_posix() for character in ("\\", "\u0000"))
+        ):
+            raise DeploymentError("source archive has an invalid relative path")
+        path = (
+            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+            + quote(relative.as_posix(), safe="/")
+        )
+        destination = directory.joinpath(*relative.parts)
+        self.kubectl.download_raw(path, destination, timeout)
+        return destination
+
+    def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
+        """Retain environments selected by service intent before controllers publish status."""
+        references = set()
+        for obj in objects:
+            component = SERVICE_COMPONENTS.get(obj.get("kind"))
+            revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            if component is None or not revision:
+                continue
+            if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
+                raise DeploymentError("source revision must be a single directory segment")
+            references.add(self.reference(component, revision))
+        images = set()
+        for reference in sorted(references):
+            manifest = self.read_manifest(reference)
+            if manifest is None:
+                raise DeploymentError(f"selected application manifest is unavailable: {reference}")
+            if "image" not in manifest:
+                continue
+            image = manifest["image"]
+            if not isinstance(image, str) or not image.strip():
+                raise DeploymentError("application manifest image must be a nonempty string")
+            images.add(image)
+        return images
 
     def prepare(self, timeout: str) -> None:
         """Wait for the file origin and select its volume's current publisher node."""
@@ -203,31 +333,7 @@ class ApplicationFiles:
         if history is None:
             return None
         references = history.copy()
-        available = self.kubectl.api_resource_names("inference.foretoken.io")
-        kinds = tuple(
-            kind
-            for kind in (
-                "modelservices",
-                "frontendservices",
-                "modelpools",
-                "modelgroups",
-                "videotasks",
-            )
-            if kind + ".inference.foretoken.io" in available
-        )
-        objects = list(self.kubectl.list_all_resources(kinds)) if kinds else []
-        for label in (
-            "inference.foretoken.io/model-group",
-            "inference.foretoken.io/frontend-service",
-            "inference.foretoken.io/model-preparation-group",
-            "foretoken.io/application-files=consumer",
-        ):
-            objects.extend(
-                self.kubectl.list_all_resources(
-                    ("pods", "jobs", "replicasets", "deployments"),
-                    label_selector=label,
-                )
-            )
+        objects = application_consumers(self.kubectl)
         references.update(application_references(objects))
         return references
 
@@ -243,8 +349,11 @@ class ApplicationFiles:
         timeout: str,
         reuse_previous: bool = False,
         sources: dict[str, Any] | None = None,
+        image: str | None = None,
+        parts: list[str] | None = None,
+        previous_image: str | None = None,
     ) -> str:
-        """Publish a compiler export with provenance and return the selected immutable revision."""
+        """Publish an export, checking the producer-selected base when reusing application parts."""
         command = [
             "python",
             "-c",
@@ -252,17 +361,46 @@ class ApplicationFiles:
             source,
             f"{self.mount}/{component}/{revision}",
             builder.binding,
-            f"{self.mount}/{component}/{previous}" if previous else "",
-            json.dumps(self._retained_versions(references)),
-            json.dumps(reuse_previous),
-            json.dumps(sources),
+            json.dumps({
+                "previous": f"{self.mount}/{component}/{previous}" if previous else None,
+                "keep": self._retained_versions(references),
+                "reuse_previous": reuse_previous,
+                "sources": sources,
+                "image": image,
+                "parts": parts,
+                "previous_image": previous_image,
+                "source_archive": _SOURCE_ARCHIVE,
+                "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
+            }),
         ]
-        with self._publisher(command, builder.binding, timeout, builder=builder) as job:
+        if parts is not None and not previous:
+            raise DeploymentError("partial publication requires a completed application")
+        with self._publisher(
+            command, builder.binding, timeout, builder=builder,
+            source_revision=previous if parts is not None else "",
+        ) as job:
             self._wait(job, timeout)
             result = self.kubectl.run(
                 ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
             )
             return json.loads(result.stdout)["revision"]
+
+    def retire_source(self, binding: str, references: set[str], *, timeout: str) -> bool:
+        """Collect a stopped binding's runtime files on the prepared origin; return whether none remain.
+
+        Published source archives and manifests remain available independently of runtime files.
+        """
+        command = [
+            "python", "-c", files("foretoken").joinpath("application_publish.py").read_text(),
+            "--retire-source", self.mount, binding,
+            json.dumps(self._retained_versions(references)),
+        ]
+        with self._publisher(command, binding, timeout) as job:
+            self._wait(job, timeout)
+            result = self.kubectl.run(
+                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
+            )
+            return not json.loads(result.stdout)["retained"]
 
     @contextmanager
     def import_release(
@@ -371,6 +509,7 @@ class ApplicationFiles:
         timeout: str,
         *,
         builder: ClusterBuilder | None = None,
+        source_revision: str = "",
         name: str = "",
         input_name: str = "",
         credentials_secret: str = "",
@@ -485,6 +624,51 @@ class ApplicationFiles:
                 },
             },
         }
+        if builder is not None:
+            # Read private inputs as their actual compiler owner. Only a read-only
+            # archive crosses into the publisher; neither container changes input modes.
+            pod = self.kubectl.get("pod", builder.name, builder.namespace)
+            compiler = next(container for container in pod["spec"]["containers"] if container["name"] == "builder")
+            compiler_security = {
+                **pod["spec"].get("securityContext", {}),
+                **compiler.get("securityContext", {}),
+            }
+            execution_volume = "compiler"
+            if builder.execution_claim != builder.claim:
+                execution_volume = "execution"
+                volumes.append({
+                    "name": execution_volume,
+                    "persistentVolumeClaim": {"claimName": builder.execution_claim, "readOnly": True},
+                })
+            archive_mount = {"name": "source-evidence", "mountPath": str(PurePosixPath(_SOURCE_ARCHIVE).parent)}
+            volumes.append({"name": "source-evidence", "emptyDir": {}})
+            mounts.append({**archive_mount, "readOnly": True})
+            job["spec"]["template"]["spec"]["initContainers"] = [{
+                "name": "source-evidence",
+                "image": self.client_image,
+                "command": [
+                    "python", "-c", files("foretoken").joinpath("application_publish.py").read_text(),
+                    "--archive-inputs", builder.workspace, _SOURCE_ARCHIVE,
+                ],
+                "terminationMessagePolicy": "FallbackToLogsOnError",
+                "securityContext": {
+                    "runAsUser": compiler_security["runAsUser"],
+                    "allowPrivilegeEscalation": False,
+                    "readOnlyRootFilesystem": True,
+                    "capabilities": {"drop": ["ALL"]},
+                },
+                "volumeMounts": [
+                    {"name": execution_volume, "mountPath": builder.execution_mount, "readOnly": True},
+                    archive_mount,
+                ],
+            }]
+        if source_revision:
+            # Keep publisher cleanup identity while exposing its borrowed files
+            # to the existing cross-binding application reference collection.
+            labels[_SOURCE_CONSUMER_LABEL] = "true"
+            annotations = {SOURCE_REVISION: source_revision}
+            job["metadata"]["annotations"] = annotations
+            job["spec"]["template"]["metadata"]["annotations"] = annotations
         if credentials_secret:
             job["spec"]["template"]["spec"]["containers"][0]["env"] = [
                 {
@@ -499,6 +683,8 @@ class ApplicationFiles:
             ]
         deadline = time.monotonic() + seconds
         while True:
+            if builder is not None:
+                builder.cancellation.check()
             try:
                 created = self.kubectl.run(
                     ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job)
@@ -514,10 +700,20 @@ class ApplicationFiles:
                     ) from None
                 time.sleep(1)
         metadata = json.loads(created.stdout)["metadata"]
+
+        def stop() -> None:
+            self._delete_owned("jobs", metadata, timeout)
+
         try:
+            if builder is not None:
+                builder.cancellation.register(stop)
             yield metadata
         finally:
-            self._delete_owned("jobs", metadata, timeout)
+            if builder is not None:
+                builder.cancellation.unregister(stop)
+                builder.cancellation.cleanup(stop, sys.exc_info()[1])
+            else:
+                self._delete_owned("jobs", metadata, timeout)
 
     def _delete_owned(
         self, resource: str, metadata: dict[str, Any], timeout: str
@@ -583,7 +779,10 @@ class ApplicationFiles:
                     self.namespace,
                     label_selector="batch.kubernetes.io/controller-uid=" + job["uid"],
                 ):
-                    for container in pod.get("status", {}).get("containerStatuses", []):
+                    for container in (
+                        *pod.get("status", {}).get("initContainerStatuses", []),
+                        *pod.get("status", {}).get("containerStatuses", []),
+                    ):
                         if (
                             message := container.get("state", {})
                             .get("terminated", {})

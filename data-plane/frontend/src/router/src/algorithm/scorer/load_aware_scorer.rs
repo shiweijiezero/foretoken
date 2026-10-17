@@ -55,7 +55,6 @@ impl RouteScorer for LoadAwareScorer {
                 else {
                     return RouteScore {
                         preference: -1.0,
-                        ..RouteScore::default()
                     };
                 };
                 let waiting = waiting as f64;
@@ -65,7 +64,6 @@ impl RouteScorer for LoadAwareScorer {
                     } else {
                         0.5 * (1.0 - waiting.min(self.threshold) / self.threshold)
                     },
-                    ..RouteScore::default()
                 }
             })
             .collect()

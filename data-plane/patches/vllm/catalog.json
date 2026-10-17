@@ -1,0 +1,341 @@
+{
+  "_license": "SPDX-License-Identifier: Apache-2.0",
+  "_copyright": "SPDX-FileCopyrightText: Copyright contributors to the Foretoken project",
+  "default_profile": "v1-default",
+  "profiles": [
+    {
+      "name": "v1-020",
+      "versions": ">=0.20.0.dev0,<0.26.0.dev0"
+    },
+    {
+      "name": "v1-031",
+      "versions": ">=0.31.0.dev0,<0.32.0.dev0"
+    },
+    {
+      "name": "v1-legacy",
+      "versions": ">=0.26.0.dev0,<0.27.0.dev0"
+    },
+    {
+      "name": "v1-metax",
+      "versions": ">=0.30.0.dev0,<0.30.1.dev0"
+    },
+    {
+      "name": "v1-current",
+      "versions": ">=0.30.1.dev0,<0.30.2.dev0"
+    }
+  ],
+  "patches": [
+    {
+      "path": "rust/chat-request-processor.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/qwen-reasoning-selection.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/engine-core-version-compatibility.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/tracing-reload.patch",
+      "rust": true
+    },
+    {
+      "path": "common/mooncake-context-parallel.patch",
+      "rust": true
+    },
+    {
+      "path": "common/multinode-pcp-world-size.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/http-latency-histogram-buckets.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/latency-histogram-buckets.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/managed-engine-command.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/engine-request-completion.patch",
+      "rust": true
+    },
+    {
+      "path": "common/python-profiling.patch",
+      "python": {}
+    },
+    {
+      "path": "common/worker-profiling.patch",
+      "python": {
+        "profiles": [
+          "v1-default",
+          "v1-020",
+          "v1-legacy",
+          "v1-metax",
+          "v1-current",
+          "v1-legacy-backport"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/python-profiling.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "common/engine-abort-completion.patch",
+      "rust": true,
+      "python": {}
+    },
+    {
+      "path": "common/prefix-cache-lookup.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "common/offload-prefix-lookup.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/source-offload-prefix.patch",
+      "rust": true
+    },
+    {
+      "path": "common/mooncake-prefix-lookup.patch",
+      "rust": true
+    },
+    {
+      "path": "compatibility/v1-020/ready-logprobs.patch",
+      "python": {
+        "profiles": [
+          "v1-020"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-modern-offload-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/mooncake-prefix-lookup.patch",
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "common/ready-logprobs.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-default",
+          "v1-031",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "rust/ready-logprobs.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/logprobs-tensor-wire.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/logprob-padding-tokens.patch",
+      "rust": true
+    },
+    {
+      "path": "compatibility/v1-legacy/ready-logprobs.patch",
+      "python": {
+        "profiles": [
+          "v1-legacy"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-modern-ready-logprobs.patch",
+      "python": {
+        "profiles": [
+          "v1-legacy-backport"
+        ]
+      }
+    },
+    {
+      "path": "common/offloading-event-identity.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-default",
+          "v1-metax",
+          "v1-current",
+          "v1-legacy-backport"
+        ],
+        "versions": ">=0.30.0.dev0,<0.31.0.dev0",
+        "requires": "vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py"
+      }
+    },
+    {
+      "path": "common/fused-gdn-declaration.patch",
+      "rust": true
+    },
+    {
+      "path": "rust/spec-decode-timing.patch",
+      "rust": true
+    },
+    {
+      "path": "common/metax-dp-ep-shared-expert-serialization.patch",
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-metax"
+        ]
+      }
+    },
+    {
+      "path": "common/spec-decode-timing-collector.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-legacy",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "common/spec-decode-timing-hooks.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-legacy",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "common/shm-nonblocking-read.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-031",
+          "v1-legacy",
+          "v1-metax",
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-current/spec-decode-timing.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-current"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/spec-decode-timing.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-legacy/spec-decode-timing.patch",
+      "python": {
+        "profiles": [
+          "v1-legacy"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-metax/spec-decode-timing.patch",
+      "python": {
+        "profiles": [
+          "v1-metax"
+        ]
+      }
+    },
+    {
+      "path": "common/scheduler-load.patch",
+      "rust": true,
+      "python": {}
+    },
+    {
+      "path": "compatibility/v1-current/scheduler-load.patch",
+      "rust": true,
+      "python": {
+        "profiles": [
+          "v1-default",
+          "v1-020",
+          "v1-legacy",
+          "v1-metax",
+          "v1-current",
+          "v1-legacy-backport"
+        ]
+      }
+    },
+    {
+      "path": "compatibility/v1-031/scheduler-load.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "common/compile-cache-publication.patch",
+      "rust": true,
+      "python": {}
+    },
+    {
+      "path": "vllm-0.26-profiler-result.patch",
+      "python": {
+        "versions": "<0.30.0.dev0"
+      }
+    },
+    {
+      "path": "vllm-0.30-profiler-result.patch",
+      "python": {
+        "versions": ">=0.30.0.dev0"
+      }
+    }
+  ]
+}

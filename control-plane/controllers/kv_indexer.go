@@ -79,7 +79,16 @@ func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 	}
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	scope := hex.EncodeToString(sum[:])
+	// Store data survives instance replacement. Separate policy namespaces prevent
+	// legacy client salts from colliding with authenticated caller identities.
+	if isolation := group.Spec.Runtime.PrefixCacheIsolation; isolation != nil {
+		if *isolation {
+			return "caller:" + scope
+		}
+		return "shared:" + scope
+	}
+	return scope
 }
 
 // sharedKVLookupScope bounds query reuse by a known Store owner or one external-profile consumer.

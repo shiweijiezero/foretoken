@@ -9,7 +9,7 @@ English | [简体中文](README_zh.md) · [Evaluation and profiling](../../READM
 
 Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/metax-deployment.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
 
-Profiling requires a [source-installed](../../../docs/custom-deployment.md) CLI and platform. The Quick Start already configures persistent RuntimeCache storage for captures. W&B sign-in is covered by the [shared setup](../../README.md#get-started).
+Captures are saved in persistent RuntimeCache storage, already configured by the Quick Start. After updating the platform, run `foretoken deploy` for existing model services before capturing. CLI installation and W&B sign-in are covered by the [shared setup](../../README.md#get-started).
 
 ## Capture a benchmark workload
 
@@ -65,11 +65,11 @@ Nsight Systems records CUDA and NVTX timelines. Select it before model startup w
 
 ### Prepare the diagnostic image
 
-After source installation, build the Linux x86_64 diagnostic image from the local model-server build. Set `NSIGHT_IMAGE` to an image reference you can push and your cluster can pull:
+Build the Linux x86_64 diagnostic image from a matching NVIDIA model-server image. Set `MODEL_SERVER_IMAGE` to that base image and `NSIGHT_IMAGE` to an image reference you can push and your cluster can pull:
 
 ```bash
 docker build -f deploy/inference-engines/nsight/Dockerfile \
-  --build-arg MODEL_SERVER_IMAGE=foretoken-dev-model-server \
+  --build-arg MODEL_SERVER_IMAGE="$MODEL_SERVER_IMAGE" \
   -t "$NSIGHT_IMAGE" deploy/inference-engines/nsight
 docker push "$NSIGHT_IMAGE"
 ```
@@ -82,7 +82,7 @@ runtime:
     nsightImage: YOUR_NSIGHT_IMAGE
 ```
 
-Add `--values nsight-values.yaml` to the source installation command used for this cluster. Only models selecting Nsight use the diagnostic image.
+Add `--values nsight-values.yaml` to the installation command used for this cluster. Only models selecting Nsight use the diagnostic image.
 
 ### Capture
 

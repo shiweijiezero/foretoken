@@ -322,6 +322,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			EngineArgs:                            runtime.EngineArgs,
 			Env:                                   template.DeepCopy().Env,
 			AdmissionStore:                        admissionStore,
+			PrefixCacheIsolation:                  template.PrefixCacheIsolation,
 			InstanceAdmissionProtocol:             instanceAdmissionProtocol,
 			InstanceAdmission:                     startupAdmission,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),

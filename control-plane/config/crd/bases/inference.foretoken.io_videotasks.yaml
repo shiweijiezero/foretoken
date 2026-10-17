@@ -251,6 +251,25 @@ spec:
                     type: string
                   outputClaimName:
                     type: string
+                  outputIdentity:
+                    description: |-
+                      OutputIdentity retains the storage user for generation and artifact cleanup.
+                      Absence preserves the legacy worker identity.
+                    properties:
+                      gid:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 0
+                        type: integer
+                      uid:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 1
+                        type: integer
+                    required:
+                    - gid
+                    - uid
+                    type: object
                   outputPath:
                     type: string
                   retentionSeconds:

@@ -16,6 +16,8 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    throughput_scorer => ThroughputScorer = "throughput",
+    endpoint_attribute_scorer => EndpointAttributeScorer = "endpoint_attribute",
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",
@@ -37,7 +39,7 @@ pub type RouteSelectionUpdate = Box<dyn FnOnce(&RouteCandidate) + Send>;
 /// Scores and an optional state update for one selection attempt.
 /// Router runs the update only after validating the picker result; failed attempts drop it.
 pub struct ScoringOutcome {
-    /// One numeric or locality score for each candidate supplied to the scorer.
+    /// One numeric preference for each candidate supplied to the scorer.
     pub scores: Vec<RouteScore>,
     /// Captures scoring-time facts needed when the chosen target is committed before dispatch.
     /// Runs under Router's selection lock and must not re-enter routing.
@@ -75,7 +77,6 @@ pub(super) fn inverse_normalized_scores(
                     (maximum - count) as f64 / (maximum - minimum) as f64
                 }
             },
-            ..RouteScore::default()
         })
         .collect()
 }
@@ -95,8 +96,13 @@ pub(super) fn inverse_normalized_scores(
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
-    /// Requests live shared-prefix observations before the synchronous routing round.
+    /// Declares that scoring consumes prefix matches, preparing live observations before routing.
     fn needs_kv_prefix(&self) -> bool {
+        false
+    }
+
+    /// Requests the registry's daily request-length history only while this scorer is active.
+    fn needs_request_length_history(&self) -> bool {
         false
     }
 
@@ -155,17 +161,30 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     }
 }
 
+/// Returns the exact rank's observed scheduler request count, preserving missing telemetry.
+fn scheduler_requests(candidate: &RouteCandidate) -> Option<u64> {
+    let stats = candidate.data_parallel_stats()?;
+    Some(
+        stats
+            .scheduler_running_requests?
+            .saturating_add(stats.scheduler_waiting_requests?),
+    )
+}
+
 /// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.
+/// DT folds in this frontend's bound requests by maximum, without double counting native work.
 /// Group-level admission counts cannot be assigned to an individual rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate
-        .data_parallel_stats()
-        .and_then(|stats| {
-            Some(
-                stats
-                    .scheduler_running_requests?
-                    .saturating_add(stats.scheduler_waiting_requests?),
-            )
+    scheduler_requests(candidate)
+        .map(|requests| {
+            if matches!(
+                candidate.role,
+                ModelServerRole::Draft | ModelServerRole::Target
+            ) {
+                requests.max(candidate.local_load.requests as u64)
+            } else {
+                requests
+            }
         })
         .and_then(|requests| i64::try_from(requests).ok())
         .unwrap_or(i64::MAX)

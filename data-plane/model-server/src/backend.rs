@@ -4,6 +4,7 @@
 //! Engine-neutral HTTP-facing boundary and the thin vLLM EngineCore adapter.
 
 use async_trait::async_trait;
+use foretoken_model_protocol::SchedulerLoad;
 use futures::{Stream, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
@@ -11,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
+use tokio_util::sync::CancellationToken;
 use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBackend;
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
@@ -35,6 +37,7 @@ pub struct BackendGeneration {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
     pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
+    pub request_cost: foretoken_model_protocol::RequestCostTelemetry,
     pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
@@ -132,8 +135,18 @@ pub trait Backend: Send + Sync {
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
 
+    /// Observes reusable prefixes in every local scheduler without allocating request capacity.
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
+
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
+
+    /// Reads scheduler-owned token demand for the optional autoscaling observation endpoint.
+    /// Failure leaves ordinary inference and telemetry available without inventing zero load.
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError>;
 
     /// Renders the OpenMetrics payload published by the metrics handler as an owned response body.
     fn render_openmetrics(&self) -> Result<String, MetricsError>;
@@ -142,6 +155,7 @@ pub trait Backend: Send + Sync {
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
 pub struct VllmBackend {
     llm: RwLock<Option<Llm>>,
+    closing: CancellationToken,
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
@@ -162,6 +176,7 @@ impl VllmBackend {
             .collect();
         Self {
             llm: RwLock::new(Some(llm)),
+            closing: CancellationToken::new(),
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
@@ -170,6 +185,9 @@ impl VllmBackend {
 
     /// Takes and shuts down the owned vLLM `Llm` facade during model-server teardown.
     pub async fn shutdown(&self) -> Result<(), BackendError> {
+        // Pending submissions and utilities hold read guards. Release them before taking
+        // ownership of the client that broadcasts terminal errors to active streams.
+        self.closing.cancel();
         let Some(llm) = self.llm.write().await.take() else {
             return Ok(());
         };
@@ -187,30 +205,38 @@ impl VllmBackend {
             .as_ref()
             .ok_or("engine is unavailable")?
             .engine_core_client();
-        client
-            .collective_rpc(
+        self.closing
+            .run_until_cancelled(client.collective_rpc(
                 "foretoken_mctracer",
                 None,
                 (start, directory.to_string_lossy()),
                 std::collections::BTreeMap::<String, String>::new(),
-            )
+            ))
             .await
+            .ok_or("engine is shutting down")?
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
-    /// Runs one native utility for the capture supervisor; callers own deadlines and escalation.
-    pub async fn set_profiling(&self, start: bool) -> Result<(), String> {
+    /// Controls native profiling across every rank using the supervisor's trace prefix.
+    /// The supervisor owns the output directory, deadlines, and failure escalation.
+    pub async fn set_profiling(&self, start: bool, prefix: &str) -> Result<(), String> {
         let guard = self.llm.read().await;
         let client = guard
             .as_ref()
             .ok_or("engine is unavailable")?
             .engine_core_client();
-        let result = if start {
-            client.start_profile(None).await
-        } else {
-            client.stop_profile(None).await
-        };
+        let result = self
+            .closing
+            .run_until_cancelled(async {
+                if start {
+                    client.start_profile(Some(prefix)).await
+                } else {
+                    client.stop_profile(Some(prefix)).await
+                }
+            })
+            .await
+            .ok_or("engine is shutting down")?;
         result.map_err(|error| error.to_string())
     }
 }
@@ -327,9 +353,11 @@ impl Backend for VllmBackend {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         let request_id = request.request_id.clone();
-        let stream = llm
-            .generate(request.into())
+        let stream = self
+            .closing
+            .run_until_cancelled(llm.generate(request.into()))
             .await
+            .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_llm)?;
         let completion = stream.completion();
         Ok(BackendGeneration {
@@ -351,7 +379,55 @@ impl Backend for VllmBackend {
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
-        llm.abort(request_ids).await.map_err(BackendError::from_llm)
+        self.closing
+            .run_until_cancelled(llm.abort(request_ids))
+            .await
+            .ok_or(BackendError::Unavailable)?
+            .map_err(BackendError::from_llm)
+    }
+
+    async fn local_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .engine_core_client();
+        // Each scheduler reports its own rank; cache contents are not a consensus value.
+        let observations = self
+            .closing
+            .run_until_cancelled(
+                client.call_utility::<serde_json::Value, _>(
+                    "get_prefix_cache_hit",
+                    (
+                        &request.prompt_token_ids,
+                        request.cache_salt.as_deref(),
+                        request.lora_name.as_deref(),
+                        request
+                            .multimodal
+                            .iter()
+                            .map(|feature| {
+                                serde_json::json!({
+                                    "identifier": feature.identifier,
+                                    "offset": feature.offset,
+                                    "length": feature.length,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                        request.lora_path.as_deref(),
+                    ),
+                ),
+            )
+            .await
+            .ok_or(BackendError::Unavailable)?
+            .map_err(BackendError::from_engine_client)?;
+        // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
+        observations
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
+            .collect()
     }
 
     fn telemetry(&self) -> BackendTelemetry {
@@ -364,6 +440,7 @@ impl Backend for VllmBackend {
 
         BackendTelemetry {
             data_parallel_ranks: vllm.data_parallel_ranks,
+            request_cost: vllm.request_cost,
             max_concurrent_requests: self.max_concurrent_requests,
             scheduler_running_requests: vllm.scheduler_running_requests,
             scheduler_waiting_requests: vllm.scheduler_waiting_requests,
@@ -378,5 +455,23 @@ impl Backend for VllmBackend {
 
     fn render_openmetrics(&self) -> Result<String, MetricsError> {
         METRICS.render().map_err(|_| MetricsError)
+    }
+
+    async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {
+        let guard = self.llm.read().await;
+        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        let loads = self
+            .closing
+            .run_until_cancelled(
+                llm.engine_core_client()
+                    .call_utility::<Option<SchedulerLoad>, _>("get_scheduler_load", ()),
+            )
+            .await
+            .ok_or(BackendError::Unavailable)?
+            .map_err(BackendError::from_engine_client)?;
+        loads
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(BackendError::Unavailable)
     }
 }

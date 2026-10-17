@@ -7,13 +7,6 @@ ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 FROM ${UV_IMAGE} AS uv
 
-FROM ${RUNTIME_IMAGE} AS runtime-user
-RUN mkdir -p /tmp/foretoken-runtime-user \
-    && printf '%s:%s\n' "$(id -u)" "$(id -g)" > /tmp/foretoken-runtime-user/user
-
-FROM scratch AS runtime-user-export
-COPY --from=runtime-user /tmp/foretoken-runtime-user/user /user
-
 # Add build tools to the exact serving environment, leaving torch and vendor libraries intact.
 FROM ${RUNTIME_IMAGE} AS toolchain
 ARG UV_DEFAULT_INDEX
@@ -22,7 +15,7 @@ ARG FORETOKEN_GITHUB_MIRROR
 USER root
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential ccache cmake git ninja-build patch \
+      build-essential ccache cmake git libdw-dev ninja-build patch \
     && cuda=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c 'import torch; print("" if getattr(torch.version, "maca", None) else torch.version.cuda or "")') \
     && if [ -n "$cuda" ] && ! command -v nvcc >/dev/null 2>&1 && ! test -x "${CUDA_HOME:-/usr/local/cuda}/bin/nvcc"; then \
       version=$(printf %s "$cuda" | tr . -); \
@@ -100,6 +93,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     bash -euc ' \
       if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
       python="${FORETOKEN_VLLM_PYTHON:-python3}"; \
+      python=$("$python" -c "import sys; print(sys.executable)"); \
       PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
         "from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()"; \
       if "$python" -c "import torch; raise SystemExit(not bool(getattr(torch.version, \"maca\", None)))"; then \

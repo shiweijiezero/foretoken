@@ -30,7 +30,7 @@ exclude = ["third_party/vllm"]
 
 [workspace.metadata.foretoken]
 vllm_source = "third_party/vllm"
-vllm_patch_series = "patches/vllm/source.series"
+vllm_patch_catalog = "patches/vllm/catalog.json"
 
 [workspace.package]
 version = "0.0.1"

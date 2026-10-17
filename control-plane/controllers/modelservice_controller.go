@@ -22,7 +22,6 @@ import (
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,7 +44,7 @@ const (
 // ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
 // Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
 type ScalingMetricsProvider interface {
-	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
+	Snapshot(context.Context, core.TargetID, bool) (core.MetricsSnapshot, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
@@ -83,6 +82,14 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
 		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
+	if reconciler.CacheProfile.ClaimName != "" {
+		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			if object.GetName() != reconciler.CacheProfile.ClaimName {
+				return nil
+			}
+			return reconciler.modelServicesInNamespace(ctx, object)
+		}))
+	}
 	if reconciler.Alerts != nil && reconciler.Alerts.watchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
@@ -117,28 +124,22 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	sourceAllowed, err := reconciler.sourceSelectionAllowed(ctx, service)
-	if err != nil {
-		return ctrl.Result{}, err
+	// Explicit suspension overrides capacity policies and startup configuration.
+	// Retire the existing execution contracts without rewriting the user's intent.
+	if service.Spec.Suspend {
+		if err := reconciler.retirePoolCapacity(ctx, service, nil, true); err != nil {
+			return ctrl.Result{}, err
+		}
+		return reconciler.reconcileStoppedService(ctx, service, nil, nil)
 	}
-	sourceRevision, err := runtimeconfig.SourceRevision(service.Annotations, sourceAllowed)
-	var compiledPools []compiler.ModelPool
-	if err == nil {
-		compiledPools, err = compiler.CompileModelService(service.Spec)
-	}
+
+	compiledPools, err := compiler.CompileModelService(service.Spec)
 	if err != nil {
 		return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
 			pools:    conditionState{metav1.ConditionFalse, "CompilationFailed", "ModelService intent was not compiled"},
 			target:   conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
 			ready:    conditionState{metav1.ConditionFalse, "InvalidIntent", "ModelService intent is invalid"},
-		})
-	}
-	if err := reconciler.resolveManagedKVBindings(ctx, service, compiledPools); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
-			compiled: conditionState{metav1.ConditionFalse, "KVServiceNotReady", err.Error()},
-			pools:    conditionState{metav1.ConditionFalse, "ResolutionFailed", "No new ModelPools were materialized"},
-			ready:    conditionState{metav1.ConditionFalse, "KVServiceNotReady", "Referenced KVService is not ready"},
 		})
 	}
 	scaling, err := reconciler.scalingConfig(service)
@@ -151,6 +152,35 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 			compiled: conditionState{metav1.ConditionFalse, "ScalingFailed", err.Error()},
 			pools:    conditionState{metav1.ConditionFalse, "ScalingFailed", "ModelPool capacity was not resolved"},
 			ready:    conditionState{metav1.ConditionFalse, "ScalingFailed", "ModelService capacity is invalid"},
+		})
+	}
+	// Retire existing capacity using its selected execution contract before resolving
+	// dependencies needed to start or replace runtimes.
+	stopping := !slices.ContainsFunc(compiledPools, func(pool compiler.ModelPool) bool { return pool.DesiredGroups > 0 })
+	if err := reconciler.retirePoolCapacity(ctx, service, compiledPools, stopping); err != nil {
+		return ctrl.Result{}, err
+	}
+	if stopping {
+		return reconciler.reconcileStoppedService(ctx, service, compiledPools, autoscalingStatus)
+	}
+	sourceAllowed, err := reconciler.sourceSelectionAllowed(ctx, service)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	sourceRevision, err := runtimeconfig.SourceRevision(service.Annotations, sourceAllowed)
+	if err != nil {
+		return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
+			pools:    conditionState{metav1.ConditionFalse, "ResolutionFailed", "Source application selection is invalid"},
+			target:   conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
+			ready:    conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
+		})
+	}
+	if err := reconciler.resolveManagedKVBindings(ctx, service, compiledPools); err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionFalse, "KVServiceNotReady", err.Error()},
+			pools:    conditionState{metav1.ConditionFalse, "ResolutionFailed", "No new ModelPools were materialized"},
+			ready:    conditionState{metav1.ConditionFalse, "KVServiceNotReady", "Referenced KVService is not ready"},
 		})
 	}
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, service.Namespace)
@@ -246,6 +276,75 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		return ctrl.Result{RequeueAfter: scaling.PollingInterval}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// retirePoolCapacity applies decreases without replacing the Pools' execution selections.
+// A full stop also retires obsolete Pools retained by an unfinished rollout.
+func (reconciler *ModelServiceReconciler) retirePoolCapacity(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, stopping bool) error {
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return err
+	}
+	desired := make(map[string]int32, len(compiledPools))
+	for _, compiled := range compiledPools {
+		desired[compiled.Name] = compiled.DesiredGroups
+	}
+	for index := range pools {
+		pool := &pools[index]
+		capacity, selected := desired[pool.Spec.PoolName]
+		if (!selected && !stopping) || !pool.DeletionTimestamp.IsZero() || capacity >= pool.Spec.DesiredGroups {
+			continue
+		}
+		base := pool.DeepCopy()
+		pool.Spec.DesiredGroups = capacity
+		if err := reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("retire ModelPool %q capacity: %w", pool.Name, err)
+		}
+	}
+	return nil
+}
+
+// reconcileStoppedService withdraws the serving cohort and waits for Group-owned execution to end.
+// Application selections remain available for a later resume without preparing new runtimes.
+func (reconciler *ModelServiceReconciler) reconcileStoppedService(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, autoscaling []inferencev1alpha1.AutoscalingTargetStatus) (ctrl.Result, error) {
+	if _, err := reconciler.commitServingGeneration(ctx, service, compiledPools); err != nil {
+		return ctrl.Result{}, err
+	}
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	stopped := true
+	for index := range pools {
+		groups, err := ownedModelGroups(ctx, reader, &pools[index])
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		stopped = stopped && modelPoolStopped(&pools[index]) && len(groups) == 0
+	}
+	target := conditionState{metav1.ConditionUnknown, "Stopping", "Waiting for model execution to stop"}
+	if stopped {
+		target = conditionState{metav1.ConditionTrue, "ScaledToZero", "All model execution has stopped"}
+	}
+	compiled := conditionState{metav1.ConditionTrue, "Compiled", "ModelService capacity was compiled"}
+	if service.Spec.Suspend {
+		compiled = conditionState{metav1.ConditionUnknown, "Suspended", "Startup configuration is retained while model execution is suspended"}
+	}
+	err = reconciler.updateStatus(ctx, service, modelServiceState{
+		compiled:    compiled,
+		pools:       conditionState{metav1.ConditionTrue, "Applied", "Existing ModelPools have no requested capacity"},
+		target:      target,
+		ready:       conditionState{metav1.ConditionFalse, target.Reason, target.Message},
+		autoscaling: &autoscaling,
+	})
+	if !stopped {
+		return ctrl.Result{RequeueAfter: time.Second}, err
+	}
+	return ctrl.Result{}, err
 }
 
 // rejectTarget publishes a configuration rejection without withdrawing a still-serving cohort.
@@ -367,6 +466,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		}
 	}
 
+	capacityBlocked := replacementPoolsCapacityBlocked(compiledPools, byPoolName)
 	desired := make(map[string]struct{}, len(compiledPools))
 	for _, compiled := range compiledPools {
 		desired[compiled.Name] = struct{}{}
@@ -412,14 +512,52 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 
 	for index := range owned {
 		pool := &owned[index]
-		if _, keep := desired[pool.Spec.PoolName]; keep || serviceServingRevision(service, pool) != "" {
+		if _, keep := desired[pool.Spec.PoolName]; keep {
 			continue
 		}
-		if err := reconciler.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
+		// Retain obsolete serving Pools while replacements can schedule. Under capacity
+		// pressure, their normal deletion drain releases resources for the new topology.
+		if serviceServingRevision(service, pool) != "" && !capacityBlocked {
+			continue
+		}
+		if err := reconciler.retirePool(ctx, pool); err != nil {
 			return fmt.Errorf("delete stale ModelPool %q: %w", pool.Name, err)
 		}
 	}
 	return nil
+}
+
+// replacementPoolsCapacityBlocked permits obsolete-Pool retirement only after every active
+// replacement has resolved current intent and at least one reports scheduler capacity pressure.
+// Failed or unobserved targets retain the serving topology rather than spending its capacity.
+func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools map[string]*inferencev1alpha1.ModelPool) bool {
+	blocked := false
+	for _, compiled := range compiledPools {
+		if compiled.DesiredGroups == 0 {
+			continue
+		}
+		pool := pools[compiled.Name]
+		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Status.ObservedGeneration != pool.Generation ||
+			pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) ||
+			!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) {
+			return false
+		}
+		for _, name := range []string{conditionResolved, conditionGroupsMaterialized} {
+			condition := meta.FindStatusCondition(pool.Status.Conditions, name)
+			if condition == nil || condition.ObservedGeneration != pool.Generation || condition.Status != metav1.ConditionTrue {
+				return false
+			}
+		}
+		target := meta.FindStatusCondition(pool.Status.Conditions, conditionTargetReady)
+		if target == nil || target.ObservedGeneration != pool.Generation || target.Status == metav1.ConditionFalse {
+			return false
+		}
+		rollout := meta.FindStatusCondition(pool.Status.Conditions, conditionRolloutPending)
+		if rollout != nil && rollout.ObservedGeneration == pool.Generation && rollout.Status == metav1.ConditionTrue && rollout.Reason == "InsufficientCapacity" {
+			blocked = true
+		}
+	}
+	return blocked
 }
 
 // selectPoolApplication retains execution choices independently of changing platform defaults.
@@ -502,6 +640,15 @@ func (reconciler *ModelServiceReconciler) selectPoolApplication(ctx context.Cont
 	if template.Backend == "vllm" {
 		selection.ApplicationURL = reconciler.ApplicationURL
 		if template.SourceRevision != "" {
+			publishedImage, err := reconciler.ApplicationFiles.ResolveImage(ctx, "model-server", template.SourceRevision, image)
+			if err != nil {
+				return nil, err
+			}
+			// Source files also run under Nsight, but their ordinary runtime image
+			// cannot replace the platform's diagnostic tools and launch environment.
+			if imageProfile != "nsight" {
+				selection.Image = publishedImage
+			}
 			selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", template.SourceRevision)
 		}
 	}
@@ -573,10 +720,13 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	}
 	selected := make([]inferencev1alpha1.ServingPoolRevision, 0, len(compiledPools))
 	for _, compiled := range compiledPools {
+		pool := byName[compiled.Name]
 		if compiled.DesiredGroups == 0 {
+			if pool != nil && !modelPoolStopped(pool) {
+				return false, nil
+			}
 			continue
 		}
-		pool := byName[compiled.Name]
 		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !equalOptionalInt32(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
 			return false, nil
 		}
@@ -780,6 +930,21 @@ func modelPoolTransitioning(pool *inferencev1alpha1.ModelPool) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == pool.Generation
 }
 
+// retirePool retains the Pool until its Groups have completed execution retirement.
+func (reconciler *ModelServiceReconciler) retirePool(ctx context.Context, pool *inferencev1alpha1.ModelPool) error {
+	if !pool.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	if !controllerutil.ContainsFinalizer(pool, modelPoolFinalizer) {
+		base := pool.DeepCopy()
+		controllerutil.AddFinalizer(pool, modelPoolFinalizer)
+		if err := reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("protect ModelPool retirement: %w", err)
+		}
+	}
+	return client.IgnoreNotFound(reconciler.Delete(ctx, pool, client.Preconditions{UID: &pool.UID}))
+}
+
 // reconcileDelete removes owned ModelPools before releasing the ModelService finalizer.
 func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, service *inferencev1alpha1.ModelService) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(service, modelServiceFinalizer) {
@@ -791,7 +956,7 @@ func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, s
 	}
 	if len(pools) > 0 {
 		for index := range pools {
-			if err := reconciler.Delete(ctx, &pools[index]); err != nil && !apierrors.IsNotFound(err) {
+			if err := reconciler.retirePool(ctx, &pools[index]); err != nil {
 				return ctrl.Result{}, fmt.Errorf("delete ModelPool %q: %w", pools[index].Name, err)
 			}
 		}
@@ -809,7 +974,11 @@ func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, s
 // ownedPools returns ModelPools whose reference and controller owner both identify the ModelService.
 func (reconciler *ModelServiceReconciler) ownedPools(ctx context.Context, service *inferencev1alpha1.ModelService) ([]inferencev1alpha1.ModelPool, error) {
 	var list inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &list, client.InNamespace(service.Namespace)); err != nil {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	if err := reader.List(ctx, &list, client.InNamespace(service.Namespace)); err != nil {
 		return nil, fmt.Errorf("list ModelPools: %w", err)
 	}
 	owned := make([]inferencev1alpha1.ModelPool, 0, len(list.Items))

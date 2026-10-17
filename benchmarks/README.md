@@ -21,6 +21,8 @@ Run the examples from the repository checkout prepared by the [Quick Start](../R
 
 Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
+Existing services are reused unchanged; run `foretoken deploy` first to measure code or configuration changes. If no services exist, Foretoken creates them temporarily using installed applications and cleans up afterward. The namespace, shared resources, and services adopted by a later deploy or stop command are retained.
+
 ## Measure performance
 
 ```bash
@@ -58,7 +60,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | --- | --- |
 | Omit `--output` or use `local,wandb` | Print results, save local files, and upload to W&B |
 | `local` | Print results and save local files |
-| `wandb` | Print results and upload to W&B |
+| `wandb` | Print results, retain local files, and publish to W&B in the background |
 | `plot` | Retain results and export PDF, SVG, PNG, and CSV |
 | `experiment` | Organize the run under an experiment iteration and capture its source and command context |
 | `raw` | Also retain actual request and response content for HTTP performance runs, with local results |
@@ -66,11 +68,18 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Use `--output local,raw` to save request inputs and response content, including reasoning and tool calls, in `responses.jsonl`. Warmup responses are saved in `warmup_responses.jsonl`.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or resume an upload.
 
-`quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
+| Record | Use |
+| --- | --- |
+| `metrics.json` | Read the measured aggregate results |
+| `context.json` | Check the run outcome and phase separately from the measurement exit status |
+| `run.log` | Inspect preparation, execution, and errors |
+| `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
+| `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
+| `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
+Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B synchronization messages remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
@@ -80,8 +89,10 @@ foretoken perf examples/quickstart --num-prompts 20 \
   --iteration baseline
 ```
 
-`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [experiment records guide](../agent-playbooks/experiment-records.md) for the layout, source records, and author-written notes.
+`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [experiment records guide](../rsi-playbooks/experiment-records.md) for the layout, source records, and author-written notes.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
+
+If measurement completed but output publication failed, use `foretoken perf --resume RESULT_DIR` to finish it without repeating requests; see [result recovery](docs/perf/wandb.md#resume-an-upload).
 
 Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection, layout and output locations.

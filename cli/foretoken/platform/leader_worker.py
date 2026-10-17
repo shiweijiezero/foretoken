@@ -96,11 +96,11 @@ class LeaderWorkerLifecycle:
         if plan.controller is not None:
             self._kubectl.rollout_status(plan.controller, timeout)
             return
-        if plan.action == "Upgrade":
-            # Helm deliberately leaves CRDs unchanged on upgrade. Apply only for
-            # our owned release, without taking fields from another field manager.
-            self._kubectl.apply(self._helm.leader_worker_crds())
-        self._helm.install_leader_worker(plan.release, timeout)
+        self._helm.install_leader_worker(
+            plan.release,
+            timeout,
+            apply_crds=self._kubectl.apply if plan.action == "Upgrade" else None,
+        )
         self._kubectl.wait_for_crds((_RESOURCE,), timeout)
         self._require_api()
 

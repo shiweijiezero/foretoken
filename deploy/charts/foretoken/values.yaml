@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Provides default settings for the Foretoken control-plane chart.
+# One chart installs shared infrastructure or one namespace's serving controller.
+# The CLI selects the scope for install and deploy.
+scope: platform
 
 global:
   # Replaces the registry host for release images. Source-image installs set explicit images instead.
@@ -32,16 +34,19 @@ development:
   # Used by the CLI for source builds; compiler caches remain in the cluster.
   build:
     image: docker.io/moby/buildkit:v0.33.1-rootless
-    storageClassName: ""
-    storageSize: 100Gi
+    storageClassName: "" # Optional artifact storage; execution caches remain node-local.
+    storageSize: 100Gi # Requested capacity per build volume.
 
 # Persistent application file delivery, independent of model caches.
 applicationFiles:
+  # The deployment scope receives the installed platform's shared origin.
+  origin: ""
   # Ordinary HTTP tar.gz asset; published charts supply their version's URL.
   releaseURL: ""
   revision: "" # Defaults to Chart.appVersion; private replacement assets use a new version.
   credentialsSecret: "" # Namespace-local Secret with an authorization header value.
   serverImage: docker.io/nginxinc/nginx-unprivileged:1.28-alpine
+  # Requires Python 3 for application downloads and workload directory preparation.
   clientImage: docker.io/library/python:3.12-slim
   storageClassName: ""
   storageSize: 10Gi

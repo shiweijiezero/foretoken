@@ -67,6 +67,8 @@ foretoken install -e .
 # foretoken install
 ```
 
+Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
+
 The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
@@ -76,6 +78,8 @@ foretoken deploy examples/quickstart --timeout 20m
 ```
 
 This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
+
+To try different code changes side by side, see [parallel candidates](docs/custom-deployment.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/custom-deployment.md#edit-an-inference-engine).
 
 ### 4. Send a test request
 
@@ -87,10 +91,6 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
-
-### Iterate on source
-
-After a source installation, edit the checkout and rerun the deploy command to update the service. See [Deploy Foretoken from Source](docs/custom-deployment.md) for engine checkouts and runtime changes.
 
 ### 5. Evaluate and profile the service
 
@@ -115,7 +115,7 @@ This scores 100 GSM8K math problems. See [Quality evaluation](benchmarks/docs/ev
 
 #### Profiling: inspect execution bottlenecks
 
-Use a source-installed CLI and platform for profiling, as described in the [profiling guide](benchmarks/docs/profile/README.md). The Quick Start already configures persistent capture storage.
+The Quick Start already configures persistent capture storage. See the [profiling guide](benchmarks/docs/profile/README.md) for tool setup and other capture options.
 
 ```bash
 foretoken perf examples/quickstart \
@@ -140,10 +140,10 @@ spec:
 Then run:
 
 ```bash
-# Install the platform in Gateway mode
-foretoken install --frontend-mode gateway
-# For a source-installed platform:
-# foretoken install -e . --frontend-mode gateway
+# Enable Gateway mode for the source installation above.
+foretoken install -e . --frontend-mode gateway
+# For a published platform installation:
+# foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart --timeout 20m

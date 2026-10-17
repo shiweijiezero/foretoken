@@ -360,6 +360,12 @@ fn validate_descriptor_names<'a>(
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
+    #[error("model {model:?}, {stage} routing: {source}")]
+    ModelStage {
+        model: String,
+        stage: &'static str,
+        source: Box<RouterPipelineConfigError>,
+    },
     /// The selected router algorithm rejected its parameters.
     #[error("invalid parameters for router algorithm {name:?}: {message}")]
     InvalidParameters { name: String, message: String },

@@ -11,7 +11,7 @@ import re
 import ssl
 import time
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache, partial
@@ -254,18 +254,35 @@ def _select_mirror(
     return mirror, elapsed
 
 
-def _oci_mirrors(host: str, repository: str, revision: str) -> tuple[_SourceMirror, ...]:
-    """Build shared registry candidates for platform pulls and source-image builds."""
+def _oci_mirror_prefixes(host: str) -> tuple[str, ...]:
+    """Define the public registry routes used by probes and installed-source matching."""
+    if host not in {
+        "docker.io",
+        "ghcr.io",
+        "gcr.io",
+        "registry.k8s.io",
+        "quay.io",
+        "nvcr.io",
+        "cr.infini-ai.com",
+    }:
+        return ()
     prefixes = (f"m.daocloud.io/{host}",)
-    if host == "docker.io":
-        prefixes += ("docker.1ms.run",)
+    return prefixes + ("docker.1ms.run",) if host == "docker.io" else prefixes
+
+
+def _oci_mirrors(
+    host: str, repository: str, revision: str
+) -> tuple[_SourceMirror, ...]:
+    """Build shared registry candidates for platform pulls and source-image builds."""
     candidates = []
-    for prefix in prefixes:
+    for prefix in _oci_mirror_prefixes(host):
         mirror_host, _, namespace = prefix.partition("/")
         mirror_repository = f"{namespace}/{repository}" if namespace else repository
         candidates.append(
             _SourceMirror(
-                partial(_measure_oci_manifest, mirror_host, mirror_repository, revision),
+                partial(
+                    _measure_oci_manifest, mirror_host, mirror_repository, revision
+                ),
                 prefix,
             )
         )
@@ -288,6 +305,45 @@ def platform_image_reference(
     return select_platform_oci_reference(reference, previous)
 
 
+def select_platform_image_sources(
+    references: Mapping[str, str],
+    registry: str | None = None,
+    *,
+    previous: Mapping[str, str] | None = None,
+    installed_images: Collection[str] = (),
+) -> dict[str, str]:
+    """Resolve image defaults concurrently, retaining matching installed sources while reachable."""
+    previous = previous or {}
+    with ThreadPoolExecutor() as executor:
+        # Coalesce shared images before submission; the per-image cache does not
+        # prevent duplicate probes when concurrent callers both miss it.
+        pending = {}
+        futures = {}
+        for key, reference in references.items():
+            prior = previous.get(key)
+            if prior is None and installed_images:
+                host, _, path = reference.partition("/")
+                candidates = (
+                    reference,
+                    *(f"{prefix}/{path}" for prefix in _oci_mirror_prefixes(host)),
+                )
+                prior = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate in installed_images
+                    ),
+                    None,
+                )
+            selection = (reference, prior)
+            if selection not in pending:
+                pending[selection] = executor.submit(
+                    platform_image_reference, reference, registry, previous=prior
+                )
+            futures[key] = pending[selection]
+        return {key: future.result() for key, future in futures.items()}
+
+
 @cache
 def select_platform_oci_reference(reference: str, previous: str | None = None) -> str:
     """Select an anonymous source for a CLI-owned public image or OCI chart default.
@@ -299,10 +355,7 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
     scheme = "oci://" if reference.startswith("oci://") else ""
     value = reference.removeprefix(scheme) if scheme else reference
     host, separator, path = value.partition("/")
-    if not separator or host not in {
-        "docker.io", "ghcr.io", "gcr.io", "registry.k8s.io", "quay.io", "nvcr.io",
-        "cr.infini-ai.com",
-    }:
+    if not separator or not _oci_mirror_prefixes(host):
         return reference
     if "@" in path:
         repository, revision = path.rsplit("@", 1)
@@ -312,9 +365,17 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
         repository, revision = path, "latest"
     official_host = "registry-1.docker.io" if host == "docker.io" else host
     mirrors = _oci_mirrors(host, repository, revision)
-    preferred = "" if previous == reference else next(
-        (mirror.value for mirror in mirrors if previous == f"{scheme}{mirror.value}/{path}"),
-        None,
+    preferred = (
+        ""
+        if previous == reference
+        else next(
+            (
+                mirror.value
+                for mirror in mirrors
+                if previous == f"{scheme}{mirror.value}/{path}"
+            ),
+            None,
+        )
     )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
@@ -322,7 +383,9 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
         )
         futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
-            official.result(), mirrors, tuple(future.result() for future in futures),
+            official.result(),
+            mirrors,
+            tuple(future.result() for future in futures),
             preferred=preferred,
         )
     return f"{scheme}{selected[0].value}/{path}" if selected else reference

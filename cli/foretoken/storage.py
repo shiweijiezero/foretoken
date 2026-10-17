@@ -9,12 +9,15 @@ import copy
 import json
 import os
 import subprocess
+import time
+import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from foretoken.kubernetes import Kubectl
+from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
@@ -40,11 +43,15 @@ class DirectoryVolumes:
     def __init__(self, kubectl: Kubectl) -> None:
         self.kubectl = kubectl
 
-    def apply(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Apply user intent, then bind directory PVs to the controller-created claims."""
+    def apply(
+        self, deployment: ForetokenDeployment, timeout: str,
+        *, submit: Callable[[str], None] | None = None,
+    ) -> None:
+        """Submit prepared intent, then bind directory PVs to the controller-created claims."""
+        submit = submit or self.kubectl.apply
         caches = tuple(cache for cache in deployment.runtime_caches if cache.directory)
         if not caches:
-            self.kubectl.apply(deployment.rendered)
+            submit(deployment.rendered)
             return
         documents = copy.deepcopy(deployment.objects)
         context = self.kubectl.current_context()
@@ -69,11 +76,11 @@ class DirectoryVolumes:
                 )
             spec = matching[0].setdefault("spec", {})
             annotations = matching[0]["metadata"].setdefault("annotations", {})
-            annotations.pop(self.directory_owner_annotation, None)
             path = Path(cache.directory)
             if not context.startswith("k3d-") and (
                 not path.is_absolute() or ".." in path.parts
             ):
+                annotations.pop(self.directory_owner_annotation, None)
                 spec.pop("directory", None)
                 spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
                 schedulable_nodes = tuple(
@@ -92,17 +99,45 @@ class DirectoryVolumes:
                     flush=True,
                 )
                 continue
+            consumer_nodes = nodes
+            platform = None
+            options = {}
+            if not context.startswith("k3d-"):
+                platforms = self.kubectl.list_resources(
+                    ("deployment.apps",), deployment.namespace or self.kubectl.current_namespace(),
+                    label_selector="app.kubernetes.io/name=foretoken-control-plane",
+                )
+                if len(platforms) == 1:
+                    platform = platforms[0]
+                    arguments = platform["spec"]["template"]["spec"]["containers"][0]["args"]
+                    options = dict(
+                        argument[2:].split("=", 1)
+                        for argument in arguments
+                        if argument.startswith("--") and "=" in argument
+                    )
+                    # Shared volumes retain their cluster-wide placement across redeployments.
+                    # Only a local RWO directory needs proof of a single consumer node.
+                    if cache.access_mode == "ReadWriteOnce":
+                        consumer_nodes = self._consumer_nodes(deployment, cache, nodes, options)
             resolved, hostnames, directory_owner = _resolve_directory(
-                cache, deployment.path, context, nodes
+                cache, deployment.path, context, consumer_nodes
             )
+            if not context.startswith("k3d-"):
+                directory_owner = self.read_directory_owner(matching[0])
+                if directory_owner is None:
+                    directory_owner = self._remote_directory_owner(
+                        resolved, consumer_nodes, timeout, platform, options
+                    )
             if directory_owner is not None:
                 uid, gid = directory_owner
                 annotations[self.directory_owner_annotation] = f"{uid}:{gid}"
+            else:
+                annotations.pop(self.directory_owner_annotation, None)
             locations.append((cache, resolved, hostnames))
             spec["directory"] = resolved
 
         # Let admission and the controller resolve the PVC contract before creating a PV.
-        self.kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
+        submit(yaml.safe_dump_all(documents, sort_keys=False))
         for cache, path, hostnames in locations:
             self.kubectl.run(
                 [
@@ -127,6 +162,149 @@ class DirectoryVolumes:
                     f"PVC/{claim['metadata']['name']} is not owned by RuntimeCache/{cache.name}"
                 )
             self._bind(claim, path, hostnames, timeout)
+
+    def _consumer_nodes(
+        self,
+        deployment: ForetokenDeployment,
+        cache: RuntimeCacheManifest,
+        nodes: tuple[dict[str, Any], ...],
+        options: dict[str, str],
+    ) -> tuple[dict[str, Any], ...]:
+        """Resolve cache placement from installed runtime settings and namespace consumers."""
+        caches = self.kubectl.list_resources(
+            ("runtimecaches.inference.foretoken.io",), cache.namespace
+        )
+        if options.get("cache-claim") or any(
+            current["metadata"]["name"] != cache.name for current in caches
+        ):
+            return nodes
+        key = options.get("gpu-node-selector-key", "")
+        value = options.get("gpu-node-selector-value", "")
+        if bool(key) != bool(value):
+            return nodes
+        services = self.kubectl.list_resources(
+            ("modelservices.inference.foretoken.io",), cache.namespace
+        )
+        # Keep existing intent as well as its replacement: old serving cohorts can
+        # still use the claim while a deployment rolls onto a different node.
+        services += tuple(
+            document for document in deployment.objects
+            if document.get("kind") == "ModelService"
+            and document.get("apiVersion", "").startswith("inference.foretoken.io/")
+            and document["metadata"]["namespace"] == cache.namespace
+        )
+        return _directory_nodes(nodes, services, {key: value} if key else {})
+
+    def _remote_directory_owner(
+        self,
+        path: str,
+        nodes: tuple[dict[str, Any], ...],
+        timeout: str,
+        platform: dict[str, Any] | None,
+        options: dict[str, str],
+    ) -> tuple[int, int] | None:
+        """Read directory identity with the selected platform's tools before applying consumers."""
+        if platform is None:
+            raise DeploymentError(
+                "directory ownership discovery requires this namespace's Foretoken controller"
+            )
+        tools = json.loads(options.get("application-files", "{}"))
+        if not tools.get("image"):
+            raise DeploymentError(
+                "automatic directory ownership discovery requires platform tools; run `foretoken install` first"
+            )
+        seconds = timeout_seconds(timeout)
+        namespace = platform["metadata"]["namespace"]
+        # Reuse this deployment's tools and pull credentials after its controller is ready.
+        pull_secrets = platform["spec"]["template"]["spec"].get("imagePullSecrets", [])
+        owners = set()
+        for node in nodes:
+            print(f"Reading directory owner on {node['metadata']['name']}: {path}", flush=True)
+            name = "foretoken-directory-owner-" + uuid.uuid4().hex[:12]
+            job = {
+                "apiVersion": "batch/v1", "kind": "Job",
+                "metadata": {"name": name, "namespace": namespace},
+                "spec": {
+                    "backoffLimit": 0,
+                    "activeDeadlineSeconds": max(1, int(timeout_seconds(timeout))),
+                    "ttlSecondsAfterFinished": 60,
+                    "template": {"spec": {
+                        "nodeName": node["metadata"]["name"],
+                        "restartPolicy": "Never",
+                        "automountServiceAccountToken": False,
+                        "imagePullSecrets": pull_secrets,
+                        "securityContext": {
+                            "runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "containers": [{
+                            "name": "owner", "image": tools["image"],
+                            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+                            "terminationMessagePolicy": "FallbackToLogsOnError",
+                            "command": ["python", "-I", "-B", "-c",
+                                        "import os; s=os.stat('/directory'); print(f'{s.st_uid}:{s.st_gid}')"],
+                            "securityContext": {
+                                "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                "capabilities": {"drop": ["ALL"]},
+                            },
+                            "volumeMounts": [{"name": "directory", "mountPath": "/directory", "readOnly": True}],
+                        }],
+                        "volumes": [{"name": "directory", "hostPath": {"path": path, "type": "Directory"}}],
+                    }},
+                },
+            }
+            created = json.loads(self.kubectl.run(
+                ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=seconds
+            ).stdout)["metadata"]
+            try:
+                deadline = time.monotonic() + timeout_seconds(timeout)
+                while True:
+                    current = json.loads(self.kubectl.run(
+                        ["get", "job", name, "-n", namespace, "-o", "json"],
+                        timeout=max(1, deadline - time.monotonic()),
+                    ).stdout)
+                    conditions = current.get("status", {}).get("conditions", [])
+                    if any(c["type"] == "Complete" and c["status"] == "True" for c in conditions):
+                        break
+                    failed = next((c for c in conditions if c["type"] == "Failed" and c["status"] == "True"), None)
+                    if failed or time.monotonic() >= deadline:
+                        reason = failed.get("message", "Job failed") if failed else "timed out"
+                        details = self.kubectl.run(
+                            ["describe", "pods", "-n", namespace, "-l", "batch.kubernetes.io/controller-uid=" + created["uid"]],
+                            timeout=seconds,
+                        ).stdout
+                        raise DeploymentError(f"cannot read owner of {path} on {node['metadata']['name']}: {reason}\n{details}")
+                    time.sleep(1)
+                output = self.kubectl.run(
+                    ["logs", "job/" + name, "-n", namespace, "-c", "owner"],
+                    timeout=max(1, deadline - time.monotonic()),
+                ).stdout.strip()
+                uid, gid = map(int, output.split(":"))
+                owners.add((uid, gid))
+            finally:
+                current = json.loads(self.kubectl.run(
+                    ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                ).stdout or "null")
+                if current is not None and current["metadata"]["uid"] == created["uid"]:
+                    try:
+                        self.kubectl.run(
+                            ["delete", "--raw", f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}", "-f", "-"],
+                            input_text=json.dumps({
+                                "apiVersion": "v1", "kind": "DeleteOptions",
+                                "preconditions": {"uid": created["uid"]}, "propagationPolicy": "Foreground",
+                            }), timeout=seconds,
+                        )
+                    except DeploymentError:
+                        current = json.loads(self.kubectl.run(
+                            ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                        ).stdout or "null")
+                        if current is not None and current["metadata"]["uid"] == created["uid"]:
+                            raise
+                    self.kubectl.wait_deleted("jobs", created, timeout)
+        if len(owners) != 1:
+            raise DeploymentError(f"directory {path} has different owners across nodes")
+        uid, gid = owners.pop()
+        return (uid, gid) if uid != 0 else None
 
     def _bind(
         self,
@@ -193,9 +371,16 @@ class DirectoryVolumes:
                 ["patch", "pv", name, "--type=json", "-p", json.dumps(patch)]
             )
 
-    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Delete deployment resources and explicitly disposable PVs, never directory files."""
+    def delete(
+        self, deployment: ForetokenDeployment, timeout: str,
+        *, remove: Callable[[tuple[dict[str, Any], ...]], set[str]] | None = None,
+    ) -> None:
+        """Retire user resources and disposable PVs, optionally filtering deletion by live ownership."""
         volumes = []
+        expected_uids = {
+            (obj["metadata"].get("namespace", deployment.namespace), obj["metadata"]["name"]): obj["metadata"].get("uid")
+            for obj in deployment.objects if obj.get("kind") == "RuntimeCache"
+        }
         for cache in deployment.runtime_caches:
             if not cache.directory or cache.retention_policy != "Delete":
                 continue
@@ -203,6 +388,9 @@ class DirectoryVolumes:
                 "runtimecache", cache.name, cache.namespace
             )
             if resource is None:
+                continue
+            expected_uid = expected_uids.get((cache.namespace, cache.name))
+            if expected_uid is not None and resource["metadata"]["uid"] != expected_uid:
                 continue
             claim_name = resource.get("status", {}).get("claimName")
             if not claim_name:
@@ -217,9 +405,15 @@ class DirectoryVolumes:
                     raise DeploymentError(
                         f"PV/{volume['metadata']['name']} is assigned to another claim"
                     )
-                volumes.append(volume)
-        self.kubectl.delete(deployment.rendered, timeout)
-        for previous in volumes:
+                volumes.append((resource["metadata"]["uid"], volume))
+        if remove is None:
+            self.kubectl.delete(deployment.rendered, timeout)
+            removed = {uid for uid, _ in volumes}
+        else:
+            removed = remove(deployment.objects)
+        for uid, previous in volumes:
+            if uid not in removed:
+                continue
             name = previous["metadata"]["name"]
             current = self.kubectl.get_if_exists("pv", name)
             if current is None:
@@ -233,9 +427,7 @@ class DirectoryVolumes:
                 "pvc", claim["name"], claim["namespace"]
             ):
                 raise DeploymentError(f"PV/{name} still has a claim")
-            self.kubectl.run(
-                ["delete", "pv", name, "--wait=true", f"--timeout={timeout}"]
-            )
+            self.kubectl.delete_object(current, timeout)
 
     @classmethod
     def read_directory_owner(cls, cache: dict[str, Any]) -> tuple[int, int] | None:
@@ -257,6 +449,37 @@ class DirectoryVolumes:
         """Recognize this lifecycle's persistent marker before checking claim and path."""
         key, owner = self.owner_annotation
         return (volume.get("metadata", {}).get("annotations") or {}).get(key) == owner
+
+
+def _directory_nodes(
+    nodes: tuple[dict[str, Any], ...],
+    services: tuple[dict[str, Any], ...],
+    platform_selector: dict[str, str],
+) -> tuple[dict[str, Any], ...]:
+    """Union every cache consumer's inherited Pool placement without filtering node availability."""
+    if not services:
+        return nodes
+    selected = set()
+    for service in services:
+        spec = service["spec"]
+        for pool in spec.get("modelPools") or (spec,):
+            selector = pool.get("nodeSelector")
+            if selector is None:
+                selector = spec.get("nodeSelector") or {}
+            matches = tuple(
+                node for node in nodes
+                if all(
+                    node["metadata"].get("labels", {}).get(key) == value
+                    for constraint in (selector, platform_selector)
+                    for key, value in constraint.items()
+                )
+            )
+            # Unresolved consumers must not make another Pool appear single-node.
+            # Admission and reconciliation own invalid or unsatisfiable selectors.
+            if not matches:
+                return nodes
+            selected.update(node["metadata"]["name"] for node in matches)
+    return tuple(node for node in nodes if node["metadata"]["name"] in selected)
 
 
 def _resolve_directory(

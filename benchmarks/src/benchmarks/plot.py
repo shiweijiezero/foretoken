@@ -21,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Result directories or folders containing saved results; pass several to compare"
     )
     parser.add_argument(
-        "--output-dir", type=Path, help="Figure directory (default: RESULT_DIR/plots for one input, ./plots for multiple inputs)"
+        "--output-dir", type=Path, help="Figure directory (default: ./plots for comparisons, RESULT_DIR/plots for one input)"
     )
     parser.add_argument(
         "--columns",
@@ -32,15 +32,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--metric",
-        action="append",
+        action="extend",
+        nargs="+",
         default=[],
-        help="Metric to plot; repeat to select several",
+        help="One or more metrics to plot",
     )
     parser.add_argument(
         "--method",
-        action="append",
+        action="extend",
+        nargs="+",
         default=[],
-        help="Method to include; repeat to select several",
+        help="One or more named methods to include",
+    )
+    parser.add_argument(
+        "--base", type=Path, metavar="RESULT_DIR",
+        help="Saved performance result or iteration directory to use as the base",
     )
     options = parser.parse_args(argv)
     from benchmarks.results.plots.figures import (
@@ -55,9 +61,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             columns=options.columns,
             metrics=tuple(options.metric),
             methods=tuple(options.method),
+            base=options.base,
         )
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     print(
-        f"Exported {len(artifacts)} files to {options.output_dir or default_output_directory(*options.sources)}"
+        f"Exported {len(artifacts)} files to {options.output_dir or default_output_directory(*options.sources, base=options.base)}"
     )

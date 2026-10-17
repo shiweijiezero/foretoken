@@ -185,7 +185,7 @@ type ModelAutoscalingAlgorithmConfig struct {
 }
 
 // ModelAutoscalingConfig configures user-visible service replica autoscaling.
-// Automatic scaling always maintains at least one service replica; scale-to-zero is not supported.
+// While running, automatic scaling maintains at least one service replica; suspension is independent.
 // +kubebuilder:validation:XValidation:rule="self.minReplicas <= self.maxReplicas",message="autoscaling minReplicas must not exceed maxReplicas"
 type ModelAutoscalingConfig struct {
 	// +optional
@@ -248,6 +248,11 @@ type ModelServiceSpec struct {
 	// +optional
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
 
+	// Suspend stops every Pool without changing replica counts or autoscaling configuration.
+	// Clearing it resumes reconciliation from the retained service intent.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
@@ -265,6 +270,11 @@ type ModelServiceSpec struct {
 
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
+
+	// PrefixCacheIsolation selects caller-bound caching when true and unsalted sharing when false.
+	// Omission preserves the request's cache_salt. The setting applies to every Pool and frontend.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
 
 	// InstanceAdmission limits accepted unfinished work in each instance; omission is unrestricted.
 	// +optional
@@ -308,6 +318,11 @@ type ModelServiceSpec struct {
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional
 	Observability *ModelObservability `json:"observability,omitempty"`
+
+	// RouterPipeline overrides selected frontend routing slots for this model and its execution stages.
+	// Omitted slots inherit; supplied algorithms and parameters replace the entire slot.
+	// +optional
+	RouterPipeline *ModelRouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Admission replaces the frontend's entire admission block; omission uses its defaults.
 	// +optional

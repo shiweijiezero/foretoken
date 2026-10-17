@@ -209,9 +209,27 @@ pub struct DataParallelTelemetry {
     pub kv_cache_usage: Option<f64>,
 }
 
+/// Cumulative first moment and sample count read from an engine-owned histogram.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistogramMoments {
+    pub sum: f64,
+    pub count: u64,
+}
+
+/// Engine-owned request distributions used by request-cost routing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestCostTelemetry {
+    pub prompt_tokens: Option<HistogramMoments>,
+    pub generation_tokens: Option<HistogramMoments>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryResponse {
+    #[serde(default)]
+    pub request_cost: RequestCostTelemetry,
     pub version: u8,
     pub collected_at_unix_ms: u64,
     pub accepting: bool,
@@ -234,25 +252,65 @@ pub struct TelemetryResponse {
     pub e2e_seconds: CumulativeHistogram,
 }
 
+/// One EngineCore's scheduler token demand, distinct from allocated KV cache occupancy.
+/// The model-server publishes complete rank coverage for token-load autoscaling consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerLoad {
+    pub data_parallel_rank: u32,
+    pub queued_prefill_tokens: u64,
+    pub scheduled_decode_kv_tokens: u64,
+    pub queued_decode_kv_tokens: u64,
+    pub context_length: u64,
+    pub kv_capacity_tokens: u64,
+}
+
+/// Versioned scheduler-demand response consumed only by the control-plane collector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerLoadResponse {
+    pub version: u8,
+    pub collected_at_unix_ms: u64,
+    pub engines: Vec<SchedulerLoad>,
+}
+
 /// Group-local route used by the frontend KV indexer to consume normalized deltas.
 pub const KV_INDEX_DELTA_PATH: &str = "/v1/internal/kv-index/delta";
 
+/// Read-only engine observations for every DP rank of a routing candidate.
+pub const KV_LOCAL_PREFIX_PATH: &str = "/v1/internal/kv-index/local-prefix";
 /// Read-only shared-cache observations for a tokenized routing request.
 pub const KV_SHARED_PREFIX_PATH: &str = "/v1/internal/kv-index/shared-prefix";
 
 /// Existing KV observation deadline shared by HTTP callers and Pod-local connector queries.
 pub const KV_OBSERVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Cache identity of a processed media item; observations never transfer its tensors.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvMultimodalIdentity {
+    pub identifier: String,
+    pub offset: usize,
+    pub length: usize,
+}
+
+/// Native cache identity used for read-only local and connector observations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct KvSharedPrefixRequest {
+pub struct KvPrefixRequest {
     pub prompt_token_ids: Vec<u32>,
     pub dp_rank: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_salt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lora_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lora_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub multimodal: Vec<KvMultimodalIdentity>,
 }
 
-/// A live connector observation, not an event-index entry or a cache lease.
+/// A source-confirmed reusable prefix, not resident block count or a cache lease.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvSharedPrefixResponse {
@@ -260,7 +318,31 @@ pub struct KvSharedPrefixResponse {
     pub scope_id: String,
     pub placement: KvPlacement,
     pub matched_tokens: usize,
-    pub block_size: usize,
+}
+
+/// Engine-confirmed local prefixes remain separate for every data-parallel rank.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvLocalPrefixResponse {
+    pub model_group_id: String,
+    pub scope_id: String,
+    pub ranks: Vec<KvRankPrefix>,
+}
+
+/// Native query result for one scheduler; the engine owns group alignment and validity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvRankPrefix {
+    pub dp_rank: u32,
+    pub matched_tokens: usize,
+    #[serde(default)]
+    pub offloaded: Vec<KvTierPrefix>,
+}
+
+/// A connector-confirmed continuation, including any locally reusable prefix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvTierPrefix {
+    pub tier: KvStorageTier,
+    pub matched_tokens: usize,
 }
 
 /// Cursor parameters for one source-local, zero-based delta stream. `None` means no event
@@ -360,6 +442,15 @@ pub struct KvDelta {
     pub sequence: u64,
     pub event: KvDeltaEvent,
 }
+/// Engine-reported cache layout required to bind a locality query to its event partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvCacheGroup {
+    pub group_idx: u32,
+    pub spec_kind: String,
+    pub sliding_window: Option<u32>,
+}
+
 /// Bounded source-local page. Identity, producer epoch and rank are independent from route ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -370,6 +461,9 @@ pub struct KvDeltaResponse {
     pub dp_rank: u32,
     pub through: u64,
     pub current: u64,
+    /// Absent when the producer cannot establish the engine's layout; consumers must not guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_groups: Option<Vec<KvCacheGroup>>,
     pub deltas: Vec<KvDelta>,
 }
 

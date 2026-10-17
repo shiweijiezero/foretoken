@@ -62,6 +62,8 @@ foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
 
 ## 查看结果
 
-控制台与 `slo_results.json` 给出每组条件下的最高达标请求峰值及其配置限额、最后一次实测峰值与限额，以及停止原因。
+控制台与 `slo_results.json` 给出每组条件下的最高达标请求峰值及其配置限额、最后一次实测峰值与限额，以及停止原因。其中的 `repeat_request_counts` 列出每个探测点各次测量的请求数和失败原因，包括未达标的探测点。
+
+搜索中断后，可用 [`--resume`](sweep_zh.md#继续已有扫描) 继续。
 
 显式部署的快速开始服务不再需要时，用 `foretoken delete examples/quickstart` 删除。

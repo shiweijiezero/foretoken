@@ -4,7 +4,7 @@
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::ModelServerRole;
-use foretoken_router::{RouteTargetId, RouteTargetSet};
+use foretoken_router::{ModelRoutingStages, RouteTargetId, RouteTargetSet, RouterPipelineConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -80,9 +80,13 @@ pub struct SnapshotModel {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     pub admission_target_sets: Vec<RouteTargetSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_pipeline: Option<foretoken_router::ModelRouterPipeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +104,8 @@ pub struct SnapshotEpdComponent {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
@@ -137,6 +143,8 @@ pub struct SnapshotPdComponent {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     pub profile_name: String,
     pub profile_revision: String,
     pub connector: String,
@@ -175,6 +183,8 @@ pub struct SnapshotGroup {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_isolation: Option<bool>,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
@@ -191,19 +201,51 @@ pub struct ModelIdentity {
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
+    pub prefix_cache_isolation: Option<bool>,
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
     /// Compares the backend inventory independently of frontend rules and publication version.
     /// Runtime builders reuse clients and cached observations when this inventory is unchanged.
     pub fn same_discovery(&self, other: &Self) -> bool {
-        self.models == other.models
+        self.models.len() == other.models.len()
+            && self.models.iter().zip(&other.models).all(|(left, right)| {
+                left.service_uid == right.service_uid
+                    && left.model == right.model
+                    && left.source == right.source
+                    && left.revision == right.revision
+                    && left.tokenizer == right.tokenizer
+                    && left.tokenizer_revision == right.tokenizer_revision
+                    && left.prefix_cache_isolation == right.prefix_cache_isolation
+                    && left.capabilities == right.capabilities
+                    && left.admission_target_sets == right.admission_target_sets
+            })
             && self.groups == other.groups
             && self.pd_components == other.pd_components
             && self.pd_pipeline_scopes == other.pd_pipeline_scopes
             && self.epd_components == other.epd_components
             && self.epd_pipeline_scopes == other.epd_pipeline_scopes
             && self.dt_components == other.dt_components
+    }
+
+    /// Resolves model routing once and rejects conflicting policies for a shared public model name.
+    pub fn model_routing(
+        &self,
+    ) -> Result<BTreeMap<String, ModelRoutingStages<RouterPipelineConfig>>, SnapshotError> {
+        let mut routing = BTreeMap::new();
+        for model in &self.models {
+            let config = model
+                .router_pipeline
+                .as_ref()
+                .unwrap_or(&Default::default())
+                .resolve(&self.settings.router_pipeline);
+            if let Some(previous) = routing.insert(model.model.clone(), config.clone())
+                && previous != config
+            {
+                return Err(SnapshotError::ConflictingRouting(model.model.clone()));
+            }
+        }
+        Ok(routing)
     }
 
     /// Returns each model's deterministically ordered, controller-owned admission target sets.
@@ -244,7 +286,15 @@ impl ServingSnapshot {
     /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::<String, ModelIdentity>::new();
-        for (model, source, revision, tokenizer, tokenizer_revision, capabilities) in self
+        for (
+            model,
+            source,
+            revision,
+            tokenizer,
+            tokenizer_revision,
+            prefix_cache_isolation,
+            capabilities,
+        ) in self
             .models
             .iter()
             .map(|model| {
@@ -254,6 +304,7 @@ impl ServingSnapshot {
                     &model.revision,
                     &model.tokenizer,
                     &model.tokenizer_revision,
+                    model.prefix_cache_isolation,
                     &model.capabilities,
                 )
             })
@@ -264,6 +315,7 @@ impl ServingSnapshot {
                     &g.revision,
                     &g.tokenizer,
                     &g.tokenizer_revision,
+                    g.prefix_cache_isolation,
                     &g.capabilities,
                 )
             }))
@@ -274,6 +326,7 @@ impl ServingSnapshot {
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
+                    c.prefix_cache_isolation,
                     &c.capabilities,
                 )
             }))
@@ -284,6 +337,7 @@ impl ServingSnapshot {
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
+                    c.prefix_cache_isolation,
                     &c.capabilities,
                 )
             }))
@@ -300,6 +354,7 @@ impl ServingSnapshot {
                 revision: revision.clone(),
                 tokenizer: tokenizer.clone(),
                 tokenizer_revision: tokenizer_revision.clone(),
+                prefix_cache_isolation,
                 capabilities: capabilities.clone(),
             };
             match identities.get_mut(model) {
@@ -307,7 +362,8 @@ impl ServingSnapshot {
                     if existing.source != value.source
                         || existing.revision != value.revision
                         || existing.tokenizer != value.tokenizer
-                        || existing.tokenizer_revision != value.tokenizer_revision =>
+                        || existing.tokenizer_revision != value.tokenizer_revision
+                        || existing.prefix_cache_isolation != value.prefix_cache_isolation =>
                 {
                     return Err(SnapshotError::ConflictingIdentity(model.clone()));
                 }
@@ -326,6 +382,8 @@ impl ServingSnapshot {
 }
 #[derive(Debug, Error)]
 pub enum SnapshotError {
+    #[error("model {0} has conflicting routing configurations")]
+    ConflictingRouting(String),
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
     #[error("routing snapshot has an invalid DT component or scope: {0}")]
@@ -352,7 +410,9 @@ pub enum SnapshotError {
     InvalidPdPipelineScope(String),
     #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
     MixedModelRoles(String),
-    #[error("routing snapshot model {0:?} has conflicting revision or tokenizer identity")]
+    #[error(
+        "routing snapshot model {0:?} has conflicting model, tokenizer or prefix-cache settings"
+    )]
     ConflictingIdentity(String),
     #[error("routing snapshot endpoint {endpoint:?} is invalid: {message}")]
     InvalidEndpoint { endpoint: String, message: String },

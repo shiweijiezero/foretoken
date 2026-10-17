@@ -1339,6 +1339,7 @@ dependencies = [
  "foretoken-model-protocol",
  "foretoken-request-ledger",
  "futures",
+ "prometheus-client",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -1347,6 +1348,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
  "vllm-engine-core-client",
@@ -1487,6 +1489,11 @@ dependencies = [
 [[package]]
 name = "foretoken-xtask"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "form_urlencoded"

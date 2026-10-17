@@ -11,10 +11,11 @@ import json
 import logging
 import math
 import os
-import shutil
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from statistics import mean, median, stdev
 from typing import Any, Generic, Protocol, TypeVar
@@ -28,6 +29,7 @@ from benchmarks.results.output import (
     WandbSink,
     write_json,
 )
+from benchmarks.results.tasks import prepare_task_resume, run_task, task_source
 
 logger = logging.getLogger(__name__)
 ConfigT = TypeVar("ConfigT")
@@ -43,6 +45,7 @@ class SweepDefinition:
     path: str
     num_runs: int
     experiment_name: str
+    resume: str = ""
 
 
 @dataclass
@@ -73,7 +76,7 @@ class SweepAdapter(Protocol, Generic[ConfigT]):
         label: str,
         wandb_group: str,
         dry_run: bool,
-    ) -> Mapping[str, Any]: ...
+    ) -> BenchmarkRun: ...
 
 
 def _axis_label(value: object) -> str:
@@ -175,38 +178,35 @@ def run_sweep(
     mode: str,
     dry_run: bool = False,
     combinations: list[SweepPoint] | None = None,
+    service_resources: ExitStack | None = None,
 ) -> SweepExecution:
     """Run points sequentially and publish one comparison through the existing result lifecycle.
 
-    Adapters own their request event loops and serving resources. Completed point
-    records survive a later failure or interruption, alongside the full plan.
+    Adapters own request event loops and acquire serving resources in the supplied
+    stack. Release those services before result sinks close so final logs include
+    cleanup. Completed point records survive a later failure or interruption.
     """
     if definition.num_runs < 1:
         raise ValueError(f"--num-runs must be >= 1, got {definition.num_runs}")
     combinations = (
         load_sweep_points(definition, adapter) if combinations is None else combinations
     )
-    prepared = [
-        (f"point-{index}", point, adapter.apply_point(config, point))
+    prepared = {
+        f"point-{index}": (point, adapter.apply_point(config, point))
         for index, point in enumerate(combinations, start=1)
-    ]
-    for _, _, point_config in prepared:
+    }
+    for _, point_config in prepared.values():
         adapter.validate_point(point_config)
     name = definition.experiment_name.strip().replace("/", "-")
-    directory = os.path.join(config.outputs.output_dir, name) if name else None
-    if directory is not None:
-        # An explicit experiment name identifies a replaceable result set.
-        if os.path.exists(directory):
-            shutil.rmtree(directory)
-        os.makedirs(directory)
     plan = {
         "mode": mode,
         "sweep": definition.path,
         "num_runs": definition.num_runs,
+        "dry_run": dry_run,
         "wandb_group": adapter.group_name(config),
         "combinations": [
             {"dir": point_name, "bench": point}
-            for point_name, point, _ in prepared
+            for point_name, (point, _) in prepared.items()
         ],
         "base": adapter.plan_base(config),
     }
@@ -231,77 +231,91 @@ def run_sweep(
             )
         return selected
 
-    all_points: list[dict[str, Any]] = []
+    all_points = [{
+        "combination": combination_name,
+        "parameter_group": str(combination[_PARAMETER_GROUP]),
+        "run_number": run_number,
+        "bench": dict(combination),
+        "label": f"{combination_name}-run{run_number}" if definition.num_runs > 1 else combination_name,
+        "status": "pending", "exit_code": None,
+    } for combination_name, (combination, _) in prepared.items() for run_number in range(definition.num_runs)]
     artifacts: dict[str, Path] = {}
-    with ResultOutputs(
-        config, None, output_dir=directory, sink_factory=sinks
-    ) as outputs:
+    with (
+        ResultOutputs(config, None, directory_prefix=f"{name}-" if name else "", sink_factory=sinks) as outputs,
+        service_resources if service_resources is not None else nullcontext(),
+    ):
         experiment_dir = outputs.execution_dir
+        root = Path(experiment_dir)
+        if definition.resume:
+            prepare_task_resume(Path(definition.resume), root, plan, outputs=config.outputs)
+            plan["resumed_from"] = str(Path(definition.resume).resolve())
         artifacts["config"] = write_json(experiment_dir, "config.json", plan)
         outputs.open(plan)
-        try:
-            for combination_name, combination, point_config in prepared:
-                point_config = replace(
-                    point_config, outputs=point_config.outputs.for_child_run()
-                )
-                for run_number in range(definition.num_runs):
-                    label = (
-                        f"{combination_name}-run{run_number}"
-                        if definition.num_runs > 1
-                        else combination_name
-                    )
-                    run_dir = os.path.join(
-                        experiment_dir, combination_name, f"run={run_number}"
-                    )
-                    logger.info(
-                        "Sweep %s run=%s/%s",
-                        combination_name,
-                        run_number + 1,
-                        definition.num_runs,
-                    )
-                    point = {
-                        "combination": combination_name,
-                        "parameter_group": str(combination[_PARAMETER_GROUP]),
-                        "run_number": run_number,
-                        "bench": dict(combination),
-                        "label": label,
-                    }
-                    # Append before dispatch so interruption leaves a visible incomplete run.
-                    all_points.append(point)
-                    point["exit_code"] = 1
-                    metrics = dict(
-                        adapter.execute_point(
-                            point_config,
-                            output_dir=run_dir,
-                            label=label,
-                            wandb_group=plan["wandb_group"],
-                            dry_run=dry_run,
-                        )
-                    )
-                    point.update(metrics)
-                    point["exit_code"] = (
-                        0 if dry_run or metrics.get("success_num", 0) else 1
-                    )
-        finally:
-            artifacts["sweep_points"] = write_json(
-                experiment_dir, "sweep_points.json", all_points
+        # Imported task records are references, not new samples. Populate all reused
+        # tasks before dispatch so progress also covers completed points later in the plan.
+        for point in all_points:
+            task_dir = root / point["combination"] / f"run={point['run_number']}"
+            task_path = task_dir / "task.json"
+            if task_path.is_file():
+                saved = json.loads(task_path.read_text(encoding="utf-8"))
+                if saved["status"] == "completed":
+                    point.update(saved["metrics"], status="failed" if saved["exit_code"] else "completed",
+                                 exit_code=saved["exit_code"], reused=True)
+                    point["result"] = os.path.relpath(task_source(task_dir), root)
+
+        def checkpoint(*, finished: bool = False) -> dict[str, Any]:
+            """Publish the current task inventory and derived metrics after each transition."""
+            counts = Counter(point["status"] for point in all_points)
+            status = "running" if not finished else (
+                "completed" if counts["completed"] == len(all_points)
+                else "partial" if counts["completed"] else "failed"
             )
+            totals = {key: sum(int(point.get(key, 0)) for point in all_points)
+                      for key in ("request_num", "success_num", "failed_num")}
+            totals["sweep"] = {"status": status, "tasks": len(all_points),
+                               **{state: counts[state] for state in ("completed", "failed", "interrupted", "running", "pending")}}
+            artifacts["sweep_points"] = write_json(experiment_dir, "sweep_points.json", all_points)
             summary = summarize_sweep(all_points, num_runs=definition.num_runs)
-            artifacts["sweep_summary"] = write_json(
-                experiment_dir, "sweep_summary.json", summary
-            )
+            artifacts["sweep_summary"] = write_json(experiment_dir, "sweep_summary.json", summary)
             artifacts["sweep_summary_csv"] = write_sweep_csv(summary, experiment_dir)
-        totals = {
-            key: sum(int(point.get(key, 0)) for point in all_points)
-            for key in ("request_num", "success_num", "failed_num")
-        }
-        run = BenchmarkRun(
-            plan,
-            totals,
-            None,
-            artifacts,
-            exit_code=0 if dry_run or totals["success_num"] else 1,
-        )
+            artifacts["metrics"] = write_json(experiment_dir, "metrics.json", totals)
+            if finished:
+                log = logger.info if status == "completed" else logger.error
+                log("Sweep %s: completed=%s/%s, failed=%s, interrupted=%s, pending=%s",
+                    status, counts["completed"], len(all_points), counts["failed"], counts["interrupted"], counts["pending"])
+            return totals
+
+        checkpoint()
+        try:
+            for point in all_points:
+                if point.get("reused"):
+                    logger.info("Reusing completed sweep task: %s/run=%s", point["combination"], point["run_number"])
+                    continue
+                point_config = prepared[point["combination"]][1]
+                point_config = replace(point_config, outputs=point_config.outputs.for_child_run())
+                run_dir = root / point["combination"] / f"run={point['run_number']}"
+                point.update(status="running", exit_code=None)
+                checkpoint()
+                logger.info("Sweep %s run=%s/%s", point["combination"], point["run_number"] + 1, definition.num_runs)
+                try:
+                    result = run_task(run_dir, partial(
+                        adapter.execute_point, point_config, output_dir=str(run_dir), label=point["label"],
+                        wandb_group=plan["wandb_group"], dry_run=dry_run,
+                    ))
+                    point.update(result.metrics, exit_code=result.exit_code,
+                                 status="completed" if result.exit_code == 0 else "failed")
+                    point["result"] = os.path.relpath(task_source(run_dir), root)
+                except BaseException as error:
+                    point.update(status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+                                 exit_code=130 if isinstance(error, KeyboardInterrupt) else 1,
+                                 error_type=type(error).__name__)
+                    raise
+                finally:
+                    checkpoint()
+        finally:
+            totals = checkpoint(finished=True)
+        run = BenchmarkRun(plan, totals, None, artifacts,
+                           exit_code=0 if totals["sweep"]["status"] == "completed" else 1)
         outputs.publish(run)
     return SweepExecution(run, all_points, experiment_dir)
 
@@ -361,7 +375,7 @@ def summarize_sweep(
             "parameter_group": runs[0]["parameter_group"],
             "method": method,
             "bench": runs[0]["bench"],
-            "runs": len(runs),
+            "runs": sum(run.get("status") != "pending" for run in runs),
             "requested_runs": num_runs if num_runs is not None else len(runs),
             "failed_runs": sum(
                 bool(run.get("exit_code")) or bool(run.get("failed_num", 0))

@@ -117,9 +117,9 @@ def loki_values(config: LogConfig) -> dict[str, Any]:
 
 
 def collector_values(
-    endpoint: str, image_pull_secrets: tuple[str, ...] = ()
+    endpoint: str, release: ReleaseRef, image_pull_secrets: tuple[str, ...] = ()
 ) -> dict[str, Any]:
-    """Collect labeled Foretoken containers on each node with persistent offsets and buffers."""
+    """Configure node collectors with release-scoped checkpoints retained across Pod replacement."""
     target = urlsplit(endpoint)
     port = target.port or (443 if target.scheme == "https" else 80)
     uri = target.path.rstrip("/") + "/loki/api/v1/push"
@@ -144,7 +144,8 @@ def collector_values(
         "daemonSetVolumes": [
             {"name": "varlog", "hostPath": {"path": "/var/log"}},
             {"name": "state", "hostPath": {
-                "path": "/var/log/foretoken-log-collector", "type": "DirectoryOrCreate",
+                "path": f"/var/lib/foretoken/log-collector/{release.namespace}/{release.name}",
+                "type": "DirectoryOrCreate",
             }},
         ],
         "daemonSetVolumeMounts": [
@@ -258,7 +259,7 @@ class LogCollectionLifecycle:
             if not config.endpoint:
                 self._helm.install_loki(self.loki, loki_values(config), timeout)
             self._helm.install_log_collector(
-                self.collector, collector_values(endpoint, config.image_pull_secrets), timeout
+                self.collector, collector_values(endpoint, self.collector, config.image_pull_secrets), timeout
             )
         statefulset = (
             self._helm.loki_statefulset(self.loki).name
@@ -274,6 +275,6 @@ class LogCollectionLifecycle:
         )
 
     def uninstall(self, releases: tuple[ReleaseRef, ...], timeout: str) -> None:
-        """Stop collection and storage without deleting retained Loki claims."""
+        """Stop collection and storage, retaining node checkpoints and Loki claims."""
         for release in releases:
             self._helm.uninstall(release, timeout)

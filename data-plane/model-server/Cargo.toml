@@ -21,6 +21,7 @@ foretoken-artifacts.workspace = true
 foretoken-model-protocol.workspace = true
 foretoken-request-ledger = { path = "../request-ledger" }
 futures.workspace = true
+prometheus-client.workspace = true
 reqwest.workspace = true
 rmp-serde.workspace = true
 rmpv.workspace = true
@@ -29,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 uuid.workspace = true
 zeromq.workspace = true

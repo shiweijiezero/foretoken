@@ -83,7 +83,7 @@ def parse_video_arguments(
     parser.add_argument(
         "--experiment-name",
         default="",
-        help="Sweep directory name under --output-dir",
+        help="Name prefix for a new sweep directory under --output-dir",
     )
     parser.add_argument(
         "--dry-run",
@@ -137,6 +137,7 @@ def parse_video_arguments(
             path=parsed.sweep,
             num_runs=parsed.num_runs,
             experiment_name=parsed.experiment_name,
+            resume=parsed.resume,
         ),
     )
     config.validate()

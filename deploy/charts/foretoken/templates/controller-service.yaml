@@ -2,7 +2,7 @@
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
 {{/* Exposes controller-runtime metrics to the Prometheus Operator. */}}
-{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+{{- if and (eq .Values.scope "deployment") (eq (include "foretoken.observabilityEnabled" .) "true") }}
 apiVersion: v1
 kind: Service
 metadata:

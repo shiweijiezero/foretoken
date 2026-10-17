@@ -349,6 +349,7 @@ pub trait Generation: Send + Sync {
 /// Request-processing artifacts for one public model identity.
 pub struct ModelRuntime {
     bundle: Arc<RuntimeBundle>,
+    prefix_cache_isolation: Option<bool>,
 }
 
 impl ModelRuntime {
@@ -356,8 +357,27 @@ impl ModelRuntime {
     ///
     /// Runtime builders supply the resolved bundle; request dispatch borrows the returned runtime
     /// until its containing generation is replaced.
-    pub fn new(bundle: Arc<RuntimeBundle>) -> Self {
-        Self { bundle }
+    pub fn new(bundle: Arc<RuntimeBundle>, prefix_cache_isolation: Option<bool>) -> Self {
+        Self {
+            bundle,
+            prefix_cache_isolation,
+        }
+    }
+
+    /// Resolves the model-owned cache salt before preprocessing using the captured caller identity.
+    fn resolve_cache_salt(
+        &self,
+        requested: Option<String>,
+    ) -> Result<Option<String>, GenerationError> {
+        match self.prefix_cache_isolation {
+            Some(true) => foretoken_admission::CallerIdentity::current()
+                .caller
+                .filter(|caller| !caller.is_empty())
+                .map(Some)
+                .ok_or(GenerationError::InvalidRequest),
+            Some(false) => Ok(None),
+            None => Ok(requested),
+        }
     }
 }
 
@@ -1120,6 +1140,7 @@ impl Generation for RuntimeGeneration {
                 .generation_slot(&request.model, Some(&admission))
                 .await?;
             let runtime = slot.state.model(&request.model)?;
+            request.cache_salt = runtime.resolve_cache_salt(request.cache_salt.take())?;
             let text_request = TextRequest {
                 request_id: request.request_id.clone(),
                 prompt: request.prompt.clone(),
@@ -1151,7 +1172,7 @@ impl Generation for RuntimeGeneration {
     async fn generate_chat(
         &self,
         mut request: GenerationRequest,
-        chat: ChatRequest,
+        mut chat: ChatRequest,
         include_reasoning: bool,
     ) -> Result<GeneratedChat, GenerationError> {
         let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout()?);
@@ -1171,6 +1192,7 @@ impl Generation for RuntimeGeneration {
                 .generation_slot(&request.model, Some(&admission))
                 .await?;
             let runtime = slot.state.model(&request.model)?;
+            chat.cache_salt = runtime.resolve_cache_salt(chat.cache_salt.take())?;
             let bundle = runtime.bundle.clone();
             let tool_parser = request.tool_call_parser.clone();
             let reasoning_parser = request.reasoning_parser.clone();

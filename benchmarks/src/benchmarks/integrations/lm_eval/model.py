@@ -36,8 +36,9 @@ class ServiceAuthentication:
 class LikelihoodCompletion(ServiceAuthentication, LocalCompletionsAPI):
     """Score text through the native adapter, requiring complete echoed token probabilities."""
 
-    def __init__(self, *, responses=None, **options):
+    def __init__(self, *, responses=None, progress=None, **options):
         self.responses = responses
+        self.progress = progress
         self.tokenizer_identity = (
             options.get("tokenizer"), options.get("tokenizer_backend"), options.get("revision", "main"),
         )
@@ -62,6 +63,10 @@ class LikelihoodCompletion(ServiceAuthentication, LocalCompletionsAPI):
             for key, (_, context, continuation) in zip(keys, requests)
             if self.responses.get_likelihood(key) is None
         }
+        if self.progress is not None:
+            self.progress.advance("Evaluation/Likelihood windows reused", sum(
+                self.responses.get_likelihood(key) is not None for key in keys
+            ))
         if missing:
             previous_hook = self.cache_hook
             self.set_cache_hook(self.responses)
@@ -89,16 +94,22 @@ class LikelihoodCompletion(ServiceAuthentication, LocalCompletionsAPI):
                     "Likelihood scoring requires echoed logprobs for every prompt token "
                     "and one generated token; check the service's Completions support and tokenizer"
                 )
-        return super().parse_logprobs(outputs, tokens=tokens, ctxlens=ctxlens, **kwargs)
+        values = super().parse_logprobs(outputs, tokens=tokens, ctxlens=ctxlens, **kwargs)
+        if self.progress is not None:
+            self.progress.advance("Evaluation/Likelihood windows completed", sum(
+                value is not None for value in values
+            ))
+        return values
 
 
 class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
     """Own request dispatch and task formatting for one harness run; the caller owns the response store."""
 
-    def __init__(self, *, config, responses=None, resume=False, **options):
+    def __init__(self, *, config, responses=None, resume=False, progress=None, **options):
         self.config = config
         self.responses = responses
         self.resume = resume
+        self.progress = progress
         super().__init__(**options)
 
     @cached_property
@@ -116,7 +127,7 @@ class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
         return LikelihoodCompletion.create_from_arg_obj(
             options, {
                 "batch_size": self.config.batch_size, "service": self.service,
-                "responses": self.responses,
+                "responses": self.responses, "progress": self.progress,
             },
         )
 
@@ -157,6 +168,8 @@ class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
             request for request, slot in zip(requests, slots)
             if self.responses.get(slot) is None
         ]
+        if self.progress is not None:
+            self.progress.advance("Evaluation/Generations reused", len(slots) - len(missing))
         if missing:
             previous_hook = self.cache_hook
             self.set_cache_hook(self.responses)
@@ -175,6 +188,8 @@ class ServiceEvaluation(ServiceAuthentication, LocalChatCompletion):
     def parse_generations(self, outputs, **kwargs):
         """Normalize null answers before synchronous or asynchronous completion callbacks."""
         values = super().parse_generations(outputs, **kwargs)
+        if self.progress is not None:
+            self.progress.advance("Evaluation/Generations completed", len(values))
         if self.responses is None:
             return values
         return [LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER if value is None else value for value in values]

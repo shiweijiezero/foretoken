@@ -356,6 +356,7 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                   picker:
                     default:
                       algorithm: gamble_sampling
@@ -373,6 +374,7 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                   scorer:
                     default:
                       algorithm: kv_least_loaded
@@ -390,11 +392,16 @@ spec:
                     required:
                     - algorithm
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - filter
                 - picker
                 - scorer
                 type: object
+              suspend:
+                description: Suspend stops frontend execution while retaining its
+                  configured replicas and storage.
+                type: boolean
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:

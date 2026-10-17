@@ -141,6 +141,10 @@ type ModelGroupECRuntimeConfig struct {
 	// +kubebuilder:validation:MaxLength=253
 	SharedStorageClaim string `json:"sharedStorageClaim"`
 
+	// SharedStorageIdentity fixes the claim's filesystem identity for this execution cohort.
+	// +optional
+	SharedStorageIdentity *StorageIdentity `json:"sharedStorageIdentity,omitempty"`
+
 	// SharedStoragePath is the fixed in-container connector path.
 	// +kubebuilder:validation:Pattern=`^/[^[:space:]]*$`
 	// +kubebuilder:validation:MaxLength=256
@@ -238,6 +242,10 @@ type ModelGroupRuntime struct {
 	// +optional
 	// +listType=atomic
 	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// PrefixCacheIsolation pins the cache namespace and request policy for this instance.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
 
 	// InstanceAdmissionProtocol pins the configuration interface of the selected executable.
 	// Zero retains startup-only limits; one selects live file configuration.

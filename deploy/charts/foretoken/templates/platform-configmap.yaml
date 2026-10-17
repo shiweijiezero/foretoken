@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Persist resolved deployment defaults without running a shared serving controller.
+{{- if eq .Values.scope "platform" }}
+{{- include "foretoken.validateValues" . }}
+{{- $applications := include "foretoken.applications" . | fromJson }}
+{{- $image := deepCopy .Values.image }}
+{{- $_ := set $image "repository" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" $image.repository)) }}
+{{- $_ := set $image "tag" (default .Chart.AppVersion $image.tag) }}
+{{- $controller := deepCopy .Values.controller }}
+{{- $_ := set $controller "applicationURL" (index $applications "control-plane") }}
+{{- $frontend := deepCopy .Values.frontend }}
+{{- $_ := set $frontend "image" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" $frontend.image)) }}
+{{- $_ := set $frontend "applicationURL" (index $applications "frontend") }}
+{{- $_ := set $frontend "gateway" (dict "create" false "controllerName" .Values.frontend.gateway.controllerName "name" (include "foretoken.frontendGatewayName" .) "namespace" (include "foretoken.frontendGatewayNamespace" .) "sectionName" (include "foretoken.frontendGatewaySectionName" .)) }}
+{{- $runtime := deepCopy .Values.runtime }}
+{{- $_ := set $runtime.vllm "image" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" (include "foretoken.runtimeVllmImage" .))) }}
+{{- with $runtime.vllmOmni.image }}
+{{- $_ := set $runtime.vllmOmni "image" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) }}
+{{- end }}
+{{- with $runtime.vllm.nsightImage }}
+{{- $_ := set $runtime.vllm "nsightImage" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) }}
+{{- end }}
+{{- $_ := set $runtime.vllm "applicationURL" (index $applications "model-server") }}
+{{- $admission := dict "externalURL" (include "foretoken.admissionStoreURL" .) "externalURLSecret" .Values.admissionStore.externalURLSecret }}
+{{- if .Values.admissionStore.externalURLSecret.name }}
+{{- $_ := set $admission "externalURL" "" }}
+{{- end }}
+{{- $values := dict
+    "scope" "deployment"
+    "global" (dict "imageRegistry" "")
+    "image" $image
+    "imagePullSecrets" .Values.imagePullSecrets
+    "development" .Values.development
+    "controller" $controller
+    "frontend" $frontend
+    "runtime" $runtime
+    "workload" .Values.workload
+    "resources" .Values.resources
+    "admissionStore" $admission
+    "modelDistribution" .Values.modelDistribution
+    "rdma" (dict "managed" false "resourceName" (include "foretoken.rdmaResourceName" .) "resourceCount" .Values.rdma.resourceCount)
+    "applicationFiles" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "clientImage" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage)) "releaseURL" "")
+    "observability" (dict "mode" .Values.observability.mode "additionalLabels" .Values.observability.additionalLabels "interval" .Values.observability.interval "scrapeTimeout" .Values.observability.scrapeTimeout "prometheus" .Values.observability.prometheus)
+}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "foretoken.platformName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    foretoken.io/platform: configuration
+  annotations:
+    foretoken.io/install-source: {{ ternary "source" "release" .Values.development.enabled | quote }}
+data:
+  deploymentValues: {{ $values | toJson | quote }}
+{{- end }}

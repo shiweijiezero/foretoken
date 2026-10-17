@@ -5499,10 +5499,10 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "sum by(controller) (rate(controller_runtime_reconcile_errors_total{job=\"foretoken-control-plane\"}[$__rate_interval]))",
+              "expr": "sum by(namespace,controller) (rate(controller_runtime_reconcile_errors_total{job=\"foretoken-control-plane\",namespace=~\"$namespace\"}[$__rate_interval]))",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "{{controller}}",
+              "legendFormat": "{{namespace}} / {{controller}}",
               "range": true,
               "refId": "A"
             }
@@ -5559,10 +5559,10 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "histogram_quantile(0.99,sum by(controller,le) (rate(controller_runtime_reconcile_time_seconds_bucket{job=\"foretoken-control-plane\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.99,sum by(namespace,controller,le) (rate(controller_runtime_reconcile_time_seconds_bucket{job=\"foretoken-control-plane\",namespace=~\"$namespace\"}[$__rate_interval])))",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "{{controller}}",
+              "legendFormat": "{{namespace}} / {{controller}}",
               "range": true,
               "refId": "A"
             }
@@ -5619,10 +5619,10 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(name) (workqueue_depth{job=\"foretoken-control-plane\"})",
+              "expr": "max by(namespace,name) (workqueue_depth{job=\"foretoken-control-plane\",namespace=~\"$namespace\"})",
               "instant": false,
               "interval": "5s",
-              "legendFormat": "{{name}}",
+              "legendFormat": "{{namespace}} / {{name}}",
               "range": true,
               "refId": "A"
             }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Add Nsight Systems to a source-built NVIDIA model-server image (Linux x86_64).
+# Add Nsight Systems to an NVIDIA model-server image (Linux x86_64).
 ARG MODEL_SERVER_IMAGE
 FROM debian:bookworm-slim AS nsight
 ADD --checksum=sha256:c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b \

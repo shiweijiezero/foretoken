@@ -73,6 +73,10 @@ func (reconciler *FrontendServiceReconciler) observeConfiguration(ctx context.Co
 		if replicaSet.UID != owner.UID || !metav1.IsControlledBy(replicaSet, deployment) {
 			continue
 		}
+		// Legacy views share publication versions but omit routes they cannot execute.
+		if pod.Annotations[frontendServingConfigAnnotation] != fmt.Sprint(frontend.Status.ServingConfigVersion) {
+			return result
+		}
 		if pod.Status.PodIP == "" {
 			return result
 		}
@@ -121,7 +125,7 @@ func (reconciler *ModelServiceReconciler) frontendConfigurationApplied(ctx conte
 		}
 		pending := fmt.Sprintf("Waiting for frontend %q to apply the model service configuration", frontend.Name)
 		configuration := new(corev1.ConfigMap)
-		if err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend)}, configuration); apierrors.IsNotFound(err) {
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend, frontend.Status.ServingConfigVersion)}, configuration); apierrors.IsNotFound(err) {
 			return false, "ConfigurationPending", pending, nil
 		} else if err != nil {
 			return false, "", "", err

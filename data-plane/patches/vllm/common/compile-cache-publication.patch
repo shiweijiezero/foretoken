@@ -1,0 +1,37 @@
+--- a/vllm/compilation/backends.py
++++ b/vllm/compilation/backends.py
+@@ -10,2 +10,3 @@
+ import pprint
++import tempfile
+ import time
+@@ -217,4 +218,8 @@
+         data = printer.pformat(self.cache)
+-        with open(self.cache_file_path, "w") as f:
+-            f.write(data)
++        # Readers can initialize from this shared index while other workers publish it.
++        with tempfile.TemporaryDirectory(dir=self.cache_dir) as staging:
++            tmp_file = os.path.join(staging, "vllm_compile_cache.py")
++            with open(tmp_file, "w") as f:
++                f.write(data)
++            os.replace(tmp_file, self.cache_file_path)
+ 
+--- a/vllm/compilation/decorators.py
++++ b/vllm/compilation/decorators.py
+@@ -8,2 +8,3 @@
+ import sys
++import tempfile
+ from collections.abc import Callable, Generator
+@@ -710,7 +711,8 @@
+             os.makedirs(self._aot_cache_dir, exist_ok=True)
+-            # File saving should be atomic, so we will save to a temporary location
+-            # first. Should be upstreamed to PyTorch 2.12 as well.
+-            tmp_file = f"{self._aot_compilation_path}.{os.getpid()}.tmp"
+-            self.aot_compiled_fn.save_compiled_function(tmp_file)
+-            os.replace(tmp_file, self._aot_compilation_path)
++            # Shared-cache writers can have identical PIDs in different containers.
++            # Keep each save private until its complete artifact replaces the cache entry.
++            with tempfile.TemporaryDirectory(dir=self._aot_cache_dir) as staging:
++                tmp_file = os.path.join(staging, "model")
++                self.aot_compiled_fn.save_compiled_function(tmp_file)
++                os.replace(tmp_file, self._aot_compilation_path)
+             compilation_counter.num_aot_artifacts_saved += 1

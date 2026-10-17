@@ -4,6 +4,7 @@
 //! Namespace-scoped VideoTask access and streaming reads from dedicated result storage.
 
 use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,26 +194,34 @@ impl VideoTaskClient {
         // observable and expires through the same controller cleanup as finished generation.
         if !inputs_ready {
             let directory = self.output_mount.join(format!("tasks/{id}"));
-            tokio::fs::create_dir_all(&directory)
+            // The Pod prepares a setgid tasks root under the output-volume identity.
+            // Share only this new task directory and its copies with the worker's group.
+            tokio::fs::create_dir(&directory)
                 .await
-                .map_err(|_| StatusCode::INSUFFICIENT_STORAGE)?;
+                .map_err(storage_error_status)?;
+            tokio::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o2770))
+                .await
+                .map_err(storage_error_status)?;
             for (source, target) in sources {
                 tokio::fs::copy(source, &target)
                     .await
-                    .map_err(|_| StatusCode::INSUFFICIENT_STORAGE)?;
+                    .map_err(storage_error_status)?;
+                tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640))
+                    .await
+                    .map_err(storage_error_status)?;
                 tokio::fs::File::open(target)
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                     .sync_all()
                     .await
-                    .map_err(|_| StatusCode::INSUFFICIENT_STORAGE)?;
+                    .map_err(storage_error_status)?;
             }
             tokio::fs::File::open(directory)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                 .sync_all()
                 .await
-                .map_err(|_| StatusCode::INSUFFICIENT_STORAGE)?;
+                .map_err(storage_error_status)?;
             self.send(
                 Method::PATCH,
                 self.resource_url(&id)?,
@@ -278,7 +287,7 @@ impl VideoTaskClient {
         let path = self.storage_path(&artifact.path).await?;
         let mut file = tokio::fs::File::open(path)
             .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
+            .map_err(storage_error_status)?;
         Ok(Body::from_stream(async_stream::stream! {
             let mut buffer = vec![0u8; 64 * 1024];
             loop {
@@ -303,7 +312,7 @@ impl VideoTaskClient {
         }
         let resolved = tokio::fs::canonicalize(self.output_mount.join(path))
             .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
+            .map_err(storage_error_status)?;
         if !resolved.starts_with(&self.output_mount) {
             return Err(StatusCode::BAD_REQUEST);
         }
@@ -351,5 +360,14 @@ impl VideoTaskClient {
             429 => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::BAD_GATEWAY,
         })
+    }
+}
+
+// Keep denied external-file access distinct from missing files and storage failures.
+fn storage_error_status(error: std::io::Error) -> StatusCode {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INSUFFICIENT_STORAGE,
     }
 }

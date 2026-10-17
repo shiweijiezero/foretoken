@@ -9,7 +9,6 @@ MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 OMNI_MODEL_SERVER_IMAGE ?= foretoken-omni-model-server:dev
 VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
-MOONCAKE_VERSION ?=
 
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 DOCKER_REGISTRY := $(patsubst %/,%,$(or $(strip $(FORETOKEN_DOCKER_IO_REGISTRY)),$(OCI_REGISTRY)))
@@ -149,6 +148,8 @@ mooncake-source:
 		FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)" \
 		./deploy/mooncake/prepare-source
 
+# Match the standard model-server's transfer package unless a version is selected explicitly.
+image-mooncake: MOONCAKE_VERSION ?= $(shell tr -d '\n' < "$(CURDIR)/data-plane/patches/vllm/mooncake.version")
 image-mooncake: mooncake-source
 	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \

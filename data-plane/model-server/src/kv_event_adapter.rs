@@ -104,12 +104,22 @@ impl RankState {
 
 struct Inner {
     ranks: BTreeMap<u32, RankState>,
+    cache_groups: Option<Vec<foretoken_model_protocol::KvCacheGroup>>,
+}
+
+/// Native utility result decoded only at the vLLM adapter boundary.
+#[derive(Debug, serde::Deserialize, PartialEq)]
+struct VllmCacheGroup {
+    group_idx: u32,
+    kind: String,
+    block_size: u32,
+    sliding_window: Option<u32>,
 }
 
 #[derive(Debug)]
 pub enum KvDeltaError {
     Unavailable,
-    CursorReset(KvDeltaResponse),
+    CursorReset(Box<KvDeltaResponse>),
 }
 
 pub struct KvEventAdapter {
@@ -135,6 +145,7 @@ impl KvEventAdapter {
                 ranks: (0..data_parallel_size)
                     .map(|rank| (rank, RankState::new()))
                     .collect(),
+                cache_groups: None,
             }),
             key,
             scope_id,
@@ -142,6 +153,40 @@ impl KvEventAdapter {
             model_revision,
             data_parallel_size,
         })
+    }
+
+    /// Loads the connected engines' shared cache layout before bootstrap starts event subscription.
+    /// The adapter carries this immutable layout with each source epoch; failure leaves it unknown.
+    pub async fn load_cache_groups(
+        &self,
+        client: &vllm_engine_core_client::EngineCoreClient,
+    ) -> Result<(), vllm_engine_core_client::Error> {
+        let groups: Vec<VllmCacheGroup> = client
+            .call_utility_consensus("get_kv_cache_group_metadata", ())
+            .await?;
+        self.inner.lock().unwrap().cache_groups = Some(
+            groups
+                .into_iter()
+                .map(|group| foretoken_model_protocol::KvCacheGroup {
+                    group_idx: group.group_idx,
+                    spec_kind: group.kind,
+                    sliding_window: group.sliding_window,
+                })
+                .collect(),
+        );
+        Ok(())
+    }
+
+    /// Binds live scheduler observations to the same model/layout identity as event deltas.
+    pub fn prefix_response(
+        &self,
+        ranks: Vec<foretoken_model_protocol::KvRankPrefix>,
+    ) -> foretoken_model_protocol::KvLocalPrefixResponse {
+        foretoken_model_protocol::KvLocalPrefixResponse {
+            model_group_id: self.model_group_id.clone(),
+            scope_id: self.scope_id.clone(),
+            ranks,
+        }
     }
 
     /// Returns bounded rank-local deltas for the internal KV index endpoint.
@@ -168,12 +213,12 @@ impl KvEventAdapter {
         let rank = &inner.ranks[&dp_rank];
         if epoch != Some(rank.epoch.as_str()) || after.is_some_and(|cursor| cursor > rank.current())
         {
-            return Err(KvDeltaError::CursorReset(self.response(
+            return Err(KvDeltaError::CursorReset(Box::new(self.response(
                 &inner,
                 dp_rank,
                 0,
                 Vec::new(),
-            )));
+            ))));
         }
         let deltas = rank
             .ring
@@ -204,6 +249,7 @@ impl KvEventAdapter {
             dp_rank,
             through,
             current: inner.ranks.get(&dp_rank).map_or(0, RankState::current),
+            cache_groups: inner.cache_groups.clone(),
             deltas,
         }
     }
@@ -427,6 +473,23 @@ impl KvEventAdapter {
             field(fields, "kv_cache_spec_sliding_window")
                 .or_else(|| field(fields, "sliding_window")),
         );
+        // Sparse groups are observed through the scheduler's native prefix query; their
+        // event hashes are not a contiguous token sequence and must not degrade dense streams.
+        let sparse_group = self
+            .inner
+            .lock()
+            .unwrap()
+            .cache_groups
+            .as_ref()
+            .is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    Some(group.group_idx) == group_idx
+                        && (group.spec_kind != "full_attention" || group.sliding_window.is_some())
+                })
+            });
+        if spec_kind != "full_attention" || sliding_window.is_some() || sparse_group {
+            return true;
+        }
         let (Some(token_values), Some(block_size)) = (
             field(fields, "token_ids").and_then(Value::as_array),
             field(fields, "block_size").and_then(Value::as_u64),

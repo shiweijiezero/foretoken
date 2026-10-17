@@ -151,7 +151,10 @@ pub(crate) struct RouterMetricsScope {
 
 impl RouterMetricsScope {
     /// Registers bounded model and target labels before the Router begins serving requests.
-    pub(crate) fn new(inventory: &dyn RouteInventory, algorithms: [&'static str; 3]) -> Self {
+    pub(crate) fn new(
+        inventory: &dyn RouteInventory,
+        algorithms: impl Fn(&str, RoutingStage) -> [&'static str; 3],
+    ) -> Self {
         let routes = inventory.model_routes().routes();
         let models = routes
             .iter()
@@ -162,7 +165,9 @@ impl RouterMetricsScope {
         let mut candidate_labels = HashSet::new();
         for model_name in models {
             for round in ROUTING_STAGES {
-                for (stage, algorithm) in ["filter", "scorer", "picker"].into_iter().zip(algorithms)
+                for (stage, algorithm) in ["filter", "scorer", "picker"]
+                    .into_iter()
+                    .zip(algorithms(&model_name, round))
                 {
                     stage_labels.insert(StageLabels {
                         model_name: model_name.clone(),

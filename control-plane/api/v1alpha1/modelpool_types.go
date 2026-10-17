@@ -68,18 +68,6 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
-// RuntimeCacheDirectoryOwner is the host identity discovered for a local directory mount.
-// Cache consumers use it so private runtime files remain manageable by the host owner.
-type RuntimeCacheDirectoryOwner struct {
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=4294967294
-	UID int64 `json:"uid"`
-
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=4294967294
-	GID int64 `json:"gid"`
-}
-
 // RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
 type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
@@ -91,9 +79,9 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
 
-	// DirectoryOwner preserves a locally discovered directory identity across cache consumers.
+	// DirectoryOwner preserves the discovered directory identity across cache consumers.
 	// +optional
-	DirectoryOwner *RuntimeCacheDirectoryOwner `json:"directoryOwner,omitempty"`
+	DirectoryOwner *StorageIdentity `json:"directoryOwner,omitempty"`
 }
 
 // HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
@@ -201,6 +189,10 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	// +kubebuilder:validation:MaxProperties=16
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// PrefixCacheIsolation pins the model's cache policy for this execution cohort.
+	// +optional
+	PrefixCacheIsolation *bool `json:"prefixCacheIsolation,omitempty"`
 
 	// InstanceAdmission retains the immutable startup limit of a protocol-zero application.
 	// Live-file applications use ModelPoolSpec.InstanceAdmission instead.

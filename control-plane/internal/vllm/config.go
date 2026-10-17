@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/url"
 	"path"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -127,7 +127,7 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if effective.TokenizerRevision == "" {
 		effective.TokenizerRevision = effective.Revision
 	}
-	args, err := compileEngineArgs(template.EngineArgs)
+	args, err := compileEngineArgs(template)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
@@ -140,12 +140,6 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	}
 	if err := validateParallelism(effective.Parallelism); err != nil {
 		return EffectiveConfig{}, err
-	}
-	// Encoder-only execution disables APC because it produces no decoder KV.
-	if template.Role == inferencev1alpha1.ModelRoleEncoder {
-		if _, exists := args["enable-prefix-caching"]; exists {
-			return EffectiveConfig{}, fmt.Errorf("encoder execution owns enable-prefix-caching")
-		}
 	}
 	capacity := int64(template.NodeCount) * int64(template.Resources.Requests.GPU.Count)
 	ranks := int64(effective.Parallelism.PP) * int64(effective.Parallelism.TP) * int64(effective.Parallelism.PCP) * int64(effective.Parallelism.DP)
@@ -314,7 +308,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 	return &LaunchECPlan{
 		ProfileName: ec.ProfileName, ProfileRevision: ec.ProfileRevision,
 		Connector: ec.Connector, Role: string(ec.Role),
-		SharedStoragePath: path.Join(ec.SharedStoragePath, ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision)),
+		SharedStoragePath: path.Join(ec.SharedStoragePath, runtimeconfig.EncoderCacheDirectory(ec)),
 	}, nil
 }
 
@@ -383,7 +377,7 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 	}
 	for name := range names {
 		switch name {
-		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "enable-prefix-caching", "mm-processor-cache-gb", "mm-encoder-only":
+		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "enable-prefix-caching", "mm-processor-cache-gb", "mm-encoder-only", "distributed-executor-backend", "data-parallel-backend":
 			continue
 		}
 		var leftValue, rightValue any
@@ -414,25 +408,55 @@ func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) erro
 	return nil
 }
 
-var controllerOwnedArgs = []string{
-	"--api-server-count", "--code-revision", "--config", "--convert",
-	"--data-parallel-address", "--data-parallel-backend", "--data-parallel-external-lb",
-	"--data-parallel-hybrid-lb", "--data-parallel-multi-port-external-lb",
-	"--data-parallel-rank", "--data-parallel-rpc-port",
-	"--data-parallel-size-local", "--data-parallel-start-rank",
-	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
-	"--enable-elastic-ep",
-	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
-	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
-	"--port", "--profiler-config", "--rdma-host", "--rdma-nic", "--revision", "--role",
-	"--runner", "--served-model-name", "--tensor-transport", "--tokenizer", "--tokenizer-revision", "--worker-cls", "--zmq-endpoint",
-}
-
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
-// compileEngineArgs normalizes native option names and protects platform-owned startup options.
-// Backend values stay native; the Rust adapter renders the resolved map into argv.
-func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alpha1.EngineArguments, error) {
+// compileEngineArgs resolves native choices against the Pool's actual execution contract.
+// Unclaimed options remain engine-owned; the Rust adapter renders the resulting map.
+func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (inferencev1alpha1.EngineArguments, error) {
+	input := template.EngineArgs
+	reserved := map[string]string{
+		"model":                                "select the model with spec.model",
+		"tokenizer":                            "select the tokenizer with spec.tokenizer",
+		"revision":                             "model preparation resolves the model revision before engine startup",
+		"code-revision":                        "model code is loaded from the prepared model snapshot",
+		"tokenizer-revision":                   "model preparation resolves the tokenizer revision before engine startup",
+		"served-model-name":                    "the service model identity is shared by routing and engine metadata",
+		"config":                               "place native options directly in engineArgs so topology and resource planning use them",
+		"hf-token":                             "configure Hugging Face credentials for model preparation, not only the engine process",
+		"download-dir":                         "model preparation and runtimeCache own the model download directory",
+		"headless":                             "the model-server connects directly to EngineCore without a Python API server",
+		"api-server-count":                     "the model-server owns API serving",
+		"grpc":                                 "the model-server uses the EngineCore transport, not the Python gRPC server",
+		"host":                                 "configure the Foretoken service endpoint rather than the unused Python API server",
+		"port":                                 "configure the Foretoken service endpoint rather than the unused Python API server",
+		"data-parallel-address":                "the model-server owns the EngineCore handshake endpoint",
+		"data-parallel-rpc-port":               "the model-server owns the EngineCore handshake endpoint",
+		"data-parallel-rank":                   "ranks are assigned from the Pool topology",
+		"data-parallel-start-rank":             "ranks are assigned from the Pool topology",
+		"data-parallel-size-local":             "local engine counts are derived from the Pool topology",
+		"data-parallel-external-lb":            "Foretoken routes requests to its managed DP ranks",
+		"data-parallel-hybrid-lb":              "Foretoken routes requests to its managed DP ranks",
+		"data-parallel-multi-port-external-lb": "Foretoken routes requests to its managed DP ranks",
+		"enable-elastic-ep":                    "the Pool owns worker membership and replica lifecycle",
+		"master-addr":                          "member discovery supplies the distributed rendezvous address",
+		"master-port":                          "member discovery supplies the distributed rendezvous port",
+		"nnodes":                               "select the node count with nodes",
+		"node-rank":                            "member discovery assigns each node rank",
+		"kv-events-config":                     "the model-server owns the publisher and subscriber configuration",
+		"kv-transfer-config":                   "select KV transfer through kvCache or split modelPools so routing and storage share the same configuration",
+		"ec-transfer-config":                   "select encoder transfer through ecProfile and E/P/D modelPools",
+	}
+	if template.SpeculationRole != "" {
+		for _, name := range []string{"role", "rdma-host", "rdma-nic", "tensor-transport", "zmq-endpoint", "worker-cls", "scheduler-cls"} {
+			reserved[name] = "the DT role adapter owns execution and transport setup"
+		}
+	}
+	if template.RuntimeCache != nil {
+		reserved["profiler-config"] = "Foretoken profiling owns capture configuration and output storage"
+	}
+	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
+		reserved["worker-cls"] = "mcTracer profiling supplies the instrumented worker"
+	}
 	args := make(inferencev1alpha1.EngineArguments, len(input))
 	names := make([]string, 0, len(input))
 	for name := range input {
@@ -449,9 +473,20 @@ func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alph
 				return nil, fmt.Errorf("engineArgs.%s must use the full option name %s", name, topology)
 			}
 		}
-		for _, owned := range controllerOwnedArgs {
-			if key != "data-parallel-size" && strings.HasPrefix(owned, "--"+key) {
-				return nil, fmt.Errorf("engineArgs option %q is owned by Foretoken", name)
+		if string(input[name].Raw) == "null" {
+			continue
+		}
+		if reason, exists := reserved[key]; exists {
+			return nil, fmt.Errorf("engineArgs.%s cannot be set here: %s", name, reason)
+		}
+		for owned := range reserved {
+			if key != "data-parallel-size" && strings.HasPrefix(owned, key) {
+				return nil, fmt.Errorf("engineArgs.%s must use a full native option name", name)
+			}
+		}
+		for _, option := range []string{"runner", "convert", "data-parallel-backend", "distributed-executor-backend", "mm-device-do-normalize", "mm-encoder-only", "enforce-eager", "enable-prefix-caching"} {
+			if key != option && strings.HasPrefix(option, key) {
+				return nil, fmt.Errorf("engineArgs.%s must use the full option name %s", name, option)
 			}
 		}
 		if _, exists := args[key]; exists {
@@ -461,6 +496,64 @@ func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alph
 		args[key] = *value.DeepCopy()
 	}
 
+	// The request transport serves generation and launches DP engines as local processes.
+	for _, choice := range []struct {
+		name   string
+		values []string
+		reason string
+	}{
+		{"runner", []string{"auto", "generate"}, "the model-server submits generation requests"},
+		{"convert", []string{"auto", "none"}, "the model-server does not submit pooling requests"},
+		{"data-parallel-backend", []string{"mp"}, "headless EngineCore startup launches DP processes"},
+	} {
+		if value, exists := args[choice.name]; exists {
+			var selected string
+			if json.Unmarshal(value.Raw, &selected) != nil || !slices.Contains(choice.values, selected) {
+				return nil, fmt.Errorf("engineArgs.%s requires %v: %s", choice.name, choice.values, choice.reason)
+			}
+		}
+	}
+
+	// Compile role requirements into the effective configuration, rather than overriding argv.
+	required := map[string]any{}
+	if template.Role == inferencev1alpha1.ModelRoleEncoder {
+		required["mm-encoder-only"] = true
+		required["enable-prefix-caching"] = false
+		// Preserve the Encoder default while allowing native graph execution choices.
+		if _, supplied := args["enforce-eager"]; !supplied {
+			required["enforce-eager"] = true
+		}
+	} else if _, exists := args["mm-encoder-only"]; exists {
+		required["mm-encoder-only"] = false
+	}
+	if template.NodeCount > 1 {
+		required["distributed-executor-backend"] = "mp"
+		required["data-parallel-backend"] = "mp"
+	}
+	// Pixel normalization is already performed by the Rust image processor. The launcher
+	// emits the disabling flag only for engine versions that expose this option.
+	if value, exists := args["mm-device-do-normalize"]; exists {
+		var enabled bool
+		if json.Unmarshal(value.Raw, &enabled) != nil || enabled {
+			return nil, fmt.Errorf("engineArgs.mm-device-do-normalize must be false because the image processor already normalizes pixels")
+		}
+		delete(args, "mm-device-do-normalize")
+	}
+	for _, name := range []string{"mm-encoder-only", "enforce-eager", "enable-prefix-caching", "distributed-executor-backend", "data-parallel-backend"} {
+		expected, applies := required[name]
+		if !applies {
+			continue
+		}
+		value, exists := args[name]
+		if exists {
+			var selected any
+			if json.Unmarshal(value.Raw, &selected) != nil || !reflect.DeepEqual(selected, expected) {
+				return nil, fmt.Errorf("engineArgs.%s must be %v for this Pool's execution mode", name, expected)
+			}
+		}
+		value.Raw, _ = json.Marshal(expected)
+		args[name] = value
+	}
 	if len(args) == 0 {
 		return nil, nil
 	}

@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-import sys
-from concurrent.futures import ThreadPoolExecutor
+import json
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,11 @@ from foretoken.accelerators.discovery import ExporterDiscovery
 from foretoken.accelerators.metax import MetaXExporterLifecycle, MetaXMetricsDiscovery
 from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
+from foretoken.build_storage import (
+    managed_build_storage_resources,
+    remove_build_storage,
+)
+from foretoken.cluster_build import BuildCancellation
 from foretoken.kubernetes import (
     Kubectl,
     control_plane_deployments,
@@ -30,6 +35,7 @@ from foretoken.kubernetes import (
     unmark_managed_metrics_scraper_namespace,
 )
 from foretoken.manifest import DeploymentError
+from foretoken.namespace_mutation import NamespaceMutation
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
@@ -57,6 +63,7 @@ from foretoken.source import (
     forget_install,
     has_source_state,
     prepare_source_images,
+    reconcile_source_resources,
     record_install,
     remove_build_caches,
     resolve_source_base_image,
@@ -191,19 +198,12 @@ class PlatformLifecycle:
                 f"Helm release {platform.display_name} is not managed by foretoken; "
                 "use its existing Helm lifecycle"
             )
-        if platform_exists:
-            install_source = helm.release_install_source(platform)
-            requested_source = "source" if command.editable is not None else "release"
-            if install_source != requested_source:
-                command_hint = (
-                    "foretoken install -e ."
-                    if install_source == "source"
-                    else "foretoken install"
-                )
-                raise DeploymentError(
-                    f"Helm release {platform.display_name} uses {install_source} images; "
-                    f"run {command_hint}"
-                )
+        install_source = helm.release_install_source(platform) if platform_exists else None
+        if install_source == "source" and command.editable is None:
+            raise DeploymentError(
+                f"Helm release {platform.display_name} uses source images; "
+                "run foretoken install -e ."
+            )
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
         stored_values = (
@@ -243,27 +243,6 @@ class PlatformLifecycle:
             ),
         )
         load_balancer_config = resolve_load_balancer_config(values)
-
-        deployments = control_plane_deployments(kubectl)
-        expected_deployment = f"{platform.name}-control-plane"
-        unexpected_deployments = tuple(
-            deployment
-            for deployment in deployments
-            if not (
-                platform_exists
-                and deployment.namespace == platform.namespace
-                and deployment.name == expected_deployment
-            )
-        )
-        if unexpected_deployments:
-            existing = ", ".join(
-                f"{deployment.namespace}/{deployment.display_name}"
-                for deployment in unexpected_deployments
-            )
-            raise DeploymentError(
-                "another Foretoken control plane already exists; use its existing "
-                f"lifecycle: {existing}"
-            )
 
         load_balancer_plan = load_balancer.resolve_install(load_balancer_config)
         if load_balancer_plan.blocking:
@@ -317,7 +296,7 @@ class PlatformLifecycle:
             source_runtime_image = resolve_source_base_image(
                 kubectl,
                 Path(command.editable).expanduser().resolve(),
-                current_runtime.image,
+                configured_runtime_image if install_source == "release" else current_runtime.image,
                 source_base_image,
             )
             if (
@@ -523,48 +502,51 @@ class PlatformLifecycle:
             else (),
         )
 
-        source_executor = (
-            ThreadPoolExecutor(max_workers=1) if command.editable is not None else None
-        )
+        installation_workers = ThreadPoolExecutor(max_workers=2)
+        source_cancellation = BuildCancellation()
         source_future = None
-        source_result = None
+        dependencies: Future[None] = Future()
+        # Only the worker enters source contexts. Join it before the outer stack
+        # closes them, preserving installation errors through normal context exit.
+        source_artifacts = artifacts.enter_context(ExitStack())
         try:
-            if source_executor is not None:
-                source_values = (*stored_values, *values)
-                source_root = Path(command.editable).expanduser().resolve()
-                installed_images = (
-                    helm.platform_image_references(platform)
-                    if platform_exists
-                    else None
+            if command.editable is not None:
+                # Bootstrap shared storage and its namespace before Helm releases
+                # can concurrently create resources in that namespace.
+                origin = helm.prepare_source_origin(
+                    Path(command.editable).expanduser().resolve(),
+                    (*stored_values, *values),
+                    command.timeout,
                 )
+                context = prepare_source_images(
+                    command,
+                    platform.namespace,
+                    (*stored_values, *values),
+                    source_runtime_image,
+                    origin=origin,
+                    build_metax_runtime=build_metax_runtime,
+                    runtime_backend=runtime_selection.backend
+                    if runtime_selection
+                    else "nvidia",
+                    saved_arguments=source_build_arguments,
+                    before_delivery=dependencies.result,
+                    cancellation=source_cancellation,
+                )
+                source_future = installation_workers.submit(
+                    source_cancellation.run_stage, source_artifacts.enter_context, context
+                )
+            elif not kubectl.exists("namespace", platform.namespace):
+                kubectl.run(["create", "namespace", platform.namespace])
 
-                def prepare_source() -> tuple[Any, Any]:
-                    """Prepare source artifacts while independent platform releases reconcile."""
-                    source_helm = Helm(default_platform_config(self._oci_registry))
-                    origin = source_helm.prepare_source_origin(
-                        source_root, source_values, command.timeout
-                    )
-                    context = prepare_source_images(
-                        command,
-                        platform.namespace,
-                        source_values,
-                        source_runtime_image,
-                        origin=origin,
-                        installed_images=installed_images,
-                        build_metax_runtime=build_metax_runtime,
-                        runtime_backend=runtime_selection.backend
-                        if runtime_selection
-                        else "nvidia",
-                        saved_arguments=source_build_arguments,
-                    )
-                    try:
-                        return context, context.__enter__()
-                    except BaseException:
-                        context.__exit__(*sys.exc_info())
-                        raise
-
-                source_future = source_executor.submit(prepare_source)
-
+            # A new Prometheus installation must establish its CRDs before restoring
+            # custom log-chart monitoring resources. Existing monitoring can update in parallel.
+            log_future = (
+                installation_workers.submit(
+                    self._logs.install, log_config, command.timeout
+                )
+                if managed_prometheus_exists or not install_managed_prometheus
+                else None
+            )
             if install_managed_prometheus:
                 helm.install_prometheus(
                     managed_prometheus,
@@ -635,29 +617,28 @@ class PlatformLifecycle:
                     timeout_seconds=timeout_seconds(command.timeout),
                 )
 
-            log_endpoint, log_storage_statefulset = self._logs.install(
-                log_config, command.timeout
+            log_endpoint, log_storage_statefulset = (
+                log_future.result()
+                if log_future is not None
+                else self._logs.install(log_config, command.timeout)
             )
-            source_images = None
+            dependencies.set_result(None)
+            source_images = (
+                source_future.result() if source_future is not None else None
+            )
+        except BaseException as error:
+            if not dependencies.done():
+                dependencies.set_exception(error)
             if source_future is not None:
-                source_result = source_future.result()
-                source_context, source_images = source_result
-                artifacts.callback(source_context.__exit__, None, None, None)
-        except BaseException:
-            failure = sys.exc_info()
-            if source_executor is not None:
-                source_executor.shutdown(wait=True)
-                if (
-                    source_future is not None
-                    and source_result is None
-                    and source_future.exception() is None
-                ):
-                    orphan_context, _ = source_future.result()
-                    orphan_context.__exit__(*failure)
+                source_future.cancel()
+            source_cancellation.cancel(error)
+            if isinstance(error, (DeploymentError, OSError)):
+                source_cancellation.check()
             raise
-        else:
-            if source_executor is not None:
-                source_executor.shutdown(wait=True)
+        finally:
+            # Resolve dependency success or failure before joining: the source
+            # worker may be waiting to deliver node images immediately before Helm.
+            installation_workers.shutdown(wait=True)
 
         helm.install_platform(
             release=platform,
@@ -681,6 +662,8 @@ class PlatformLifecycle:
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
+        if platform_exists:
+            self._adopt_existing_deployments(command)
         if (
             not dragonfly_plan.config.enabled
             or dragonfly_plan.release != helm.dragonfly_release()
@@ -731,6 +714,7 @@ class PlatformLifecycle:
                 source_images.inputs,
                 build_state=source_images.build_state,
             )
+            reconcile_source_resources(kubectl, command.timeout)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -740,6 +724,46 @@ class PlatformLifecycle:
                 "cluster assigns LoadBalancer addresses; set "
                 "loadBalancer.managedAddresses in --values to install managed MetalLB",
             )
+
+    def _adopt_existing_deployments(self, command: InstallCommand) -> None:
+        """Give legacy services a namespace owner without advancing their recorded runtime selections.
+
+        Discovery also resumes an interrupted handoff: services remain authoritative
+        after the shared controller has gone. Independent namespace controllers keep
+        their own lifecycle, and no service intent or deployment revision is rewritten.
+        """
+        helm, kubectl = self._helm, self._kubectl
+        namespaces = {resource.namespace for resource in platform_service_resources(kubectl)}
+        defaults = None
+        for namespace in sorted(namespaces):
+            with NamespaceMutation(kubectl, namespace, command.timeout).hold():
+                # Deletion or a candidate deployment may have completed since discovery.
+                if not any(resource.namespace == namespace for resource in platform_service_resources(kubectl)):
+                    continue
+                installed = {release.namespace: release for release in helm.deployment_releases()}
+                release = installed.get(namespace)
+                if release is not None:
+                    status = json.loads(helm.run([
+                        "status", release.name, "--namespace", release.namespace, "--output", "json",
+                    ]).stdout)["info"]["status"]
+                    if status == "deployed":
+                        continue
+                    # Retry a failed release with its own recorded runtime choices.
+                    values = helm.release_user_values(release)
+                else:
+                    if any(resource.namespace == namespace for resource in control_plane_deployments(kubectl)):
+                        _print_plan("Serving controller", "Preserve", f"existing controller in {namespace}")
+                        continue
+                    if defaults is None:
+                        defaults = helm.deployment_values(kubectl)
+                    values = defaults
+                    release = helm.deployment_release(namespace)
+                _print_plan("Serving controller", "Adopt", release.display_name)
+                helm.install_deployment(
+                    release, values, command.timeout,
+                    source_root=Path(command.editable).expanduser().resolve() if command.editable else None,
+                )
+            helm.wait_control_plane(release, command.timeout)
 
     def uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
@@ -760,9 +784,10 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
+        source_storage = managed_build_storage_resources(kubectl, platform.namespace)
         source_builds = (
             platform_exists and helm.release_install_source(platform) == "source"
-        ) or has_source_state(kubectl)
+        ) or has_source_state(kubectl) or bool(source_storage)
         unadopted_origin = (
             () if platform_exists else helm.application_origin_resources()
         )
@@ -777,14 +802,14 @@ class PlatformLifecycle:
         )
         metax_managed = bool(metax_exporter.managed_resources())
         managed_logs = self._logs.managed_releases()
-        dragonfly_managed = helm.release_exists(
-            helm.dragonfly_release()
-        ) and helm.is_cleanup_managed(helm.dragonfly_release())
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
+        deployments = helm.deployment_releases()
+        dragonfly_managed = helm.is_cli_managed(helm.dragonfly_release())
         if (
             platform_exists
+            or source_storage
             or unadopted_origin
             or admission_claims
             or dcgm_managed
@@ -793,15 +818,16 @@ class PlatformLifecycle:
             or managed_logs
             or dragonfly_managed
             or gateway_plan.managed
+            or deployments
         ):
             resources = platform_service_resources(kubectl)
-            if resources:
-                remaining = ", ".join(
-                    f"{resource.namespace}/{resource.display_name}"
-                    for resource in resources
-                )
+            if resources or deployments:
+                remaining = ", ".join([
+                    *(f"{resource.namespace}/{resource.display_name}" for resource in resources),
+                    *(release.display_name for release in deployments),
+                ])
                 raise DeploymentError(
-                    "delete Foretoken services and wait for their workloads to be removed before uninstalling the platform: "
+                    "delete Foretoken deployments and wait for their services and controllers to be removed before uninstalling the platform: "
                     f"{remaining}"
                 )
 
@@ -843,6 +869,9 @@ class PlatformLifecycle:
             _print_plan(
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
+        helm.stop_platform_tasks(kubectl, command.timeout)
+        if source_builds:
+            reconcile_source_resources(kubectl, command.timeout, uninstall=True)
         self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)
@@ -886,4 +915,9 @@ class PlatformLifecycle:
             _print_plan("LoadBalancer", *load_balancer_result)
         if source_builds:
             remove_build_caches(kubectl, command.timeout)
+        if source_storage:
+            _print_plan(
+                "Source build storage",
+                *remove_build_storage(kubectl, platform.namespace, command.timeout),
+            )
         forget_install(kubectl)

@@ -90,8 +90,12 @@ jobs:
         run: |
           helm lint deploy/charts/foretoken --kube-version 1.36.3
           helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
-          grep -q '^kind: Deployment' /tmp/foretoken.yaml
+          grep -q '^kind: Job' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
+          helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 \
+            --namespace foretoken-demo --set scope=deployment > /tmp/foretoken-deployment.yaml
+          grep -q '^kind: Deployment' /tmp/foretoken-deployment.yaml
+          grep -q '^kind: Role$' /tmp/foretoken-deployment.yaml
           if grep -Eq '^kind: (ServiceMonitor|PrometheusRule)' /tmp/foretoken.yaml; then
             exit 1
           fi
@@ -142,6 +146,14 @@ jobs:
             crd/modelgroups.inference.foretoken.io \
             --timeout=1m
           kubectl create namespace foretoken-demo
+          helm upgrade --install foretoken deploy/charts/foretoken \
+            --namespace foretoken-demo \
+            --set scope=deployment \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test \
+            --set image.pullPolicy=Never \
+            --wait \
+            --timeout=3m
           # kind has no default StorageClass. This static volume exercises the
           # RuntimeCache binding path without adding an external provisioner.
           kubectl apply -f - <<'EOF'
@@ -170,13 +182,18 @@ jobs:
             --namespace foretoken-demo \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "False"
           helm upgrade foretoken deploy/charts/foretoken \
-            --namespace foretoken-platform \
+            --namespace foretoken-demo \
+            --set scope=deployment \
             --set image.repository=foretoken-control-plane \
             --set image.tag=test \
             --set image.pullPolicy=Never \
             --set resources.requests.cpu=21m \
             --wait \
             --timeout=3m
+          kubectl delete modelservices,frontendservices --all --namespace foretoken-demo --wait --timeout=2m
+          kubectl delete runtimecaches --all --namespace foretoken-demo --wait --timeout=2m
+          helm uninstall foretoken --namespace foretoken-demo --wait
+          kubectl delete namespace foretoken-demo --wait --timeout=1m
           helm uninstall foretoken --namespace foretoken-platform --wait
           kubectl get crd/frontendservices.inference.foretoken.io
           kubectl get crd/modelservices.inference.foretoken.io

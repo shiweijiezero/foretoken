@@ -107,6 +107,8 @@ Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflo
 
 ## Read scores
 
+W&B shows completed generations or likelihood windows for lm-evaluation-harness, and saved predictions and reviews for EvalScope, as the evaluation runs. Resumed lm-evaluation-harness runs report reused work separately. Task scores appear after the framework finishes scoring.
+
 Open the result directory printed by the command:
 
 | File or directory | Contents |
@@ -114,6 +116,7 @@ Open the result directory printed by the command:
 | `metrics.json` | Task scores, subsets, answer filters, sample counts, and available uncertainty or execution status |
 | `native/` | The framework's reports and any generated sample records |
 | `evaluator.log` | The evaluator's execution log |
+| `evaluation_progress.jsonl` | Measured completion counts over time, retained after interruption |
 
 See [output settings](../../README.md#read-and-save-results) to choose where results are saved.
 

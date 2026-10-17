@@ -9,6 +9,33 @@ import json
 import sys
 from pathlib import Path
 
+PROGRESS_FILENAME = "evaluation_progress.json"
+
+
+def write_progress(directory: Path, snapshot: dict) -> None:
+    """Replace the child snapshot atomically so the parent never reads a partial record."""
+    path = directory / PROGRESS_FILENAME
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(snapshot), encoding="utf-8")
+    temporary.replace(path)
+
+
+class EvaluationProgress:
+    """Publish measured counters from the isolated evaluator for its parent process."""
+
+    def __init__(self, directory: str) -> None:
+        self.path = Path(directory) / PROGRESS_FILENAME
+        self.counts: dict[str, int] = {}
+
+    def advance(self, metric: str, count: int) -> None:
+        """Count completed or reused work at the native response boundary."""
+        self.counts[metric] = self.counts.get(metric, 0) + count
+        self.flush()
+
+    def flush(self) -> None:
+        """Atomically expose the latest counters, including work completed before exit."""
+        write_progress(self.path.parent, self.counts)
+
 
 def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
     """Validate the previous evaluation before delegating its framework-specific restoration."""
@@ -42,10 +69,16 @@ def main() -> None:
         from benchmarks.integrations.evalscope.evaluation import run_evalscope
 
         runner = run_evalscope
-    runner(
-        invocation["arguments"], invocation["service"], invocation["directory"],
-        resume=bool(invocation["resume"]),
-    )
+    progress = EvaluationProgress(invocation["directory"])
+    try:
+        runner(
+            invocation["arguments"], invocation["service"], invocation["directory"],
+            resume=bool(invocation["resume"]),
+            **({"progress": progress} if invocation["evaluator"] == "lm-eval" else {}),
+        )
+    finally:
+        if invocation["evaluator"] == "lm-eval":
+            progress.flush()
 
 
 if __name__ == "__main__":

@@ -64,7 +64,6 @@ impl RouteScorer for ActiveRequestScorer {
                         (maximum - count) as f64 / maximum as f64
                             * self.max_busy_score.unwrap_or(1.0)
                     },
-                    ..RouteScore::default()
                 }
             })
             .collect()

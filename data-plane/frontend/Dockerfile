@@ -24,25 +24,16 @@ RUN apt-get update \
 
 COPY data-plane/ ./data-plane/
 
-# Key the target cache by the builder image: artifacts built on different
-# Debian releases are not interchangeable even with the same Rust version.
-# Retain prepared Rust inputs with their outputs, isolated from legacy builders.
-# Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
-# Reconstruct Rust-only inputs without retaining files added by prior patches.
+# Lock only upstream preparation so other components can compile independently.
+# Preserve captured Rust sources when completing the upstream tree for patch preparation.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
       git config --global url."${FORETOKEN_GITHUB_MIRROR%/}/".insteadOf https://github.com/; \
     fi \
-    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ]; then \
+    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ] && [ "${FORETOKEN_CARGO_REGISTRY}" != "sparse+https://index.crates.io/" ]; then \
       mkdir -p /workspace/.cargo; \
       printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
         "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \
-    fi \
-    && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
-      export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
     && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
       if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
@@ -52,7 +43,21 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
       fi \
       && rm -rf data-plane/third_party/vllm \
       && mkdir -p data-plane/third_party/vllm \
-      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      && if [ -d data-plane/third_party/vllm/rust ]; then \
+        git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \
+      else \
+        git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+      fi; \
+    fi
+
+# Share Cargo's own cache locks with its registry and Git data, while leaving the
+# image's installed toolchain on PATH. Compiler outputs remain glibc-specific.
+ENV CARGO_HOME=/var/cache/foretoken-cargo
+# Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
+RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
+    --mount=type=cache,id=foretoken-cargo-target-bookworm-prepared-source,target=/workspace/data-plane/target,sharing=locked \
+    if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
+      export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
     && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && mkdir -p data-plane/target/vllm-rust \

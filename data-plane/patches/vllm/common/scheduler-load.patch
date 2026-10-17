@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/core/sched/scheduler_load.py b/vllm/v1/core/sched/scheduler_load.py
+new file mode 100644
+--- /dev/null
++++ b/vllm/v1/core/sched/scheduler_load.py
+@@ -0,0 +1,67 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
++
++"""Scheduler-owned token demand exposed through the EngineCore utility RPC."""
++
++from collections.abc import Iterable
++from typing import TYPE_CHECKING
++
++from vllm.v1.kv_cache_interface import FullAttentionSpec
++from vllm.v1.request import Request, RequestStatus
++
++if TYPE_CHECKING:
++    from vllm.v1.core.sched.output import SchedulerOutput
++    from vllm.v1.core.sched.scheduler import Scheduler
++
++
++def read_scheduler_load(
++    scheduler: "Scheduler", waiting: Iterable[Request]
++) -> dict[str, int] | None:
++    """Read queued and captured decode demand; activate capture on the first query."""
++    groups = scheduler.kv_cache_config.kv_cache_groups
++    if (
++        len(groups) != 1
++        or not isinstance(groups[0].kv_cache_spec, FullAttentionSpec)
++        or scheduler.dcp_world_size != 1
++        or scheduler.pcp_world_size != 1
++    ):
++        return None
++    scheduler._capture_scheduler_load = True
++    if scheduler.running and scheduler._scheduled_decode_load is None:
++        return None
++    queued_prefill = queued_decode = 0
++    for request in waiting:
++        if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
++            queued_decode += request.num_computed_tokens
++        elif (
++            request.status == RequestStatus.PREEMPTED and request.num_output_tokens > 0
++        ):
++            # Preemption resets computed progress, not the context to resume.
++            queued_decode += request.num_tokens
++        else:
++            queued_prefill += request.num_tokens
++    scheduled_decode = sum(
++        tokens
++        for request_id, tokens in (scheduler._scheduled_decode_load or {}).items()
++        if request_id in scheduler.requests
++    )
++    return {
++        "data_parallel_rank": scheduler.parallel_config.data_parallel_index,
++        "queued_prefill_tokens": queued_prefill,
++        "scheduled_decode_kv_tokens": scheduled_decode,
++        "queued_decode_kv_tokens": queued_decode,
++        "context_length": scheduler.max_model_len,
++        "kv_capacity_tokens": scheduler.kv_cache_config.num_blocks
++        * groups[0].kv_cache_spec.block_size,
++    }
++
++
++def capture_scheduler_load(scheduler: "Scheduler", output: "SchedulerOutput") -> None:
++    """Capture decode contexts before the scheduler advances computed-token counts."""
++    if scheduler._capture_scheduler_load:
++        cached = output.scheduled_cached_reqs
++        scheduler._scheduled_decode_load = {
++            request_id: cached.num_computed_tokens[index]
++            for index, request_id in enumerate(cached.req_ids)
++            if not cached.is_context_phase(request_id)
++        }
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -805,6 +805,10 @@
+     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
+         self.model_executor.profile(is_start, profile_prefix)
+ 
++    def get_scheduler_load(self) -> dict[str, int] | None:
++        """Expose per-engine token demand through the existing utility RPC."""
++        return self.scheduler.get_scheduler_load()
++
+     def reset_mm_cache(self):
+         # NOTE: Since this is mainly for debugging, we don't attempt to
+         # re-sync the internal caches (P0 sender, P1 receiver)

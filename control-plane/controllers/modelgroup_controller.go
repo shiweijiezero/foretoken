@@ -61,6 +61,7 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
+	APIReader             client.Reader
 	DrainClient           ModelGroupDrainClient
 	Now                   func() time.Time
 	ControlPlaneNamespace string
@@ -72,6 +73,7 @@ type ModelGroupReconciler struct {
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
 func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelGroup{}).
 		Owns(&batchv1.Job{}).
@@ -135,6 +137,15 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := reconciler.reconcileNetworkPolicy(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Hold the Group until preparation and serving workloads have both retired.
+	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
+		base := group.DeepCopy()
+		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
+		if err := reconciler.Patch(ctx, group, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add ModelGroup drain finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
 	prepared, err := reconciler.reconcilePreparation(ctx, group, pool)
 	if err == errNoPreparationPlacement {
 		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, reconciler.updateStatus(ctx, group, modelGroupPlacementState())
@@ -144,17 +155,6 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	}
 	if !prepared {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
-	}
-
-	// Acquisition has no serving requests to drain; its Job can be cancelled by owner deletion.
-	// Protect serving resources before creating them, including a concurrent delete request.
-	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
-		base := group.DeepCopy()
-		controllerutil.AddFinalizer(group, modelGroupDrainFinalizer)
-		if err := reconciler.Patch(ctx, group, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("add ModelGroup drain finalizer: %w", err)
-		}
-		return ctrl.Result{Requeue: true}, nil
 	}
 
 	workload, err := reconciler.reconcileWorkload(ctx, group, deployment)
@@ -364,8 +364,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 					ServiceAccountName:           preparationSourceName(group.Spec),
 					AutomountServiceAccountToken: &automountToken,
 					RestartPolicy:                corev1.RestartPolicyNever,
-					SecurityContext:              runtimeCachePodSecurityContext(cache),
-					InitContainers:               runtimeCacheInitContainers(group.Spec.Runtime.Image, cache),
 					ImagePullSecrets:             slices.Clone(imagePullSecrets),
 					NodeSelector:                 nodeSelector,
 					Tolerations:                  tolerations,
@@ -388,6 +386,8 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		job.Spec.Template.Annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: revision}
 	}
 	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), "foretoken-model-server")
+	access := runtimeconfig.CacheStorageAccess(cache)
+	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, files.Image, access.Identity, access)
 	return job, nil
 }
 
@@ -584,9 +584,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 			)
 		}
 	}
-	if group.Spec.ECRuntime != nil {
-		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: group.Spec.ECRuntime.SharedStorageClaim}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: group.Spec.ECRuntime.SharedStoragePath})
+	if ec := group.Spec.ECRuntime; ec != nil {
+		directory := runtimeconfig.EncoderCacheDirectory(ec)
+		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: ec.SharedStorageClaim}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: path.Join(ec.SharedStoragePath, directory), SubPath: directory})
 	}
 	if group.Spec.KVRuntime != nil && group.Spec.KVRuntime.Offload != nil && group.Spec.KVRuntime.Offload.Filesystem {
 		volumes = append(volumes, corev1.Volume{Name: "kv-offload", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
@@ -629,8 +630,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 					NodeSelector:                  maps.Clone(group.Spec.Accelerator.NodeSelector),
 					Tolerations:                   acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
-					SecurityContext:               runtimeCachePodSecurityContext(group.Spec.Artifacts.Cache),
-					InitContainers:                runtimeCacheInitContainers(group.Spec.Runtime.Image, group.Spec.Artifacts.Cache),
 					Volumes:                       volumes,
 					Containers: []corev1.Container{{
 						Name:            "model-server",
@@ -665,6 +664,19 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	if err := configureModelEnvironment(group.Spec, container); err != nil {
 		return nil, err
 	}
+	access := runtimeconfig.CacheStorageAccess(group.Spec.Artifacts.Cache)
+	accesses := []runtimeconfig.VolumeAccess{access}
+	if ec := group.Spec.ECRuntime; ec != nil {
+		identity := runtimeconfig.DefaultStorageIdentity()
+		if ec.SharedStorageIdentity != nil {
+			identity = *ec.SharedStorageIdentity
+		}
+		accesses = append(accesses, runtimeconfig.VolumeAccess{
+			Name: "ec-shared-storage", Identity: identity,
+			Directories: []string{runtimeconfig.EncoderCacheDirectory(ec)},
+		})
+	}
+	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
 }
 

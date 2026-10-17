@@ -7,6 +7,18 @@ package v1alpha1
 
 import apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
+// StorageIdentity is the non-root filesystem identity shared by a volume's consumers.
+// Controllers resolve it before publishing workloads or persistent execution plans.
+type StorageIdentity struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967294
+	UID int64 `json:"uid"`
+
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967294
+	GID int64 `json:"gid"`
+}
+
 // ResourceQuantity is a non-negative Kubernetes resource quantity.
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=64

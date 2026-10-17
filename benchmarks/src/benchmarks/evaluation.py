@@ -16,6 +16,7 @@ from benchmarks.config.evaluation import (
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
 from benchmarks.results.experiment import experiment_output
+from benchmarks.results.output import ResultOutputs
 from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
 
 
@@ -70,8 +71,11 @@ def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
     if len(config.services) > 1:
         run_evaluation_comparison(config)
     else:
-        with resolve_model_service(config.service) as service:
-            run = run_evaluation(config, service)
+        with (
+            ResultOutputs(config, None, directory_prefix="eval-") as outputs,
+            resolve_model_service(config.service) as service,
+        ):
+            run = run_evaluation(config, service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
 

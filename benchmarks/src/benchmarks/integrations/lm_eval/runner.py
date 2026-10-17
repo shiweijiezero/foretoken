@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 def run_lm_eval(
-    arguments: list[str], service: dict[str, Any], directory: str, *, resume: bool = False
+    arguments: list[str], service: dict[str, Any], directory: str, *, resume: bool = False,
+    progress=None,
 ) -> None:
     """Resolve native configuration and own the response store for one model-service evaluation."""
     setup_logging()
@@ -56,11 +57,11 @@ def run_lm_eval(
     # Keep native tokenizer choices for likelihoods; chat requests remain message lists.
     chat_options = {**config.model_args, "tokenizer_backend": None, "tokenized_requests": False}
     chat_options.pop("tokenizer", None)
-    progress = LmEvalResponses(Path(directory).parent) if config.use_cache is None else nullcontext(None)
-    with progress as responses:
+    response_context = LmEvalResponses(Path(directory).parent) if config.use_cache is None else nullcontext(None)
+    with response_context as responses:
         model = ServiceEvaluation.create_from_arg_obj(chat_options, {
             "batch_size": config.batch_size, "config": config, "service": service,
-            "responses": responses, "resume": resume,
+            "responses": responses, "resume": resume, "progress": progress,
         })
         manager = config.process_tasks(config.metadata)
         manager.load = partial(model.load_tasks, manager.load)

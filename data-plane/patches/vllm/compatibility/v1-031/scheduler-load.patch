@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -52,6 +52,10 @@
+     SchedulingPolicy,
+     create_request_queue,
+ )
++from vllm.v1.core.sched.scheduler_load import (
++    capture_scheduler_load,
++    read_scheduler_load,
++)
+ from vllm.v1.core.sched.utils import check_stop, remove_all
+ from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
+ from vllm.v1.kv_cache_interface import (
+@@ -97,6 +101,8 @@
+         self.kv_events_config = vllm_config.kv_events_config
+         self.parallel_config = vllm_config.parallel_config
+         self.log_stats = log_stats
++        self._capture_scheduler_load = False
++        self._scheduled_decode_load: dict[str, int] | None = None
+         self.observability_config = vllm_config.observability_config
+         self.spec_decode_metrics_level = (
+             self.observability_config.per_request_spec_decode_metrics
+@@ -1580,7 +1586,14 @@
+         self.waiting.prepend_request(request)
+         self.reset_preempted_req_ids.add(request.request_id)
+ 
++    def get_scheduler_load(self) -> dict[str, int] | None:
++        """Read token demand across both scheduler-owned waiting queues."""
++        return read_scheduler_load(
++            self, itertools.chain(self.waiting, self.kv_holding_waiting)
++        )
++
+     def _update_after_schedule(self, scheduler_output: SchedulerOutput) -> None:
++        capture_scheduler_load(self, scheduler_output)
+         # Advance the number of computed tokens for the request AFTER
+         # the request is scheduled.
+         # 1. The scheduler_output of the current step has to include the

@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from typing import Any, NoReturn
 
 from foretoken.manifest import DeploymentError
+from foretoken.namespace_mutation import mutation_lock_fds
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 from foretoken.tools import resolve_tool
@@ -46,6 +47,7 @@ class HelmClient:
             text=True,
             capture_output=True,
             check=False,
+            pass_fds=mutation_lock_fds.get(),
         )
 
     @staticmethod

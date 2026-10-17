@@ -294,15 +294,14 @@ class BenchmarkOutputConfig:
 
     @property
     def saves_local(self) -> bool:
-        """Keep plot and experiment inputs in the persistent result directory."""
-        return self.includes("local") or self.includes("plot") or self.includes("experiment") or self.includes("raw")
+        """Retain results needed by local readers, figures, experiments, and remote publication."""
+        return any(self.includes(destination) for destination in ("local", "wandb", "plot", "experiment", "raw"))
 
     def for_child_run(self) -> BenchmarkOutputConfig:
         """Retain child measurements while the enclosing sweep or search exports comparison plots."""
-        return replace(self, destinations=tuple(dict.fromkeys(
-            "local" if destination == "plot" else destination
-            for destination in self.destinations
-        )))
+        return replace(self, destinations=tuple(dict.fromkeys((
+            "local", *(destination for destination in self.destinations if destination != "plot"),
+        ))))
 
     def validate(self) -> None:
         """Validate the selected HTTP benchmark output destinations."""
@@ -339,6 +338,7 @@ class ParameterSweepConfig:
     path: str = ""
     num_runs: int = 1
     experiment_name: str = ""
+    resume: str = ""
 
 
 @dataclass

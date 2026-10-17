@@ -1,0 +1,9 @@
+{
+  "maca": "3.8.2.6",
+  "torch": "2.10.0+metax3.8.2.2",
+  "torchaudio": {
+    "repository": "pytorch/audio",
+    "revision": "27b7ebdebd2d2e4d34a2f5c05b0fb26efbd1da63",
+    "version": "2.10.0"
+  }
+}

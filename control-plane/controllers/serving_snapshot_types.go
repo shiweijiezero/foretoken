@@ -47,6 +47,8 @@ type servingSnapshotModel struct {
 	Revision              string                                  `json:"revision"`
 	Tokenizer             string                                  `json:"tokenizer"`
 	TokenizerRevision     string                                  `json:"tokenizer_revision"`
+	PrefixCacheIsolation  *bool                                   `json:"prefix_cache_isolation,omitempty"`
+	RouterPipeline        *inferencev1alpha1.ModelRouterPipeline  `json:"router_pipeline,omitempty"`
 	SelectedPoolRevisions []inferencev1alpha1.ServingPoolRevision `json:"selected_pool_revisions,omitempty"`
 	Topology              string                                  `json:"topology"`
 	Capabilities          []string                                `json:"capabilities,omitempty"`
@@ -61,21 +63,22 @@ type servingSnapshotScalingTarget struct {
 }
 
 type servingSnapshotGroup struct {
-	RouteTargetID     string                        `json:"route_target_id"`
-	ServiceUID        string                        `json:"service_uid"`
-	PoolUID           string                        `json:"pool_uid"`
-	PoolName          string                        `json:"pool_name"`
-	Model             string                        `json:"model"`
-	Source            inferencev1alpha1.ModelSource `json:"source"`
-	Revision          string                        `json:"revision"`
-	Tokenizer         string                        `json:"tokenizer"`
-	TokenizerRevision string                        `json:"tokenizer_revision"`
-	MaxInputTokens    *int32                        `json:"max_input_tokens,omitempty"`
-	Capabilities      []string                      `json:"capabilities,omitempty"`
-	Endpoint          string                        `json:"endpoint"`
-	KVScopeID         string                        `json:"kv_scope_id"`
-	KVLookupScope     string                        `json:"kv_lookup_scope,omitempty"`
-	DataParallelSize  int32                         `json:"data_parallel_size"`
+	RouteTargetID        string                        `json:"route_target_id"`
+	ServiceUID           string                        `json:"service_uid"`
+	PoolUID              string                        `json:"pool_uid"`
+	PoolName             string                        `json:"pool_name"`
+	Model                string                        `json:"model"`
+	Source               inferencev1alpha1.ModelSource `json:"source"`
+	Revision             string                        `json:"revision"`
+	Tokenizer            string                        `json:"tokenizer"`
+	TokenizerRevision    string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation *bool                         `json:"prefix_cache_isolation,omitempty"`
+	MaxInputTokens       *int32                        `json:"max_input_tokens,omitempty"`
+	Capabilities         []string                      `json:"capabilities,omitempty"`
+	Endpoint             string                        `json:"endpoint"`
+	KVScopeID            string                        `json:"kv_scope_id"`
+	KVLookupScope        string                        `json:"kv_lookup_scope,omitempty"`
+	DataParallelSize     int32                         `json:"data_parallel_size"`
 }
 
 // servingSnapshotParallelism is the controller-owned execution topology used by KV transfer.
@@ -101,6 +104,7 @@ type servingSnapshotPDComponent struct {
 	Revision                 string                        `json:"revision"`
 	Tokenizer                string                        `json:"tokenizer"`
 	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation     *bool                         `json:"prefix_cache_isolation,omitempty"`
 	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
 	ProfileName              string                        `json:"profile_name"`
 	ProfileRevision          string                        `json:"profile_revision"`
@@ -133,6 +137,7 @@ type servingSnapshotEPDComponent struct {
 	Revision                 string                        `json:"revision"`
 	Tokenizer                string                        `json:"tokenizer"`
 	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	PrefixCacheIsolation     *bool                         `json:"prefix_cache_isolation,omitempty"`
 	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
 	Capabilities             []string                      `json:"capabilities"`
 	Endpoint                 string                        `json:"endpoint"`

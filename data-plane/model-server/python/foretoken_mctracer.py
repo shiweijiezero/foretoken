@@ -19,7 +19,8 @@ class Capture:
 
     def __init__(self, directory: str) -> None:
         self.root = Path(directory)
-        self.worker = str(os.getpid())
+        self.pid = str(os.getpid())
+        self.worker = f"{os.environ['FORETOKEN_POD_UID']}-{self.pid}"
         self.work = self.root / self.worker
         self.work.mkdir()
         self.log = (self.work / "mctracer.log").open("wb")
@@ -28,7 +29,7 @@ class Capture:
             # The collector inherits the engine's process group so managed-engine
             # shutdown also owns it if a native operation fails or times out.
             self.process = subprocess.Popen(
-                ["mcTracer", "--mctx", "--attach", self.worker, "--odname", "capture"],
+                ["mcTracer", "--mctx", "--attach", self.pid, "--odname", "capture"],
                 cwd=self.work,
                 stdin=slave,
                 stdout=slave,
@@ -95,7 +96,7 @@ class Capture:
         # Collector shutdown can change SDK recording state. Establish the idle
         # state after export, before returning control to model execution.
         self._set_collection_enabled(False)
-        (self.work / "capture" / f"tracer_out-{self.worker}.json").rename(
+        (self.work / "capture" / f"tracer_out-{self.pid}.json").rename(
             self.root / f"{self.worker}.mctracer.json"
         )
 

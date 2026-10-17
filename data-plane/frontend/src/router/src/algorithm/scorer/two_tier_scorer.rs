@@ -28,8 +28,7 @@ impl Default for TwoTierScorer {
 }
 
 impl TwoTierScorer {
-    /// Selects within the current execution stage using one shared KV-block unit.
-    /// Different observed block sizes leave candidates tied without a cache-dependent preference.
+    /// Selects within the current execution stage by request load and reusable device-token ratio.
     fn select(
         &self,
         request: &RouterRequest,
@@ -61,32 +60,15 @@ impl TwoTierScorer {
                 (row, cache)
             })
             .collect::<Vec<_>>();
-        let max_overlap = overlaps
-            .iter()
-            .map(|(_, cache)| cache.map_or(0, |(blocks, _)| blocks))
-            .max()?;
+        let max_overlap = overlaps.iter().map(|(_, cache)| cache.unwrap_or(0)).max()?;
         if max_overlap == 0 {
             return Some(least_loaded.0);
         }
-        let block_size = overlaps
-            .iter()
-            .find_map(|(_, cache)| cache.map(|(_, size)| size))?;
-        if overlaps
-            .iter()
-            .any(|(_, cache)| cache.is_some_and(|(_, size)| size != block_size))
-        {
-            return None;
-        }
-        let request_blocks = request.token_count().div_ceil(block_size);
-        let cache_ratio = if request_blocks == 0 {
-            0.0
-        } else {
-            max_overlap as f64 / request_blocks as f64
-        };
+        let cache_ratio = max_overlap as f64 / request.token_count() as f64;
         if cache_ratio > self.cache_threshold {
             overlaps
                 .iter()
-                .filter(|(_, cache)| cache.is_some_and(|(blocks, _)| blocks == max_overlap))
+                .filter(|(_, cache)| *cache == Some(max_overlap))
                 .min_by_key(|(row, _)| candidates[*row].local_load.requests)
                 .map(|(row, _)| *row)
         } else {
@@ -131,7 +113,6 @@ impl RouteScorer for TwoTierScorer {
             .map(|(row, _)| match selected {
                 Some(selected) => RouteScore {
                     preference: if row == selected { 1.0 } else { 0.0 },
-                    ..RouteScore::default()
                 },
                 None => RouteScore::default(),
             })
@@ -139,12 +120,12 @@ impl RouteScorer for TwoTierScorer {
     }
 }
 
-/// Returns complete Device-prefix blocks and their source block size for one exact route binding.
+/// Returns reusable Device-prefix tokens for one exact route binding.
 fn device_overlap(
     request: &RouterRequest,
     candidate: &RouteCandidate,
     indexer: &dyn KvPrefixIndexer,
-) -> Option<(usize, usize)> {
+) -> Option<usize> {
     if candidate.role == ModelServerRole::Encoder {
         return None;
     }
@@ -157,16 +138,14 @@ fn device_overlap(
     let KvPrefixQueryResult::Matches(matches) = indexer.prefix_matches(lookup) else {
         return None;
     };
-    let block_size = matches.block_size()? as usize;
-    let total_blocks = request.token_count() / block_size;
-    let blocks = matches
+    let tokens = matches
         .into_iter()
         .filter(|matched| {
             matched.placement.tier == KvStorageTier::Device
                 && matched.placement.locality != KvCacheLocality::Unspecified
         })
-        .map(|matched| (matched.matched_tokens / block_size).min(total_blocks))
+        .map(|matched| matched.matched_tokens.min(request.token_count()))
         .max()
         .unwrap_or(0);
-    Some((blocks, block_size))
+    Some(tokens)
 }

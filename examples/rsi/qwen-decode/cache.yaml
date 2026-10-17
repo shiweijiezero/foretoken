@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: runtime-cache
+spec:
+  initialSize: 128Gi
+  accessMode: ReadWriteOnce
+  retentionPolicy: Delete

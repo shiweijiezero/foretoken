@@ -41,20 +41,33 @@ Choose a scorer for the workload:
 | Spread cold requests toward less recently selected targets | `no_hit_lru` |
 | Trade off load balance and cache reuse | `two_tier`; requires `picker.algorithm: max` |
 | Prefer the same model replica for requests with the same `session_id` in the request body | `session_affinity` |
+| Prefer lower weighted request lengths | `throughput` |
+| Prefer a configured endpoint observation | `endpoint_attribute` |
 | Give every target an equal score | `uniform` |
 
-Scorer-specific options go under `scorer.parameters`. For example, give matched prefix length more weight:
+Scorer-specific options go under `scorer.parameters`. For example, give cache affinity more weight in the default strategy:
 
 ```yaml
 spec:
   routerPipeline:
     scorer:
-      algorithm: prefix
+      algorithm: kv_least_loaded
       parameters:
-        matchLengthWeight: 0.5
+        cacheWeight: 0.7
 ```
 
-When the KV index is unavailable, targets remain eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
+`kv_least_loaded` combines cache credit with per-rank request pressure. By default, GPU-local reuse receives full credit and the additional prefix requiring CPU, filesystem or shared-store restoration receives half credit. Equal shared-cache hits therefore retain each target's local-cache advantage, while load can change the ranking.
+
+Both weights accept values from 0 to 1:
+
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `cacheWeight` | `0.5` | Balances cache affinity against load; `0` selects by load alone and skips cache queries for this scorer. |
+| `restoreWeight` | `0.5` | Credit for the restored extension relative to GPU-local reuse; `0` credits only GPU-local reuse, and `1` gives both equal credit. |
+
+For Encoder and Decode, `kv_least_loaded` uses load alone. These weights express routing preferences, not transfer-time estimates.
+
+A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 
 ## Choose from the scores
 
@@ -69,13 +82,40 @@ Set `routerPipeline.picker.algorithm` to control selection:
 ## Draft/Target routing
 
 For DT services, Router first selects a Target with healthy compatible Draft pools
-from `speculation.draftPools`, matching candidate format, context and support for
-the Target's default candidate count, then selects a Draft through the same configured
+from `speculation.draftPools`, matching candidate format, context and initialized
+tensor paths, then selects a Draft through the same configured
 Filter → Scorer → Picker pipeline. Both routing-load reservations last through
 the request. Native workload snapshots inform existing load scorers; they do not
 reserve token work or dictate physical batching. The binding is fixed for the
 request, and the selected Target advances its rounds. See the
 [DT frontend workflow](../../../dt-plugin/docs/frontend-workflow.md).
+
+## Override a model or execution stage
+
+Set `spec.routerPipeline` in the model's `ModelService` YAML to override the frontend defaults. For example, use load-based routing for the model and cache-aware routing for its Prefill stage:
+
+```yaml
+spec:
+  routerPipeline:
+    scorer:
+      algorithm: least_loaded
+    prefill:
+      scorer:
+        algorithm: kv_least_loaded
+        parameters:
+          cacheWeight: 0.7
+    decode:
+      scorer:
+        algorithm: queue_depth
+      picker:
+        algorithm: max
+```
+
+Each of `filter`, `scorer`, and `picker` is resolved independently: an `encoder`, `prefill`, or `decode` selection takes precedence over the model selection, which takes precedence over the frontend default. Aggregate serving uses the model selection. Remove a selection to resume inheritance.
+
+A selection must name its `algorithm` and replaces that algorithm's entire `parameters` object. Omitting parameters uses the selected algorithm's defaults, not the inherited parameters.
+
+Apply changes with the deployment's usual `foretoken deploy` command. Routing updates online without replacing model instances; invalid settings keep the active configuration. ModelServices exposing the same public model name through one frontend must resolve to the same routing configuration.
 
 ## Inspect routing behavior
 

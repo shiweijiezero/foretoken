@@ -70,6 +70,9 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if slices.ContainsFunc(spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool { return pool.Speculation != nil }) {
 			return nil, fmt.Errorf("speculation requires the vllm backend")
 		}
+		if spec.PrefixCacheIsolation != nil {
+			return nil, fmt.Errorf("prefixCacheIsolation is not supported by the vllm-omni video backend")
+		}
 		if spec.InstanceAdmission != nil {
 			return nil, fmt.Errorf("instanceAdmission is not supported by the vllm-omni video backend")
 		}
@@ -228,6 +231,9 @@ func validateSpeculation(spec inferencev1alpha1.ModelServiceSpec) error {
 			draftPools[name] = true
 		}
 	}
+	if enabled && spec.PrefixCacheIsolation != nil {
+		return fmt.Errorf("prefixCacheIsolation is not supported by the DT role adapter")
+	}
 	for _, pool := range spec.ModelPools {
 		if pool.Model != "" && !draftPools[pool.Name] {
 			return fmt.Errorf("modelPools %q: model override requires a referencing Target speculation.draftPools", pool.Name)
@@ -337,6 +343,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			MemberCount:                           nodes,
 			Resources:                             normalizedResources,
 			NodeSelector:                          normalizedNodeSelector,
+			PrefixCacheIsolation:                  spec.PrefixCacheIsolation,
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
 			Network:                               network,
 			ECProfile:                             ecProfile,

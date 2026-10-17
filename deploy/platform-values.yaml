@@ -17,8 +17,9 @@
 #   imagePullSecrets:
 #     - name: registry-auth
 
-# Source-build storage. The default StorageClass and 100Gi compiler cache apply
-# unless these values are overridden.
+# Source builds automatically use persistent node-local compiler caches.
+# An explicit StorageClass stores build artifacts; execution caches remain local.
+# storageSize is the requested capacity of each build volume.
 # development:
 #   build:
 #     storageClassName: your-storage-class

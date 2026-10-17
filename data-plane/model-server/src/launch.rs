@@ -408,8 +408,6 @@ impl LaunchPlanV1 {
                 format!("--node-rank={}", member.index),
                 format!("--master-addr={}", member.leader_address),
                 "--master-port=29800".into(),
-                "--distributed-executor-backend=mp".into(),
-                "--data-parallel-backend=mp".into(),
             ]);
         }
         Ok(config)
@@ -483,19 +481,7 @@ impl LaunchPlanV1 {
         // The controller has already normalized native option names.
         // Keep argument values intact: this command never goes through a shell.
         for (name, value) in &self.engine_args {
-            if matches!(self.ec.role, Some(EcRole::Producer))
-                && matches!(name.as_str(), "mm-encoder-only" | "enforce-eager")
-            {
-                continue;
-            }
             append_engine_arg(&mut args, name, value)?;
-        }
-        if matches!(self.ec.role, Some(EcRole::Producer)) {
-            args.extend([
-                "--mm-encoder-only".into(),
-                "--enforce-eager".into(),
-                "--no-enable-prefix-caching".into(),
-            ]);
         }
         if self.kv.events() {
             args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
@@ -552,10 +538,6 @@ impl LaunchPlanV1 {
     /// Returns the connector-owned placement exposed by live prefix observation.
     pub fn shared_prefix_placement(&self) -> Option<KvPlacement> {
         match self.kv {
-            KvPlan::FilesystemOffload { .. } => Some(KvPlacement {
-                tier: KvStorageTier::Disk,
-                locality: KvCacheLocality::Local,
-            }),
             KvPlan::MooncakeStore { .. } | KvPlan::MultiConnector { .. } => Some(KvPlacement {
                 tier: KvStorageTier::External,
                 locality: KvCacheLocality::Remote,

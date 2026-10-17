@@ -160,6 +160,7 @@ class ProfileOperation(Message):
 
     start: bool
     directory: str | None = None
+    profile_prefix: str | None = None
 
 
 class KvLayer(Message):
@@ -1124,7 +1125,7 @@ def create_app(
         if request.directory is not None:
             await service.worker("foretoken_mctracer", request.start, request.directory)
         elif request.start:
-            await service.engine.start_profile()
+            await service.engine.start_profile(profile_prefix=request.profile_prefix)
         else:
             await service.engine.stop_profile()
         return {"completed": True}
@@ -1139,6 +1140,16 @@ def create_app(
             "version": 2,
             "collected_at_unix_ms": workload["collected_at_unix_ms"],
             "draft_target_workload": workload,
+            # Each role currently owns one EngineCore rank. Publish its native
+            # gauges explicitly for the common rank-aware Router scorers.
+            "data_parallel_ranks": [
+                {
+                    "data_parallel_rank": 0,
+                    "scheduler_running_requests": workload["running_requests"],
+                    "scheduler_waiting_requests": workload["waiting_requests"],
+                    "kv_cache_usage": workload["kv_cache_usage"],
+                }
+            ],
             "accepting": observation["accepting"],
             "running_requests": observation["active_sessions"],
             "max_concurrent_requests": workload["max_num_seqs"],

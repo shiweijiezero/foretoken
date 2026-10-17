@@ -102,8 +102,12 @@ type VideoExecutionPlan struct {
 	Revisions       []ServingPoolRevision `json:"revisions,omitempty"`
 	JobName         string                `json:"jobName"`
 	OutputClaimName string                `json:"outputClaimName"`
-	OutputPath      string                `json:"outputPath"`
-	WorkerImage     string                `json:"workerImage"`
+	// OutputIdentity retains the storage user for generation and artifact cleanup.
+	// Absence preserves the legacy worker identity.
+	// +optional
+	OutputIdentity *StorageIdentity `json:"outputIdentity,omitempty"`
+	OutputPath     string           `json:"outputPath"`
+	WorkerImage    string           `json:"workerImage"`
 	// WorkerApplicationURL retains the published executable used by this task and its cleanup.
 	// +optional
 	WorkerApplicationURL string `json:"workerApplicationURL,omitempty"`

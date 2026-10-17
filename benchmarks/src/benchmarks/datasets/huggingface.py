@@ -41,10 +41,15 @@ _HF_DATASETS_PREFIX = "hf://datasets/"
 _HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
 
 
-def _configured_local_model(tokenizer_path: str) -> str | None:
-    """Find a tokenizer directory below the benchmark data root when present."""
-    data_root = os.environ.get("FORETOKEN_DATA_ROOT")
-    if not data_root or "/" not in tokenizer_path:
+def find_local_tokenizer_path(
+    tokenizer_path: str, *, data_root: str | Path | None = None,
+) -> str | None:
+    """Find client-side tokenizer files below a deployment or configured data root."""
+    if Path(tokenizer_path).is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
+        return None
+    if data_root is None:
+        data_root = os.environ.get("FORETOKEN_DATA_ROOT")
+    if not data_root:
         return None
     root = Path(data_root).expanduser()
     for candidate in (root / "models" / tokenizer_path, root / tokenizer_path):
@@ -97,6 +102,10 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
     local = Path(tokenizer_path).expanduser()
     if local.exists():
         return str(local.resolve())
+    if source == "local":
+        configured = find_local_tokenizer_path(tokenizer_path)
+        if configured is not None:
+            return configured
     if source == "local" or local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
         raise ValueError(
             f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
@@ -111,7 +120,7 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
         return modelscope_download(tokenizer_path, allow_file_pattern=list(_TOKENIZER_ALLOW_PATTERNS))
     if source != "hf":
         raise ValueError(f"Unsupported model source: {source!r}")
-    local_model = _configured_local_model(tokenizer_path)
+    local_model = find_local_tokenizer_path(tokenizer_path)
     if local_model:
         logger.info("Using local tokenizer for Hugging Face repo %r", tokenizer_path)
         return local_model

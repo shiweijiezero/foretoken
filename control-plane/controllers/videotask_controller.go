@@ -215,8 +215,12 @@ func (r *VideoTaskReconciler) prepareVideoTask(ctx context.Context, task *api.Vi
 	if err != nil {
 		return api.VideoExecutionPlan{}, fmt.Errorf("parse frontend video request timeout: %w", err)
 	}
+	identity, err := videoOutputIdentity(ctx, r.APIReader, task.Namespace, frontend.Spec.VideoTasks.ClaimName)
+	if err != nil {
+		return api.VideoExecutionPlan{}, err
+	}
 	plan := api.VideoExecutionPlan{
-		JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName,
+		JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName, OutputIdentity: &identity,
 		OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
 		WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds, TimeoutSeconds: timeout,
 	}
@@ -233,6 +237,22 @@ func (r *VideoTaskReconciler) prepareVideoTask(ctx context.Context, task *api.Vi
 	plan.Model, plan.ServiceUID, plan.ServingGeneration = service.Spec.Model, string(service.UID), service.Status.ServingGeneration
 	plan.Revisions = append([]api.ServingPoolRevision(nil), service.Status.ServingPoolRevisions...)
 	return plan, nil
+}
+
+// videoOutputIdentity resolves the borrowed output claim's user before persisting a task plan.
+func videoOutputIdentity(ctx context.Context, reader client.Reader, namespace, claimName string) (api.StorageIdentity, error) {
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, claim); err != nil {
+		return api.StorageIdentity{}, fmt.Errorf("read video output claim %q: %w", claimName, err)
+	}
+	identity, err := runtimeconfig.ParseStorageIdentity(claim.Annotations[runtimeconfig.DirectoryOwnerAnnotation])
+	if err != nil {
+		return api.StorageIdentity{}, fmt.Errorf("resolve video output claim %q identity: %w", claimName, err)
+	}
+	if identity == nil {
+		return api.StorageIdentity{UID: 65532, GID: 65532}, nil
+	}
+	return *identity, nil
 }
 
 // newVideoWorkerJob runs either inference or idempotent task-directory cleanup under the same storage identity.
@@ -262,8 +282,11 @@ func (r *VideoTaskReconciler) newVideoWorkerJob(task *api.VideoTask, plan api.Vi
 		)
 	}
 	labels := map[string]string{"inference.foretoken.io/video-task": task.Name}
-	noToken, nonRoot, noEscalation, readOnly := false, true, false, true
-	group := int64(65532)
+	noToken, noEscalation, readOnly := false, false, true
+	identity := api.StorageIdentity{UID: 65532, GID: 65532}
+	if plan.OutputIdentity != nil {
+		identity = *plan.OutputIdentity
+	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: task.Namespace, Labels: labels, Annotations: map[string]string{
 			"inference.foretoken.io/video-task-contract": videoTaskContract,
@@ -275,7 +298,6 @@ func (r *VideoTaskReconciler) newVideoWorkerJob(task *api.VideoTask, plan api.Vi
 				RestartPolicy:                corev1.RestartPolicyNever,
 				AutomountServiceAccountToken: &noToken,
 				ImagePullSecrets:             append([]corev1.LocalObjectReference(nil), r.ImagePullSecrets...),
-				SecurityContext:              &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, FSGroup: &group, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 				Containers: []corev1.Container{{Name: "video-worker", Image: plan.WorkerImage, Command: command, Env: env,
 					SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 					VolumeMounts:    []corev1.VolumeMount{{Name: "video-output", MountPath: videoTaskOutputMount}}}},
@@ -284,6 +306,8 @@ func (r *VideoTaskReconciler) newVideoWorkerJob(task *api.VideoTask, plan api.Vi
 		}},
 	}
 	r.ApplicationFiles.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], plan.WorkerApplicationURL, "video-worker")
+	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, r.ApplicationFiles.Image, identity,
+		runtimeconfig.VolumeAccess{Name: "video-output", Identity: identity})
 	if err := controllerutil.SetControllerReference(task, job, r.Scheme()); err != nil {
 		return nil, err
 	}
@@ -361,8 +385,12 @@ func (r *VideoTaskReconciler) cleanupVideoTask(ctx context.Context, task *api.Vi
 			}
 			return ctrl.Result{}, r.Delete(ctx, task)
 		}
+		identity, err := videoOutputIdentity(ctx, r.APIReader, task.Namespace, frontend.Spec.VideoTasks.ClaimName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		task.Status.Plan = &api.VideoExecutionPlan{
-			JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName,
+			JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName, OutputIdentity: &identity,
 			OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
 			WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds,
 		}

@@ -24,7 +24,8 @@ use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
-    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
+    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, SchedulerLoadResponse,
+    TelemetryResponse,
 };
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
@@ -313,14 +314,15 @@ impl AppState {
 /// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
-pub fn router(mut state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
-    let profiling = crate::profiling::router(state.profiling.take());
+pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
+    let profiling = crate::profiling::router(state.profiling.clone());
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
+        .route("/v1/internal/scheduler-load", get(scheduler_load))
         .route("/v1/internal/admission", get(instance_admission_status))
         .route(
             "/v1/internal/admission/ready",
@@ -331,14 +333,18 @@ pub fn router(mut state: AppState, internal_generate_request_body_limit_bytes: u
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
         .route(
+            foretoken_model_protocol::KV_LOCAL_PREFIX_PATH,
+            post(local_kv_prefix),
+        )
+        .route(
             foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
             post(shared_kv_prefix),
         )
+        .with_state(state)
+        .merge(profiling)
         .layer(DefaultBodyLimit::max(
             internal_generate_request_body_limit_bytes,
         ))
-        .with_state(state)
-        .merge(profiling)
 }
 
 // The protocol-1 workload probe cannot admit an older binary that ignores the projected limit.
@@ -361,10 +367,32 @@ async fn instance_admission_status(State(state): State<AppState>) -> Json<Instan
     Json(state.health.instance_admission_status())
 }
 
+// Query schedulers through their existing utility transport, without admitting a generation.
+async fn local_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
+) -> Response {
+    if !state.health.ready() || !state.health.accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(adapter) = state.kv_events else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::time::timeout(
+        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
+        state.backend.local_prefixes(&request),
+    )
+    .await
+    {
+        Ok(Ok(ranks)) => Json(adapter.prefix_response(ranks)).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 // Shared lookups are observations only: admission and engine health must still permit reads.
 async fn shared_kv_prefix(
     State(state): State<AppState>,
-    Json(request): Json<foretoken_model_protocol::KvSharedPrefixRequest>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
 ) -> Response {
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -421,9 +449,35 @@ async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
     Json(telemetry_response(&state))
 }
 
+// Query the engine only on demand; older engines or unsupported layouts keep their
+// existing inference/telemetry paths and report unavailable load to bounded policies.
+// Bound the engine query so a stalled utility cannot retain backend ownership indefinitely.
+async fn scheduler_load(State(state): State<AppState>) -> Response {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.backend.scheduler_load(),
+    )
+    .await
+    {
+        Ok(Ok(engines)) => Json(SchedulerLoadResponse {
+            version: 1,
+            collected_at_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock predates Unix epoch")
+                .as_millis() as u64,
+            engines,
+        })
+        .into_response(),
+        Ok(Err(_)) | Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 // The shutdown coordinator closes admission before draining. Return the post-close telemetry
 // snapshot so its caller can observe remaining requests without owning server state.
 async fn close_admission(State(state): State<AppState>) -> Json<TelemetryResponse> {
+    if let Some(profiling) = &state.profiling {
+        profiling.close();
+    }
     state.health.set_accepting(false);
     Json(telemetry_response(&state))
 }
@@ -431,8 +485,9 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
-        version: 2,
+        version: 3,
         draft_target_workload: None,
+        request_cost: telemetry.request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

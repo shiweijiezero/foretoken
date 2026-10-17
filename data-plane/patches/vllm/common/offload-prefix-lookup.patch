@@ -1,0 +1,230 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+@@ -6,3 +6,3 @@
+ from itertools import chain, islice
+-from typing import Any, NamedTuple
++from typing import Any, Callable, NamedTuple
+ 
+@@ -56,2 +56,5 @@
+ )
++from vllm.v1.kv_offload.cpu.manager import CPUOffloadingManager
++from vllm.v1.kv_offload.tiering.fs.manager import FileSystemTierManager
++from vllm.v1.kv_offload.tiering.manager import TieringOffloadingManager
+ from vllm.v1.outputs import KVConnectorOutput
+@@ -491,2 +494,90 @@
+ 
++    def query_prefix(
++        self,
++        request: Request,
++        local_tokens: int,
++        max_num_new_tokens: int | None = None,
++    ) -> list[dict[str, str | int]]:
++        """Observe native offload prefixes without reserving cache capacity."""
++        if request.skip_reading_prefix_cache:
++            return []
++        if isinstance(self.manager, TieringOffloadingManager):
++            primary = self.manager.primary_tier
++            secondary_tiers = self.manager.secondary_tiers
++        elif isinstance(self.manager, CPUOffloadingManager):
++            primary = self.manager
++            secondary_tiers = ()
++        else:
++            return []
++
++        # Reuse native hashing, group keys, and the layout convergence algorithm.
++        # Only this temporary request state changes; the active scheduler and tiers do not.
++        context = _create_req_context(request)
++        state = RequestOffloadState(
++            self.config, request, context, RequestOffloadingContext()
++        )
++        state.num_locally_computed_tokens = local_tokens
++        state.update_offload_keys()
++        # A full native load still recomputes the last prompt token for sampling.
++        max_prefix_tokens = request.num_tokens - 1
++        cpu_tokens = self._query_prefix_match(state, primary.peek, max_num_new_tokens)
++        observations: list[dict[str, str | int]] = []
++        if cpu_tokens is not None and cpu_tokens > 0:
++            observations.append(
++                {
++                    "tier": "host_pinned",
++                    "matched_tokens": min(local_tokens + cpu_tokens, max_prefix_tokens),
++                }
++            )
++
++        filesystem_tiers = [
++            tier
++            for tier in secondary_tiers
++            if isinstance(tier, FileSystemTierManager)
++            and context.load_tier_filter.allows(tier.medium, tier.locality)
++        ]
++        if not filesystem_tiers:
++            return observations
++        if self.config.supports_partial_tail:
++            keys = [
++                make_offload_key(block_hash, group.group_idx)
++                for group in self.config.kv_group_configs
++                for block_hash in request.block_hashes[
++                    local_tokens // self.config.tokens_per_hash :
++                ]
++            ]
++        else:
++            keys = [
++                key
++                for group, group_state in zip(
++                    self.config.kv_group_configs, state.group_states
++                )
++                for key in group_state.offload_keys[
++                    local_tokens // group.tokens_per_chunk :
++                ]
++            ]
++        disk_keys: set[OffloadKey] = set()
++        for tier in filesystem_tiers:
++            disk_keys.update(tier.peek(keys, context))
++
++        def lookup(key: OffloadKey, req_context: ReqContext) -> LookupResult:
++            result = primary.peek(key, req_context)
++            if result is LookupResult.MISS and key in disk_keys:
++                return LookupResult.HIT
++            return result
++
++        # Disk is a continuation through the CPU staging tier, not an independent
++        # prefix whose length can be added to the GPU or CPU hit.
++        disk_tokens = self._query_prefix_match(state, lookup, max_num_new_tokens)
++        if disk_tokens is not None and disk_tokens > (cpu_tokens or 0):
++            observations.append(
++                {
++                    "tier": "disk",
++                    "matched_tokens": min(
++                        local_tokens + disk_tokens, max_prefix_tokens
++                    ),
++                }
++            )
++        return observations
++
+     def __init__(
+@@ -608,2 +699,3 @@
+         or None if the backend deferred a lookup."""
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
+         hit_count = 0
+@@ -611,11 +703,12 @@
+         for local_idx, key in enumerate(keys):
+-            result = self.manager.lookup(key, req_context)
++            result = lookup(key, req_context)
+             match result:
+                 case LookupResult.HIT:
+-                    self._events_tracker.record_lookup(
+-                        req,
+-                        group_config,
+-                        start_chunk_idx + local_idx,
+-                        key,
+-                    )
++                    if record_events:
++                        self._events_tracker.record_lookup(
++                            req,
++                            group_config,
++                            start_chunk_idx + local_idx,
++                            key,
++                        )
+                     hit_count += 1
+@@ -641,2 +734,3 @@
+         Returns 0 on miss, None if the backend deferred a lookup."""
++        lookup = self.manager.lookup if block_lookup is None else block_lookup
+         defer_lookup = False
+@@ -644,3 +738,3 @@
+         for idx in range(len(keys) - 1, -1, -1):
+-            match self.manager.lookup(keys[idx], req_context):
++            match lookup(keys[idx], req_context):
+                 case LookupResult.HIT:
+@@ -781,2 +875,4 @@
+                         start_chunk_idx,
++                        block_lookup=block_lookup,
++                        record_events=record_events,
+                     )
+@@ -901,3 +997,3 @@
+                 boundary_keys.append(key)
+-                result = self.manager.lookup(key, req_status.req_context)
++                result = lookup(key, req_status.req_context)
+                 if result is LookupResult.MISS:
+@@ -910,8 +1006,9 @@
+             if not boundary_missed and not boundary_pending:
+-                for group_config, key in zip(
+-                    self.config.kv_group_configs, boundary_keys
+-                ):
+-                    self._events_tracker.record_partial_lookup(
+-                        req_status.req, group_config, boundary, key
+-                    )
++                if record_events:
++                    for group_config, key in zip(
++                        self.config.kv_group_configs, boundary_keys
++                    ):
++                        self._events_tracker.record_partial_lookup(
++                            req_status.req, group_config, boundary, key
++                        )
+                 req_status.partial_tail_boundary = boundary
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading_connector.py
+@@ -146,2 +146,13 @@
+ 
++    def query_prefix(
++        self, request: "Request", local_tokens: int
++    ) -> list[dict[str, str | int]]:
++        """Return read-only offload observations for the scheduler's native layout."""
++        assert self.connector_scheduler is not None
++        return self.connector_scheduler.query_prefix(
++            request,
++            local_tokens,
++            max_num_new_tokens=self._max_loadable_tokens(request, local_tokens),
++        )
++
+     def get_num_new_matched_tokens(
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py
+@@ -390,2 +390,16 @@
+     # ==============================
++    def query_prefix(
++        self, request: "Request", local_tokens: int
++    ) -> list[dict[str, str | int]]:
++        """Collect native offload observations without assigning a request to a child."""
++        from vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector import (
++            OffloadingConnector,
++        )
++
++        observations: list[dict[str, str | int]] = []
++        for connector in self._connectors:
++            if isinstance(connector, (OffloadingConnector, MultiConnector)):
++                observations.extend(connector.query_prefix(request, local_tokens))
++        return observations
++
+     def get_num_new_matched_tokens(
+--- a/vllm/v1/kv_offload/cpu/manager.py
++++ b/vllm/v1/kv_offload/cpu/manager.py
+@@ -107,2 +107,11 @@
+ 
++    def peek(self, key: OffloadKey, req_context: ReqContext) -> LookupResult:
++        """Observe CPU readiness without updating access counts or replacement state."""
++        block = self._policy.get(key)
++        if block is None:
++            return LookupResult.MISS
++        if not block.is_ready:
++            return LookupResult.HIT_PENDING
++        return LookupResult.HIT
++
+     @override
+--- a/vllm/v1/kv_offload/tiering/fs/manager.py
++++ b/vllm/v1/kv_offload/tiering/fs/manager.py
+@@ -214,2 +214,12 @@
+         return LookupResult.HIT if result else LookupResult.MISS
++
++    def peek(self, keys: list[OffloadKey], req_context: ReqContext) -> set[OffloadKey]:
++        """Observe existing native files without promotion or pending-request state."""
++        return {
++            key
++            for key, found in zip(
++                keys, self._lookup_manager.batch_lookup(keys, req_context), strict=True
++            )
++            if found
++        }
+ 

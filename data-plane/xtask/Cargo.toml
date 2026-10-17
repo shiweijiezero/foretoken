@@ -8,6 +8,11 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
 [[bin]]
 name = "foretoken-xtask"
 path = "src/main.rs"

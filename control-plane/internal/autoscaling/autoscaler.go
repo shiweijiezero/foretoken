@@ -69,6 +69,14 @@ func (autoscaler *Autoscaler) Automatic() bool {
 	return autoscaler != nil && autoscaler.pipeline.Automatic
 }
 
+// RequiresEngineLoad reports the selected decision algorithm's observation needs to the controller.
+func (autoscaler *Autoscaler) RequiresEngineLoad(role core.TargetRole) bool {
+	consumer, ok := autoscaler.pipeline.DecisionAlgorithm.(interface {
+		RequiresEngineLoad(core.TargetRole) bool
+	})
+	return ok && consumer.RequiresEngineLoad(role)
+}
+
 // TriggerAlgorithmName reports the configured trigger algorithm for status consumers.
 func (autoscaler *Autoscaler) TriggerAlgorithmName() string {
 	if autoscaler == nil || autoscaler.pipeline.TriggerAlgorithm == nil {

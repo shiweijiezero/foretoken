@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The model-server owns one startup deadline across the persistent attempt and one
     // Pod-scoped temporary retry, including complete teardown of a failed child process.
-    let ((engine, client, prepared_tokenizer), cache_mode) =
+    let ((engine, client, prepared_tokenizer), cache_mode, startup_deadline) =
         start_with_cache_fallback(&config, async |mode, deadline| {
             start_engine_attempt(
                 &config,
@@ -191,6 +191,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Default::default()
         },
     };
+    let kv_events = if let Some(adapter) = kv_events {
+        let remaining = startup_deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, adapter.load_cache_groups(&client)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                warn!(%error, "KV cache group metadata is unavailable; event-index queries cannot select a cache group");
+            }
+            Err(_) => {
+                warn!("KV cache group metadata exceeded the engine startup deadline");
+            }
+        }
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let host = config.member.as_ref().map_or_else(
+            || LOOPBACK_HOST.to_string(),
+            |member| member.address.to_string(),
+        );
+        tokio::spawn(adapter.clone().serve(host, ready_tx));
+        if ready_rx.await != Ok(true) {
+            warn!("KV event subscriber is unavailable; live engine observations remain available");
+        }
+        Some(adapter)
+    } else {
+        None
+    };
     if !*client_health.borrow() {
         let reason = client.health_error().map_or_else(
             || "EngineCore client became unhealthy during startup".to_string(),
@@ -201,22 +225,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         health.set_process_alive(false);
         return Err(std::io::Error::other(reason).into());
     }
-    let kv_events = if let Some(adapter) = kv_events {
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let host = config.member.as_ref().map_or_else(
-            || LOOPBACK_HOST.to_string(),
-            |member| member.address.to_string(),
-        );
-        tokio::spawn(adapter.clone().serve(host, ready_tx));
-        if ready_rx.await == Ok(true) {
-            Some(adapter)
-        } else {
-            warn!("KV event subscriber is unavailable; prefix scoring is disabled");
-            None
-        }
-    } else {
-        None
-    };
     health.set_client_healthy(true);
     health.set_accepting(true);
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
@@ -228,8 +236,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut profiler = profiling.map(|config| {
         profiling::Supervisor::new(
             config,
-            profiling::CaptureBackend::Native(backend.clone()),
-            health.clone(),
+            Some(profiling::CaptureBackend::Native(backend.clone())),
         )
     });
 
@@ -271,13 +278,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Signals, client health, child exit, and server failure converge on one shutdown path.
     enum Stop {
         Signal,
-        ClientUnhealthy(String),
-        ChildExited(String),
+        Engine(String),
         Server(String),
         CacheServer(String),
         Profiling(String),
     }
-    let stop = tokio::select! {
+    let mut stop = tokio::select! {
         // Refresh projected limits after slow engine preparation before polling HTTP intake.
         biased;
         never = async move {
@@ -286,16 +292,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => std::future::pending::<std::convert::Infallible>().await,
             }
         } => match never {},
+        reason = engine_failure(&engine, &health, &mut client_health) => Stop::Engine(reason),
         () = shutdown_signal() => Stop::Signal,
-        () = health.execution_failed() => Stop::ClientUnhealthy("request termination could not be confirmed".into()),
-        changed = client_health.changed() => {
-            if changed.is_err() || !*client_health.borrow() {
-                Stop::ClientUnhealthy("EngineCore client became unhealthy".into())
-            } else {
-                unreachable!("EngineCore health only transitions to unhealthy")
-            }
-        },
-        status = engine.wait_for_exit() => Stop::ChildExited(format!("managed EngineCore exited unexpectedly: {status}")),
         result = &mut server => Stop::Server(match result {
             Ok(()) => "HTTP server stopped unexpectedly".into(),
             Err(error) => format!("HTTP server failed: {error}"),
@@ -310,65 +308,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     match &stop {
         Stop::Signal => info!("received shutdown signal"),
-        Stop::ClientUnhealthy(reason)
-        | Stop::ChildExited(reason)
+        Stop::Engine(reason)
         | Stop::Server(reason)
         | Stop::CacheServer(reason)
         | Stop::Profiling(reason) => warn!(%reason),
     }
 
     // Stop new admission before draining HTTP handlers, the client, and finally the child process.
+    if let Some(profiler) = &profiler {
+        profiler.handle().close();
+    }
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
-    if matches!(&stop, Stop::ClientUnhealthy(_) | Stop::ChildExited(_)) {
-        engine.shutdown(config.launch.drain_timeout()).await?;
-        health.set_process_alive(false);
-    }
-    // Only an active native capture can hold the backend lock or require forced profiler stop.
-    // Merely preparing profiling must not bypass normal request draining on SIGTERM.
-    if let Some(profiler) = &mut profiler
-        && profiler.has_native_capture()
-    {
-        engine.shutdown(config.launch.drain_timeout()).await?;
-        engine.wait_for_exit().await;
-        health.set_process_alive(false);
-        profiler
-            .engine_stopped("diagnostic runtime terminated")
-            .await;
-    }
-    if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(
-            deadline.saturating_duration_since(Instant::now()),
-            server.as_mut(),
-        )
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
-            Err(_) => {
-                warn!("HTTP handlers did not drain before deadline");
-                drop(server);
-            }
+    // Only an active native capture requires forced profiler stop. Merely preparing
+    // profiling must not bypass normal request draining on SIGTERM.
+    let mut engine_stopped = matches!(&stop, Stop::Engine(_))
+        || profiler
+            .as_ref()
+            .is_some_and(|profiler| profiler.has_native_capture());
+    if engine_stopped {
+        stop_failed_engine(&engine, &backend, &health, deadline).await?;
+        if let Some(profiler) = &mut profiler {
+            profiler.engine_stopped("runtime terminated").await;
         }
     }
-    if tokio::time::timeout(
-        deadline.saturating_duration_since(Instant::now()),
-        health.wait_drained(),
-    )
-    .await
-    .is_err()
-    {
-        warn!("accepted requests did not finish before the drain deadline");
-        // Stopping the process resolves pending submissions before client shutdown needs their
-        // read locks. A canceled HTTP consumer is not evidence that those submissions ended.
-        engine
-            .shutdown(deadline.saturating_duration_since(Instant::now()))
-            .await
-            .map_err(io::Error::other)?;
-        health.set_process_alive(false);
+    let server_stopped = matches!(&stop, Stop::Server(_));
+    let drain = async {
+        if !server_stopped && let Err(error) = server.as_mut().await {
+            error!(%error, "HTTP server failed while draining");
+        }
+        health.wait_drained().await;
+    };
+    tokio::pin!(drain);
+    // Graceful shutdown still supervises the engine. A crash cannot finish accepted work,
+    // so close its request registry immediately instead of waiting for HTTP drain to time out.
+    loop {
+        tokio::select! {
+            biased;
+            reason = engine_failure(&engine, &health, &mut client_health), if !engine_stopped => {
+                warn!(%reason, "engine failed while draining");
+                stop = Stop::Engine(reason);
+                stop_failed_engine(&engine, &backend, &health, deadline).await?;
+                engine_stopped = true;
+            }
+            result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
+                if result.is_err() {
+                    warn!("accepted requests did not finish before the drain deadline");
+                    stop_failed_engine(&engine, &backend, &health, deadline).await?;
+                }
+                break;
+            }
+        }
     }
     if let Err(error) = backend.shutdown().await {
         warn!(%error, "could not shut down EngineCore client cleanly");
@@ -382,12 +375,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stop {
         Stop::Signal => Ok(()),
-        Stop::ClientUnhealthy(reason)
-        | Stop::ChildExited(reason)
+        Stop::Engine(reason)
         | Stop::Server(reason)
         | Stop::CacheServer(reason)
         | Stop::Profiling(reason) => Err(std::io::Error::other(reason).into()),
     }
+}
+
+// engine_failure remains active during both serving and graceful drain.
+async fn engine_failure(
+    engine: &ManagedEngine,
+    health: &RuntimeHealth,
+    client_health: &mut tokio::sync::watch::Receiver<bool>,
+) -> String {
+    tokio::select! {
+        () = health.execution_failed() => "request termination could not be confirmed".into(),
+        changed = client_health.changed() => {
+            if changed.is_err() || !*client_health.borrow() {
+                "EngineCore client became unhealthy".into()
+            } else {
+                unreachable!("EngineCore health only transitions to unhealthy")
+            }
+        }
+        status = engine.wait_for_exit() => format!("managed EngineCore exited unexpectedly: {status}"),
+    }
+}
+
+// stop_failed_engine establishes execution termination before releasing client ownership.
+// Client shutdown wakes every output stream and utility that can no longer receive an engine reply.
+async fn stop_failed_engine(
+    engine: &ManagedEngine,
+    backend: &VllmBackend,
+    health: &RuntimeHealth,
+    deadline: Instant,
+) -> io::Result<()> {
+    engine
+        .shutdown(deadline.saturating_duration_since(Instant::now()))
+        .await
+        .map_err(io::Error::other)?;
+    health.set_process_alive(false);
+    if let Err(error) = backend.shutdown().await {
+        warn!(%error, "could not shut down EngineCore client cleanly");
+    }
+    Ok(())
 }
 
 // Workers own only their local child and cache observer. Collective readiness is
@@ -409,6 +439,10 @@ async fn run_worker(
     )
     .await
     .map_err(EngineStartupFailure::into_error)?;
+    let mut profiler = profiling
+        .filter(|_| config.launch.profiling.engine == profiling::Engine::Nsight)
+        .cloned()
+        .map(|profile| profiling::Supervisor::new(profile, None));
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let app = axum::Router::new()
@@ -419,7 +453,10 @@ async fn run_worker(
         .route(
             "/readyz",
             axum::routing::get(|| async { axum::http::StatusCode::OK }),
-        );
+        )
+        .merge(profiling::router(
+            profiler.as_ref().map(profiling::Supervisor::handle),
+        ));
     let mut server = Box::pin(
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { server_shutdown.notified().await })
@@ -431,10 +468,22 @@ async fn run_worker(
         result = &mut server => Some(format!("worker health server stopped: {result:?}")),
         reason = wait_cache_server(cache_server) => Some(reason),
         error = wait_cache_write_failure(cache, runtime_cache::Mode::Persistent) => Some(error.to_string()),
+        result = async {
+            match &mut profiler {
+                Some(profiler) => profiler.run().await,
+                None => std::future::pending().await,
+            }
+        } => Some(result.err().unwrap_or_else(|| "capture supervisor stopped".into())),
     };
+    if let Some(profiler) = &profiler {
+        profiler.handle().close();
+    }
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     engine.shutdown(config.launch.drain_timeout()).await?;
+    if let Some(profiler) = &mut profiler {
+        profiler.engine_stopped("worker runtime terminated").await;
+    }
     match failure {
         Some(message) => Err(io::Error::other(message).into()),
         None => Ok(()),
@@ -458,14 +507,14 @@ impl EngineStartupFailure {
 }
 
 /// Retries one failed persistent-cache startup with Pod-scoped temporary storage.
-/// Both attempts share one deadline; the attempt must completely stop a failed child before returning.
+/// Returns the original deadline for startup metadata; both attempts share it and must stop failed children.
 async fn start_with_cache_fallback<T>(
     config: &RuntimeConfig,
     mut attempt: impl AsyncFnMut(runtime_cache::Mode, Instant) -> Result<T, EngineStartupFailure>,
-) -> io::Result<(T, runtime_cache::Mode)> {
+) -> io::Result<(T, runtime_cache::Mode, Instant)> {
     let deadline = Instant::now() + config.launch.startup_timeout();
     match attempt(runtime_cache::Mode::Persistent, deadline).await {
-        Ok(started) => Ok((started, runtime_cache::Mode::Persistent)),
+        Ok(started) => Ok((started, runtime_cache::Mode::Persistent, deadline)),
         Err(EngineStartupFailure::PersistentCache { context, source }) => {
             // Distributed members restart together; a local retry would reuse stale peers.
             if config.member.is_some() {
@@ -490,7 +539,7 @@ async fn start_with_cache_fallback<T>(
                 cache_mode = runtime_cache::Mode::Temporary.as_str(),
                 "engine started with Pod-scoped temporary cache storage"
             );
-            Ok((started, runtime_cache::Mode::Temporary))
+            Ok((started, runtime_cache::Mode::Temporary, deadline))
         }
         Err(failure) => Err(failure.into_error()),
     }

@@ -7,23 +7,35 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
+在 `catalog.json` 中按应用顺序声明补丁。供固定源码和全部 Python 引擎版本共用的补丁只需一条记录：
+
+```json
+{
+  "path": "common/engine-abort-completion.patch",
+  "rust": true,
+  "python": {}
+}
+```
+
+`rust: true` 表示供 `make vllm-source` 使用。`python` 规则用于已安装引擎和引擎源码构建，`{}` 适用于全部兼容配置；可通过其中的 `profiles`、`versions`、`requires` 限定兼容配置、包版本或所需的上游文件。清单顶层的 `profiles` 定义 Python 版本与兼容配置名称的对应关系。
+
 | 位置 | 用途 |
 | --- | --- |
 | `common/` | 共享的 Python、通信与原生代码补丁 |
-| `compatibility/` | 适配不同上游接口的补丁清单与插入位置 |
+| `compatibility/` | 适配不同上游接口的变体 |
 | `rust/` | 上游 Rust crate 的补丁 |
-| `source.series` | 固定源码版本的补丁顺序，由 `make vllm-source` 读取 |
-| `version-map.yaml` | 已安装 Python 包版本到兼容补丁清单的映射 |
 
-清单中的路径相对于本目录。补丁使用 `-p1`，应用目录是包含 `vllm/` 的上游仓库根目录或已安装包的父目录。
+补丁路径相对于本目录。补丁使用 `-p1`，应用目录是包含 `vllm/` 的上游仓库根目录或已安装包的父目录。
 
-修改对应的上游源码后重新生成 unified diff。共享行为放在 `common/`，兼容补丁只保留有差异的导入、接口和插入位置。多个包版本可以使用同一份清单；扩展版本映射前，先在对应源码上检查整组补丁，并实际运行受影响的功能。
+修改上游源码后重新生成 unified diff。共享行为放在 `common/`，接口差异放在 `compatibility/`。在受影响的源码版本上检查所选补丁，并实际运行改动的功能。
 
-模型镜像通过 `apply.py` 选择清单、应用缺失补丁并编译改动的 Python 文件。Rust 源码准备直接读取 `source.series`，不按 Python 包版本选择。再次执行源码准备或镜像构建，检查已应用补丁的源码能否复用。
+模型镜像通过 `apply.py`、引擎源码构建通过 `vllm_patches.py` 的 `engine_patches()` 选择 Python 规则；Rust 源码准备选择清单中的 `rust` 条目。重复执行准备或镜像构建，检查已应用补丁的源码能否复用。
 
 镜像和源码构建共用 `vllm_patches.py` 中的依赖适配。更新依赖时，保留引擎镜像的 NCCL override 和其他组件仍需使用的包。
 
 其他库的补丁放在与 `vllm/` 同级的独立目录中。
+
+`common/scheduler-load.patch` 负责统计 token 需求，各版本的调度器适配负责传入全部等待队列，并在调度更新 token 计数前采集 decode 上下文。请求被抢占后，计算进度虽然清零，其上下文需求仍需保留。
 
 ## 引擎完成契约
 

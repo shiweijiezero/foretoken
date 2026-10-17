@@ -155,14 +155,7 @@ Each caller has separate waiting and concurrency allowances shared across fronte
 
 Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
-Configure the trusted gateway to overwrite these headers for every text request with the authenticated role and a stable caller identifier:
-
-```http
-x-role: role1
-x-caller-id: caller-a
-```
-
-Requests without a caller identifier or matching role are rejected. Authentication, authorization, and RPM/token quotas belong at the gateway; restrict frontend access to that gateway.
+Role rules require an authentication gateway. Requests without an authenticated identity or matching role are rejected. Gateway integration is described in [Admission lifecycle](../../docs/development/admission-rules.md#gateway-integration); cache sharing is configured through [prefix cache isolation](../../docs/inference-parameters.md#prefix-cache-isolation).
 
 ### Override one model
 

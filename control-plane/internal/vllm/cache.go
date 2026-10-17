@@ -27,24 +27,24 @@ func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
 
 // RuntimeCacheEnv returns vLLM model and compilation cache environment for one ModelGroup.
 func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tritonCacheDirectory string) []corev1.EnvVar {
-	env := make([]corev1.EnvVar, 0, 6)
+	root := "/tmp/foretoken-runtime-cache"
 	if cache != nil {
-		env = append(env,
-			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: namespace + "/" + cache.ClaimName},
-			corev1.EnvVar{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(cache.MountPath)},
-			corev1.EnvVar{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(cache.MountPath)},
-			corev1.EnvVar{Name: "VLLM_CACHE_ROOT", Value: path.Join(cache.MountPath, "vllm")},
-			corev1.EnvVar{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(cache.MountPath, "torch")},
-		)
-		if cache.DirectoryOwner != nil {
-			// A host directory identity may have no passwd entry in the engine image.
-			user := strconv.FormatInt(cache.DirectoryOwner.UID, 10)
-			env = append(env,
-				corev1.EnvVar{Name: "HOME", Value: cache.MountPath},
-				corev1.EnvVar{Name: "USER", Value: user},
-				corev1.EnvVar{Name: "LOGNAME", Value: user},
-			)
-		}
+		root = cache.MountPath
+	}
+	// Runtime identities need not have a passwd entry or a writable image home.
+	user := strconv.FormatInt(runtimeconfig.CacheStorageAccess(cache).Identity.UID, 10)
+	env := []corev1.EnvVar{
+		{Name: "HOME", Value: root},
+		{Name: "USER", Value: user},
+		{Name: "LOGNAME", Value: user},
+		{Name: "XDG_CACHE_HOME", Value: path.Join(root, ".cache")},
+		{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(root)},
+		{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(root)},
+		{Name: "VLLM_CACHE_ROOT", Value: path.Join(root, "vllm")},
+		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(root, "torch")},
+	}
+	if cache != nil {
+		env = append(env, corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: namespace + "/" + cache.ClaimName})
 	}
 	if tritonCacheDirectory != "" {
 		// Kubernetes expands references only to earlier environment entries.
@@ -52,9 +52,8 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tr
 			corev1.EnvVar{Name: cacheNodeNameEnv, ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},
 			corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: tritonCacheDirectory},
 		)
-	} else if cache != nil {
-		// Groups without a resolved path retain their existing Pod template until
-		// the Pool replaces them with the newly resolved runtime revision.
+	} else {
+		// Preparation and Groups without a resolved path keep compilation state Pod-local.
 		env = append(env, corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/triton"})
 	}
 	return env

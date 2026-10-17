@@ -67,6 +67,8 @@ foretoken install -e .
 # foretoken install
 ```
 
+安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
+
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例
@@ -76,6 +78,8 @@ foretoken deploy examples/quickstart --timeout 20m
 ```
 
 该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
+
+同时尝试不同代码改动，见[并行运行候选方案](docs/custom-deployment_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/custom-deployment_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
@@ -87,10 +91,6 @@ curl --fail-with-body --no-buffer \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
-
-### 快速迭代源码
-
-源码安装后，修改代码并重新执行部署命令即可更新服务。引擎源码和运行环境设置见[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
 ### 5. 评测与性能剖析
 
@@ -115,7 +115,7 @@ foretoken eval examples/quickstart \
 
 #### 性能剖析：定位执行瓶颈
 
-采集需使用源码安装的 CLI 和平台，见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。快速开始示例已配置持久化采集存储。
+快速开始示例已配置持久化采集存储。其他采集工具的准备和用法见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。
 
 ```bash
 foretoken perf examples/quickstart \
@@ -140,10 +140,10 @@ spec:
 然后运行：
 
 ```bash
-# 安装平台并启用网关模式
-foretoken install --frontend-mode gateway
-# 源码安装的平台：
-# foretoken install -e . --frontend-mode gateway
+# 为上面的源码安装启用网关模式
+foretoken install -e . --frontend-mode gateway
+# 使用发布版平台时：
+# foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
 foretoken deploy examples/quickstart --timeout 20m

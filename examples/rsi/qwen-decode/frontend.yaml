@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: qwen-decode-frontend
+spec:
+  replicas: 1
+  hostname: qwen-decode.rsi.example.com
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  timeouts:
+    request: 10m
+    streamIdle: 5m
+  routerPipeline:
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: least_loaded
+    picker:
+      algorithm: gamble_sampling

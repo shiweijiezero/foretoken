@@ -65,6 +65,20 @@ class ForetokenDeployment:
         )
 
 
+def service_requires_execution(service: dict[str, Any]) -> bool:
+    """Tell deployment preparation whether a model or frontend needs running instances."""
+    spec = service.get("spec") or {}
+    if spec.get("suspend", False):
+        return False
+    if service["kind"] == "ModelService":
+        if spec.get("autoscaling") is not None:
+            return True
+        pools = spec.get("modelPools")
+        if pools:
+            return any(pool.get("replicas", 1) != 0 for pool in pools)
+    return spec.get("replicas", 1) != 0
+
+
 def deployment_path(path_value: str) -> Path:
     """Return a validated Kustomize root supplied by a CLI caller."""
     path = Path(path_value).expanduser().resolve()

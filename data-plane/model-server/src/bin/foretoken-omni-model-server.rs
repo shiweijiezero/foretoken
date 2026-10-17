@@ -210,8 +210,9 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 
 fn telemetry_response(health: &RuntimeHealth) -> TelemetryResponse {
     TelemetryResponse {
-        version: 2,
+        version: 3,
         draft_target_workload: None,
+        request_cost: Default::default(),
         collected_at_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

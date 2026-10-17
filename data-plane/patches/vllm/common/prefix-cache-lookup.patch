@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/v1/request.py
++++ b/vllm/v1/request.py
+@@ -12,3 +12,3 @@
+ 
+-from vllm.multimodal.inputs import MultiModalFeatureSpec
++from vllm.multimodal.inputs import MultiModalFeatureSpec, PlaceholderRange
+ from vllm.pooling_params import PoolingParams
+@@ -224,2 +224,48 @@
+     @classmethod
++    def for_prefix_cache_lookup(
++        cls,
++        prompt_token_ids: list[int],
++        block_hasher: Callable[["Request"], list["BlockHash"]] | None,
++        cache_salt: str | None = None,
++        lora_name: str | None = None,
++        mm_features: list[dict[str, Any]] | None = None,
++        lora_path: str | None = None,
++    ) -> "Request":
++        """Build an unscheduled cache-identity request for prefix observers.
++
++        Uses native hashing without processing tensors, loading adapters, or
++        changing scheduler state. Multimodal inputs carry identifier and
++        placeholder offset/length only.
++        """
++        from vllm.lora.request import LoRARequest
++
++        lora_request = None
++        if lora_name is not None:
++            if lora_path is None:
++                raise ValueError("LoRA prefix lookup requires the adapter path")
++            lora_request = LoRARequest(lora_name, 1, lora_path=lora_path)
++
++        features = [
++            MultiModalFeatureSpec(
++                data=None,
++                modality="",
++                identifier=feature["identifier"],
++                mm_position=PlaceholderRange(
++                    offset=feature["offset"], length=feature["length"]
++                ),
++            )
++            for feature in mm_features or []
++        ]
++        return cls(
++            request_id="prefix-cache-lookup",
++            prompt_token_ids=prompt_token_ids,
++            sampling_params=SamplingParams(max_tokens=1),
++            pooling_params=None,
++            cache_salt=cache_salt,
++            lora_request=lora_request,
++            mm_features=features,
++            block_hasher=block_hasher,
++        )
++
++    @classmethod
+     def from_engine_core_request(
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -435,2 +435,47 @@
+ 
++    def get_prefix_cache_hit(
++        self,
++        prompt_token_ids: list[int],
++        cache_salt: str | None = None,
++        lora_name: str | None = None,
++        mm_features: list[dict[str, Any]] | None = None,
++        lora_path: str | None = None,
++    ) -> dict[str, Any]:
++        """Return this DP rank's local and offloaded reuse for routing observers.
++
++        This snapshot neither schedules nor reserves cache blocks. The native
++        coordinator reconciles all cache groups at the generation boundary.
++        """
++        request = Request.for_prefix_cache_lookup(
++            prompt_token_ids,
++            self.request_block_hasher,
++            cache_salt,
++            lora_name,
++            mm_features,
++            lora_path,
++        )
++        manager = self.scheduler.kv_cache_manager
++        matched_tokens = 0
++        if request.num_tokens > 1 and manager.prefix_cache_lookup_enabled(request):
++            _, matched_tokens, _ = manager.coordinator.find_longest_cache_hit(
++                request.block_hashes, request.num_tokens - 1
++            )
++        offloaded: list[dict[str, Any]] = []
++        connector = self.scheduler.get_kv_connector()
++        if request.num_tokens > 1 and connector is not None:
++            from vllm.distributed.kv_transfer.kv_connector.v1.multi_connector import (
++                MultiConnector,
++            )
++            from vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector import (
++                OffloadingConnector,
++            )
++
++            if isinstance(connector, (OffloadingConnector, MultiConnector)):
++                offloaded = connector.query_prefix(request, matched_tokens)
++        return {
++            "dp_rank": self.engine_index,
++            "matched_tokens": matched_tokens,
++            "offloaded": offloaded,
++        }
++
+     def add_request(self, request: Request, request_wave: int = 0):

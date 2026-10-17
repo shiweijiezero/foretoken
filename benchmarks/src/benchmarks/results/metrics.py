@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -337,6 +338,13 @@ def summarize_measurements(
         "request_num": request_num,
         "success_num": success_count,
         "failed_num": request_num - success_count,
+        "failure_reasons": [
+            {"status_code": status, "error": error, "request_num": count}
+            for (status, error), count in Counter(
+                (item.status_code, item.error_message)
+                for item in measurements if not item.succeeded
+            ).items()
+        ],
         "success_rate": success_count / request_num if request_num else 0.0,
         "stream": stream,
         "latency": percentile_summary(latencies),

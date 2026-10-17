@@ -6,8 +6,11 @@ package runtimeconfig
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"strings"
+
+	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
 const (
@@ -48,6 +51,11 @@ func ValidateSourceRevision(revision string) error {
 		return fmt.Errorf("source revision must be a single directory segment")
 	}
 	return nil
+}
+
+// EncoderCacheDirectory gives volume projection and engine configuration the same service-scoped path.
+func EncoderCacheDirectory(ec *api.ModelGroupECRuntimeConfig) string {
+	return path.Join(ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision))
 }
 
 // ModelDirectory returns the stable model area of a workload's persistent data root.

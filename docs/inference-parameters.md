@@ -19,7 +19,7 @@ spec:
     gpu-memory-utilization: 0.85
 ```
 
-Values are YAML booleans, numbers, strings, lists or objects. Omitted options retain engine defaults; `null` omits a native option. Supported values depend on the backend image, model and hardware.
+Values are YAML booleans, numbers, strings, lists or objects. Omit an option or set it to `null` to use its default. Supported values depend on the backend image, model and hardware.
 
 ## Model environment variables
 
@@ -87,6 +87,27 @@ spec:
 
 Redeploy the model's configuration directory with `foretoken deploy`. Limits update online and accepted work continues. A full instance stops accepting new work until occupancy falls below the limit. Omit `instanceAdmission` for unlimited acceptance.
 
+## Prefix cache isolation
+
+Prefix caching reuses computation for repeated prompt prefixes. To separate this cache by authenticated caller, add the following to the ModelService YAML:
+
+```yaml
+spec:
+  prefixCacheIsolation: true
+```
+
+The setting applies to all Pools and frontends serving this model, across Chat Completions, text completions, Responses and Messages. It supports vLLM text and image generation.
+
+| Value | Cache sharing |
+| --- | --- |
+| `true` | Isolate prefixes by authenticated caller, ignoring the request body's `cache_salt`. |
+| `false` | Share unsalted prefixes across callers, ignoring the request body's `cache_salt`. |
+| Omitted or `null` | Use the request body's `cache_salt`; omission, `null` or an empty string uses unsalted prefixes. |
+
+Isolation requires an authentication gateway. Changing isolation leaves prefix caching and admission settings unchanged.
+
+Apply the model and frontend configuration directory with `foretoken deploy <directory>`. Changing this setting replaces model instances and switches to a separate cache domain, including for persistent shared caches.
+
 ## Common vLLM options
 
 | Engine option | Purpose |
@@ -98,7 +119,8 @@ Redeploy the model's configuration directory with `foretoken deploy`. Limits upd
 | `gpu-memory-utilization` | Fraction of device memory per engine instance |
 | `max-num-seqs` | Maximum sequences scheduled per iteration |
 | `max-num-batched-tokens` | Maximum tokens scheduled per iteration |
-| `enforce-eager` | Disable graph capture when `true` |
+| `enforce-eager` | Disable graph capture when `true`; defaults to `true` for Encoder Pools |
+| `enable-prefix-caching` | Enable KV prefix caching with `true` or disable it with `false`; Encoder Pools use `false` |
 | `speculative-config` | Native speculative decoding configuration |
 | `tensor-parallel-size` | Tensor parallelism (TP) |
 | `pipeline-parallel-size` | Pipeline parallelism (PP) |
@@ -135,4 +157,6 @@ Methods and child fields follow vLLM. For methods using draft weights, `model` a
 
 ## Platform-managed options
 
-Foretoken manages model identity, startup endpoints, transfer connectors and profiling. Other native options are interpreted by the selected engine. See the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/); vLLM is the currently implemented backend.
+Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache` and `ecProfile` for model selection, placement and cache transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.
+
+Other native options, including `ec-manager-config` and custom workers outside mcTracer, are passed to vLLM. See the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/).

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.util
 import json
 import os
 import py_compile
@@ -15,7 +16,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import yaml
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -23,104 +23,69 @@ from packaging.version import Version
 
 
 def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
-    """Select one source-compatible patch series for an installed or source vLLM tree."""
+    """Select Python engine patches in catalog order for image and source builds."""
     version_value = Version(version)
-    version_map = yaml.safe_load((patches / "version-map.yaml").read_text())
-    series_name = version_map["default_series"]
-    for profile in version_map["profiles"]:
+    catalog = json.loads((patches / "catalog.json").read_text())
+    profile_name = catalog["default_profile"]
+    for profile in catalog["profiles"]:
         if SpecifierSet(profile["versions"]).contains(version_value, prereleases=True):
-            series_name = profile["series"]
+            profile_name = profile["name"]
             break
 
-    legacy_ready_backport = False
+    # Some legacy packages backport the modern Ready interface and use its patch family.
     ready_source = directory / "vllm/v1/engine/__init__.py"
-    if series_name == "compatibility/v1-legacy/series" and ready_source.is_file():
+    if profile_name == "v1-legacy" and ready_source.is_file():
         source = ready_source.read_text()
-        legacy_ready_backport = (
+        if (
             "tensor_parallel_size: int" in source
             and "decode_context_parallel_size: int" in source
-        )
-        if legacy_ready_backport:
-            series_name = "compatibility/v1-default/series"
+        ):
+            profile_name = "v1-legacy-backport"
 
     selected = []
-    for line in (patches / series_name).read_text().splitlines():
-        name = line.split("#", 1)[0].strip()
-        if not name:
+    for entry in catalog["patches"]:
+        rule = entry.get("python")
+        if rule is None:
             continue
-        if legacy_ready_backport and name == "common/ready-logprobs.patch":
-            name = "compatibility/v1-modern-ready-logprobs.patch"
-        optional = version_map["optional_patches"].get(name)
-        if optional is not None and (
-            not SpecifierSet(optional["versions"]).contains(
-                version_value, prereleases=True
-            )
-            or not (directory / optional["requires"]).is_file()
+        if "profiles" in rule and profile_name not in rule["profiles"]:
+            continue
+        if "versions" in rule and not SpecifierSet(rule["versions"]).contains(
+            version_value, prereleases=True
         ):
             continue
-        selected.append(patches / name)
-
-    profiler_result = (
-        "vllm-0.26-profiler-result.patch"
-        if version_value < Version("0.30.0.dev0")
-        else "vllm-0.30-profiler-result.patch"
-    )
-    selected.append(patches / profiler_result)
+        if "requires" in rule and not (directory / rule["requires"]).is_file():
+            continue
+        selected.append(patches / entry["path"])
     return selected
 
 
-def _patch_content_present(directory: Path, patch: Path) -> bool:
-    """Recognize applied hunks whose trailing context changed in a later patch."""
-    target = None
-    hunks: list[tuple[Path, list[str]]] = []
-    last_additions: list[int] = []
-    for line in patch.read_text().splitlines():
-        if line.startswith("+++ b/"):
-            target = Path(line.removeprefix("+++ b/"))
-        elif line.startswith("@@ ") and target is not None:
-            hunks.append((target, []))
-            last_additions.append(0)
-        elif hunks and line.startswith((" ", "+")):
-            hunks[-1][1].append(line[1:])
-            if line.startswith("+"):
-                last_additions[-1] = len(hunks[-1][1])
-    try:
-        # Keep each insertion with its preceding context, not isolated lines that
-        # may already occur elsewhere. Later patches may replace trailing context.
-        return bool(hunks) and all(
-            end > 0
-            and "\n" + "\n".join(lines[:end]) + "\n"
-            in "\n" + (directory / path).read_text() + "\n"
-            for (path, lines), end in zip(hunks, last_additions, strict=True)
-        )
-    except OSError:
-        return False
+def patch_files(patches: list[Path]) -> set[Path]:
+    """Return both sides of patch targets for private staging and payload export."""
+    return {
+        Path(line[6:].split()[0])
+        for patch in patches
+        for line in patch.read_text().splitlines()
+        if line.startswith(("--- a/", "+++ b/"))
+    }
 
 
-def apply_patch(directory: Path, patch: Path) -> None:
-    """Apply one patch while recognizing a completed patch with changed context."""
-    arguments = [
-        "patch",
-        "--fuzz=0",
-        "--strip=1",
-        f"--directory={directory}",
-        f"--input={patch}",
-    ]
-    applied = subprocess.run(
-        arguments + ["--force", "--reverse", "--dry-run"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if applied.returncode:
-        if _patch_content_present(directory, patch):
-            print(f"vLLM patch already installed: {patch.name}", flush=True)
-            return
+def apply_patches(directory: Path, patches: list[Path]) -> set[Path]:
+    """Strictly apply an ordered stack to a caller-owned private tree and return its targets."""
+    for patch in patches:
         subprocess.run(
-            arguments + ["--batch", "--forward", "--no-backup-if-mismatch"], check=True
+            [
+                "patch",
+                "--fuzz=0",
+                "--strip=1",
+                "--batch",
+                "--forward",
+                "--no-backup-if-mismatch",
+                f"--directory={directory}",
+                f"--input={patch.resolve()}",
+            ],
+            check=True,
         )
-    else:
-        print(f"vLLM patch already installed: {patch.name}", flush=True)
+    return patch_files(patches)
 
 
 def repair_installed_dependencies() -> None:
@@ -229,7 +194,8 @@ def install_mooncake_dependencies() -> None:
             check=True,
         )
         command.extend(["--reinstall-package", package])
-    subprocess.run(command + [f"{package}==0.3.12.post1"], check=True)
+    version = Path(__file__).with_name("mooncake.version").read_text().strip()
+    subprocess.run(command + [f"{package}=={version}"], check=True)
 
 
 def check_installed_dependencies() -> None:
@@ -286,21 +252,77 @@ def check_installed_dependencies() -> None:
 
 
 def main() -> None:
-    """Apply the selected installed-engine series and compile changed Python files."""
+    """Prepare the installed-engine stack privately, then publish only patched package files."""
     distribution = importlib.metadata.distribution("vllm")
     directory = Path(distribution.locate_file(""))
     patches = engine_patches(directory, distribution.version, Path(__file__).parent)
-    changed_files = {
-        Path(line[6:].split()[0])
-        for patch in patches
-        for line in patch.read_text().splitlines()
-        if line.startswith("+++ b/")
-    }
-    for patch in patches:
-        apply_patch(directory, patch)
-    for path in sorted(changed_files):
-        if path.suffix == ".py":
-            py_compile.compile(str(directory / path), doraise=True)
+    files = patch_files(patches)
+    staging = Path(tempfile.mkdtemp(prefix="foretoken-vllm-patches-"))
+    prepared = staging / "package"
+    prepared.mkdir()
+    completed = False
+    try:
+        for name in sorted(files):
+            source = directory / name
+            target = prepared / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_file():
+                shutil.copy2(source, target)
+        # Installed images have no pristine checkout. Let patch undo recognized
+        # hunks in reverse stack order, including partially applied patches.
+        # Only a successful replay of the entire forward stack can publish files.
+        with (staging / "bootstrap.log").open("w") as log:
+            for patch in reversed(patches):
+                print(f"Reversing {patch}", file=log, flush=True)
+                result = subprocess.run(
+                    [
+                        "patch",
+                        "--fuzz=0",
+                        "--strip=1",
+                        "--force",
+                        "--reverse",
+                        "--no-backup-if-mismatch",
+                        f"--directory={prepared}",
+                        f"--input={patch.resolve()}",
+                    ],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                if result.returncode not in (0, 1):
+                    result.check_returncode()
+        apply_patches(prepared, patches)
+        bytecode = {}
+        for name in sorted(files):
+            path = prepared / name
+            if path.is_file() and name.suffix == ".py":
+                compiled = staging / "bytecode" / name.with_suffix(".pyc")
+                py_compile.compile(
+                    str(path),
+                    cfile=str(compiled),
+                    dfile=str(directory / name),
+                    doraise=True,
+                )
+                bytecode[compiled] = Path(
+                    importlib.util.cache_from_source(str(directory / name))
+                )
+        for name in sorted(files):
+            source = prepared / name
+            target = directory / name
+            if source.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            else:
+                target.unlink(missing_ok=True)
+        for source, target in bytecode.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        completed = True
+    finally:
+        if completed:
+            shutil.rmtree(staging)
+        else:
+            print(f"vLLM patch preparation retained at {staging}", file=sys.stderr)
 
 
 if __name__ == "__main__":

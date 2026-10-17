@@ -95,22 +95,10 @@ impl RouteCandidate {
     }
 }
 
-/// Numeric preference followed by lexicographic locality and load; larger values are preferred.
+/// Scorer-owned numeric preference; Pickers prefer larger values.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RouteScore {
-    /// Raw numeric scorer output. Locality policies leave this at zero; metric policies leave the
-    /// remaining fields at zero so their floating-point scores reach Picker without quantization.
     pub preference: f64,
-    /// Complete prompt tokens in the best readable prefix.
-    pub matched_tokens: i64,
-    /// Storage preference after equal prefix length: Device > HostPinned > Disk > External.
-    pub tier_preference: i8,
-    /// Placement locality after equal prefix and tier: Local > Remote.
-    pub locality_preference: i8,
-    /// Engine load preference; the provided load scorers negate load so lower values rank higher.
-    pub load: i64,
-    /// Final DT tie breaker for frontend reservations not yet reflected in engine telemetry.
-    pub reserved_requests: i64,
 }
 
 impl PartialEq for RouteScore {
@@ -129,22 +117,7 @@ impl PartialOrd for RouteScore {
 
 impl Ord for RouteScore {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.preference.total_cmp(&other.preference).then_with(|| {
-            (
-                self.matched_tokens,
-                self.tier_preference,
-                self.locality_preference,
-                self.load,
-                self.reserved_requests,
-            )
-                .cmp(&(
-                    other.matched_tokens,
-                    other.tier_preference,
-                    other.locality_preference,
-                    other.load,
-                    other.reserved_requests,
-                ))
-        })
+        self.preference.total_cmp(&other.preference)
     }
 }
 
@@ -153,6 +126,6 @@ impl Ord for RouteScore {
 pub struct ScoredCandidate {
     /// Routable ModelGroup scored in the current routing round.
     pub candidate: RouteCandidate,
-    /// Numeric or locality preference assigned by the Scorer.
+    /// Numeric preference assigned by the Scorer.
     pub score: RouteScore,
 }

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen-decode
+spec:
+  model: Qwen/Qwen3.5-35B-A3B
+  source: hf
+  backend: vllm
+  replicas: 1
+  nodes: 1
+  resources:
+    requests:
+      cpu: "16"
+      memory: 256Gi
+      gpu:
+        count: 4
+    limits:
+      cpu: "30"
+      memory: 508Gi
+  timeouts:
+    startup: 30m
+    drain: 2m
+  engineArgs:
+    dtype: bfloat16
+    tensor-parallel-size: 4
+    max-model-len: 131072
+    max-num-seqs: 16
+    max-num-batched-tokens: 4096

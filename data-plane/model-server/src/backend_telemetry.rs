@@ -117,6 +117,7 @@ impl BoundaryLatencyMetrics {
 
 pub(crate) struct VllmMetricsSnapshot {
     pub(crate) data_parallel_ranks: Vec<DataParallelTelemetry>,
+    pub(crate) request_cost: foretoken_model_protocol::RequestCostTelemetry,
     pub(crate) scheduler_running_requests: Option<u64>,
     pub(crate) scheduler_waiting_requests: Option<u64>,
     pub(crate) kv_cache_usage: Option<f64>,
@@ -149,6 +150,27 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
                 .map(|metric| metric.get()),
         })
         .collect::<Vec<_>>();
+    let costs = engine_labels
+        .iter()
+        .map(request_cost_metrics)
+        .collect::<Vec<_>>();
+    let sum = |read: fn(
+        &foretoken_model_protocol::RequestCostTelemetry,
+    ) -> Option<foretoken_model_protocol::HistogramMoments>| {
+        if costs.is_empty() {
+            return None;
+        }
+        costs.iter().map(read).try_fold(
+            foretoken_model_protocol::HistogramMoments::default(),
+            |total, value| {
+                let value = value?;
+                Some(foretoken_model_protocol::HistogramMoments {
+                    sum: total.sum + value.sum,
+                    count: total.count + value.count,
+                })
+            },
+        )
+    };
     // Aggregate exactly the same rank observations used by the router; missing ranks stay unknown.
     let scheduler_running_requests =
         sum_metric(&data_parallel_ranks, |rank| rank.scheduler_running_requests);
@@ -164,6 +186,10 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
     };
     VllmMetricsSnapshot {
         data_parallel_ranks,
+        request_cost: foretoken_model_protocol::RequestCostTelemetry {
+            prompt_tokens: sum(|cost| cost.prompt_tokens),
+            generation_tokens: sum(|cost| cost.generation_tokens),
+        },
         scheduler_running_requests,
         scheduler_waiting_requests,
         kv_cache_usage,
@@ -192,4 +218,48 @@ fn sum_metric<T>(observations: &[T], read: impl Fn(&T) -> Option<u64>) -> Option
         .iter()
         .map(read)
         .try_fold(0_u64, |total, value| total.checked_add(value?))
+}
+
+/// Reads the two rank-local request-length histograms through prometheus-client's public encoder.
+/// Histogram::get is private in the pinned library. Encoding these in-process handles avoids a
+/// scrape, text endpoint, or dependency on a Prometheus server in the routing control loop.
+fn request_cost_metrics(labels: &EngineLabels) -> foretoken_model_protocol::RequestCostTelemetry {
+    use foretoken_model_protocol::{HistogramMoments, RequestCostTelemetry};
+    use prometheus_client::{encoding::text::encode, registry::Registry};
+    let mut registry = Registry::default();
+    for (name, family) in [
+        ("prompt", &METRICS.request.request_prompt_tokens),
+        ("generation", &METRICS.request.request_generation_tokens),
+    ] {
+        // Every configured rank has a zero baseline before its first request.
+        let histogram = family.get_or_create(labels);
+        registry.register(name, "Internal histogram observation", histogram.clone());
+    }
+    let mut encoded = String::new();
+    encode(&mut encoded, &registry).expect("encoding in-memory histograms into String cannot fail");
+    let read = |name: &str| -> Option<HistogramMoments> {
+        let sum_name = format!("{name}_sum");
+        let count_name = format!("{name}_count");
+        let mut sum = None;
+        let mut count = None;
+        for line in encoded.lines() {
+            let Some((key, value)) = line.split_once(' ') else {
+                continue;
+            };
+            if key == sum_name {
+                sum = Some(value.parse().expect("histogram sum is numeric"));
+            }
+            if key == count_name {
+                count = Some(value.parse().expect("histogram count is numeric"));
+            }
+        }
+        Some(HistogramMoments {
+            sum: sum?,
+            count: count?,
+        })
+    };
+    RequestCostTelemetry {
+        prompt_tokens: read("prompt"),
+        generation_tokens: read("generation"),
+    }
 }

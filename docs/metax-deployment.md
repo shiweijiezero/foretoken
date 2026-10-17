@@ -82,7 +82,7 @@ When finished, remove the resources created by the same configuration:
 foretoken delete examples/quickstart
 ```
 
-The example includes its namespace, so deletion removes its services and PVC objects. Directory-backed model files remain available for reuse; dynamic volumes follow their storage retention policy. Use a namespace dedicated to the example. The administrator maintains the shared platform.
+Use a namespace dedicated to the example. Deletion waits for service cleanup, then removes its controller and namespace, including the PVC objects. Directory-backed model files remain available for reuse; dynamic volumes follow their storage retention policy. The administrator maintains the shared platform.
 
 ## If the request does not succeed
 

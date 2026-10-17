@@ -10,7 +10,6 @@ from foretoken_runtime import PrefixLookupServer, offset_tcp_endpoint
 from vllm.distributed.kv_transfer.kv_connector.v1.mooncake.store.connector import (
     MooncakeStoreConnector as UpstreamMooncakeStoreConnector,
 )
-from vllm.sampling_params import SamplingParams
 from vllm.utils.hashing import get_hash_fn_by_name
 from vllm.v1.core.kv_cache_utils import get_request_block_hasher, init_none_hash
 from vllm.v1.request import Request
@@ -61,30 +60,28 @@ class _PrefixServer:
         self.server = PrefixLookupServer(endpoint, self._lookup)
 
     def _lookup(self, query):
-        block_size = self.worker.coord.lcm_block_size
+        """Observe the native Store's reusable prefix without scheduling a load."""
         if query.get("dpRank") != self.dp_rank:
-            return {"matchedTokens": None, "blockSize": block_size}
+            return {"matchedTokens": None}
         try:
             tokens = query["promptTokenIds"]
-            request = Request(
-                request_id="prefix-observation",
+            request = Request.for_prefix_cache_lookup(
                 prompt_token_ids=tokens,
-                sampling_params=SamplingParams(max_tokens=1),
-                pooling_params=None,
-                cache_salt=query.get("cacheSalt"),
                 block_hasher=self.block_hasher,
+                cache_salt=query.get("cacheSalt"),
+                lora_name=query.get("loraName"),
+                mm_features=query.get("multimodal"),
+                lora_path=query.get("loraPath"),
             )
-            # Match the native scheduler's complete-block lookup boundary.
-            token_len = len(tokens) // block_size * block_size
+            # Native matching owns group convergence and partial-block hit boundaries.
             view = _LookupView(self.worker)
-            matched = type(self.worker).lookup(view, token_len, request.block_hashes)
-            return {
-                "matchedTokens": None if view.store.failed else matched,
-                "blockSize": block_size,
-            }
+            matched = type(self.worker).lookup_prefix(
+                view, len(tokens), request.block_hashes
+            )
+            return {"matchedTokens": None if view.store.failed else matched}
         except Exception:
             logger.exception("vLLM shared KV prefix lookup failed")
-            return {"matchedTokens": None, "blockSize": block_size}
+            return {"matchedTokens": None}
 
     def close(self):
         self.server.close()

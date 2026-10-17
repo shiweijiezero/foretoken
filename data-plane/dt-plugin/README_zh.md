@@ -91,6 +91,8 @@ adapter 支持 `temperature`、`top_p`、`top_k` 和 Target `seed`。Draft 使�
 前端拒绝非默认的重复、频率和存在惩罚，包括从模型 `generation_config.json` 继承的值。
 若模型默认开启重复惩罚，且你希望关闭它，应在请求中显式设置 `"repetition_penalty": 1.0`。
 当前 DT 路径不能保留非默认的惩罚行为，也不会静默忽略它。
+DT adapter 暂不支持按调用方隔离前缀缓存，因此拒绝 `prefixCacheIsolation` 配置和
+请求中的显式 `cache_salt`。
 
 ## 自动选择 tensor 传输
 

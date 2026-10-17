@@ -188,14 +188,18 @@ foretoken plot results/baseline
 foretoken plot results/baseline results/candidate
 ```
 
-You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs write to `./plots`.
+You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs or `--base` write to `./plots`. Use `--output-dir` to choose another location.
 
-Choose a metric, figure width and output location:
+For performance results, select a reference approach with `--base` to generate measured values and relative changes:
 
 ```bash
-foretoken plot results/baseline results/candidate \
-  --metric generation_tokens_per_second --columns 2 \
-  --output-dir results/comparison
+foretoken plot results/candidate --base results/baseline
 ```
 
-Repeat `--metric` to select more metrics, or use `--method` to select named methods. Performance comparisons group matching workloads; use the CSV tables to inspect values, sample counts and run status. For score definitions and evaluator reports, see [quality results](eval/README.md#read-scores).
+`--base` accepts a relative or absolute path to one result or iteration directory, including its repeated measurements. The base is loaded automatically.
+
+`comparison-base.csv` compares each candidate with the base under matching workloads: means, repeat counts and standard deviations, failures, condition differences, and original result paths. Available success and actual token-length metrics accompany selected speed metrics. Values retain their saved units; standard deviation is unavailable for a single repeat.
+
+Change is `(candidate mean / base mean - 1) × 100%`; lower latency and higher throughput indicate improvement. Missing workloads or metrics and a zero base leave the percentage empty, with the reason in `status`. Review environment differences and missing records alongside the results; warmup settings alone do not establish cache state.
+
+Select metrics with `--metric generation_tokens_per_second ttft_p95_seconds`. `--method` also accepts multiple names, and `--columns 2` produces wider figures. For score definitions, see [quality results](eval/README.md#read-scores).
