@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](worker_zh.md)
 
-A Worker investigates a specific question, implements an approach that can be evaluated, and improves it using the results. Once a version is ready, the Worker hands it to an Experimenter and can continue other useful research or prepare the next version. Small tasks may combine development and execution; resource arrangements follow the [team guidance](common.md).
+A Worker investigates a specific question, implements an approach that can be evaluated, and improves it using the results. Once a version is ready, the Worker hands it to an Experimenter and can continue other useful research or prepare the next version. Resource arrangements follow the [team guidance](common.md).
 
 ## Understand and implement the approach
 

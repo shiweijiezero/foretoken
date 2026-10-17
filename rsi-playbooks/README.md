@@ -47,9 +47,11 @@ The lead coordinates the task, choosing research directions and allocating resou
 
 Advisors continually investigate mechanisms and optimization methods, uncover new questions and reassess the current direction. Their research can deepen an existing investigation or explore ideas beyond the current candidate list.
 
-Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results. Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+Workers turn specific questions into code or configuration changes that can be evaluated, then improve them using the results.
 
-Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations. Small tasks may combine roles, while important conclusions selected for retention are checked by someone who did not implement or run the corresponding candidate.
+Experimenters build and evaluate those approaches while observing resource use, recording results and cleaning up afterward.
+
+Preparing the next candidate can overlap evaluation of the current one. The team adjusts concurrency in each stage from available resources and observed durations.
 
 See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace isolation and resource handoffs.
 
@@ -72,6 +74,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-Read `report.md` for measured comparisons, conclusions and the currently retained approach. The team shares its path at experiment start and keeps it updated throughout the task, including when paused or stopped. The report links to iteration notes and original results; experiments using W&B also retain run links. Delivery locations and record organization follow the task file and [experiment records guide](experiment-records.md#maintain-the-user-facing-report).
+The team provides the path to `report.md` when the experiment starts. The report stays current as the experiment progresses, summarizing performance comparisons, findings and the retained approach. Follow its links to inspect individual iterations, original results and W&B runs when enabled. See the [experiment records guide](experiment-records.md) for directory layout and recording conventions.
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.

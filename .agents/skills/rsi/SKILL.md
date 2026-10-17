@@ -32,7 +32,7 @@ The lead develops research directions, assigns questions and resources, and comb
 
 [Workers](roles/worker.md) investigate specific questions and implement candidates, then improve them using experimental results. At least one Worker follows the end-to-end execution path to connect local changes with service behavior.
 
-[Experimenters](roles/experimenter.md) build and evaluate prepared candidates while observing resources, recording results and cleaning up experiments. The lead chooses their number from evaluation capacity; small tasks can combine development and execution in one member.
+[Experimenters](roles/experimenter.md) build and evaluate prepared candidates while observing resources, recording results and cleaning up experiments. The lead chooses their number from evaluation capacity.
 
 Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
 

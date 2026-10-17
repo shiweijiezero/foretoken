@@ -27,7 +27,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [Worker](roles/worker_zh.md) 研究具体问题并实现候选方案，再根据实验结果继续改进。至少一名 Worker 应跟进完整执行流程，以便把局部改动与服务整体表现联系起来。
 
-[Experimenter](roles/experimenter_zh.md) 负责构建和评测准备好的方案，同时观察资源使用、保存结果并清理实验环境。主 Agent 根据评测容量安排人数；小任务可以由同一成员兼任开发与实验执行。
+[Experimenter](roles/experimenter_zh.md) 负责构建和评测准备好的方案，同时观察资源使用、保存结果并清理实验环境。主 Agent 根据评测容量安排人数。
 
 派工时，主 Agent 提供任务、角色说明、代码和证据的绝对路径，并交代参考方案及相关决定，由成员自行阅读原文。成员沿用 `worker-01`、`experimenter-01` 等稳定名称，角色前缀为 `lead`、`advisor`、`worker` 和 `experimenter`。如果运行环境已经指定主 Agent 的消息地址，团队就使用该地址通信。
 
