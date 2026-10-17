@@ -146,7 +146,7 @@ To redraw figures without resuming a sweep, use [`foretoken plot`](../recipes.md
 ## Video settings
 
 ```bash
-foretoken perf video \
+foretoken perf --video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --sweep benchmarks/examples/video-sweep.jsonl \

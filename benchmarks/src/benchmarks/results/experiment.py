@@ -213,12 +213,14 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     public_selectors = set()
     if isinstance(config, BenchmarkConfig):
         public_selectors = {"--model", "--dataset"}
+    elif isinstance(config, VideoBenchmarkConfig):
+        public_selectors = {"--dataset"}
     elif isinstance(config, EvaluationConfig):
         public_selectors = {"--model", "--reference"}
         if config.evaluator is None:
             public_selectors.add("--dataset")
     context: dict[str, Any] = {
-        "command": ["foretoken", *command.split("-"), *_command_arguments(arguments, public_selectors)],
+        "command": ["foretoken", command, *_command_arguments(arguments, public_selectors)],
         "started_at": datetime.now(UTC).isoformat(),
         "status": "running",
     }

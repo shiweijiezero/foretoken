@@ -146,7 +146,7 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 ## 视频参数
 
 ```bash
-foretoken perf video \
+foretoken perf --video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --sweep benchmarks/examples/video-sweep.jsonl \

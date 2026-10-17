@@ -84,10 +84,10 @@ def _recover_completed(
     return recover_results(source, outputs)
 
 
-def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
+def _run_video(arguments: Sequence[str]) -> None:
     """Parse and run one request-only video-generation benchmark."""
     try:
-        command = parse_video_arguments(arguments, command_name=command_name)
+        command = parse_video_arguments(arguments)
         config = command.config
         configure_logging(not config.outputs.includes("quiet"))
         recovered = _recover_completed(config.sweep.resume, config.outputs, arguments, config.to_dict())
@@ -95,7 +95,7 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
             if recovered.exit_code:
                 raise SystemExit(recovered.exit_code)
             return
-        with experiment_output(config, "perf-video", arguments) as config:
+        with experiment_output(config, "perf", arguments) as config:
             result = (
                 run_video_sweep(config, dry_run=command.dry_run)
                 if config.sweep.path
@@ -110,8 +110,9 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     """Parse and run one benchmark command for lazy import by the top-level CLI."""
     arguments = tuple(sys.argv[1:] if argv is None else argv)
-    if arguments[:1] == ("video",):
-        _run_video(arguments[1:], command_name=arguments[0])
+    options = arguments[:arguments.index("--")] if "--" in arguments else arguments
+    if "--video" in options:
+        _run_video(arguments)
         return
     try:
         benchmark = parse_benchmark_arguments(arguments)
