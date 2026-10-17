@@ -17,7 +17,7 @@ Run the benchmark from the repository root against an existing synchronous video
 ## TI2V benchmark
 
 ```bash
-foretoken perf video \
+foretoken perf --video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --num-prompts 10 \
@@ -49,7 +49,7 @@ With W&B enabled, each completed request updates the success/failure counts and 
 ## TV2V benchmark
 
 ```bash
-foretoken perf video \
+foretoken perf --video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TV2V \
   --num-prompts 10 \

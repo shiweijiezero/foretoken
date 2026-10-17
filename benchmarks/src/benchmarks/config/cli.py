@@ -604,6 +604,7 @@ def parse_benchmark_arguments(
             "Measure HTTP latency and throughput for Foretoken and "
             "OpenAI-compatible inference services"
         ),
+        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     _add_benchmark_arguments(parser)

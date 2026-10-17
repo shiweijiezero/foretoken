@@ -11,7 +11,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.11 或更高版本、`kubectl`，以及 Helm 4.3 或 4.2 的最新补丁版本。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
+需要准备 Python 3.11 或更高版本、`kubectl`，以及 Helm 4.2.4 或更高版本。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
 
 ## 安装命令行工具
 

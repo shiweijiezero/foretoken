@@ -13,7 +13,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-The examples below use the [Qwen throughput and decode latency task](tasks/qwen-decode.md). Check that its required resources are available before starting. For your own task, use the [task template](templates/task-template.md) and replace the file path in the prompt.
+The examples below use the [Qwen3.5-35B-A3B optimization task](tasks/qwen3.5-35b-a3b.md). Check that its required resources are available before starting. For your own task, use the [task template](templates/task-template.md) and replace the file path in the prompt.
 
 ### Claude Code
 
@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 Enter:
 
 ```text
-/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen-decode.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
 ```
 
 To pause, use `/goal clear` to end automatic continuation and ask the team to stop this task's experiments and collectors.
@@ -36,7 +36,7 @@ To pause, use `/goal clear` to end automatic continuation and ask the team to st
 Open Codex in the repository and enter:
 
 ```text
-/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen-decode.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
+/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md. Read prior experiment records and relevant guidance, follow the task's resources, time budget and end conditions, and deliver the required results.
 ```
 
 Use `/goal pause` to pause the goal and ask members to stop experiments and collectors. Use `/goal resume` to continue.

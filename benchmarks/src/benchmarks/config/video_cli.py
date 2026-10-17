@@ -36,14 +36,16 @@ class VideoBenchCommand:
     dry_run: bool = False
 
 
-def parse_video_arguments(
-    argv: Sequence[str], *, command_name: str = "video"
-) -> VideoBenchCommand:
+def parse_video_arguments(argv: Sequence[str]) -> VideoBenchCommand:
     """Map the video CLI surface to its request and result configuration."""
     parser = argparse.ArgumentParser(
-        prog=f"foretoken perf {command_name}",
+        prog="foretoken perf",
         description="Benchmark an existing synchronous video-generation endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--video", action="store_true", required=True,
+        help="Benchmark video generation instead of Chat Completions",
     )
     _add_benchmark_arguments(parser, video=True)
     parser.add_argument("--width", type=int, default=1024)
