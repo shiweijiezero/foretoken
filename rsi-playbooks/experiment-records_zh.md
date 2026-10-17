@@ -48,6 +48,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
+├── workspace/                 # Agent 自行组织的辅助材料，按需创建
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -62,6 +63,12 @@ results/decode/parallelism/
 ```
 
 记录保存在执行评测命令的机器上，相对路径以该命令的工作目录为起点。在远端运行时，到远端按命令打印的路径查看。参数扫描的一次运行可以包含多个结果目录；使用 W&B 时，也可通过输出的链接查看曲线和比较结果。
+
+### Agent 辅助材料区
+
+研究资料、分析脚本、准备日志、复核证据和清理记录统一放在 `<output-dir>/workspace/`，不再散放到实验根目录。Agent 按需创建该目录，自行组织内部结构；`research/`、`preparation/`、`review/`、`cleanup/` 只是分类示例，不要求全部创建。评测命令不会自动生成 `workspace/`。
+
+报告、规定的实验笔记和原始运行产物仍保存在各自约定的位置。笔记和报告汇总发现，并链接 `workspace/` 中的支撑文件。任务结束清理临时文件时，保留仍被引用的证据。
 
 ## 分析结果
 

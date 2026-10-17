@@ -48,6 +48,7 @@ For example, when logged in to W&B, replace the recipe's output options with:
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
+├── workspace/                 # Agent-managed supporting files, created as needed
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -62,6 +63,12 @@ results/decode/parallelism/
 ```
 
 Records are saved on the machine running the evaluation. Relative paths start from the command's working directory. For remote runs, inspect the printed paths on the remote machine. A parameter sweep can produce several result directories within one run. With W&B enabled, the printed links also let you inspect curves and compare results.
+
+### Agent-managed supporting files
+
+Keep research material, analysis scripts, preparation logs, review evidence and cleanup records under `<output-dir>/workspace/`, rather than adding auxiliary directories at the experiment root. Agents create this directory as needed and choose its internal layout; names such as `research/`, `preparation/`, `review/` and `cleanup/` are examples, not required subdirectories. Benchmark commands do not create `workspace/`.
+
+Keep the report, required experiment notes and original run artifacts in their documented locations. Summarize findings in the notes and report, linking supporting files in `workspace/`. Preserve cited evidence when removing temporary files at task completion.
 
 ## Analyze results
 
