@@ -51,7 +51,7 @@ SARA 结合建模／模拟和 A100/SGLang 测量。真实 LLaMA 3.1 8B trace 回
 
 - [encoder 分离文档](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/docs/fern/pages/use-cases/multimodal-serving/encoder-disaggregation.md)
 - [SARA 论文](https://arxiv.org/html/2609.26763v1)
-- [维护中 E/P/D 示例](../../../../examples/encoder-prefill-decode/README_zh.md)
+- [维护中 E/P/D 示例](../../../../examples/feature/encoder-prefill-decode/README_zh.md)
 - [执行工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)
 - [扩缩容 owner](../../../../control-plane/internal/autoscaling/README_zh.md)
 - [多模态生成](../multimodal-generation/)

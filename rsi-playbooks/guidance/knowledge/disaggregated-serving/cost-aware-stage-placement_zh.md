@@ -55,5 +55,5 @@ MegaScale-Infer 的 H20-attention／L40S-expert 部署，按采购成本归一�
 - [Melange solver](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/solver/melange/solver.py)
 - [planner](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)
 - [Kueue 重平衡指南](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/kueue-rebalancing/README.md)
-- [E/P/D 示例](../../../../examples/encoder-prefill-decode/README_zh.md)
+- [E/P/D 示例](../../../../examples/feature/encoder-prefill-decode/README_zh.md)
 - [异构硬件](../heterogeneous-hardware/)

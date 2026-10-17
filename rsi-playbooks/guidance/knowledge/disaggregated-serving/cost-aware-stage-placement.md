@@ -55,5 +55,5 @@ These are system-level results combining stage placement and AFD execution. Fast
 - [Melange solver](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/python/aibrix/aibrix/gpu_optimizer/optimizer/solver/melange/solver.py)
 - [planner](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)
 - [Kueue rebalancing guide](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/kueue-rebalancing/README.md)
-- [E/P/D example](../../../../examples/encoder-prefill-decode/README.md)
+- [E/P/D example](../../../../examples/feature/encoder-prefill-decode/README.md)
 - [heterogeneous hardware](../heterogeneous-hardware/)

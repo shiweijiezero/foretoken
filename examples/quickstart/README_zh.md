@@ -5,9 +5,9 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](../multi-model-quickstart/README_zh.md)。
+如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](multi-model/README_zh.md)。
 
-预量化权重和在线量化的用法见[部署量化模型](../quantized-model/README_zh.md)。
+预量化权重和在线量化的用法见[部署量化模型](../feature/quantized-model/README_zh.md)。
 
 本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存与多模型示例共用项目根目录的 `data/`，由 `cache.yaml` 配置。
 

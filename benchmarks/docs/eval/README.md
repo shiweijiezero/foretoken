@@ -45,10 +45,10 @@ Candidate scoring uses raw text by default. Add `--apply_chat_template` when the
 
 ## Compare task scores across deployments
 
-After preparing the [quantized-model examples](../../../examples/quantized-model/README.md), pass their Kustomize directories before the task options to score the same task on each service:
+After preparing the [quantized-model examples](../../../examples/feature/quantized-model/README.md), pass their Kustomize directories before the task options to score the same task on each service:
 
 ```bash
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+foretoken eval examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --tasks piqa --limit 100 --output local,wandb,plot
 ```
 

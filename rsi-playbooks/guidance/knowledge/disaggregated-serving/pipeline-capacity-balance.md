@@ -51,7 +51,7 @@ SARA combines modeling/simulation with A100/SGLang measurements. In its physical
 
 - [encoder-disaggregation guide](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/docs/fern/pages/use-cases/multimodal-serving/encoder-disaggregation.md)
 - [SARA paper](https://arxiv.org/html/2609.26763v1)
-- [maintained E/P/D example](../../../../examples/encoder-prefill-decode/README.md)
+- [maintained E/P/D example](../../../../examples/feature/encoder-prefill-decode/README.md)
 - [runtime workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)
 - [autoscaling owner](../../../../control-plane/internal/autoscaling/README.md)
 - [multimodal generation](../multimodal-generation/)

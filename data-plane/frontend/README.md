@@ -59,7 +59,7 @@ Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separ
 
 ## Generate video
 
-`POST /v1/videos/sync` accepts a prompt and reference media as multipart form data and returns the generated video. The [MiniMax H3 recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#generate-from-an-image) provides deployment and request commands that save the result to `./data/video.mp4`.
+`POST /v1/videos/sync` accepts a prompt and reference media as multipart form data and returns the generated video. The [MiniMax H3 recipe](../../examples/quickstart/recipes/minimax-h3/a100-bf16-tp2/README.md#generate-from-an-image) provides deployment and request commands that save the result to `./data/video.mp4`.
 
 ### Background generation
 
@@ -75,7 +75,7 @@ spec:
 `video-results` must be an existing dedicated persistent volume claim (PVC) in the same namespace. Use ReadWriteMany storage across nodes. Place the reference image at `inputs/reference.png` in this volume, then apply the configuration:
 
 ```bash
-DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
+DEPLOYMENT=examples/quickstart/recipes/minimax-h3/a100-bf16-tp2
 foretoken deploy "$DEPLOYMENT" --timeout 1h
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"

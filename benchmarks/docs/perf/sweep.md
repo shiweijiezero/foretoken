@@ -115,7 +115,7 @@ foretoken perf examples/quickstart examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A sweep row's `service` list provides the same choices. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/quantized-model/README.md):
+Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A sweep row's `service` list provides the same choices. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/feature/quantized-model/README.md):
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \

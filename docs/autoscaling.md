@@ -120,4 +120,4 @@ kubectl get modelservice <name> -o json \
 
 `desiredReplicas` is the algorithm recommendation. `adjustedReplicas` includes adjustment rules, and `appliedReplicas` is the capacity written after service constraints.
 
-For the complete maintained workload, see the [multi-model example](../examples/multi-model-quickstart/README.md). The implementation boundary is documented in the [Autoscaling architecture guide](../control-plane/internal/autoscaling/README.md).
+For the complete maintained workload, see the [multi-model example](../examples/quickstart/multi-model/README.md). The implementation boundary is documented in the [Autoscaling architecture guide](../control-plane/internal/autoscaling/README.md).

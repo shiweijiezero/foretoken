@@ -21,7 +21,7 @@ spec:
         - ForetokenMetricsTargetDown
 ```
 
-Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, to disable it. The [observability example](../../examples/observability/README.md) provides a runnable deployment.
+Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, to disable it. The [observability example](../../examples/feature/observability/README.md) provides a runnable deployment.
 
 Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver for notifications. If selected rules do not appear in Prometheus, check the service's `AlertsReady` condition.
 

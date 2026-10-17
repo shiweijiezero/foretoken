@@ -160,22 +160,22 @@ loadBalancer:
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
-资源要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart`。
+资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart`。
 
 ```bash
-foretoken deploy examples/multi-model-quickstart --timeout 20m
+foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
 命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
 
-等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
+等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
 
 目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
 
 不应用配置，直接查看同一部署的状态：
 
 ```bash
-foretoken status examples/multi-model-quickstart
+foretoken status examples/quickstart/multi-model
 ```
 
 状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
@@ -188,13 +188,13 @@ foretoken status -n foretoken-multi-model-demo --watch
 部署后解析前端服务的公开 URL：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 ```
 
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
 ```
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
@@ -202,7 +202,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ### 停止与恢复
 
 ```bash
-foretoken stop examples/multi-model-quickstart
+foretoken stop examples/quickstart/multi-model
 ```
 
 实验暂时不用 GPU 时，可以停止服务，同时保留配置、存储和构建缓存。命令等待前端和模型实例退出；之后对同一目录执行 `foretoken deploy` 即可恢复，模型进程会重新启动并加载权重。
@@ -228,7 +228,7 @@ foretoken stop examples/multi-model-quickstart
 先删除服务及其不再使用的构建资源，再卸载平台：
 
 ```bash
-foretoken delete examples/multi-model-quickstart
+foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 

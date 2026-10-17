@@ -5,7 +5,7 @@
 
 [中文](model-storage_zh.md)
 
-The Quick Start examples share downloaded models and runtime caches in the repository-root `data/` directory. Their `cache.yaml` files use:
+The Quick Start examples share downloaded models and runtime caches in the repository-root `data/` directory. The default example's `cache.yaml` uses:
 
 ```yaml
 spec:
@@ -23,7 +23,7 @@ Foretoken creates the directory-backed volume for this configuration. The direct
 
 ## Choose where the directory lives
 
-For local k3d, relative paths resolve from the Kustomize root. Both Quick Start examples use `../../data` to reach the repository-root directory; bind that directory into the nodes when creating the cluster. See the [k3d guide](k3d-deployment.md).
+For local k3d, relative paths resolve from the Kustomize root. The default example uses `../../data` and the multi-model example uses `../../../data` to reach the repository-root directory; bind that directory into the nodes when creating the cluster. See the [k3d guide](k3d-deployment.md).
 
 Existing deployments can keep their current path. Changing the directory of an already bound cache requires a new RuntimeCache name; move or copy existing files separately if needed.
 

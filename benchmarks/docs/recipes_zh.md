@@ -126,7 +126,7 @@ foretoken perf --dataset random \
   --num-prompts 100 --warmup-requests 10 --num-runs 3 --temperature 0 \
   --experiment-name quantization --output local,wandb,plot
 
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+foretoken eval examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --tasks piqa,hellaswag --num_fewshot 0 --limit 100 \
   --output local,wandb,plot
 ```
@@ -136,8 +136,8 @@ foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbyt
 以 BF16 为参考比较完整词表 KL 散度和 token 一致率，候选文件提供图表所用的模型名称与权重位宽。
 
 ```bash
-foretoken eval --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+foretoken eval --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --context-length 512 --num-windows 4 --score-tokens 16 \
   --output local,wandb,plot
 ```

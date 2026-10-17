@@ -45,10 +45,10 @@ foretoken eval examples/quickstart \
 
 ## 比较多个部署的任务评分
 
-按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
+按[量化模型示例](../../../examples/feature/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
 
 ```bash
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+foretoken eval examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --tasks piqa --limit 100 --output local,wandb,plot
 ```
 

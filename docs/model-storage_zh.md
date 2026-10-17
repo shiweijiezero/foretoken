@@ -5,7 +5,7 @@
 
 [English](model-storage.md)
 
-两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。各自的 `cache.yaml` 使用：
+两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。默认示例的 `cache.yaml` 使用：
 
 ```yaml
 spec:
@@ -23,7 +23,7 @@ Foretoken 会为该配置创建目录型存储。删除服务时目录会保留�
 
 ## 选择目录位置
 
-本机 k3d 的相对路径以 Kustomize 根目录为基准。两个 Quick Start 示例用 `../../data` 指向项目根目录，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
+本机 k3d 的相对路径以 Kustomize 根目录为基准。默认示例用 `../../data`，多模型示例用 `../../../data` 指向项目根目录的 `data/`，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](k3d-deployment_zh.md)。
 
 已有部署可以继续使用原路径。已绑定缓存更换目录时需要使用新的 RuntimeCache 名称；已有文件按需另行移动或复制。
 

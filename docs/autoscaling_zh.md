@@ -120,4 +120,4 @@ kubectl get modelservice <name> -o json \
 
 `desiredReplicas` 是算法建议，`adjustedReplicas` 包含调整规则的结果，`appliedReplicas` 是应用服务约束后实际写入的容量。
 
-完整的维护示例见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，实现边界见[自动扩缩容架构指南](../control-plane/internal/autoscaling/README_zh.md)。
+完整的维护示例见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，实现边界见[自动扩缩容架构指南](../control-plane/internal/autoscaling/README_zh.md)。

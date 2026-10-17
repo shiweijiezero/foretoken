@@ -160,22 +160,22 @@ loadBalancer:
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-See the [multi-model example](../examples/multi-model-quickstart/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
+See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
 
 ```bash
-foretoken deploy examples/multi-model-quickstart --timeout 20m
+foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
 The command installs or updates the controller for the deployment namespace and applies the selected services. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
+While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
 Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
 
 Inspect the same deployment without applying it:
 
 ```bash
-foretoken status examples/multi-model-quickstart
+foretoken status examples/quickstart/multi-model
 ```
 
 Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
@@ -188,13 +188,13 @@ foretoken status -n foretoken-multi-model-demo --watch
 Resolve the public frontend URL after deployment:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 ```
 
 For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
@@ -202,7 +202,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ### Stop and resume
 
 ```bash
-foretoken stop examples/multi-model-quickstart
+foretoken stop examples/quickstart/multi-model
 ```
 
 Use this to release GPUs between experiments while keeping configuration, storage and build caches. The command waits for frontend and model execution to stop. Run `foretoken deploy` with the same directory to resume; model processes start and load weights again.
@@ -228,7 +228,7 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 Delete the deployed services and their unused build resources before uninstalling the platform:
 
 ```bash
-foretoken delete examples/multi-model-quickstart
+foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 

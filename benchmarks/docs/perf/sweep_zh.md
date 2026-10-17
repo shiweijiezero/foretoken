@@ -115,7 +115,7 @@ foretoken perf examples/quickstart examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。sweep 行中的 `service` 列表表达相同选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)用于比较 [BF16 和 4-bit 部署](../../../examples/quantized-model/README_zh.md)：
+多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。sweep 行中的 `service` 列表表达相同选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)用于比较 [BF16 和 4-bit 部署](../../../examples/feature/quantized-model/README_zh.md)：
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \
