@@ -140,6 +140,19 @@ def sweep_charts(
         "speculative_decoding_target_forward_mean_seconds",
         "speculative_decoding_draft_time_share_ratio",
         "speculative_decoding_target_forward_time_share_ratio",
+        "draft_target_acceptance_ratio",
+        "draft_target_accepted_tokens_per_round",
+        "draft_target_round_mean_seconds",
+        "draft_target_draft_mean_seconds",
+        "draft_target_target_mean_seconds",
+        "draft_target_transfer_read_mean_seconds",
+        "draft_target_transfer_prepare_mean_seconds",
+        "draft_target_transfer_bytes_estimate",
+        "draft_target_context_read_mean_seconds",
+        "draft_target_context_prepare_mean_seconds",
+        "draft_target_context_transfer_bytes_estimate",
+        "draft_target_admitted_submissions_estimate",
+        "draft_target_rejected_submissions_estimate",
     }
     default_metrics.update(
         str(row["metric"])
@@ -207,12 +220,14 @@ def sweep_charts(
                 milliseconds = (
                     metric.startswith(("tpot_", "itl_")) and metric.endswith("_seconds")
                     or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}
+                    or metric.startswith("draft_target_") and metric.endswith("_mean_seconds")
                 )
                 ratio = metric in {
                     "slo_slo_attainment", "success_rate", "resources_cpu_throttled_periods_ratio",
                     "speculative_decoding_acceptance_ratio",
                     "speculative_decoding_draft_time_share_ratio",
                     "speculative_decoding_target_forward_time_share_ratio",
+                    "draft_target_acceptance_ratio",
                 }
                 scale = 1000 if milliseconds else 100 if ratio else 1
                 by_method: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(
@@ -301,6 +316,13 @@ def sweep_charts(
                                 {
                                     "speculative_decoding_draft_mean_seconds": "Draft GPU time per step (ms)",
                                     "speculative_decoding_target_forward_mean_seconds": "Target forward GPU time per step (ms)",
+                                    "draft_target_round_mean_seconds": "DT round wall time (ms)",
+                                    "draft_target_draft_mean_seconds": "DT draft wall time (ms)",
+                                    "draft_target_target_mean_seconds": "DT target wall time (ms)",
+                                    "draft_target_transfer_read_mean_seconds": "DT proposal read wall time (ms)",
+                                    "draft_target_transfer_prepare_mean_seconds": "DT proposal prepare wall time (ms)",
+                                    "draft_target_context_read_mean_seconds": "DT feature read wall time (ms)",
+                                    "draft_target_context_prepare_mean_seconds": "DT feature prepare wall time (ms)",
                                 }.get(metric, metric.removesuffix("_seconds").replace("_", " ").upper() + " (ms)")
                             )
                             if milliseconds
@@ -319,6 +341,12 @@ def sweep_charts(
                                 "slo_request_goodput": "Request goodput (req/s)",
                                 "slo_token_goodput": "Output goodput (tokens/s)",
                                 "speculative_decoding_acceptance_ratio": "Accepted draft tokens (%)",
+                                "draft_target_acceptance_ratio": "DT accepted / verified tokens (%)",
+                                "draft_target_accepted_tokens_per_round": "DT accepted tokens per round",
+                                "draft_target_transfer_bytes_estimate": "DT proposal bytes read (bytes)",
+                                "draft_target_context_transfer_bytes_estimate": "DT feature bytes read (bytes)",
+                                "draft_target_admitted_submissions_estimate": "DT admitted submissions",
+                                "draft_target_rejected_submissions_estimate": "DT rejected submissions",
                                 "speculative_decoding_accepted_tokens_per_draft": "Accepted tokens per draft",
                                 "speculative_decoding_draft_time_share_ratio": "Draft share of measured GPU time (%)",
                                 "speculative_decoding_target_forward_time_share_ratio": "Target forward share of measured GPU time (%)",

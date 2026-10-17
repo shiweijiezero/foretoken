@@ -8,6 +8,7 @@ package resolver
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -81,6 +82,7 @@ type ModelGroupTemplate struct {
 	Revision        string
 	Role            inferencev1alpha1.ModelRole
 	SpeculationRole inferencev1alpha1.SpeculationRole
+	DraftPools      []string
 	Artifacts       inferencev1alpha1.ModelGroupArtifacts
 	Runtime         inferencev1alpha1.ModelGroupRuntime
 	PDRuntime       *inferencev1alpha1.ModelGroupPDRuntimeConfig
@@ -144,11 +146,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	effective, err := vllmconfig.Compile(template)
 	if err != nil {
 		return ModelGroupTemplate{}, err
-	}
-	if _, neural := effective.EngineArgs["speculative-config"]; template.SpeculationRole != "" && neural {
-		if profile.RDMA == nil || profile.DeviceResourceName != "nvidia.com/gpu" {
-			return ModelGroupTemplate{}, fmt.Errorf("neural DT requires NVIDIA GPUs and a platform RDMA allocation")
-		}
 	}
 	if effective.Revision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
@@ -312,6 +309,7 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 	return ModelGroupTemplate{
 		Role:            template.Role,
 		SpeculationRole: template.SpeculationRole,
+		DraftPools:      slices.Clone(template.DraftPools),
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model: runtime.Model, Source: runtime.Source, ModelRevision: runtime.Revision,
 			Tokenizer: runtime.Tokenizer, TokenizerRevision: runtime.TokenizerRevision,
@@ -454,6 +452,7 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Ordinal:         ordinal,
 		Role:            template.Role,
 		SpeculationRole: template.SpeculationRole,
+		DraftPools:      slices.Clone(template.DraftPools),
 		Artifacts:       template.Artifacts,
 		Runtime:         template.Runtime,
 		PDRuntime:       pdRuntime,

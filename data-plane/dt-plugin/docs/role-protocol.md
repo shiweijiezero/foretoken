@@ -5,13 +5,91 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Draft/Target role protocol
 
-This internal protocol connects a frontend coordinator to independently deployed
-models. Role endpoints execute model work; the frontend owns placement, stage
-ordering, stream lifetime and cancellation. Local vLLM schedulers form batches
-and own KV allocation. A version is a Target engine generation ticket, not a KV
-length or a transport-buffer identity.
+Protocol version 9 connects request-level Foretoken routing and independent
+Draft/Target roles. Router selects a fixed Draft set and Target. The Target owns
+round progression; native schedulers own token budgets, physical batches and KV.
+Update frontend and both roles together. No shared stage scheduler or `/work/*`
+API is required.
 
-## One request
+## Routed generation
+
+`POST /generate` receives `request_id`, `draft_endpoints` (one entry currently),
+`target_endpoint` (reachable by the Draft for optional context), `token_ids`,
+`max_tokens` and ordinary sampling/stop/priority fields described below.
+The Target validates protocol, tokenizer, candidate format, context profile and method
+limits, then selects a common initialized `tensor_transports` entry: mutually granted same-host GPU IPC first, then RDMA, then ZMQ. It passes the selected `tensor_transport` in Draft `POST /sessions`
+and retains it for the request before prefill. RDMA additionally requires
+successful local GPU registration and a connection-owned bidirectional GPU proof
+before prefill; see the [binding proof](connector-contract.md#rdma-binding-proof). An empty capability list selects
+token-only execution only when both roles use that candidate format.
+An explicit Draft refusal becomes `admission_closed` before Target prefill. Other
+binding errors terminate and clean up the request without selecting another peer.
+
+Kubernetes allows the HTTP control port between DT roles of the same ModelService,
+including deployments without RDMA. Tensor channels use dynamically allocated
+ZMQ TCP or Mooncake ports within that service; unrelated model services remain isolated.
+The managed deployment supplies Pod IP and existing platform RDMA allocations.
+
+`RoleCommunication` owns the shared HTTP pool and peer protocol; each
+`DraftPeerSession` retains its request's control stream. `TargetCoordinator` uses
+that session handle and advances the exact confirmed prefix. Native Target prefill supplies the first token and next ticket.
+Each subsequent round commits confirmed deltas, selects one chain length from its configured default and remaining output,
+prepares its data and submits the current ticket once.
+`TargetCoordinator.select_candidate_count()` selects K without owning execution;
+its default also respects the bound method limit and Target capacity. The role consumes ticket
+ownership before the native utility call; uncertain admission is never retried.
+A stale ticket returns false and the coordinator consumes native replay output.
+Unused proposal artifacts are revoked. Native preemption owns KV recovery.
+
+The NDJSON stream starts with `opened` and its session ID, before RDMA binding
+preparation. Requests borrow the connection-owned proof; cancellation closes their sessions
+without cancelling shared probes. Prefill
+still waits for successful preparation. `committed` contains
+confirmed token/text deltas, nullable next version, native observations, transfer
+measurements and the Target-owned round record. Protocol v9 identifies the actual
+RDMA transport incarnation and uses connection-owned proof endpoints. It retains nullable
+`round.admitted` for ticket admission and `round.context_transfer` for the
+Target-to-Draft feature read; `round.transfer` retains proposal-read measurements. Keep the stream open for session
+ownership. The frontend closes the session explicitly on completion/cancellation;
+Target closes its Draft and joins native abort and started operations. A failed
+cleanup remains visible through `GET /sessions/{id}/state` (`open`, `closing`,
+`closed`, `failed`). A claimed source artifact still requires the consumer ACK.
+
+Each proposal and native submission carries
+`{request_id, work_id, frontier, round, phase}`. Native `physical_batches` report
+batch ID, wall-clock start/end, scheduled tokens and members' engine/client request
+IDs, confirmed frontier and work identity. No logical batch is assigned above the
+native scheduler. Readiness and ticket admission are distinct from verification's
+token acceptance. Native workload snapshots are observations, not adapter credits.
+
+## Candidate policy and capacity
+
+Protocol v9 advertises two distinct nullable length fields, separately from tensor transport:
+
+| Role | `default_draft_tokens` | `max_candidate_tokens` |
+| --- | --- | --- |
+| Target | Positive round default; must fit capacity | Native engine capacity, fixed at startup |
+| Ordinary autoregressive Draft | null | null; native context/resource limits still apply |
+| Neural Draft | null | Native proposal block length; the adapter can publish a shorter prefix |
+
+Target chooses the round count, capped by remaining output, the bound Draft
+method limit and its own engine capacity. Router and live binding check execution
+compatibility; the two capacities need not match. Manual callers may vary candidate counts
+within the advertised capacity. Neural prefix truncation applies to both token IDs
+and proposal probability rows. No adaptive K policy is enabled by this contract.
+
+## Manual role diagnostics
+
+The direct proposal and verification endpoints remain available for diagnostics.
+An unbound `/generate` (without `draft_endpoints`) exposes manual ticket control.
+`/verify` prepares and admits one member. It rejects bound coordinated requests
+with HTTP 409, preserving their sole round owner. Each request can become ready
+independently; native scheduling forms batches.
+
+The model-server can also refuse a new Draft session with HTTP 503 and
+`error.code: "admission_busy"` before acquiring its permit. Target terminates and cleans up the request on ambiguous Draft binding failure;
+model services do not choose another peer. A manual caller may select another Draft only
+after explicit refusal proves nonacceptance. Other HTTP or transport errors are fatal.
 
 1. Open Target `POST /generate` with `token_ids` and `max_tokens`, optionally
    `stop` strings, `stop_token_ids`, `min_tokens`, `ignore_eos`, `priority` and `sampling`.
@@ -24,26 +102,27 @@ length or a transport-buffer identity.
    The caller may then select another Target.
 2. After the first nonterminal commit, open Draft `POST /sessions` with the
    original prompt plus confirmed tokens, the Target's `version`, and the same
-   `sampling` and `priority` settings. Draft uses independent random draws, ignoring the Target
+   `sampling` and `priority` settings, plus a common `tensor_transport` when using
+   tensors. Omitting the selection uses the Draft's preferred initialized path; manual
+   callers must ensure the Target supports it. Draft uses independent random draws, ignoring the Target
    seed. Read the
    `opened` event and **keep this response stream open** throughout the session.
    A draining Draft instead returns `{"event":"admission_closed"}` and closes
    the NDJSON body. This guarantees no session or proposal was created. Admission
    is decided when the body starts, including if drain happened after HTTP headers.
-   The frontend may keep the Target session and select another Draft. Update the
-   frontend and roles together to enable this recovery; a missing/malformed response
+   The caller may keep the Target session and select another Draft. A missing/malformed response
    or HTTP error does not provide the same guarantee and is not retried.
 3. Call Draft `POST /sessions/{id}/propose` with that `version` and `max_tokens`
-   within the role budget. Its result contains `version`, `token_ids`, and
-   `artifact`: null without RDMA, otherwise `{artifact_id}`. This handle does not
+   within the method limit, if any, and native context limits. Its result contains `version`, `token_ids`, and
+   `artifact`: null without tensor transport, otherwise `{artifact_id}`. This handle does not
    expose a GPU address.
 4. Call Target `POST /sessions/{id}/verify` with that version, candidate IDs,
-   `artifact`, and the selected Draft HTTP `source_endpoint`. In RDMA mode Target
+   `artifact`, and the selected Draft HTTP `source_endpoint`. With tensor transport Target
    first calls Draft `POST /artifacts/{artifact_id}/claim` to obtain the GPU
    `PayloadRef` defined in the [Connector contract](connector-contract.md).
-   A revoked or already claimed artifact returns HTTP 409; Target reports
-   `accepted: false` without starting a read. Otherwise, Target
-   completes the GPU read and sends `POST /artifacts/{artifact_id}/release` to
+   A revoked or already claimed artifact returns HTTP 409; Target propagates
+   that failure without starting a read or consuming its ticket. Otherwise, Target
+   completes the transfer into GPU storage and sends `POST /artifacts/{artifact_id}/release` to
    Draft with the exact `publication_id`, then stages data and submits candidates.
    `accepted` means the engine admitted this candidate submission, not that its
    tokens were accepted by verification. An empty token list requests one ordinary
@@ -58,7 +137,7 @@ length or a transport-buffer identity.
    cancellation boundary.
 
 The initial Target prefill produces its first token without a Draft. The
-frontend must not re-tokenize display text to reconstruct commits: stop handling
+caller must not re-tokenize display text to reconstruct commits: stop handling
 can make displayed text and internal token boundaries differ. This first adapter
 supports text and linear candidates and does not negotiate tokenizer compatibility; callers
 must select models with matching token-ID semantics.
@@ -70,7 +149,9 @@ the method and Target/Draft model pair. Selected roles must agree on this profil
 `propose` additionally carries `context_source: {endpoint, session_id}` for the
 current Target. Independent token-only Draft models ignore this field.
 
-Draft calls Target `POST /sessions/{id}/context` with the same `version`. Target
+Draft calls Target `POST /sessions/{id}/context` with the same `version` and
+selected `tensor_transport`. Target checks that path against its capabilities and
+any coordinated binding. Target
 validates the paused engine ticket and returns `artifact_id`, the complete confirmed
 `token_ids`, and `profile`. The artifact contains a dense
 `[computed_tokens, feature_layers, hidden_size]` tensor in the Target model dtype;
@@ -80,33 +161,17 @@ profile, prefix and dimensions, then uses the existing claim/read/ACK endpoints.
 The proposal owns the received features until native execution finishes or is aborted.
 Context transfer completes outside the Target compute loop, allowing other requests
 to execute while this request waits for Draft.
-
-## Batch verification
-
-`POST /batch/verify` accepts `{"members": [...]}`. Each member has `session_id`
-and the same fields as the single-session verify request. Session IDs must be
-unique in the batch. The response is `{"accepted": [true, false, ...]}` in input
-order. Closed or stale members return false without rejecting their siblings.
-Malformed input and concurrent verification of the same session reject the call.
-
-Target claims, reads and stages each live member's tensor before making **one**
-`submit_external_draft_batch` EngineCore utility call. The scheduler admits each
-still-valid ticket during that call, with no scheduling step between admissions.
-This does not force one GPU batch: native capacity limits still apply. The existing
-single-session endpoint delegates to this same implementation with one member.
-
-Session streams, rather than the batch command, own cancellation. Cancelling one
-session invalidates its ticket while other members finish their reads and admission.
-The service observes every started transfer and reclaims unadmitted destination
-buffers on failure before submission or explicit rejection. If the utility response
-is uncertain, staged storage stays with its session until output or abort. The
-frontend keeps candidates associated with each session
-and version; one member's result cannot be applied to another.
+If Target revokes that context before Draft admission, Draft returns HTTP 409 with
+`detail: "Target context was revoked"`. The managed coordinator preserves the
+confirmed frontier and consumes Target's native replay output next. Other proposal
+conflicts and transport failures remain errors; no submitted transfer is replayed.
 
 ## Target KV checkpoint and resume
 
-Targets started with `--enable-kv-migration` advertise `kv_migration: true`.
-The caller must pause between rounds and select a compatible destination.
+Targets started with `--tensor-transport rdma --enable-kv-migration` advertise
+`kv_migration: true`; checkpoint DMA requires the strict RDMA startup path.
+This manual diagnostic requires an unbound session; routed requests reject
+checkpoint export. The caller must pause between rounds and select a compatible destination.
 
 1. Source `POST /sessions/{id}/checkpoint` with `{"version": ...}` copies the
    confirmed prefix's resident KV. It returns `artifact_id`, `token_ids`,
@@ -123,8 +188,8 @@ The caller must pause between rounds and select a compatible destination.
    event proves resumed execution. The caller then closes the old source session;
    subsequent proposal/verification uses the new session's generation tickets.
 
-The Rust executor checks model/tokenizer identities and matches the exported
-prefix before calling `/resume`. Direct protocol callers own these checks and
+The diagnostic caller checks model/tokenizer identities and matches the exported
+prefix before calling `/resume`. Callers
 must not verify another round on the source while exporting. Resume currently
 requires greedy sampling and no Python-side stop strings; frontend stop handling
 continues in its existing output processor. On failure, close both sessions.
@@ -140,7 +205,7 @@ after response headers terminate the stream; the frontend must cancel the paired
 session rather than treating end-of-stream without a terminal event as success.
 
 `GET /status` reports model, role, acceptance state, active-session count,
-candidate format and token budget. A failed EngineCore makes status and new
+candidate format, `default_draft_tokens` and `max_candidate_tokens`. A failed EngineCore makes status and new
 session admission return 503. `POST /drain` closes new session admission but allows existing proposals, commits
 and verification to finish. New session streams return `admission_closed`; engine
 failures and other HTTP errors are not admission-refusal signals. Drain is
@@ -157,10 +222,15 @@ tokens. The implementation does not promise optimal Draft KV reuse.
 
 ## Transport and extension boundary
 
-Both roles advertise `token_ids_log_probs` when started with RDMA, or
-`greedy_token_ids` without it. The selected pair must match. Random sampling
-requires RDMA. Tensor data moves directly between workers; frontend relays only
-candidate IDs and artifact handles. Each model retains its own KV cache.
+Both roles advertise `token_ids_log_probs` with ZMQ or RDMA, or
+`greedy_token_ids` without tensor transport. `/status.tensor_transports` lists
+initialized paths (`gpu_ipc`, `rdma`, `zmq`), or is empty for token-only. Router requires an
+compatible intersection; GPU IPC requires a same-host, symmetric peer relation
+from `/status.gpu_ipc: {host_id, device_id, peer_devices}`. Target selects and logs the request binding. Default auto offers ZMQ TCP, allocated RDMA and supported MACA peers.
+NVIDIA GPU IPC is not enabled. Missing granted peer access excludes that path;
+forced `--tensor-transport gpu-ipc` fails startup instead. Explicit IPC requires shared same-host paths. Failures
+never switch an existing artifact to another backend or replay a read.
+Random sampling requires tensor transport. Tensor data moves directly between workers. Target coordinates candidate IDs and artifact handles; Frontend receives confirmed output. Each model retains its own KV cache.
 
 Draft cancellation revokes unclaimed artifacts and recycles their buffers after
 local GPU work completes. Claim and revocation are serialized by the Draft Worker:
@@ -181,17 +251,19 @@ uses these endpoints for both direct token-input requests and public API dispatc
 
 `GET /status` reports the loaded `model`, nullable `revision`, `tokenizer`,
 nullable `tokenizer_revision` and `max_model_len` in addition to the role,
-admission state, active sessions, candidate format and token budget. Frontend
+admission state, active sessions, candidate format, `default_draft_tokens` and `max_candidate_tokens`. Frontend
 registry probes compare these with discovery configuration before admitting the
 endpoint to routing. When the model-server loads prepared snapshots, it preserves their configured
 source identity and supplies `prepared_tokenizer` metadata for frontend artifact
 preparation. Local snapshot paths do not replace the published source identity.
 Standalone launches report the engine identity directly.
 
-Router selects a Target only when its scope contains a healthy Draft with the
-same candidate format, then restricts Draft selection to that format. Random
-sampling excludes token-only roles before selection. These observations come from
-readiness probes; the workflow rechecks live status before opening sessions.
+Router selects a Target only when its referenced pools contain a healthy Draft
+with the same candidate format and context profile whose method supports the
+Target default candidate count. Ordinary autoregressive Drafts have no static K limit. Random sampling excludes
+token-only roles. Router selects the compatible Draft through the same scorer/picker pipeline.
+Target checks live tokenizer, context and candidate capabilities before binding.
+Role services never choose another peer.
 
 ## Controller lifecycle
 
@@ -224,7 +296,7 @@ It is separate from request telemetry and is consumed by the model-server
 supervisor during shutdown.
 
 Role discovery uses `GET /status?observations=false`: role/model identity,
-admission state, candidate format and budgets are available without a GPU or
+admission state, candidate format and length capabilities are available without a GPU or
 EngineCore RPC. `/healthz` and `/readyz` use the same lightweight check. Full
 `GET /status` retains native workload and retained-artifact observations for
 execution and drain; `/v1/internal/telemetry` publishes the detailed workload.
@@ -238,47 +310,44 @@ engine and transport owners, not inferred from returned text or session counts.
 
 ### Per-round execution
 
-The batch executor returns a `DraftTargetRoundObservation` beside each output.
-It identifies the request, round number, input version, selected endpoints,
-confirmed context length and caller batch size. Prefill is round zero and has no
-Draft measurement. A binding refusal returns an `admission_closed` round without
-proposal or Target measurements, together with its unchanged request continuation.
-Completed and cancelled rounds are returned; stream drop or
-execution failure records an `aborted` round in tracing and aggregate metrics.
+Target attaches a `DraftTargetRoundObservation` to each confirmed output.
+Its nullable `tensor_transport` identifies the fixed binding; null means token-only. It
+identifies the request, round, input version, selected endpoints and confirmed
+context length. Prefill is round zero with no Draft measurement. `batch_requests` describes the
+final native step, while `physical_batches` preserve actual memberships. Failed or
+cancelled requests can end without a final round record.
 
 | Measurement | Boundary and meaning |
 | --- | --- |
-| `dispatch_wait_seconds` | State creation or preceding round completion to execution; includes caller queueing and worker selection. |
-| `draft_seconds` | Frontend Draft binding/commit through proposal receipt, including HTTP overhead. |
-| `proposal_wait_seconds` | This proposal's completion to submitting the batch; measures waiting for sibling proposals. |
-| `target_seconds` | Initial generate or verification submission to receiving this member's result. Includes preparation, native queueing and response overhead. |
+| `draft_seconds` | Proposal request through receipt, including HTTP and native queueing. |
+| `target_seconds` | Initial prefill or verification preparation through confirmed output and Draft prefix synchronization; includes native queueing. |
 | Engine `queue_seconds` | Ready engine work waiting to be scheduled, summed across steps. Excludes remote-candidate waits. |
 | Engine `scheduled_seconds` | Sum of native schedule-to-result wall time. Each member observes its shared batch duration; this is not CUDA-event GPU time. |
 | Engine `remote_wait_seconds` | Previous Target output to admission of the next candidates (or preemption). Includes caller waiting, drafting and transfer. |
 | Engine `steps`, `scheduled_tokens`, `preemptions` | Actual native work in this output interval. `batch_requests` and `batch_tokens` describe its final native step, not the caller's batch. |
+| `requested_tokens` | Target-selected K before Draft execution; null for prefill. |
 | `proposed_tokens` / engine `verified_tokens` / engine `accepted_tokens` / `committed_tokens` | Draft output, candidates actually checked, sampler acceptance before stop truncation, and final Target output respectively. Acceptance excludes correction/bonus tokens. |
-| Transfer `bytes`, `read_seconds`, `prepare_seconds` | Actual proposal or KV checkpoint bytes, distinguished by round `phase`; Worker read including readiness fencing/polling; role claim through read, ACK and staging. Null when no tensor transfer is needed. |
+| Transfer `transport`, `bytes`, `read_seconds`, `prepare_seconds` | Concrete completed-read backend and actual proposal bytes; Worker read including readiness fencing/polling; role claim through read, ACK and staging. Null when no tensor transfer is needed. |
 
 These intervals overlap and must not be added. In particular, remote wait starts
-in the preceding output interval. Missing stages on cancellation are null, not
-zero. Engine measurements are retained only until the owning generator consumes
+in the preceding output interval. Unavailable measurements are null. Engine measurements are retained only until the owning generator consumes
 the output or closes; they are not an engine-side history store.
 
 The existing frontend `/metrics` endpoint exports `foretoken_dt_rounds_total`,
 `foretoken_dt_tokens_total`, `foretoken_dt_stage_seconds` histograms, and
 `foretoken_dt_transfer_bytes_total`. These are process-level aggregates.
-Labels contain only phase, outcome and stage. Request IDs, round numbers and
+Labels contain the logical model name, phase, outcome and stage. Request IDs, round numbers and
 endpoints remain in `foretoken::dt` traces and returned records. `accepted / verified`
 is the sampler acceptance rate; `committed` also includes Target-generated tokens.
-Aborted rounds may have incomplete token/transfer observations.
+Metrics cover received round observations; failed streams can have incomplete
+token/transfer totals.
 
 ### Online worker workload
 
 `GET /status.workload` and `/v1/internal/telemetry.draft_target_workload` read
 EngineCore directly. BackendRegistry retains these timestamped snapshots for
 Router scorers through `RouteTargetStats`; it does not scrape Prometheus.
-The round API also exposes the selected workers' preparation-time snapshots via
-`workloads()`. Measurements describe native scheduler boundaries, not an
+Measurements describe native scheduler boundaries, not an
 instantaneous GPU-kernel activity probe. Registry data ages between readiness
 refreshes; use `collected_at_unix_ms` when judging its freshness.
 
@@ -295,26 +364,15 @@ refreshes; use `collected_at_unix_ms` when judging its freshness.
 
 ### KV migration inputs
 
-Request state exposes `target_location()`, `context_tokens()` and live
-`target_kv()`. The latter uses `GET /sessions/{id}/kv`; a fresh request has no
-Target, and a session with no current engine allocation reports `kv: null`.
-A Draft session between proposals also has no live engine request, even though
-unreferenced prefix-cache pages may still exist.
+`GET /sessions/{id}/kv` reports native residency for a live Target session. A
+session with no current engine allocation reports `kv: null`. Draft sessions
+between proposals have no live engine request, although cached prefix pages may
+remain. The diagnostic caller owns the session's location and confirmed tokens.
 
 A KV observation contains context length, computed-token frontier and allocated
-blocks/bytes per cache group. It comes from native page tables and configured
-page sizes. Shared pages count toward each request; lookahead pages can be
-allocated before they contain confirmed KV. Consequently these bytes are neither
-exclusive memory consumption nor an exact migration payload. An engine-finished request has no live KV. Frontend stop handling can finish
-a request after this snapshot; preemption may also invalidate it immediately.
-Session location identifies its owner and does not guarantee resident KV.
-
-This supplies location, context, capacity and measured workload for a later
-wait-versus-move decision. Explicit migration records use `phase: "migrate"` and
-include `migration.source_target_endpoint`, `checkpoint_tokens`, `export_seconds`,
-the receiver transfer measurements and its first resumed engine output. Export
-time includes checkpoint creation and publication; `target_seconds` covers the
-whole migration through that output. Metrics distinguish these records by phase,
-with `kv_export` duration and `checkpoint` token stages. These are measurements
-of executed moves, not a prediction of future migration cost. The public scheduler
-has no migration policy or cost estimator.
+blocks/bytes per cache group from native page tables and configured page sizes.
+Shared pages count toward each request; lookahead pages can be allocated before
+they contain confirmed KV. These bytes are neither exclusive memory consumption
+nor an exact migration payload. Preemption can invalidate the snapshot immediately.
+The internal checkpoint/resume operations do not publish coordinated migration
+rounds or implement a public migration policy.

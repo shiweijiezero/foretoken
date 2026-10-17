@@ -17,7 +17,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus};
@@ -313,7 +313,8 @@ impl AppState {
 /// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
-pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
+pub fn router(mut state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
+    let profiling = crate::profiling::router(state.profiling.take());
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -326,10 +327,6 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             get(instance_admission_ready),
         )
         .route("/v1/internal/admission/close", post(close_admission))
-        .route(
-            "/v1/internal/profiling",
-            get(profile_observation).post(profile_control),
-        )
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
@@ -341,6 +338,7 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
+        .merge(profiling)
 }
 
 // The protocol-1 workload probe cannot admit an older binary that ignores the projected limit.
@@ -361,37 +359,6 @@ async fn instance_admission_ready(State(state): State<AppState>) -> StatusCode {
 // The controller observes applied limits through the same listener used for drain and execution.
 async fn instance_admission_status(State(state): State<AppState>) -> Json<InstanceAdmissionStatus> {
     Json(state.health.instance_admission_status())
-}
-
-#[derive(Deserialize)]
-struct ProfileQuery {
-    run_uid: Option<String>,
-}
-
-// Return runtime identity even before a run exists, so the reconciler can persist a fixed plan.
-async fn profile_observation(
-    State(state): State<AppState>,
-    Query(query): Query<ProfileQuery>,
-) -> Response {
-    match state.profiling {
-        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
-        None => StatusCode::NOT_IMPLEMENTED.into_response(),
-    }
-}
-
-// The handler acknowledges acceptance only; polling exposes the independently supervised result.
-async fn profile_control(
-    State(state): State<AppState>,
-    Json(request): Json<crate::profiling::Request>,
-) -> Response {
-    let Some(handle) = state.profiling else {
-        return StatusCode::NOT_IMPLEMENTED.into_response();
-    };
-    let uid = request.run_uid.clone();
-    match handle.control(request) {
-        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
-        Err(error) => (StatusCode::CONFLICT, error).into_response(),
-    }
 }
 
 // Shared lookups are observations only: admission and engine health must still permit reads.
@@ -708,6 +675,7 @@ async fn stop_uncertain_execution(health: &RuntimeHealth) {
 #[derive(Clone, Copy)]
 pub(crate) enum ReservationEnd {
     NotSubmitted,
+    AdmissionRefused,
     StageTerminated,
     RequestTerminated,
 }
@@ -725,6 +693,12 @@ pub(crate) async fn finish_shared(
     reference.final_stage |= matches!(end, ReservationEnd::RequestTerminated);
     loop {
         let result = match end {
+            ReservationEnd::AdmissionRefused => {
+                store
+                    .ledger
+                    .return_before_submission(&reference, owner)
+                    .await
+            }
             ReservationEnd::NotSubmitted => {
                 store
                     .ledger

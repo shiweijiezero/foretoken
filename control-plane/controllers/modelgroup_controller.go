@@ -433,7 +433,6 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, imagePullSecrets []corev1.LocalObjectReference, files runtimeconfig.ApplicationFiles) (*appsv1.Deployment, error) {
 	var launchJSON, launchEnv, command string
 	var startupSeconds, drainSeconds int64
-	var dtRDMA bool
 	switch group.Spec.Runtime.Backend {
 	case "vllm":
 		launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
@@ -444,7 +443,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 		if err != nil {
 			return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
 		}
-		dtRDMA = launchPlan.DT != nil && launchPlan.DT.RDMA
 		launchEnv, command = "FORETOKEN_VLLM_LAUNCH_PLAN", "foretoken-model-server"
 		startupSeconds, drainSeconds = launchPlan.Lifecycle.StartupSeconds, launchPlan.Lifecycle.DrainSeconds
 	case vllmomniconfig.Backend:
@@ -463,7 +461,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	}
 	labels := modelGroupLabels(group)
 	podLabels := maps.Clone(labels)
-	if dtRDMA {
+	if group.Spec.SpeculationRole != "" {
 		podLabels[modelGroupDTServiceLabel] = pool.Spec.ModelServiceRef.UID
 	}
 	var annotations map[string]string
@@ -502,7 +500,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
 	}
-	if group.Spec.NodeCount > 1 || dtRDMA {
+	if group.Spec.NodeCount > 1 || group.Spec.SpeculationRole != "" {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
 	if group.Spec.Runtime.Backend == "vllm" {
@@ -858,12 +856,14 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			metricsScraperNamespaceLabel: metricsScraperNamespaceValue,
 		}},
 	})
-	if group.Spec.RDMA != nil && group.Spec.SpeculationRole != "" {
-		// DT workers establish dynamic Mooncake channels and acknowledge reads over HTTP.
-		// Only roles belonging to the same verified service may reach these ports.
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
+	if group.Spec.SpeculationRole != "" {
+		peer := networkingv1.NetworkPolicyPeer{
 			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{modelGroupDTServiceLabel: pool.Spec.ModelServiceRef.UID}},
-		}}})
+		}
+		// Round coordination uses HTTP even when candidate tensors need no RDMA transfer.
+		ingress[0].From = append(ingress[0].From, peer)
+		// ZMQ TCP and Mooncake allocate tensor channels within the same service.
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{peer}})
 	}
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports

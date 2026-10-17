@@ -90,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return draft_target::run(
             &config,
             cache_config.as_ref(),
+            profiling_config.as_ref(),
             &mut cache_server,
             cache_shutdown,
             request_ledger,
@@ -224,8 +225,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let mut profiler =
-        profiling.map(|config| profiling::Supervisor::new(config, backend.clone(), health.clone()));
+    let mut profiler = profiling.map(|config| {
+        profiling::Supervisor::new(
+            config,
+            profiling::CaptureBackend::Native(backend.clone()),
+            health.clone(),
+        )
+    });
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let shutdown = Arc::new(Notify::new());

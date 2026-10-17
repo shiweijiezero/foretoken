@@ -42,7 +42,7 @@ DT does not maintain an additional engine image or ready-metadata patch.
 ## Engine boundary
 
 The plugin configures `method="external"` and exposes
-`ExternalAsyncLLM.submit_external_draft_batch([(ticket, token_ids), ...])`.
+`ExternalAsyncLLM.submit_external_draft_batch([(ticket, token_ids, work_identity), ...])`.
 All entries reach the scheduler in one utility call, returning one admission result
 per entry; native scheduling still chooses physical GPU batches. A nonterminal
 `RequestOutput.external_draft_request` carries an immutable request/generation
@@ -56,14 +56,44 @@ tickets return false; an empty candidate list requests a Target-only step.
 | EngineCore | Receive submissions through the existing utility queue; sleep when only external waiters remain |
 | MRV2 | Resolve current request slots, fill GPU draft-token state before input preparation, consume staged GPU proposal distributions through native rejection sampling |
 | Plugin AsyncLLM | Attach the next ticket after native output stop handling; never issue one on terminal output |
-| Foretoken frontend | Select role instances, order rounds, retain session lifetimes, stream confirmed output |
-| Role service | Translate session/version messages to engine requests and tickets; abort owned work on disconnect |
+| Foretoken frontend / Router | Normalize input, choose a fixed Draft set and Target per request, retain routing reservations and process confirmed output |
+| TargetCoordinator | Own one request’s confirmed prefix, round and propose/verify progression |
+| RoleService | Own native sessions, independent proposal preparation, ticket admission and cleanup |
 
 No local Draft model is constructed by the Target engine. Updating
 Scheduler's CPU candidates alone is insufficient: MRV2 input preparation reads
 `req_states.draft_tokens`, so the plugin fills that state after request-slot
 updates. EngineCore distinguishes lifecycle ownership from schedulable work to
-avoid stepping continuously while remote candidates are outstanding.
+avoid stepping continuously while remote candidates are outstanding. Queued
+requests count as schedulable only while native running admission has room,
+including slots retained for streaming input. When every running request waits
+for Draft and admission is full, EngineCore sleeps on its input queue; candidate
+submission or cancellation wakes it. Finished-request cleanup and in-flight
+batches continue through the normal engine loop.
+
+The three strategy boundaries are the existing Router pipeline for request
+placement, `TargetCoordinator.select_candidate_count()` for round K, and native
+Scheduler subclasses for local token scheduling. Budget selection does not own
+frontier or execution. `ObservedScheduler.schedule()` and
+`ExternalScheduler.schedule()` are the local batching extension boundary; their
+default continues to call native scheduling.
+
+Target round policy and native capacity are separate. The ordinary Target uses
+`--draft-tokens` for its default K and `--max-candidate-tokens` for native
+`num_speculative_tokens`; the capacity defaults to K. Neural capacity remains in
+its native speculative configuration. MRV2 retains startup-sized candidate and
+sampling buffers; shorter submissions populate only their actual rows, and
+`dynamic_sd_lookup` prevents synthetic candidate padding. Native scheduling
+still selects the actual verification work.
+
+Ordinary autoregressive Draft rounds use native generation `max_tokens` and have
+no artificial static K limit. Neural Drafts compute their native block; the
+adapter truncates returned tokens and exported q rows to the requested prefix.
+Their native block length is the advertised method limit. Request-level routing
+checks execution compatibility; each round caps the configured K by the selected
+method and Target capacities. These fields are carried by role protocol v9 and
+`DraftTargetCapabilities`; `requested_tokens` records the selected round count
+alongside proposal, verification and acceptance counts.
 
 Tickets pair vLLM's unique internal request ID with its cumulative confirmed output
 token count. The client retains the internal ID from the native output collector;
@@ -80,15 +110,65 @@ multimodal input and EC transfer are not enabled by this adapter. The optional
 NVIDIA Target migration connector supports one full-attention KV group; other KV
 connectors remain unsupported.
 
-The role CLI defaults `VLLM_BATCH_INVARIANT` to `1` for NVIDIA and `0` for MACA
-before importing vLLM, unless the process environment already specifies a value.
-Native kernels own this numerical
-policy; the plugin does not replace their implementations. Target-only comparison
-runs must use the same setting. Model/backend support and hardware restrictions
-still apply, and independent Draft randomness prevents a general seeded-sequence
+The role CLI preserves the native `VLLM_BATCH_INVARIANT` default and any explicit
+environment setting. Comparison runs that enable it must use the same setting
+for DT and Target-only execution. Native model/backend support and hardware
+restrictions apply; independent Draft randomness prevents a general seeded-sequence
 equality claim. See the [role startup requirements](../README.md#start-two-roles).
 
+## Greedy validation
+
+Compare complete token IDs with a native Target-only run using the same model,
+tokenizer, dtype, decoding options, prefix-cache setting and batch-invariance mode.
+At the first mismatch, retain the confirmed prefix, ticket, input IDs, positions,
+computed-token frontier, attention metadata and leading logits. Trace the earliest
+different layer, checking cached prefix KV before that query. Similar logits or a
+successful request do not make a token-ID mismatch pass.
+
+On the pinned MetaX BF16 Qwen3-4B path without batch invariance, a single-token
+decode and a four-token verification query differed first at the native QKV GEMM,
+despite identical first-row input and cached prefix KV. A later top-logit tie became
+a strict ordering, changing the greedy token. Replaying native linear layers with
+the same input row and weights reproduced batch-shape variation independently of
+request coordinator, Draft execution and transport.
+
+The MetaX source manifest applies `metax-batch-invariant-matmul.patch` to native
+vLLM. Its default persistent GEMM tile requires 96 KiB shared memory; the tested
+device provides 64 KiB. The patch selects smaller M/N tiles on devices below that
+limit while retaining the K reduction tile and native execution. With
+`VLLM_BATCH_INVARIANT=1`, isolated Target verification matched native Target-only
+token IDs for all eight cases at budgets 1 and 3, including deliberately incorrect
+candidates, correction, EOS and max-token termination. Native QKV and LM-head
+single-row/four-row replays were also identical. This verifies that model/backend
+combination, not all models or an end-to-end N:M/RDMA deployment, and does not
+measure performance. The default remains disabled; changing the mode requires
+re-running both sides of the comparison.
+
+End-to-end greedy checks also exercised Qwen3-8B with a block-7 DSpark Draft and
+Target K=3: native vLLM 0.31.0 on A100 over cross-host ZMQ TCP, and MetaX's pinned
+0.30 runtime on MXC500 over same-host ZMQ TCP and MACA GPU IPC. Both sides used
+BF16 and batch invariance. Complete token IDs and finish/stop reasons matched
+Target-only for single and eight-concurrent request workloads, including natural
+rejection, EOS and shortened final budgets. Cancellation drained sessions and
+artifacts; native records contained multiple-request physical batches. This
+validates those execution profiles, not random-sampling distributions, NVIDIA
+GPU IPC, RDMA, hardware link utilization or a full Kubernetes rollout.
+
 ## Neural Draft context
+
+Neural profiles use the pinned native speculator on NVIDIA or MetaX. Same-host
+ZMQ TCP/IPC stages features and proposal distributions through host memory; RDMA uses
+Mooncake. Roles advertise initialized `tensor_transports`; Router requires a
+compatible path, and Target selects eligible same-host GPU IPC first, then RDMA
+and ZMQ, once per request. GPU IPC requires mutual granted peer access metadata.
+The default launcher offers TCP, allocated RDMA and supported MACA peers; explicit IPC requires shared
+same-host paths. RDMA startup also checks actual GPU registration. Before prefill, the selected
+pair shares a connection-owned proof of both GPU read directions across requests;
+uncertain transfers retain the usual drain/process-exit boundary.
+Pools are keyed by backend as well as tensor geometry/dtype. These paths preserve
+request-level routing or native token scheduling. ZMQ send uses copied frames, and
+source snapshots remain owned until ACK or unclaimed revoke; receiver H2D must finish
+before admission. GPU-consumption fences still govern destination buffer reuse.
 
 With a neural Draft profile, Target retains a position-indexed history of final and
 auxiliary hidden states through a non-model speculator. Export runs on the
@@ -97,11 +177,12 @@ excluding the last correction/bonus token. Rejected suffixes are discarded;
 request completion, abort and native request removal release the retained history.
 Target APC is disabled so a cache hit cannot leave gaps in that history.
 
-The frontend passes the current Target session address with each proposal.
+TargetCoordinator supplies the current Target session address during Draft preparation.
 Draft claims and reads the context before admitting a normal native request
-whose prompt excludes the anchor token. Its loader keeps the Target backbone on
-the meta device and materializes shared embedding/output weights. Native MRV2
-loads the selected native speculator and allocates its own KV pages. The feature
+whose prompt excludes the anchor token. Its loader initializes the Target on meta
+and materializes shared embedding/output and native normalization weights,
+preserving tied parameters. Native MRV2 loads the selected native speculator and
+allocates its own KV pages. The feature
 forward gathers staged rows for the locally scheduled prefill chunk; sampling supplies
 the confirmed anchor. Native speculator execution and request postprocessing
 remain unchanged. The adapter defers output copying until the native proposal
@@ -139,35 +220,32 @@ It loads projected instance limits, accepts Target request reservations and hold
 permits across the session stream. Python owns engine sessions and transport
 artifacts; it does not duplicate the platform admission store or limit watcher.
 
-Target owns a request session across rounds. Target prefill emits the first
-confirmed token; the caller then forms each batch, selects DT, and executes:
-
-1. Reuse the selected Draft binding with the confirmed delta, or bind the full
-   confirmed prefix on a newly selected Draft.
-2. Ask Draft for candidates within the remaining output budget.
-3. Submit candidates using the Target's current ticket.
-4. Return the actual Target delta, stop outcome and request state to the caller.
+The selected Target owns peer HTTP and transfer operations through `RoleCommunication`;
+`DraftPeerSession` retains each control stream while `TargetCoordinator` decides request rounds.
+Native prefill emits the first confirmed output and ticket. The coordinator commits
+exact deltas, obtains one chain and calls local verification. Each request prepares
+and admits independently; native scheduling combines compatible ready requests.
+The Target default candidate count is 3, capped by remaining output; its engine
+capacity can be configured independently. There is
+no shared stage pool, global rules policy or explicit logical-batch scheduler.
 
 Each engine owns local batching and KV state. Draft rounds are ordinary vLLM
-requests against the confirmed prefix, using native prefix caching where the method
-permits it. Target owns verification and final token commitment. The normal frontend output processor
-retains text decoding and stop-string handling; it does not reconstruct engine
-token state by re-tokenizing cropped text.
+requests, using native prefix caching where the method permits it. Frontend's
+normal output processor retains text decoding and stop-string handling. It does
+not relay per-round candidates or reconstruct state from display text.
 
-The caller owns returned request state; dropping it closes both role sessions.
-Dropping an executing round closes members still owned by that round. Draining rejects new
-bindings while allowing existing rounds to finish. Engine health/readiness stays
-available during drain so Service routing does not interrupt existing sessions.
-Session close waits for native abort followed by an ordered worker utility that
-synchronizes the MRV2 compute stream. The Rust ingress retains admission capacity
-until that acknowledgement and artifact cleanup complete; enqueueing an abort is
-not a termination acknowledgement.
-Frontend or role failure terminates the request. Request state records the current
-Target session/KV location across batches.
-Ordinary rounds reuse that Target. Explicit migration snapshots its native pages
-and loads them through the destination native block allocator before resuming;
-transparent replay is not implemented. Multiple Draft replicas provide capacity, not collaborative
-candidate trees or intermediate verification.
+Dropping the client stream explicitly closes the Target session and its bound Draft. Draining
+rejects new bindings while allowing existing rounds to finish. Engine health and
+readiness remain available so Service routing preserves active sessions. Session
+close waits for native abort and an ordered Worker utility that synchronizes the
+MRV2 compute stream. The ingress retains admission capacity until termination
+acknowledgement and artifact cleanup complete.
+
+Transport or engine failure terminates the request without replay. Existing
+checkpoint/resume remains a manual, unbound-session diagnostic with its model,
+sampling and KV-layout restrictions. Automatic migration is outside the current
+request-binding path. Binding is fixed by this delivery, not an engine-neutral
+requirement that all future Target placement remain resident.
 
 After admission drain, model-server signals the role launcher first. Its lifespan
 closes Worker-owned transport registrations before stopping EngineCore. Sending
@@ -178,16 +256,20 @@ the fallback when the application does not exit within the drain deadline.
 ## Worker and transport boundary
 
 `DraftTargetWorkerExtension` is installed through the native `worker_extension_cls`
-entry point. It connects the plugin Runner's GPU I/O hooks to Mooncake; the
-EngineCore and scheduler adapters contain no Mooncake-specific behavior.
+entry point. It connects the plugin Runner's GPU I/O hooks to the selected tensor
+transport; EngineCore and scheduler adapters contain no transport-specific behavior.
 
 Draft marks each per-round request with `SamplingParams.extra_args["dt_artifact_id"]`.
-The sampler exposes processed logits, and the Worker captures complete float32
+The sampler observer captures processed logits returned by native `Sampler.sample`,
+the shared entry point in both pinned runtimes. RoleService supplies independent
+per-proposal seeds, keeping native sampling on its materialized distribution path.
+The Worker captures complete float32
 `log(q)` rows without copying probabilities to the API process. Worker RPCs
 publish source buffers, start/poll destination reads, stage received artifacts
 against engine tickets, and return buffers to an exact-shape pool after their
-owners finish using them. Registrations remain until role shutdown; idle buffers
-are reusable and excluded from retained-artifact counts.
+owners finish using them. Device buffers remain reusable until role shutdown;
+RDMA registrations stay with those buffers. ZMQ host snapshots are released on ACK
+or unclaimed revoke. Idle device buffers are excluded from retained-artifact counts.
 
 Target's role waits for read readiness, ACKs the source, stages the tensor and
 submits candidates through the existing EngineCore utility queue. MRV2 maps the
@@ -196,7 +278,9 @@ Submission success is not consumption completion: the role retains Target storag
 until subsequent engine output or abort. See the
 [Connector contract](connector-contract.md) for scaling and temperature semantics.
 
-`MooncakeTransport` owns registrations; `RegisteredTensor` fences producer writes
+`TensorTransport` owns reusable buffers; `MooncakeTransport` adds device registrations,
+`MacaIpcTransport` reuses Mooncake MACA handles/copies, and `ZmqTransport` owns
+sockets and immutable host snapshots. `TensorBuffer` fences producer writes
 and the final local consumer with CUDA events. RDMA completion is independent of
 CUDA producer readiness. A completed-read ACK permits source release, not reuse
 of a destination still in use by model execution. Uncertain buffers remain
@@ -207,13 +291,13 @@ transport separately and does not establish inference correctness or performance
 
 `ObservedScheduler` wraps the native Draft scheduler; `ExternalScheduler` adds
 Target remote-candidate admission. Native queues and page tables remain the only
-load/KV authority. Schedule/output hooks accumulate wall durations and sampler
+load/KV authority. Schedule/output hooks attach stable physical batch and work identities, and accumulate wall durations and sampler
 acceptance without copying the scheduling algorithm. The one-worker synchronous
 execution constraint makes each scheduled step's completion unambiguous.
 
 `ExternalAsyncLLM` consumes cumulative output observations through EngineCore's
 utility queue, derives interval deltas, and deletes remaining records when its
 generator closes. Native abort notifications have no model step to measure.
-The role adds Worker-measured transfer timing; the frontend owns caller queue,
-proposal-batch wait, round identity, tracing and aggregate metrics. See the
+The role adds Worker-measured transfer timing; TargetCoordinator owns round identity and remote-stage wall durations; Frontend records
+received observations in tracing and aggregate metrics. See the
 [measurement contract](role-protocol.md#observations) for boundaries and KV limits.

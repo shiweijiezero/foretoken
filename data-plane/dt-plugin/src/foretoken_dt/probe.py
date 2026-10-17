@@ -37,13 +37,29 @@ def _ready_event(tensor):
     return event
 
 
+async def _transport(args):
+    """Start the selected diagnostic backend; the producer/consumer owns its final drain."""
+    import torch
+
+    from .transport import MacaIpcTransport, MooncakeTransport
+
+    if args.tensor_transport == "gpu-ipc":
+        return MacaIpcTransport(args.host, torch.device(args.device))
+    if args.tensor_transport == "zmq":
+        from .zmq import ZmqTransport
+
+        host = f"[{args.host}]" if ":" in args.host else args.host
+        transport = ZmqTransport(f"tcp://{host}:*")
+        await transport.start()
+        return transport
+    return MooncakeTransport(args.host, args.nic, torch.device(args.device))
+
+
 async def _serve(args: argparse.Namespace) -> None:
     """Reuse one registration, changing its contents only after each read ACK."""
     import torch
 
-    from .transport import MooncakeTransport
-
-    transport = MooncakeTransport(args.host, args.nic)
+    transport = await _transport(args)
     tensor = torch.arange(args.elements, dtype=torch.int64, device=args.device)
     buffer = transport.register(tensor)
     completed = asyncio.get_running_loop().create_future()
@@ -103,9 +119,9 @@ async def _read(args: argparse.Namespace) -> None:
     """Read into local device storage, acknowledge the copy, then verify its contents."""
     import torch
 
-    from .transport import MooncakeTransport, PayloadRef
+    from .transport import PayloadRef
 
-    transport = MooncakeTransport(args.host, args.nic)
+    transport = await _transport(args)
     reader, writer = await asyncio.open_connection(args.peer, args.port)
     try:
         message = await _receive(reader)
@@ -142,14 +158,15 @@ async def _read(args: argparse.Namespace) -> None:
                 raise ValueError("producer did not confirm source release")
             if not torch.equal(tensor, expected):
                 await transport.close()
-                raise RuntimeError(f"RDMA payload differs at iteration {iteration}")
+                raise RuntimeError(f"tensor payload differs at iteration {iteration}")
         await buffer.close(ready_event=_ready_event(tensor))
         await transport.close()
         print(
             json.dumps(
                 {
                     "verified": True,
-                    "requested_transport": "rdma",
+                    "requested_transport": args.tensor_transport,
+                    "transport": source.transport,
                     "device": str(tensor.device),
                     "bytes": source.nbytes,
                     "iterations": iterations,
@@ -166,11 +183,17 @@ async def _read(args: argparse.Namespace) -> None:
 def main() -> None:
     """Run a producer or consumer diagnostic inside an existing engine environment."""
     parser = argparse.ArgumentParser(
-        description="Validate DT tensor transfers through Mooncake RDMA (not inference)."
+        description="Validate DT tensor transport and reuse (not inference)."
     )
     subparsers = parser.add_subparsers(dest="role", required=True)
     for role in ("serve", "read"):
         command = subparsers.add_parser(role)
+        command.add_argument(
+            "--tensor-transport",
+            choices=("rdma", "gpu-ipc", "zmq"),
+            default="rdma",
+            help="Concrete backend to measure; GPU IPC currently requires MACA peers",
+        )
         command.add_argument(
             "--host", required=True, help="Routable local host/IP, no port"
         )

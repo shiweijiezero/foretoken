@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Independent role execution; placement and round orchestration belong to the frontend."""
+"""Target-owned request rounds and connection-owned native engine sessions."""
 
 from __future__ import annotations
 
@@ -16,17 +16,22 @@ from secrets import randbits
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-import httpx
 from anyio import CancelScope
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from .connections import RdmaIdentity, RoleCommunication
+
 logger = logging.getLogger(__name__)
+
+ROLE_PROTOCOL_VERSION = 9
+CONTEXT_REVOKED = "Target context was revoked"
 
 if TYPE_CHECKING:
     from vllm import AsyncEngineArgs
 
+    from .coordinator import TargetCoordinator
     from .vllm.engine import ExternalAsyncLLM as AsyncLLM
     from .vllm.engine import ExternalDraftRequest
 
@@ -56,12 +61,13 @@ class Sampling(Message):
 
 
 class OpenDraft(Message):
-    """Confirmed token context supplied by the frontend when binding a Draft."""
+    """Confirmed token context supplied by Target or a manual diagnostic caller."""
 
     token_ids: list[StrictInt] = Field(min_length=1)
     version: StrictInt = Field(ge=0)
     sampling: Sampling = Field(default_factory=Sampling)
     priority: StrictInt = 0
+    tensor_transport: Literal["gpu_ipc", "rdma", "zmq"] | None = None
 
 
 class ContextSource(Message):
@@ -77,6 +83,7 @@ class Propose(Message):
     version: StrictInt = Field(ge=0)
     max_tokens: StrictInt = Field(gt=0)
     context_source: ContextSource | None = None
+    work: dict | None = None
 
 
 class Commit(Message):
@@ -98,14 +105,19 @@ class Generate(Message):
     ignore_eos: bool = False
     sampling: Sampling = Field(default_factory=Sampling)
     priority: StrictInt = 0
+    work: dict | None = None
+    request_id: str | None = None
+    draft_endpoints: list[str] = Field(default_factory=list)
+    target_endpoint: str | None = None
 
 
 class TensorPayload(Message):
-    """Registered GPU tensor descriptor; tensor contents never enter HTTP."""
+    """Worker tensor descriptor; physical tensor contents never enter HTTP."""
 
     publication_id: str
     segment: str
-    address: StrictInt = Field(gt=0)
+    address: StrictInt | None = Field(default=None, gt=0)
+    transport: Literal["gpu_ipc", "rdma", "zmq"]
     nbytes: StrictInt = Field(gt=0)
     dtype: Literal["float32", "uint8", "float16", "bfloat16"]
     shape: list[StrictInt]
@@ -119,6 +131,7 @@ class TensorPayload(Message):
             "nbytes": self.nbytes,
             "dtype": self.dtype,
             "shape": self.shape,
+            "transport": self.transport,
         }
 
 
@@ -126,6 +139,27 @@ class ProposalArtifact(Message):
     """Handle to claim before obtaining a Draft distribution descriptor."""
 
     artifact_id: str
+
+
+class TransportPeer(Message):
+    """Address the actual peer incarnations; HTTP URLs alone cannot identify GPU connections."""
+
+    identity: RdmaIdentity
+    peer: RdmaIdentity
+    peer_endpoint: str
+
+
+class ReadTransportProbe(TransportPeer):
+    """Read a connection-owned probe through the ordinary artifact lifecycle."""
+
+    artifact_id: str
+
+
+class ProfileOperation(Message):
+    """Private native capture command; the model-server supervisor owns its lifecycle."""
+
+    start: bool
+    directory: str | None = None
 
 
 class KvLayer(Message):
@@ -159,6 +193,13 @@ class ExportCheckpoint(Message):
     version: StrictInt = Field(ge=0)
 
 
+class ExportContext(Message):
+    """Request features over the path selected for this Draft/Target binding."""
+
+    version: StrictInt = Field(ge=0)
+    tensor_transport: Literal["gpu_ipc", "rdma", "zmq"]
+
+
 class ReleaseArtifact(Message):
     """Proof that the consumer will no longer read one source publication."""
 
@@ -174,18 +215,6 @@ class Verify(Message):
     source_endpoint: str | None = None
 
 
-class BatchVerifyItem(Verify):
-    """One independently cancellable member of a frontend verification batch."""
-
-    session_id: str
-
-
-class BatchVerify(Message):
-    """Ready round members submitted together to one selected Target worker."""
-
-    members: list[BatchVerifyItem] = Field(min_length=1)
-
-
 @dataclass
 class DraftSession:
     """Connection-owned confirmed prefix; vLLM owns all cached model state."""
@@ -194,6 +223,7 @@ class DraftSession:
     version: int
     sampling: Sampling
     priority: int
+    tensor_transport: str | None
     artifacts: set[str] = field(default_factory=set)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     active_request: str | None = None
@@ -211,17 +241,25 @@ class RoleService:
         self,
         engine: AsyncLLM,
         role: Literal["draft", "target"],
-        budget: int,
-        rdma: bool = False,
+        default_draft_tokens: int | None,
+        max_candidate_tokens: int | None,
+        tensor_transports: tuple[Literal["gpu_ipc", "rdma", "zmq"], ...] = (),
         model_metadata: dict | None = None,
     ):
+        """Retain role policy and native limits; create_app owns final engine shutdown."""
         self.engine = engine
-        self.role = role
-        self.budget = budget
-        self.rdma = rdma
-        self.transfers: set[asyncio.Task] = set()
-        self.target_artifacts: dict[str, str] = {}
+        self.model_metadata = model_metadata or {}
+        self.coordinators: dict[str, TargetCoordinator] = {}
+        self.session_tasks: dict[str, set[asyncio.Task]] = {}
         self.verifying: set[str] = set()
+        self.role = role
+        self.default_draft_tokens = default_draft_tokens
+        self.max_candidate_tokens = max_candidate_tokens
+        self.tensor_transports = tensor_transports
+        self.gpu_ipc: dict | None = None
+        self.communication = RoleCommunication(self)
+        self.operations: set[asyncio.Task] = set()
+        self.target_artifacts: dict[str, str] = {}
         self.transfer_observations: dict[str, dict] = {}
         self.target_exports: dict[str, set[str]] = {}
         self.migration_enabled = engine.vllm_config.kv_transfer_config is not None
@@ -232,7 +270,6 @@ class RoleService:
         self.context_profile = None
         if engine.vllm_config.additional_config.get("foretoken_dt_context_role"):
             spec = engine.vllm_config.speculative_config
-            self.budget = spec.num_speculative_tokens
             identity = model_metadata or {}
             self.context_profile = {
                 "method": spec.method,
@@ -252,10 +289,19 @@ class RoleService:
         (result,) = results
         return result
 
+    async def release_artifact(
+        self, artifact_id: str, publication_id: str | None = None
+    ) -> None:
+        """Join Worker release, including DMA/GPU fencing and any outstanding source ACK."""
+        while not await self.worker("dt_release", artifact_id, publication_id):
+            await asyncio.sleep(0.001)
+
     def validate_sampling(self, sampling: Sampling) -> None:
         """Reject random proposals before admission when no tensor transport exists."""
-        if not self.rdma and sampling.temperature != 0:
-            raise HTTPException(422, "random sampling requires RDMA on both roles")
+        if not self.tensor_transports and sampling.temperature != 0:
+            raise HTTPException(
+                422, "random sampling requires tensor transport on both roles"
+            )
 
     def require_role(self, role: str) -> None:
         """Reject operations sent to the wrong bound role."""
@@ -302,19 +348,60 @@ class RoleService:
         session = self.drafts.pop(session_id, None)
         if session is not None:
             session.closed.set()
-            if session.active_request is not None:
-                await self.engine.abort(session.active_request)
+            try:
+                if session.active_request is not None:
+                    await self.engine.abort(session.active_request)
+            finally:
+                await asyncio.gather(
+                    *tuple(self.session_tasks.get(session_id, ())),
+                    return_exceptions=True,
+                )
             for artifact_id in tuple(session.artifacts):
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
+            self.transfer_observations.pop(session_id, None)
         if session_id in self.targets:
             del self.targets[session_id]
-            await self.engine.abort(session_id)
-            for artifact_id in self.target_exports.pop(session_id, set()):
-                await self.worker("dt_release", artifact_id)
+            coordinator = self.coordinators.pop(session_id, None)
+            peer_close = (
+                asyncio.create_task(coordinator.peer.close()) if coordinator else None
+            )
+            try:
+                await self.engine.abort(session_id)
+            finally:
+                # Started reads keep their completion/ACK responsibility even when
+                # native abort fails. Join both peers before releasing storage.
+                operations = tuple(self.session_tasks.get(session_id, ()))
+                if peer_close is not None:
+                    operations += (peer_close,)
+                await asyncio.gather(*operations, return_exceptions=True)
+            exports = self.target_exports.get(session_id, set())
+            for artifact_id in tuple(exports):
+                await self.release_artifact(artifact_id)
+                exports.discard(artifact_id)
+            self.target_exports.pop(session_id, None)
             self.transfer_observations.pop(session_id, None)
-            artifact_id = self.target_artifacts.pop(session_id, None)
+            artifact_id = self.target_artifacts.get(session_id)
             if artifact_id is not None:
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
+                self.target_artifacts.pop(session_id, None)
+            if peer_close is not None:
+                peer_close.result()
+
+    def start_operation(self, session_id: str, operation) -> asyncio.Task:
+        """Retain one session's asynchronous operation until completion and safe cleanup."""
+        task = asyncio.create_task(operation)
+        self.operations.add(task)
+        owned = self.session_tasks.setdefault(session_id, set())
+        owned.add(task)
+
+        def completed(task):
+            owned.discard(task)
+            if not owned:
+                self.session_tasks.pop(session_id, None)
+            self._operation_finished(task)
+
+        task.add_done_callback(completed)
+        return task
 
     async def open_draft(self, request: OpenDraft):
         """Keep the owning control stream open; disconnect closes the Draft session."""
@@ -326,22 +413,40 @@ class RoleService:
         self.require_accepting()
         session_id = uuid4().hex
         session = DraftSession(
-            list(request.token_ids), request.version, request.sampling, request.priority
+            list(request.token_ids),
+            request.version,
+            request.sampling,
+            request.priority,
+            request.tensor_transport,
         )
         self.drafts[session_id] = session
         try:
-            yield _event({"event": "opened", "session_id": session_id})
+            yield _event(
+                {
+                    "event": "opened",
+                    "session_id": session_id,
+                    "rdma": self.communication.identity.model_dump()
+                    if self.communication.identity
+                    else None,
+                }
+            )
             await session.closed.wait()
         finally:
             await self.close_session(session_id)
 
-    async def propose(self, session_id: str, request: Propose) -> dict:
-        """Run one locally batched Draft request against its confirmed token prefix.
+    async def propose(
+        self, session_id: str, request: Propose, work: dict | None = None
+    ) -> dict:
+        """Retain one native proposal operation until its owning session can join cleanup."""
+        task = self.start_operation(
+            session_id, self._propose(session_id, request, work)
+        )
+        return await asyncio.shield(task)
 
-        Each round is a normal vLLM request. Eligible methods reuse immutable
-        prefix blocks; rejected suffixes never enter the next round's prompt.
-        Closing the owning session aborts in-flight generation.
-        """
+    async def _propose(
+        self, session_id: str, request: Propose, work: dict | None
+    ) -> dict:
+        """Generate against the confirmed prefix using native KV and local batching."""
         from vllm import SamplingParams
         from vllm.inputs import TokensPrompt
         from vllm.sampling_params import RequestOutputKind
@@ -349,25 +454,37 @@ class RoleService:
         session = self.draft_session(session_id)
         if request.version != session.version or session.active_request is not None:
             raise HTTPException(409, "context version changed or proposal is in flight")
-        if request.max_tokens > self.budget:
-            raise HTTPException(422, "proposal exceeds the role's token budget")
+        if (
+            self.max_candidate_tokens is not None
+            and request.max_tokens > self.max_candidate_tokens
+        ):
+            raise HTTPException(
+                422, "proposal exceeds the Draft method's candidate capacity"
+            )
         request_id = uuid4().hex
         session.active_request = request_id
-        if self.rdma:
+        logger.info(
+            "DT proposal work=%s session=%s engine_request=%s",
+            json.dumps(work),
+            session_id,
+            request_id,
+        )
+        if self.tensor_transports:
             session.artifacts.add(request_id)
         artifact = None
         context_task = None
+        context_id = None
         try:
             prompt = list(session.token_ids)
-            extra = {"dt_artifact_id": request_id} if self.rdma else {}
+            extra = {"dt_artifact_id": request_id} if self.tensor_transports else {}
+            if work is not None:
+                extra["dt_work"] = work
             if self.context_profile is not None:
                 if request.context_source is None:
                     raise HTTPException(422, "neural Draft requires Target context")
-                context_task = asyncio.create_task(
-                    self.receive_context(session, request)
+                context_task = self.start_operation(
+                    session_id, self.receive_context(session_id, session, request)
                 )
-                self.transfers.add(context_task)
-                context_task.add_done_callback(self._transfer_finished)
                 context_id = await asyncio.shield(context_task)
                 if session.closed.is_set():
                     raise HTTPException(
@@ -402,9 +519,11 @@ class RoleService:
                 raise HTTPException(409, "session closed during proposal")
             if tokens is None:
                 raise RuntimeError("Draft engine completed without a candidate")
-            if self.rdma:
+            if self.tensor_transports:
                 while True:
-                    publication = await self.worker("dt_publish", request_id)
+                    publication = await self.worker(
+                        "dt_publish", request_id, session.tensor_transport
+                    )
                     if publication["ready"]:
                         break
                     await asyncio.sleep(0.001)
@@ -414,6 +533,7 @@ class RoleService:
                 "token_ids": tokens,
                 "artifact": artifact,
                 "observation": output.dt_observation,
+                "context_transfer": self.transfer_observations.pop(session_id, None),
             }
         finally:
             with CancelScope(shield=True):
@@ -423,25 +543,43 @@ class RoleService:
                         context_task, return_exceptions=True
                     )
                     if isinstance(context_id, str):
-                        await self.worker("dt_release", context_id)
+                        await self.release_artifact(context_id)
+                        session.artifacts.discard(context_id)
                 session.active_request = None
-                if self.rdma and (artifact is None or session.closed.is_set()):
-                    await self.worker("dt_release", request_id)
+                if self.tensor_transports and (
+                    artifact is None or session.closed.is_set()
+                ):
+                    await self.release_artifact(request_id)
                     session.artifacts.discard(request_id)
 
-    async def receive_context(self, session: DraftSession, request: Propose) -> str:
+    async def receive_context(
+        self, session_id: str, session: DraftSession, request: Propose
+    ) -> str:
         """Pull Target features before native Draft admission; the proposal owns their release."""
         source = request.context_source
-        async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(
-                f"{source.endpoint.rstrip('/')}/sessions/{source.session_id}/context",
-                json={"version": request.version},
-            )
-            response.raise_for_status()
-            context = response.json()
+        context = await self.communication.export_context(
+            source.endpoint,
+            source.session_id,
+            request.version,
+            session.tensor_transport,
+        )
+        if context is None:
+            raise HTTPException(409, CONTEXT_REVOKED)
         artifact_id = context["artifact_id"]
+        logger.info(
+            "DT context work=%s artifact=%s source=%s",
+            json.dumps(request.work),
+            artifact_id,
+            source.endpoint,
+        )
+        # Keep failed receive/release ownership visible to session cleanup too.
+        session.artifacts.add(artifact_id)
 
         async def validate(payload):
+            if payload.transport != session.tensor_transport:
+                raise HTTPException(
+                    422, "context transport differs from session binding"
+                )
             if (
                 context["profile"] != self.context_profile
                 or context["token_ids"] != session.token_ids
@@ -457,23 +595,34 @@ class RoleService:
                     422, "Target context does not cover the computed prefix"
                 )
 
-        result = await self.read_artifact(artifact_id, source.endpoint, validate)
+        started = time.monotonic()
+        result = await self.communication.read_artifact(
+            artifact_id, source.endpoint, validate
+        )
         if result is None:
-            raise HTTPException(409, "Target context was revoked")
+            raise HTTPException(409, CONTEXT_REVOKED)
+        self.transfer_observations[session_id] = {
+            "bytes": result["bytes"],
+            "transport": result["transport"],
+            "read_seconds": result["read_seconds"],
+            "prepare_seconds": time.monotonic() - started,
+        }
         return artifact_id
 
-    async def export_context(self, session_id, ticket, artifact_id):
+    async def export_context(self, session_id, ticket, artifact_id, transport):
         """Publish a scheduler-selected snapshot while retaining session cancellation ownership."""
         try:
             context = await self.engine.export_context(ticket, artifact_id)
             if context is None:
                 raise HTTPException(409, "Target generation changed")
-            while not (await self.worker("dt_publish", artifact_id))["ready"]:
+            while not (await self.worker("dt_publish", artifact_id, transport))[
+                "ready"
+            ]:
                 await asyncio.sleep(0.001)
             return {**context, "profile": self.context_profile}
         finally:
             if session_id not in self.targets:
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
 
     async def generate(self, request: Generate, resume: ResumeTarget | None = None):
         """Stream Target-confirmed deltas; disconnect aborts the original request."""
@@ -488,8 +637,29 @@ class RoleService:
         self.require_accepting()
         session_id = uuid4().hex
         self.targets[session_id] = None
+        coordinator = None
+        if request.draft_endpoints:
+            from .coordinator import TargetCoordinator
+
+            coordinator = TargetCoordinator(self, session_id, request)
+            self.coordinators[session_id] = coordinator
         try:
-            yield _event({"event": "opened", "session_id": session_id})
+            if coordinator is not None and not await coordinator.peer.open(
+                request, coordinator.frontier
+            ):
+                yield _event({"event": "admission_closed"})
+                return
+            yield _event(
+                {
+                    "event": "opened",
+                    "session_id": session_id,
+                    "rdma": self.communication.identity.model_dump()
+                    if self.communication.identity
+                    else None,
+                }
+            )
+            if coordinator is not None:
+                await coordinator.prepare_binding()
             params = SamplingParams(
                 **request.sampling.parameters(),
                 max_tokens=request.max_tokens,
@@ -501,9 +671,9 @@ class RoleService:
             )
             if resume is not None:
                 artifact_id = resume.checkpoint.artifact_id
-                task = asyncio.create_task(self.receive_checkpoint(session_id, resume))
-                self.transfers.add(task)
-                task.add_done_callback(self._transfer_finished)
+                task = self.start_operation(
+                    session_id, self.receive_checkpoint(session_id, resume)
+                )
                 await asyncio.shield(task)
                 params.extra_args = {
                     "kv_transfer_params": {
@@ -515,6 +685,12 @@ class RoleService:
             # still completing. Do not admit model work for that closed owner.
             if session_id not in self.targets:
                 return
+            work = coordinator.identity("prefill") if coordinator else request.work
+            if work is not None:
+                params.extra_args = {
+                    **(params.extra_args or {}),
+                    "dt_work": work,
+                }
             async with aclosing(
                 self.engine.generate(
                     TokensPrompt(prompt_token_ids=request.token_ids),
@@ -526,30 +702,34 @@ class RoleService:
                 async for output in outputs:
                     if session_id not in self.targets:
                         return
-                    artifact_id = self.target_artifacts.pop(session_id, None)
+                    artifact_id = self.target_artifacts.get(session_id)
                     if artifact_id is not None:
-                        await self.worker("dt_release", artifact_id)
+                        await self.release_artifact(artifact_id)
+                        self.target_artifacts.pop(session_id, None)
                     ticket = output.external_draft_request
                     self.targets[session_id] = ticket
                     completion = output.outputs[0]
-                    yield _event(
-                        {
-                            "event": "committed",
-                            "token_ids": list(completion.token_ids),
-                            "text": completion.text,
-                            "version": ticket.generation
-                            if ticket is not None
-                            else None,
-                            "finished": output.finished,
-                            "finish_reason": completion.finish_reason,
-                            "stop_reason": completion.stop_reason,
-                            "cached_token_count": output.num_cached_tokens or 0,
-                            "observation": output.dt_observation,
-                            "transfer": self.transfer_observations.pop(
-                                session_id, None
-                            ),
-                        }
-                    )
+                    transfer = self.transfer_observations.pop(session_id, None)
+                    event = {
+                        "event": "committed",
+                        "token_ids": list(completion.token_ids),
+                        "text": completion.text,
+                        "version": ticket.generation if ticket is not None else None,
+                        "finished": output.finished,
+                        "finish_reason": completion.finish_reason,
+                        "stop_reason": completion.stop_reason,
+                        "cached_token_count": output.num_cached_tokens or 0,
+                        "observation": output.dt_observation,
+                        "transfer": transfer,
+                        "round": None,
+                    }
+                    if coordinator is not None:
+                        await coordinator.confirmed(event)
+                    if session_id not in self.targets:
+                        return
+                    yield _event(event)
+                    if coordinator is not None and ticket is not None:
+                        await coordinator.advance(ticket)
         finally:
             await self.close_session(session_id)
 
@@ -561,17 +741,18 @@ class RoleService:
                 raise HTTPException(
                     409, "Target generation no longer has exportable KV"
                 )
-            while not (await self.worker("dt_publish", artifact_id))["ready"]:
+            while not (await self.worker("dt_publish", artifact_id, "rdma"))["ready"]:
                 await asyncio.sleep(0.001)
             return checkpoint
         finally:
             if session_id not in self.targets:
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
 
     async def receive_checkpoint(self, session_id: str, resume: ResumeTarget):
         """Own checkpoint claim/read/ACK and retain the receiver through its first forward."""
         checkpoint = resume.checkpoint
         artifact_id = checkpoint.artifact_id
+        self.target_artifacts[session_id] = artifact_id
         retained = False
 
         async def validate(payload):
@@ -586,7 +767,7 @@ class RoleService:
 
         started = time.monotonic()
         try:
-            result = await self.read_artifact(
+            result = await self.communication.read_artifact(
                 artifact_id, resume.source_endpoint, validate
             )
             if result is None:
@@ -596,182 +777,132 @@ class RoleService:
             self.target_artifacts[session_id] = artifact_id
             self.transfer_observations[session_id] = {
                 "bytes": result["bytes"],
+                "transport": result["transport"],
                 "read_seconds": result["read_seconds"],
                 "prepare_seconds": time.monotonic() - started,
             }
             retained = True
         finally:
             if not retained:
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
+                self.target_artifacts.pop(session_id, None)
 
-    async def verify_batch(self, request: BatchVerify) -> dict:
-        """Prepare all live members, then release them in one EngineCore utility call.
-
-        Session streams retain cancellation ownership. Cancelling one member does
-        not cancel sibling reads; the engine rejects that member's stale ticket.
-        """
+    async def verify(
+        self, session_id: str, request: Verify, work: dict | None = None
+    ) -> bool:
+        """Prepare one member independently, then let native ticket admission decide readiness."""
         self.require_role("target")
-        ids = [member.session_id for member in request.members]
-        if len(set(ids)) != len(ids):
-            raise HTTPException(422, "duplicate Target session in batch")
-        entries = []
-        for member in request.members:
-            if len(member.token_ids) > self.budget:
-                raise HTTPException(422, "candidate exceeds the role's token budget")
-            self.validate_tokens(member.token_ids)
-            needs_tensor = self.rdma and bool(member.token_ids)
-            if needs_tensor:
-                if member.artifact is None or member.source_endpoint is None:
-                    raise HTTPException(
-                        422, "RDMA verification requires a Draft publication"
-                    )
-            elif member.artifact is not None:
-                raise HTTPException(422, "this verification does not consume a tensor")
-            if member.session_id in self.verifying:
-                raise HTTPException(409, "verification is already in flight")
-            ticket = self.targets.get(member.session_id)
-            entries.append(
-                ticket
-                if ticket is not None and ticket.generation == member.version
-                else None
+        self.validate_tokens(request.token_ids)
+        if len(request.token_ids) > self.max_candidate_tokens:
+            raise HTTPException(
+                422, "proposal exceeds the Target engine's candidate capacity"
             )
-        self.verifying.update(ids)
-        # A control disconnect cannot abandon a claimed source or an in-flight read.
-        task = asyncio.create_task(
-            self.prepare_and_submit_batch(request.members, entries)
+        ticket = self.targets.get(session_id)
+        if (
+            ticket is None
+            or ticket.generation != request.version
+            or session_id in self.verifying
+        ):
+            return False
+        needs_tensor = bool(self.tensor_transports and request.token_ids)
+        if needs_tensor != (request.artifact is not None):
+            raise HTTPException(
+                422, "proposal tensor does not match the selected sampling mode"
+            )
+        if needs_tensor and request.source_endpoint is None:
+            raise HTTPException(422, "proposal tensor requires its source endpoint")
+        self.verifying.add(session_id)
+        logger.info(
+            "DT verification work=%s session=%s version=%s artifact=%s",
+            json.dumps(work),
+            session_id,
+            request.version,
+            request.artifact.artifact_id if request.artifact is not None else None,
         )
-        self.transfers.add(task)
-        task.add_done_callback(self._transfer_finished)
+
+        async def prepare_and_admit():
+            try:
+                if needs_tensor and not await self.receive_and_stage(
+                    session_id, ticket, request
+                ):
+                    return False
+                if self.targets.get(session_id) != ticket:
+                    return False
+                # Consume role-side ownership before the utility call. A lost
+                # admission response cannot make the same ticket submit again.
+                self.targets[session_id] = None
+                (accepted,) = await self.engine.submit_external_draft_batch(
+                    [(ticket, request.token_ids, work)]
+                )
+                if not accepted:
+                    artifact = self.target_artifacts.get(session_id)
+                    if artifact is not None:
+                        await self.release_artifact(artifact)
+                        self.target_artifacts.pop(session_id, None)
+                return accepted
+            finally:
+                self.verifying.discard(session_id)
+
+        task = self.start_operation(session_id, prepare_and_admit())
         return await asyncio.shield(task)
 
-    async def prepare_and_submit_batch(self, members, tickets) -> dict:
-        """Own transfer completion and cleanup until batch admission is acknowledged."""
-        accepted = [False] * len(members)
-        submission_started = False
-        admission_returned = False
-        try:
-
-            async def prepare(member, ticket):
-                if ticket is None:
-                    return False
-                if self.rdma and member.token_ids:
-                    return await self.receive_and_stage(
-                        member.session_id, ticket, member
-                    )
-                return True
-
-            # Observe every read before raising an error: one failed member must not
-            # abandon a sibling's DMA or release its source prematurely.
-            prepared = await asyncio.gather(
-                *(prepare(member, ticket) for member, ticket in zip(members, tickets)),
-                return_exceptions=True,
-            )
-            for result in prepared:
-                if isinstance(result, BaseException):
-                    raise result
-            indexes = [i for i, ready in enumerate(prepared) if ready]
-            if indexes:
-                submission_started = True
-                results = await self.engine.submit_external_draft_batch(
-                    [(tickets[i], members[i].token_ids) for i in indexes]
-                )
-                for index, result in zip(indexes, results, strict=True):
-                    accepted[index] = result
-                admission_returned = True
-            return {"accepted": accepted}
-        finally:
-            for member, admitted in zip(members, accepted):
-                self.verifying.discard(member.session_id)
-                # A failed utility response does not prove the engine rejected
-                # admission. Keep staged storage with the session until output
-                # or abort establishes that the engine can no longer consume it.
-                if not admitted and (not submission_started or admission_returned):
-                    self.transfer_observations.pop(member.session_id, None)
-                    artifact_id = self.target_artifacts.pop(member.session_id, None)
-                    if artifact_id is not None:
-                        await self.worker("dt_release", artifact_id)
-
-    def _transfer_finished(self, task: asyncio.Task) -> None:
+    def _operation_finished(self, task: asyncio.Task) -> None:
         """Observe failures even when the initiating HTTP request disconnected."""
-        self.transfers.discard(task)
+        self.operations.discard(task)
         if not task.cancelled():
             error = task.exception()
-            if error is not None:
+            if isinstance(error, HTTPException) and error.status_code == 409:
+                logger.info("DT operation rejected: %s", error.detail)
+            elif error is not None:
                 logger.error(
-                    "DT transfer failed",
+                    "DT operation failed",
                     exc_info=(type(error), error, error.__traceback__),
                 )
 
     async def drain_transfers(self) -> None:
-        """Finish background reads and ACKs before terminating the owning Worker."""
-        if self.transfers:
-            # Every failure is logged by the task callback. Wait for all owners,
-            # even if one failed; one error cannot abandon another live read.
-            await asyncio.gather(*tuple(self.transfers), return_exceptions=True)
-        if not self.rdma:
-            return
-        while True:
-            result = await self.worker("dt_close")
-            if result["ready"]:
-                return
-            status = await self.worker("dt_status")
-            if (
-                status["retained_artifacts"] > 0
-                and status["retained_artifacts"]
-                == status["unacknowledged_publications"]
-            ):
-                # Without a remote ACK, process termination is the safe release
-                # boundary; never unregister these potentially readable buffers.
-                logger.warning(
-                    "Terminating Worker with %d unacknowledged DT publications",
-                    status["unacknowledged_publications"],
-                )
-                return
-            await asyncio.sleep(0.001)
-
-    async def read_artifact(self, artifact_id, source_endpoint, validate):
-        """Own one claim/read/ACK; failed reads retain storage until DMA is known complete."""
-        read_started = False
-        read_finished = False
-        try:
-            async with httpx.AsyncClient() as client:
-                source = f"{source_endpoint.rstrip('/')}/artifacts/{artifact_id}"
-                response = await client.post(f"{source}/claim")
-                if response.status_code == 409:
-                    return None
-                response.raise_for_status()
-                payload = TensorPayload.model_validate(response.json())
-                try:
-                    await validate(payload)
-                    while True:
-                        read_started = True
-                        result = await self.worker(
-                            "dt_receive", artifact_id, payload.descriptor()
-                        )
-                        if result["ready"]:
-                            read_finished = True
-                            return result
-                        await asyncio.sleep(0.001)
-                finally:
-                    if not read_started or read_finished:
-                        response = await client.post(
-                            f"{source}/release",
-                            json={"publication_id": payload.publication_id},
-                        )
-                        response.raise_for_status()
-        except BaseException:
-            # An uncertain read stays registered: dt_release awaits its operation.
-            if read_started:
-                await self.worker("dt_release", artifact_id)
-            raise
+        """Join network/session work and drain Worker buffers before lifespan closes the HTTP pool."""
+        results = await asyncio.gather(
+            self.communication.drain(), *tuple(self.operations), return_exceptions=True
+        )
+        if self.tensor_transports:
+            while True:
+                result = await self.worker("dt_close")
+                if result["ready"]:
+                    break
+                status = await self.worker("dt_status")
+                if (
+                    status["retained_artifacts"] > 0
+                    and status["retained_artifacts"]
+                    == status["unacknowledged_publications"]
+                ):
+                    # Without a remote ACK, process termination remains the
+                    # safe release boundary; never unregister these buffers.
+                    logger.warning(
+                        "Terminating Worker with %d unacknowledged DT publications",
+                        status["unacknowledged_publications"],
+                    )
+                    break
+                await asyncio.sleep(0.001)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def receive_and_stage(self, session_id, ticket, request: Verify) -> bool:
         """Receive one proposal, then stage it only for the still-live Target ticket."""
         started = time.monotonic()
         artifact_id = request.artifact.artifact_id
+        self.target_artifacts[session_id] = artifact_id
         staged = False
 
         async def validate(payload):
+            coordinator = self.coordinators.get(session_id)
+            if (
+                coordinator is not None
+                and payload.transport != coordinator.peer.tensor_transport
+            ):
+                raise HTTPException(
+                    422, "proposal transport differs from session binding"
+                )
             expected = [
                 len(request.token_ids),
                 self.engine.model_config.get_vocab_size(),
@@ -782,10 +913,14 @@ class RoleService:
                 )
 
         try:
-            result = await self.read_artifact(
+            result = await self.communication.read_artifact(
                 artifact_id, request.source_endpoint, validate
             )
-            if result is None or self.targets.get(session_id) != ticket:
+            if result is None:
+                raise HTTPException(
+                    409, "proposal artifact was revoked or already claimed"
+                )
+            if self.targets.get(session_id) != ticket:
                 return False
             await self.worker(
                 "dt_stage", artifact_id, ticket.request_id, ticket.generation
@@ -795,6 +930,7 @@ class RoleService:
             self.target_artifacts[session_id] = artifact_id
             self.transfer_observations[session_id] = {
                 "bytes": result["bytes"],
+                "transport": result["transport"],
                 "read_seconds": result["read_seconds"],
                 "prepare_seconds": time.monotonic() - started,
             }
@@ -802,44 +938,111 @@ class RoleService:
             return True
         finally:
             if not staged:
-                await self.worker("dt_release", artifact_id)
+                await self.release_artifact(artifact_id)
+                self.target_artifacts.pop(session_id, None)
 
 
 def create_app(
     engine_args: AsyncEngineArgs,
     role: Literal["draft", "target"],
-    budget: int,
+    default_draft_tokens: int | None,
     rdma_host: str | None = None,
     rdma_nic: str = "",
+    zmq_endpoint: str | None = None,
+    gpu_ipc_host: str | None = None,
 ) -> FastAPI:
     """Build an internal role API; its lifespan exclusively owns the vLLM engine."""
+    from vllm.usage.usage_lib import UsageContext
+
     from .vllm.engine import ExternalAsyncLLM as AsyncLLM
+
+    config = engine_args.create_engine_config(UsageContext.ENGINE_CONTEXT)
+    max_candidate_tokens = (
+        config.speculative_config.num_speculative_tokens
+        if config.speculative_config is not None
+        else None
+    )
+    if role == "target" and (
+        default_draft_tokens is None
+        or default_draft_tokens <= 0
+        or max_candidate_tokens is None
+        or default_draft_tokens > max_candidate_tokens
+    ):
+        raise ValueError(
+            "Target default candidates must be positive and fit engine capacity"
+        )
 
     # The managed launcher preserves provider identity when loading local snapshots.
     metadata = json.loads(os.environ.get("FORETOKEN_DT_MODEL_METADATA", "{}"))
+    tensor_transports = tuple(
+        name
+        for name, endpoint in (
+            ("rdma", rdma_host),
+            ("gpu_ipc", gpu_ipc_host),
+            ("zmq", zmq_endpoint),
+        )
+        if endpoint is not None
+    )
 
     @asynccontextmanager
     async def lifespan(app):
-        engine = AsyncLLM.from_engine_args(engine_args)
-        service = RoleService(engine, role, budget, rdma_host is not None, metadata)
+        engine = AsyncLLM.from_vllm_config(
+            config,
+            enable_log_requests=engine_args.enable_log_requests,
+            disable_log_stats=engine_args.disable_log_stats,
+        )
+        service = RoleService(
+            engine,
+            role,
+            default_draft_tokens,
+            max_candidate_tokens,
+            tensor_transports,
+            metadata,
+        )
         app.state.service = service
         connector_initialized = False
         try:
-            if rdma_host is not None:
-                await service.worker("dt_initialize", role, rdma_host, rdma_nic)
+            if service.tensor_transports:
+                transport = await service.worker(
+                    "dt_initialize",
+                    role,
+                    rdma_host,
+                    rdma_nic,
+                    zmq_endpoint,
+                    gpu_ipc_host,
+                )
+                service.tensor_transports = tuple(transport["tensor_transports"])
+                service.gpu_ipc = transport["gpu_ipc"]
+                if transport["rdma"] is not None:
+                    service.communication.identity = RdmaIdentity.model_validate(
+                        transport["rdma"]
+                    )
                 connector_initialized = True
             yield
         finally:
             service.accepting = False
             try:
-                for session_id in (
-                    list(service.drafts) + list(service.targets) + list(service.closing)
-                ):
-                    await service.close_session(session_id)
-                if connector_initialized:
-                    await service.drain_transfers()
+                sessions = (
+                    service.drafts.keys()
+                    | service.targets.keys()
+                    | service.closing.keys()
+                )
+                results = await asyncio.gather(
+                    *(service.close_session(session_id) for session_id in sessions),
+                    return_exceptions=True,
+                )
+                try:
+                    if connector_initialized or not service.tensor_transports:
+                        await service.drain_transfers()
+                finally:
+                    for result in results:
+                        if isinstance(result, BaseException):
+                            raise result
             finally:
-                engine.shutdown()
+                try:
+                    await service.communication.close()
+                finally:
+                    engine.shutdown()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -870,17 +1073,40 @@ def create_app(
                 service.drafts.keys() | service.targets.keys() | service.closing.keys()
             ),
             "candidate_format": "token_ids_log_probs"
-            if service.rdma
+            if service.tensor_transports
             else "greedy_token_ids",
-            "token_budget": service.budget,
+            "tensor_transports": service.tensor_transports,
+            "gpu_ipc": service.gpu_ipc,
+            "rdma": service.communication.identity.model_dump()
+            if service.communication.identity
+            else None,
+            "rdma_failed_peers": [
+                peer.instance_id
+                for peer, connection in service.communication.peers.items()
+                if connection.invalid
+            ],
+            "default_draft_tokens": service.default_draft_tokens,
+            "max_candidate_tokens": service.max_candidate_tokens,
             "kv_migration": service.migration_enabled,
             "context_profile": service.context_profile,
+            "protocol_version": ROLE_PROTOCOL_VERSION,
         }
         if observations:
-            transport = await service.worker("dt_status") if service.rdma else None
+            transport = (
+                await service.worker("dt_status") if service.tensor_transports else None
+            )
             result["retained_artifacts"] = (
                 transport["retained_artifacts"] if transport else 0
             )
+            result["transport"] = transport
+            result["rdma_connections"] = {
+                "peers": len(service.communication.peers),
+                "verifications": service.communication.verifications,
+                "pending_operations": sum(
+                    len(peer.operations)
+                    for peer in service.communication.peers.values()
+                ),
+            }
             result["workload"] = await service.engine.workload()
         return result
 
@@ -890,6 +1116,18 @@ def create_app(
         """Keep the Service endpoint reachable for existing rounds during drain."""
         await status(observations=False)
         return {"healthy": True}
+
+    @app.post("/profiling")
+    async def profiling(request: ProfileOperation):
+        """Bridge supervised capture to native utilities without creating another capture owner."""
+        service = app.state.service
+        if request.directory is not None:
+            await service.worker("foretoken_mctracer", request.start, request.directory)
+        elif request.start:
+            await service.engine.start_profile()
+        else:
+            await service.engine.stop_profile()
+        return {"completed": True}
 
     @app.get("/v1/internal/telemetry")
     async def telemetry():
@@ -933,8 +1171,52 @@ def create_app(
         service.require_role("draft")
         service.validate_tokens(request.token_ids)
         service.validate_sampling(request.sampling)
+        if request.tensor_transport is None:
+            request.tensor_transport = (
+                service.tensor_transports[0] if service.tensor_transports else None
+            )
+        elif request.tensor_transport not in service.tensor_transports:
+            raise HTTPException(422, "selected tensor transport is not initialized")
         return StreamingResponse(
             service.open_draft(request), media_type="application/x-ndjson"
+        )
+
+    @app.get("/sessions/{session_id}/state")
+    async def session_state(session_id: str):
+        """Report the existing close owner; closed proves native and buffer cleanup finished."""
+        service = app.state.service
+        closing = service.closing.get(session_id)
+        if closing is not None:
+            if closing.done() and (
+                closing.cancelled() or closing.exception() is not None
+            ):
+                return {"state": "failed"}
+            return {"state": "closing"}
+        return {
+            "state": "open"
+            if session_id in service.drafts or session_id in service.targets
+            else "closed"
+        }
+
+    @app.post("/transport/rdma/probe")
+    async def transport_probe(request: TransportPeer):
+        """Publish for a transport incarnation; the communication owner survives caller cancellation."""
+        service = app.state.service
+        connection = service.communication.accept(
+            request.identity, request.peer, request.peer_endpoint
+        )
+        artifact_id = await asyncio.shield(connection.start(connection.publish()))
+        return {"artifact_id": artifact_id}
+
+    @app.post("/transport/rdma/probe/read")
+    async def read_transport_probe(request: ReadTransportProbe):
+        """Read, ACK and verify a connection-owned probe independently of model sessions."""
+        service = app.state.service
+        connection = service.communication.accept(
+            request.identity, request.peer, request.peer_endpoint
+        )
+        return await asyncio.shield(
+            connection.start(connection.read(request.artifact_id))
         )
 
     @app.get("/sessions/{session_id}/kv")
@@ -955,7 +1237,7 @@ def create_app(
     @app.post("/sessions/{session_id}/propose")
     async def propose(session_id: str, request: Propose):
         """Return one candidate chain; the owning session stream controls abort."""
-        return await app.state.service.propose(session_id, request)
+        return await app.state.service.propose(session_id, request, work=request.work)
 
     @app.post("/sessions/{session_id}/commit")
     async def commit(session_id: str, request: Commit):
@@ -979,6 +1261,14 @@ def create_app(
         service.validate_tokens(request.token_ids)
         service.validate_tokens(request.stop_token_ids)
         service.validate_sampling(request.sampling)
+        if len(request.draft_endpoints) > 1:
+            raise HTTPException(422, "this protocol currently supports one bound Draft")
+        if request.draft_endpoints and (
+            not request.request_id or not request.target_endpoint
+        ):
+            raise HTTPException(
+                422, "a routed binding requires request_id and target_endpoint"
+            )
         if request.min_tokens > request.max_tokens:
             raise HTTPException(422, "min_tokens exceeds max_tokens")
 
@@ -995,6 +1285,10 @@ def create_app(
         """Export a paused Target generation; its session owns the unclaimed snapshot."""
         service = app.state.service
         service.require_role("target")
+        if session_id in service.coordinators:
+            raise HTTPException(
+                409, "checkpoint requires an unbound diagnostic session"
+            )
         if not service.migration_enabled:
             raise HTTPException(422, "Target KV migration is disabled")
         ticket = service.targets.get(session_id)
@@ -1002,30 +1296,37 @@ def create_app(
             raise HTTPException(409, "Target generation changed")
         artifact_id = uuid4().hex
         service.target_exports.setdefault(session_id, set()).add(artifact_id)
-        task = asyncio.create_task(
-            service.export_checkpoint(session_id, ticket, artifact_id)
+        task = service.start_operation(
+            session_id, service.export_checkpoint(session_id, ticket, artifact_id)
         )
-        service.transfers.add(task)
-        task.add_done_callback(service._transfer_finished)
         return await asyncio.shield(task)
 
     @app.post("/sessions/{session_id}/context")
-    async def context(session_id: str, request: ExportCheckpoint):
+    async def context(session_id: str, request: ExportContext):
         """Export the confirmed feature prefix for a neural Draft proposal."""
         service = app.state.service
         service.require_role("target")
         if service.context_profile is None:
             raise HTTPException(422, "Target feature export is disabled")
+        if request.tensor_transport not in service.tensor_transports:
+            raise HTTPException(422, "context tensor transport is not initialized")
+        coordinator = service.coordinators.get(session_id)
+        if (
+            coordinator is not None
+            and request.tensor_transport != coordinator.peer.tensor_transport
+        ):
+            raise HTTPException(422, "context transport differs from session binding")
         ticket = service.targets.get(session_id)
         if ticket is None or ticket.generation != request.version:
             raise HTTPException(409, "Target generation changed")
         artifact_id = uuid4().hex
         service.target_exports.setdefault(session_id, set()).add(artifact_id)
-        task = asyncio.create_task(
-            service.export_context(session_id, ticket, artifact_id)
+        task = service.start_operation(
+            session_id,
+            service.export_context(
+                session_id, ticket, artifact_id, request.tensor_transport
+            ),
         )
-        service.transfers.add(task)
-        task.add_done_callback(service._transfer_finished)
         return await asyncio.shield(task)
 
     @app.post("/resume")
@@ -1035,6 +1336,7 @@ def create_app(
         validate_generation(request.generation)
         if (
             not service.migration_enabled
+            or request.generation.draft_endpoints
             or request.generation.sampling.temperature != 0
             or request.generation.stop
             or request.checkpoint.token_ids != request.generation.token_ids
@@ -1056,17 +1358,9 @@ def create_app(
         service.require_role("target")
         if session_id not in service.targets:
             raise HTTPException(404, "target session is closed or unknown")
-        result = await service.verify_batch(
-            BatchVerify(
-                members=[BatchVerifyItem(session_id=session_id, **request.model_dump())]
-            )
-        )
-        return {"accepted": result["accepted"][0]}
-
-    @app.post("/batch/verify")
-    async def verify_batch(request: BatchVerify):
-        """Stage the round's tensors before releasing live batch members together."""
-        return await app.state.service.verify_batch(request)
+        if session_id in service.coordinators:
+            raise HTTPException(409, "the bound Target owns this request's rounds")
+        return {"accepted": await service.verify(session_id, request)}
 
     @app.post("/artifacts/{artifact_id}/claim")
     async def claim_artifact(artifact_id: str):
@@ -1081,7 +1375,8 @@ def create_app(
     async def release_artifact(artifact_id: str, request: ReleaseArtifact):
         """Release a claimed publication after Target guarantees no further read."""
         service = app.state.service
-        await service.worker("dt_release", artifact_id, request.publication_id)
+        await service.release_artifact(artifact_id, request.publication_id)
+        service.communication.released(artifact_id)
         for session in service.drafts.values():
             session.artifacts.discard(artifact_id)
         for exports in service.target_exports.values():
@@ -1093,5 +1388,14 @@ def create_app(
         """Idempotently close a session and abort its active engine request."""
         await app.state.service.close_session(session_id)
         return {"closed": True}
+
+    @app.delete("/artifacts/{artifact_id}")
+    async def revoke_artifact(artifact_id: str):
+        """Revoke unused work without releasing a source whose consumer still owes an ACK."""
+        service = app.state.service
+        await service.release_artifact(artifact_id)
+        for session in service.drafts.values():
+            session.artifacts.discard(artifact_id)
+        return {"revoked": True}
 
     return app

@@ -66,6 +66,15 @@ KV 索引不可用时，目标仍可参与路由，只是不享有缓存偏好�
 | `max` | 选择最高分目标。 |
 | `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
 
+## Draft/Target 路由
+
+DT 服务先从 `speculation.draftPools` 中具有健康兼容 Draft 的 Target 里选取 Target；
+兼容性包括候选格式、context profile，以及 Draft 方法是否支持 Target 的默认候选数。
+再通过相同配置的 Filter → Scorer → Picker 选择 Draft。两者的路由负载 reservation
+持续到请求结束。现有负载 scorer 使用原生 workload 快照；它不预留 token 工作，
+也不决定物理 batch。绑定在请求期间固定，由选中的 Target 推进轮次。详见
+[DT Frontend 流程](../../../dt-plugin/docs/frontend-workflow_zh.md)。
+
 ## 查看路由表现
 
 向服务发送流量时，在 [Grafana](../../../../observability/README_zh.md) 的路由选择区域比较选择份额、结果、可选目标和选择耗时。

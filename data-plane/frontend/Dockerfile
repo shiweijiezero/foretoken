@@ -28,6 +28,7 @@ COPY data-plane/ ./data-plane/
 # Debian releases are not interchangeable even with the same Rust version.
 # Retain prepared Rust inputs with their outputs, isolated from legacy builders.
 # Copy changed trees afresh so patch removals also receive mtimes Cargo can observe.
+# Reconstruct Rust-only inputs without retaining files added by prior patches.
 RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
     --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
@@ -49,6 +50,7 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
         && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
         && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
       fi \
+      && rm -rf data-plane/third_party/vllm \
       && mkdir -p data-plane/third_party/vllm \
       && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
     fi \

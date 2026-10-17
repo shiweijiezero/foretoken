@@ -219,6 +219,7 @@ def _charts(
                 "slo_slo_attainment", "exact_match_rate", "Time/SLO attainment (%)",
                 "speculative_decoding_acceptance_ratio", "speculative_decoding_draft_time_share_ratio",
                 "speculative_decoding_target_forward_time_share_ratio",
+                "draft_target_acceptance_ratio",
             }:
                 axis.set_ylim(-3, 103)
                 axis.set_yticks(range(0, 101, 20))

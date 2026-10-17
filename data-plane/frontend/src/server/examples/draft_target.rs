@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     io::stdin().read_to_string(&mut input)?;
     let request: GenerateInput = serde_json::from_str(&input)?;
     let mut stream = generate_draft_target_tokens(
-        RoleClient::new(args[0].clone())?,
+        vec![RoleClient::new(args[0].clone())?],
         RoleClient::new(args[1].clone())?,
         request.into(),
     )

@@ -8,7 +8,6 @@ mod cache;
 mod inventory;
 mod metrics;
 mod request;
-mod round;
 mod route_target_stats;
 mod routing_load;
 pub use foretoken_serving_types::{
@@ -25,7 +24,6 @@ pub use algorithm::{
 pub use inventory::{ModelRouteTable, RouteDecision, RouteInventory};
 pub use metrics::render_metrics;
 pub use request::RouterRequest;
-pub use round::{DraftTargetPlacement, DraftTargetRoundRoute};
 pub use route_target_stats::RouteTargetStatsReader;
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage, PickerAlgorithm,

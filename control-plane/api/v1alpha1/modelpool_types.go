@@ -180,9 +180,14 @@ type NormalizedPoolTemplate struct {
 
 	Role ModelRole `json:"role"`
 
-	// SpeculationRole is derived from the ModelService speculation binding.
+	// SpeculationRole is derived from Target-to-Draft pool references.
 	// +optional
 	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
+
+	// DraftPools retains the Target's committed discovery scope.
+	// +optional
+	// +listType=set
+	DraftPools []string `json:"draftPools,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	NodeCount int32 `json:"nodeCount"`

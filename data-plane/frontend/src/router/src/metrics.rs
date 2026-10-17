@@ -291,10 +291,9 @@ impl RouterMetricsScope {
                 "invalid_picker"
             }
             Err(
-                RouteError::InvalidBatch
-                | RouteError::BatchRoutingUnsupported
-                | RouteError::PrefillBeforeEncoder
-                | RouteError::DecodeBeforePrefill,
+                RouteError::PrefillBeforeEncoder
+                | RouteError::DecodeBeforePrefill
+                | RouteError::DraftBeforeTarget,
             ) => "invalid_sequence",
         };
         let labels = OutcomeLabels {

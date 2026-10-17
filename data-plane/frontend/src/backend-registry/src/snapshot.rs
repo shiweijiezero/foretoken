@@ -37,6 +37,9 @@ pub struct ServingSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotDtComponent {
+    /// Committed Draft-pool references for a Target; empty for Draft components.
+    #[serde(default)]
+    pub draft_pools: Vec<String>,
     #[serde(default)]
     pub max_input_tokens: Option<usize>,
     pub service_uid: String,

@@ -173,6 +173,16 @@ class PrometheusObserver:
             "spec_acceptance_ratio": f"({accepted}) / (({proposed}) > 0)",
             "spec_accepted_tokens_per_draft": f"({accepted}) / (({iterations}) > 0)",
         })
+        dt_scope = self._dt_selector()
+        dt_labels = "model_name,phase,outcome,stage"
+        dt_seconds = f"sum by ({dt_labels}) (rate(foretoken_dt_stage_seconds_sum{{{dt_scope}}}[1m]))"
+        dt_count = f"sum by ({dt_labels}) (rate(foretoken_dt_stage_seconds_count{{{dt_scope}}}[1m]))"
+        expressions.update({
+            "dt_rounds_per_second": f"sum by ({dt_labels}) (rate(foretoken_dt_rounds_total{{{dt_scope}}}[1m]))",
+            "dt_tokens_per_second": f"sum by ({dt_labels}) (rate(foretoken_dt_tokens_total{{{dt_scope}}}[1m]))",
+            "dt_stage_mean_seconds": f"({dt_seconds}) / (({dt_count}) > 0)",
+            "dt_transfer_bytes_per_second": f"sum by ({dt_labels}) (rate(foretoken_dt_transfer_bytes_total{{{dt_scope}}}[1m]))",
+        })
         observed_at = time.time()
         queries = {}
         for name, expression in expressions.items():
@@ -200,6 +210,74 @@ class PrometheusObserver:
             return None
         namespace = json.dumps(self._service.model_service_refs[0].namespace)
         return f'namespace={namespace},pod=~{json.dumps(pods)},container="model-server"'
+
+    def _dt_selector(self) -> str:
+        """Select DT observations for the benchmark's frontend and logical models."""
+        deployment = self._service.deployment
+        if deployment is None:
+            raise DeploymentError("DT observation requires a Kustomize frontend")
+        selected = (self._service.model,) if self._service.model else self._service.models
+        models = "|".join(re.escape(model) for model in selected)
+        return (
+            f'namespace={json.dumps(deployment.namespace)},endpoint="http",'
+            f'inference_foretoken_io_frontend_service={json.dumps(deployment.frontend)},'
+            f'model_name=~{json.dumps(models)}'
+        )
+
+    def _measure_dt_window(self, duration_seconds: float, ended_at: float) -> dict[str, Any] | None:
+        """Estimate DT counters and wall times; preserve phase/outcome evidence for saved results."""
+        window_ms = round(duration_seconds * 1000)
+        if self._kubectl is None or self._prometheus is None or window_ms < 1:
+            return None
+        scope = self._dt_selector()
+        queries = {}
+        values = {}
+        for name, metric in (
+            ("rounds", "foretoken_dt_rounds_total"),
+            ("admissions", "foretoken_dt_admissions_total"),
+            ("tokens", "foretoken_dt_tokens_total"),
+            ("seconds", "foretoken_dt_stage_seconds_sum"),
+            ("observations", "foretoken_dt_stage_seconds_count"),
+            ("bytes", "foretoken_dt_transfer_bytes_total"),
+        ):
+            expression = (
+                f"sum by (phase,outcome,stage) (increase({metric}{{{scope}}}"
+                f"[{window_ms}ms] @ {ended_at:.3f}))"
+            )
+            result = list(prometheus_query(self._kubectl, self._prometheus, expression, _REQUEST_TIMEOUT))
+            queries[name] = {"expression": expression, "result": result}
+            for item in result:
+                labels = item["metric"]
+                value = float(item["value"][1])
+                # Progress rounds carry most execution work; terminal rounds
+                # alone omit almost every proposal in a long generation.
+                if labels["phase"] == "verify" and math.isfinite(value):
+                    key = (name, labels["outcome"] if name == "admissions" else labels["stage"])
+                    values[key] = values.get(key, 0.0) + value
+        if not any(query["result"] for query in queries.values()):
+            return None
+        rounds = values.get(("rounds", "round"))
+        accepted = values.get(("tokens", "accepted"))
+        verified = values.get(("tokens", "verified"))
+        summary = {
+            "window_seconds": duration_seconds,
+            "window_end_unix_seconds": ended_at,
+            "queries": queries,
+            "rounds_estimate": rounds,
+            "accepted_tokens_estimate": accepted,
+            "verified_tokens_estimate": verified,
+            "acceptance_ratio": accepted / verified if accepted is not None and verified else None,
+            "accepted_tokens_per_round": accepted / rounds if accepted is not None and rounds else None,
+            "transfer_bytes_estimate": values.get(("bytes", "transfer")),
+            "context_transfer_bytes_estimate": values.get(("bytes", "context_transfer")),
+            "admitted_submissions_estimate": values.get(("admissions", "admitted")),
+            "rejected_submissions_estimate": values.get(("admissions", "rejected")),
+        }
+        for stage in ("round", "draft", "target", "transfer_read", "transfer_prepare", "context_read", "context_prepare"):
+            seconds = values.get(("seconds", stage))
+            count = values.get(("observations", stage))
+            summary[f"{stage}_mean_seconds"] = seconds / count if seconds is not None and count else None
+        return summary
 
     def _measure_resource_window(self, time_origin: float, duration_seconds: float, ended_at: float) -> dict[str, Any] | None:
         """Estimate container CPU counters within the formal measurement window, including retired Pods."""
@@ -320,10 +398,12 @@ class PrometheusObserver:
         self.close()
         prometheus = self._prometheus
         summary = None
+        dt_summary = None
         resources = None
         if ended_at is not None and duration_seconds is not None:
             try:
                 summary = self._measure_spec_window(duration_seconds, ended_at)
+                dt_summary = self._measure_dt_window(duration_seconds, ended_at)
             except (DeploymentError, KeyError, TypeError, ValueError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
@@ -362,6 +442,7 @@ class PrometheusObserver:
             "last_error": self._last_error,
             "samples": rows,
             "speculative_decoding": summary,
+            "draft_target": dt_summary,
             "resources": resources,
         }
 

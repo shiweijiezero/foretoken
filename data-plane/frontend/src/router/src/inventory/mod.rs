@@ -20,16 +20,16 @@ pub trait RouteInventory: Send + Sync {
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
 
-    /// Returns the live DT candidate format; absent observations cannot form a DT pair.
-    fn draft_target_format(
-        &self,
-        _route_target_id: &RouteTargetId,
-    ) -> Option<foretoken_model_protocol::DraftTargetCandidateFormat> {
-        None
+    /// Returns a Target's compatible Draft pools; an empty list permits no Draft assignments.
+    fn draft_pools(&self, _route_target_id: &RouteTargetId) -> &[String] {
+        &[]
     }
 
-    /// Returns the hidden-state context contract observed for a DT role, if required.
-    fn draft_target_context(&self, _route_target_id: &RouteTargetId) -> Option<serde_json::Value> {
+    /// Returns live DT method limits and Target policy for binding compatibility.
+    fn draft_target_capabilities(
+        &self,
+        _route_target_id: &RouteTargetId,
+    ) -> Option<foretoken_model_protocol::DraftTargetCapabilities> {
         None
     }
 

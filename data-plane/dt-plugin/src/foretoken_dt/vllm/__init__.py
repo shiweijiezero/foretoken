@@ -3,6 +3,8 @@
 
 """Pinned native-vLLM integration for Foretoken's independent DT roles."""
 
+import logging
+import os
 from importlib.metadata import PackageNotFoundError, version
 
 SUPPORTED_VLLM_VERSION = "0.31.0"
@@ -33,3 +35,4 @@ def register() -> None:
     from .engine import install_engine_patches
 
     install_engine_patches()
+    logging.getLogger(__name__).debug("DT engine hooks loaded pid=%s", os.getpid())

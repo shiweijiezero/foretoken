@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -65,7 +67,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		return nil, err
 	}
 	if spec.Backend == "vllm-omni" {
-		if spec.Speculation != nil {
+		if slices.ContainsFunc(spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool { return pool.Speculation != nil }) {
 			return nil, fmt.Errorf("speculation requires the vllm backend")
 		}
 		if spec.InstanceAdmission != nil {
@@ -128,11 +130,12 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
-		if spec.Speculation != nil {
+		if entry.Speculation != nil {
 			pool.Template.SpeculationRole = inferencev1alpha1.SpeculationRoleTarget
-			if entry.Name == spec.Speculation.DraftPool {
-				pool.Template.SpeculationRole = inferencev1alpha1.SpeculationRoleDraft
-			}
+			pool.Template.DraftPools = slices.Clone(entry.Speculation.DraftPools)
+			slices.Sort(pool.Template.DraftPools)
+		} else if entry.Model != "" {
+			pool.Template.SpeculationRole = inferencev1alpha1.SpeculationRoleDraft
 		}
 		if entry.Model != "" {
 			if source != inferencev1alpha1.ModelSourceLocal && path.IsAbs(entry.Model) {
@@ -140,7 +143,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 			}
 			pool.Template.Model = entry.Model
 		}
-		if spec.Speculation != nil && source == inferencev1alpha1.ModelSourceLocal {
+		if pool.Template.SpeculationRole != "" && source == inferencev1alpha1.ModelSourceLocal {
 			if !path.IsAbs(pool.Template.Model) || !path.IsAbs(pool.Template.Tokenizer) {
 				return nil, fmt.Errorf("modelPools %q: local DT model and tokenizer require absolute container paths", entry.Name)
 			}
@@ -155,101 +158,100 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	return pools, nil
 }
 
-// compileNeuralSpeculation shares the Draft pool's native proposal profile with every verifier.
-// Neural roles load the service model as their base and prepare proposal weights separately.
+// compileNeuralSpeculation derives each Target's profile from its referenced Draft pools.
+// Native neural adapters currently require one profile per engine; independent Draft models
+// can differ. All roles retain independent resources and replica lifecycles.
 func compileNeuralSpeculation(spec inferencev1alpha1.ModelServiceSpec, pools []ModelPool) error {
-	if spec.Speculation == nil {
-		return nil
-	}
-	var draft *ModelPool
+	profiles := make(map[string]*apiextensionsv1.JSON)
 	for index := range pools {
-		if pools[index].Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
-			draft = &pools[index]
-			break
+		draft := &pools[index].Template
+		if draft.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft {
+			continue
+		}
+		profile, err := vllm.CompileDraftSpeculation(spec.Model, draft.Model, draft.EngineArgs)
+		if err != nil {
+			return fmt.Errorf("modelPools %q: %w", pools[index].Name, err)
+		}
+		profiles[pools[index].Name] = profile
+		if profile != nil {
+			draft.EngineArgs = draft.EngineArgs.DeepCopy()
+			delete(draft.EngineArgs, "speculative_config")
+			draft.EngineArgs["speculative-config"] = *profile.DeepCopy()
+			draft.Model = spec.Model
 		}
 	}
-	var profile *apiextensionsv1.JSON
-	for name, value := range draft.Template.EngineArgs {
-		if strings.ReplaceAll(name, "_", "-") == "speculative-config" {
-			if profile != nil {
-				return fmt.Errorf("draftPool repeats speculative-config with different spellings")
+	for index := range pools {
+		target := &pools[index].Template
+		if target.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget {
+			continue
+		}
+		profile := profiles[target.DraftPools[0]]
+		for _, name := range target.DraftPools[1:] {
+			other := profiles[name]
+			if (profile == nil) != (other == nil) || profile != nil && !bytes.Equal(profile.Raw, other.Raw) {
+				return fmt.Errorf("modelPools %q: this Target adapter requires the same neural speculative-config for all referenced Draft pools", pools[index].Name)
 			}
-			profile = value.DeepCopy()
 		}
-	}
-	if profile == nil {
-		return nil
-	}
-	var config map[string]json.RawMessage
-	if err := json.Unmarshal(profile.Raw, &config); err != nil || config == nil {
-		return fmt.Errorf("draftPool engineArgs.speculative-config must be an object")
-	}
-	var method, model string
-	if value, exists := config["model"]; exists {
-		if err := json.Unmarshal(value, &model); err != nil {
-			return fmt.Errorf("draftPool speculative-config.model must be a string")
+		if profile == nil {
+			continue
 		}
-	}
-	if model != "" && model != draft.Template.Model {
-		return fmt.Errorf("draftPool speculative-config.model must match its model")
-	}
-	if value, exists := config["method"]; exists {
-		if err := json.Unmarshal(value, &method); err != nil {
-			return fmt.Errorf("draftPool speculative-config.method must be a string")
+		target.EngineArgs = target.EngineArgs.DeepCopy()
+		if target.EngineArgs == nil {
+			target.EngineArgs = make(inferencev1alpha1.EngineArguments)
 		}
-	}
-	if model != "" || method != "mtp" || draft.Template.Model != spec.Model {
-		config["model"], _ = json.Marshal(draft.Template.Model)
-	}
-	raw, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	for index := range pools {
-		template := &pools[index].Template
-		template.EngineArgs = template.EngineArgs.DeepCopy()
-		if template.EngineArgs == nil {
-			template.EngineArgs = make(inferencev1alpha1.EngineArguments)
-		}
-		delete(template.EngineArgs, "speculative_config")
-		template.EngineArgs["speculative-config"] = apiextensionsv1.JSON{Raw: raw}
-		if template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft {
-			template.Model = spec.Model
-		}
+		target.EngineArgs["speculative-config"] = *profile.DeepCopy()
 	}
 	return nil
 }
 
-// validateSpeculation checks the user binding before deriving per-pool responsibilities.
+// validateSpeculation checks Target references before deriving roles or native profiles.
 func validateSpeculation(spec inferencev1alpha1.ModelServiceSpec) error {
-	foundDraft := false
+	byName := make(map[string]inferencev1alpha1.ModelPoolTemplate)
+	draftPools := make(map[string]bool)
+	enabled := false
 	for _, pool := range spec.ModelPools {
-		isDraft := spec.Speculation != nil && pool.Name == spec.Speculation.DraftPool
-		if pool.Model != "" && !isDraft {
-			return fmt.Errorf("modelPools %q: model override requires speculation.draftPool", pool.Name)
-		}
-		if spec.Speculation == nil {
+		byName[pool.Name] = pool
+	}
+	for _, target := range spec.ModelPools {
+		if target.Speculation == nil {
 			continue
 		}
-		if !isDraft && pool.EngineArgs != nil {
-			for name := range *pool.EngineArgs {
-				if strings.ReplaceAll(name, "_", "-") == "speculative-config" {
-					return fmt.Errorf("modelPools %q: configure speculative-config on speculation.draftPool", pool.Name)
-				}
+		enabled = true
+		if len(target.Speculation.DraftPools) == 0 || target.Model != "" {
+			return fmt.Errorf("modelPools %q: Target speculation requires draftPools and cannot override model", target.Name)
+		}
+		for _, name := range target.Speculation.DraftPools {
+			draft, exists := byName[name]
+			if !exists || draft.Model == "" || draft.Speculation != nil {
+				return fmt.Errorf("modelPools %q: draftPools %q must reference a Draft pool with model weights", target.Name, name)
 			}
+			draftPools[name] = true
+		}
+	}
+	for _, pool := range spec.ModelPools {
+		if pool.Model != "" && !draftPools[pool.Name] {
+			return fmt.Errorf("modelPools %q: model override requires a referencing Target speculation.draftPools", pool.Name)
+		}
+		if !enabled {
+			continue
 		}
 		if pool.Role != "" && pool.Role != inferencev1alpha1.ModelRoleAggregate {
 			return fmt.Errorf("speculation currently requires aggregate modelPools")
 		}
-		if isDraft {
-			if pool.Model == "" {
-				return fmt.Errorf("modelPools %q: speculation.draftPool requires model", pool.Name)
-			}
-			foundDraft = true
+		if !draftPools[pool.Name] && pool.Speculation == nil {
+			return fmt.Errorf("modelPools %q: a DT Target must declare speculation.draftPools", pool.Name)
 		}
-	}
-	if spec.Speculation != nil && (!foundDraft || len(spec.ModelPools) < 2) {
-		return fmt.Errorf("speculation requires a named draftPool and at least one main model pool")
+		if pool.Speculation != nil {
+			args := spec.EngineArgs
+			if pool.EngineArgs != nil {
+				args = *pool.EngineArgs
+			}
+			for name := range args {
+				if strings.ReplaceAll(name, "_", "-") == "speculative-config" {
+					return fmt.Errorf("modelPools %q: configure speculative-config on its referenced Draft pools", pool.Name)
+				}
+			}
+		}
 	}
 	return nil
 }

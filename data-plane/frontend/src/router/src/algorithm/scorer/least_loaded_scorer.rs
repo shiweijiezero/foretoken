@@ -44,6 +44,14 @@ impl RouteScorer for LeastLoadedScorer {
                     load: load(candidate)
                         .saturating_add(downstream_load)
                         .saturating_neg(),
+                    reserved_requests: if matches!(
+                        candidate.role,
+                        ModelServerRole::Draft | ModelServerRole::Target
+                    ) {
+                        candidate.local_load.requests.saturating_neg()
+                    } else {
+                        0
+                    },
                     ..RouteScore::default()
                 }
             })

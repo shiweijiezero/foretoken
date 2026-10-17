@@ -12,7 +12,8 @@ use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::draft_target::{RoleClient, RoleStatus};
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    DraftTargetCandidateFormat, PreparedTokenizer, RuntimeMetadataResponse, TelemetryResponse,
+    DRAFT_TARGET_PROTOCOL_VERSION, DraftTargetCapabilities, PreparedTokenizer,
+    RuntimeMetadataResponse, TelemetryResponse,
 };
 
 use foretoken_model_protocol::ModelServerRole;
@@ -39,11 +40,11 @@ pub struct BackendRegistry {
 /// One validated probe's runtime metadata, including a DT role finishing owned sessions.
 struct BackendMetadata {
     runtime: RuntimeMetadataResponse,
-    candidate_format: Option<DraftTargetCandidateFormat>,
-    context_profile: Option<serde_json::Value>,
+    draft_target: Option<DraftTargetCapabilities>,
 }
 pub(crate) enum Component {
     DraftTarget {
+        draft_pools: Vec<String>,
         endpoint: String,
         client: RoleClient,
         role: ModelServerRole,
@@ -262,10 +263,6 @@ impl BackendRegistry {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
-        let mut dt_scopes = BTreeMap::<
-            (String, String, DraftTargetCandidateFormat, Option<String>),
-            (bool, bool),
-        >::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
             if !allowed_pools.is_empty() && !allowed_pools.contains(&route.target.name) {
@@ -281,24 +278,22 @@ impl BackendRegistry {
                 continue;
             };
             if matches!(route.role, ModelServerRole::Draft | ModelServerRole::Target) {
-                let Some(format) = self.draft_target_format(&route.route_target_id) else {
-                    continue;
-                };
-                let roles = dt_scopes
-                    .entry((
-                        route.model.clone(),
-                        pipeline_scope_id.clone(),
-                        format,
-                        self.draft_target_context(&route.route_target_id)
-                            .map(|context| context.to_string()),
-                    ))
-                    .or_default();
-                if self.is_route_target_healthy(&route.route_target_id) {
-                    if route.role == ModelServerRole::Draft {
-                        roles.0 = true;
-                    } else {
-                        roles.1 = true;
-                    }
+                if route.role == ModelServerRole::Target
+                    && self.is_route_target_healthy(&route.route_target_id)
+                    && self.model_routes.routes().iter().any(|draft| {
+                        draft.role == ModelServerRole::Draft
+                            && draft.pipeline_scope_id.as_ref() == Some(pipeline_scope_id)
+                            && self
+                                .draft_pools(&route.route_target_id)
+                                .contains(&draft.target.name)
+                            && self.is_route_target_healthy(&draft.route_target_id)
+                            && self
+                                .draft_target_capabilities(&draft.route_target_id)
+                                .zip(self.draft_target_capabilities(&route.route_target_id))
+                                .is_some_and(|(draft, target)| draft.supports_target(&target))
+                    })
+                {
+                    models.insert(route.model.clone());
                 }
                 continue;
             }
@@ -326,11 +321,6 @@ impl BackendRegistry {
                 models.insert(model);
             }
         }
-        for ((model, _, _, _), (draft, target)) in dt_scopes {
-            if draft && target {
-                models.insert(model);
-            }
-        }
         models.into_iter().collect()
     }
     /// Health, runtime metadata, and telemetry are per physical component.
@@ -352,7 +342,8 @@ impl BackendRegistry {
                     telemetry(&self.health_client, c.endpoint()),
                 );
                 let status = status.filter(|status| {
-                    status.token_budget > 0
+                    status.protocol_version == DRAFT_TARGET_PROTOCOL_VERSION
+                        && status.candidates.is_valid_for(*role)
                         && status.max_model_len > 0
                         && status.role
                             == if *role == ModelServerRole::Draft {
@@ -373,8 +364,7 @@ impl BackendRegistry {
                     .find(|route| route.route_target_id == *id)
                     .expect("component has a route");
                 let metadata = status.map(|status| BackendMetadata {
-                    candidate_format: Some(status.candidate_format),
-                    context_profile: status.context_profile,
+                    draft_target: Some(status.candidates),
                     runtime: RuntimeMetadataResponse {
                         version: 1,
                         model: foretoken_model_protocol::RuntimeModelIdentity {
@@ -412,8 +402,7 @@ impl BackendRegistry {
                 healthy,
                 metadata.filter(|_| healthy).map(|runtime| BackendMetadata {
                     runtime,
-                    candidate_format: None,
-                    context_profile: None,
+                    draft_target: None,
                 }),
                 stats,
             )
@@ -500,20 +489,19 @@ impl RouteInventory for BackendRegistry {
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
 
-    fn draft_target_format(&self, id: &RouteTargetId) -> Option<DraftTargetCandidateFormat> {
-        self.metadata
-            .lock()
-            .expect("metadata mutex")
-            .get(id)?
-            .candidate_format
+    fn draft_pools(&self, id: &RouteTargetId) -> &[String] {
+        match self.components.get(id) {
+            Some(Component::DraftTarget { draft_pools, .. }) => draft_pools,
+            _ => &[],
+        }
     }
 
-    fn draft_target_context(&self, id: &RouteTargetId) -> Option<serde_json::Value> {
+    fn draft_target_capabilities(&self, id: &RouteTargetId) -> Option<DraftTargetCapabilities> {
         self.metadata
             .lock()
             .expect("metadata mutex")
             .get(id)?
-            .context_profile
+            .draft_target
             .clone()
     }
 

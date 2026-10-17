@@ -385,6 +385,26 @@ impl RequestLedger {
         Ok(())
     }
 
+    /// Returns a definitely unexecuted DT binding to frontend ownership after role cleanup.
+    /// The original reservation stays charged until frontend retry; the refusing owner is fenced.
+    pub async fn return_before_submission(
+        &self,
+        reservation: &ReservationRef,
+        owner: &str,
+    ) -> Result<(), LedgerError> {
+        Self::outcome(
+            self.transition(
+                &reservation.scope,
+                &reservation.model,
+                "return_before_submission",
+                &reservation.request,
+                json!({"slot": reservation.slot, "owner": owner}),
+            )
+            .await?,
+        )?;
+        Ok(())
+    }
+
     /// Releases a candidate after its execution owner has confirmed terminal engine state.
     pub async fn complete(
         &self,

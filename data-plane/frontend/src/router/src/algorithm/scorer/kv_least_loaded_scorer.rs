@@ -85,6 +85,14 @@ impl RouteScorer for KvLeastLoadedScorer {
                     tier_preference: tier,
                     locality_preference: locality,
                     load: load(candidate).saturating_add(downstream).saturating_neg(),
+                    reserved_requests: if matches!(
+                        candidate.role,
+                        ModelServerRole::Draft | ModelServerRole::Target
+                    ) {
+                        candidate.local_load.requests.saturating_neg()
+                    } else {
+                        0
+                    },
                     ..RouteScore::default()
                 }
             })

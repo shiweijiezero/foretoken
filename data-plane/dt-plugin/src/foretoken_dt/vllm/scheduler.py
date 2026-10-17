@@ -5,6 +5,7 @@
 
 import time
 from importlib.metadata import version
+from uuid import uuid4
 
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
@@ -21,6 +22,8 @@ class ObservedScheduler(Scheduler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dt_observations = {}
+        self.dt_instance = uuid4().hex
+        self.dt_batch_sequence = 0
         # MetaX retains the 0.30 core; 0.31 splits blocked requests from KV holders.
         self.dt_waiting_queues = (
             self.waiting,
@@ -31,6 +34,7 @@ class ObservedScheduler(Scheduler):
 
     def add_request(self, request: Request) -> None:
         """Start timing at native admission, independently of HTTP session lifetime."""
+        identity = (request.sampling_params.extra_args or {}).get("dt_work")
         self.dt_observations[request.request_id] = {
             "ready_at": time.monotonic(),
             "remote_since": None,
@@ -45,6 +49,10 @@ class ObservedScheduler(Scheduler):
                 "preemptions": 0,
             },
             "outputs": {},
+            "physical_batches": [],
+            "work": identity,
+            "client_request_id": identity["request_id"] if identity else None,
+            "initial_frontier": identity["frontier"] if identity else None,
         }
         super().add_request(request)
 
@@ -53,8 +61,32 @@ class ObservedScheduler(Scheduler):
         output = super().schedule(throttle_prefills)
         now = time.monotonic()
         output.dt_started_at = now
+        output.dt_started_at_unix_ms = time.time_ns() // 1_000_000
+        self.dt_batch_sequence += 1
+        output.dt_batch_id = f"{self.dt_instance}:{self.dt_batch_sequence}"
+        output.dt_members = []
         for req_id, count in output.num_scheduled_tokens.items():
             record = self.dt_observations[req_id]
+            # Native abort may remove the request while this forward is in flight.
+            # Capture membership/frontier at scheduling, alongside token accounting.
+            output.dt_members.append(
+                {
+                    "engine_request_id": req_id,
+                    "request_id": record["client_request_id"],
+                    "confirmed_frontier": (
+                        record["initial_frontier"]
+                        + (
+                            self.requests[req_id].num_output_tokens
+                            if isinstance(self, ExternalScheduler)
+                            else 0
+                        )
+                        if record["initial_frontier"] is not None
+                        else None
+                    ),
+                    "work": record["work"],
+                    "scheduled_tokens": count,
+                }
+            )
             if record["ready_at"] is not None:
                 record["totals"]["queue_seconds"] += now - record["ready_at"]
             record["ready_at"] = None
@@ -64,7 +96,20 @@ class ObservedScheduler(Scheduler):
     def update_from_output(self, scheduler_output, model_runner_output):
         """Capture sampler acceptance before stop truncation and post-output KV residency."""
         now = time.monotonic()
+        batch = {
+            "batch_id": scheduler_output.dt_batch_id,
+            "started_at_unix_ms": scheduler_output.dt_started_at_unix_ms,
+            "finished_at_unix_ms": time.time_ns() // 1_000_000,
+            "scheduled_tokens": scheduler_output.total_num_scheduled_tokens,
+            "scheduled_seconds": now - scheduler_output.dt_started_at,
+            "members": scheduler_output.dt_members,
+        }
         for req_id in scheduler_output.num_scheduled_tokens:
+            # Match native update_from_output's abort handling. The physical batch
+            # retains the scheduled member even if its session no longer consumes output.
+            if req_id not in self.requests:
+                continue
+            self.dt_observations[req_id]["physical_batches"].append(batch)
             record = self.dt_observations[req_id]
             totals = record["totals"]
             totals["scheduled_seconds"] += now - scheduler_output.dt_started_at
@@ -98,6 +143,7 @@ class ObservedScheduler(Scheduler):
                     "batch_requests": len(scheduler_output.num_scheduled_tokens),
                     "batch_tokens": scheduler_output.total_num_scheduled_tokens,
                     "kv": self.dt_request_kv(req_id),
+                    "physical_batches": list(record["physical_batches"]),
                 }
         return outputs
 
@@ -174,6 +220,7 @@ class ObservedScheduler(Scheduler):
                 for r in ready
             ),
             "max_num_seqs": self.scheduler_config.max_num_seqs,
+            "max_num_batched_tokens": self.scheduler_config.max_num_batched_tokens,
             "kv_cache_usage": manager.usage,
             "kv_capacity_blocks": capacity,
             "kv_used_blocks": capacity - pool.get_num_free_blocks(),
@@ -183,7 +230,20 @@ class ObservedScheduler(Scheduler):
         """Consume one output's cumulative measurements, retaining no completed history."""
         outputs = self.dt_observations[request_id]["outputs"]
         key = max(outputs) if finished else generation
-        result = outputs[key]
+        result = dict(outputs[key])
+        consumed_batches = {batch["batch_id"] for batch in result["physical_batches"]}
+        record = self.dt_observations[request_id]
+        record["physical_batches"] = [
+            batch
+            for batch in record["physical_batches"]
+            if batch["batch_id"] not in consumed_batches
+        ]
+        for pending in outputs.values():
+            pending["physical_batches"] = [
+                batch
+                for batch in pending["physical_batches"]
+                if batch["batch_id"] not in consumed_batches
+            ]
         for consumed in [value for value in outputs if value <= key]:
             del outputs[consumed]
         return result
@@ -244,12 +304,19 @@ class ExternalScheduler(ObservedScheduler):
         self, request: Request, timestamp: float, drop_stale_output: bool = False
     ) -> None:
         """Invalidate remote admission before native KV release and prompt replay."""
+        # Replay is native recovery at the current confirmed frontier, not a
+        # second execution of the last completed verification work.
+        self.dt_observations[request.request_id]["work"] = None
         request.waiting_for_external_draft = False
         request.next_decode_eligible_step = 0
         super()._preempt_request(request, timestamp, drop_stale_output)
 
     def submit_external_draft_tokens(
-        self, request_id: str, generation: int, token_ids: list[int]
+        self,
+        request_id: str,
+        generation: int,
+        token_ids: list[int],
+        work: dict | None = None,
     ) -> bool:
         """Admit one ready round on EngineCore's loop; reject stale or closed tickets."""
         request = self.requests.get(request_id)
@@ -272,15 +339,23 @@ class ExternalScheduler(ObservedScheduler):
         record["totals"]["remote_wait_seconds"] += now - record["remote_since"]
         record["remote_since"] = None
         record["ready_at"] = now
+        record["work"] = work
         request.spec_token_ids = list(token_ids)
         request.waiting_for_external_draft = False
         request.next_decode_eligible_step = 0
         return True
 
     def has_schedulable_requests(self) -> bool:
-        """Let EngineCore sleep when only live remote waiters remain."""
+        """Let EngineCore sleep until remote input or native admission can progress."""
+        # Match native waiting-to-running admission, including slots retained by
+        # streaming input. A full set of remote waiters cannot admit queued work;
+        # candidate submission and abort wake EngineCore through its input queue.
+        can_admit = (
+            len(self.running) + self.num_waiting_for_streaming_input
+            < self.max_num_active_reqs
+        )
         return bool(
-            any(self.dt_waiting_queues)
+            (can_admit and any(self.dt_waiting_queues))
             or self.has_finished_requests()
             or any(not request.waiting_for_external_draft for request in self.running)
         )

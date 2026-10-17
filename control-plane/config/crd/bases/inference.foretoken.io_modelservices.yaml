@@ -317,7 +317,7 @@ spec:
                         x-kubernetes-preserve-unknown-fields: true
                       description: |-
                         EngineArgs replaces service-level native options for this Pool when supplied.
-                        Configure neural speculation on the Draft pool; its speculative-config is shared with Targets.
+                        Configure neural speculation on a Draft pool; referencing Targets derive its profile.
                       type: object
                     env:
                       description: Env replaces the service environment when supplied;
@@ -418,7 +418,7 @@ spec:
                       type: integer
                     model:
                       description: |-
-                        Model selects proposal weights for speculation.draftPool.
+                        Model selects proposal weights for a referenced Draft pool.
                         With native speculative-config, the service model remains the base model.
                         The source and tokenizer remain those of the ModelService.
                       maxLength: 1024
@@ -549,6 +549,23 @@ spec:
                       - prefill
                       - decode
                       type: string
+                    speculation:
+                      description: Speculation binds this Target pool to the Draft
+                        pools it may use.
+                      properties:
+                        draftPools:
+                          description: |-
+                            DraftPools names aggregate pools with explicit proposal model weights.
+                            Bounded by the service's modelPools cardinality for Kubernetes CEL evaluation.
+                          items:
+                            type: string
+                          maxItems: 32
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - draftPools
+                      type: object
                   required:
                   - name
                   - resources
@@ -775,19 +792,6 @@ spec:
                 - hf
                 - modelscope
                 type: string
-              speculation:
-                description: Speculation enables remote candidate generation using
-                  the named Draft pool.
-                properties:
-                  draftPool:
-                    description: DraftPool names one aggregate entry in modelPools
-                      with its own model weights.
-                    maxLength: 63
-                    minLength: 1
-                    type: string
-                required:
-                - draftPool
-                type: object
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
@@ -851,15 +855,17 @@ spec:
                 has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
                 has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
                 || pool.role == ''decode'')))'
-            - message: speculation requires an aggregate draftPool with model weights
-                and at least one main model pool
-              rule: '!has(self.speculation) || (has(self.modelPools) && size(self.modelPools)
-                >= 2 && self.modelPools.all(pool, !has(pool.role) || pool.role ==
-                ''aggregate'') && self.modelPools.exists(pool, pool.name == self.speculation.draftPool
-                && has(pool.model)))'
-            - message: only speculation.draftPool may override model
+            - message: Target speculation must reference aggregate Draft pools with
+                model weights
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.speculation)
+                || (!has(pool.model) && (!has(pool.role) || pool.role == ''aggregate'')
+                && pool.speculation.draftPools.all(name, self.modelPools.exists(draft,
+                draft.name == name && has(draft.model) && !has(draft.speculation)
+                && (!has(draft.role) || draft.role == ''aggregate'')))))'
+            - message: model overrides require a referencing Target speculation.draftPools
               rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model)
-                || (has(self.speculation) && pool.name == self.speculation.draftPool))'
+                || self.modelPools.exists(target, has(target.speculation) && pool.name
+                in target.speculation.draftPools))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.

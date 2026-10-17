@@ -32,6 +32,9 @@ pub enum RouteStage {
 pub enum LlmFacadeError {
     #[error("request is invalid for the selected backend")]
     InvalidRequest,
+    /// Caller-facing explanation authored by the adapter, never a remote error body.
+    #[error("{0}")]
+    UnsupportedRequest(&'static str),
     #[error("backend explicitly rejected acceptance because it is busy")]
     Busy,
     #[error("backend unavailable")]
@@ -194,7 +197,7 @@ pub trait LlmFacadeResolver: Send + Sync {
     /// connector; `None` prevents the workflow from admitting that staged request.
     fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
 
-    /// Opens the exact role chosen by Router for a DT workflow; no peer selection occurs here.
+    /// Opens the selected Target or a role diagnostic transport.
     fn resolve_draft_target(&self, _decision: &RouteDecision) -> Option<draft_target::RoleClient> {
         None
     }

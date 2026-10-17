@@ -182,6 +182,13 @@ spec:
                     - vllm
                     - vllm-omni
                     type: string
+                  draftPools:
+                    description: DraftPools retains the Target's committed discovery
+                      scope.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
                   ecProfile:
                     description: ECProfile is the controller-owned platform EC profile
                       selected for encoder and prefill Pools.
@@ -673,8 +680,8 @@ spec:
                       used by this Pool's Groups.
                     type: string
                   speculationRole:
-                    description: SpeculationRole is derived from the ModelService
-                      speculation binding.
+                    description: SpeculationRole is derived from Target-to-Draft pool
+                      references.
                     enum:
                     - draft
                     - target

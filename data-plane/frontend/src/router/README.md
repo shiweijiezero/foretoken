@@ -66,6 +66,17 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | `max` | Select the highest score. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
 
+## Draft/Target routing
+
+For DT services, Router first selects a Target with healthy compatible Draft pools
+from `speculation.draftPools`, matching candidate format, context and support for
+the Target's default candidate count, then selects a Draft through the same configured
+Filter → Scorer → Picker pipeline. Both routing-load reservations last through
+the request. Native workload snapshots inform existing load scorers; they do not
+reserve token work or dictate physical batching. The binding is fixed for the
+request, and the selected Target advances its rounds. See the
+[DT frontend workflow](../../../dt-plugin/docs/frontend-workflow.md).
+
 ## Inspect routing behavior
 
 Use the Routing decisions panels in [Grafana](../../../../observability/README.md) to compare selection shares, outcomes, eligible targets, and selection latency while sending traffic.

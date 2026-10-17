@@ -111,6 +111,9 @@ pub struct Tokenization {
 pub enum GenerationError {
     #[error("request is invalid")]
     InvalidRequest,
+    /// Safe request guidance supplied by the execution adapter for public API callers.
+    #[error("{0}")]
+    UnsupportedRequest(&'static str),
     #[error("model was not found")]
     ModelNotFound,
     #[error("no backend is available")]
@@ -152,6 +155,7 @@ impl From<LlmFacadeError> for GenerationError {
     fn from(error: LlmFacadeError) -> Self {
         match error {
             LlmFacadeError::InvalidRequest => Self::InvalidRequest,
+            LlmFacadeError::UnsupportedRequest(message) => Self::UnsupportedRequest(message),
             LlmFacadeError::Busy => Self::BackendBusy,
             LlmFacadeError::Unavailable => Self::Unavailable,
             LlmFacadeError::Rejected => Self::BackendRejected,
@@ -411,7 +415,6 @@ pub struct RuntimeState {
     stream_idle: Duration,
     models: BTreeMap<String, ModelRuntime>,
     video: Option<VideoBackendContext>,
-    draft_target: BTreeMap<String, crate::draft_target::DraftTargetScheduler>,
     preparation_targets: BTreeMap<String, PreparationTargets>,
     router: Arc<dyn Router>,
     resolver: Arc<dyn LlmFacadeResolver>,
@@ -434,26 +437,10 @@ impl RuntimeState {
             stream_idle,
             models,
             video: None,
-            draft_target: BTreeMap::new(),
             preparation_targets: BTreeMap::new(),
             router,
             resolver,
         }
-    }
-
-    /// Attaches model queues; request processors stay immutable while Draft placement refreshes.
-    pub fn with_draft_target_models(mut self, models: BTreeSet<String>) -> Self {
-        for model in models {
-            self.draft_target.insert(
-                model.clone(),
-                crate::draft_target::DraftTargetScheduler::new(
-                    model,
-                    self.router.clone(),
-                    self.resolver.clone(),
-                ),
-            );
-        }
-        self
     }
 
     /// Registers video models whose engine owns preprocessing, using the same route inventory.
@@ -590,21 +577,8 @@ impl RuntimeGeneration {
         }
         control.activate(version);
         self.admission.publish(version, admission);
-        // Every live Target session keeps its processor/session owner, but new Draft bindings
-        // use the current compatible inventory. Weak slots do not prolong completed requests.
-        publication.retain(|previous| {
-            let Some(previous) = previous.upgrade() else {
-                return false;
-            };
-            for (model, scheduler) in &previous.state.draft_target {
-                let replacement = state
-                    .draft_target
-                    .contains_key(model)
-                    .then(|| (state.router.clone(), state.resolver.clone()));
-                scheduler.retire(replacement);
-            }
-            true
-        });
+        // Active responses retain their original runtime and request processors.
+        publication.retain(|previous| previous.strong_count() != 0);
         let slot = Arc::new(RuntimeSlot {
             version,
             models: control.configured_models().into(),
@@ -665,13 +639,6 @@ impl RuntimeGeneration {
                 .map(|slot| slot.control.refresh_backend_readiness()),
         )
         .await;
-        // Retained Target sessions route against the latest inventory, whose refresh may finish
-        // after the original generation. Notify every queue only after observations are current.
-        for slot in &slots {
-            for scheduler in slot.state.draft_target.values() {
-                scheduler.refresh();
-            }
-        }
         if let Some(slot) = self.slot.load_full() {
             self.publication_updates.send_replace(slot.version);
         }
@@ -839,59 +806,43 @@ impl RuntimeGeneration {
             if !Arc::ptr_eq(&runtime.bundle, &active.state.model(&request.model)?.bundle) {
                 return Err(GenerationError::Unavailable);
             }
-            let (result, session) = if let Some(scheduler) =
-                active.state.draft_target.get(&request.model)
-            {
-                match scheduler
-                    .generate(generate_request.clone(), admission.clone(), rules)
-                    .await
-                {
-                    Ok(Some((decision, stream))) => break (decision, stream, None, Some(active)),
-                    Ok(None) => continue,
-                    Err(error) => (Err(error), None),
+            let mut context =
+                RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
+            context.allowed_pools = rules.allowed_pools;
+            context.busy_targets = busy_targets.clone();
+            let mut session = before_waiting_deadline(admission.waiting_deadline(), async {
+                Ok(active.state.router.start(context).await)
+            })
+            .await?;
+            let result = match session.select_initial() {
+                Ok(initial) => {
+                    let selected = (initial.route_target_id.clone(), initial.data_parallel_rank);
+                    let _queue =
+                        foretoken_metrics::QueueGuard::backend_dispatch(&initial.admission_targets);
+                    let result = execute_workflow(
+                        &*active.state.resolver,
+                        &mut *session,
+                        initial,
+                        generate_request.clone(),
+                        &admission,
+                        rules.priority,
+                    )
+                    .await;
+                    if matches!(result, Err(GenerationError::BackendBusy)) {
+                        busy_targets.push(selected);
+                    }
+                    result
                 }
-            } else {
-                let mut context =
-                    RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
-                context.allowed_pools = rules.allowed_pools;
-                context.busy_targets = busy_targets.clone();
-                let mut session = before_waiting_deadline(admission.waiting_deadline(), async {
-                    Ok(active.state.router.start(context).await)
-                })
-                .await?;
-                let result = match session.select_initial() {
-                    Ok(initial) => {
-                        let selected =
-                            (initial.route_target_id.clone(), initial.data_parallel_rank);
-                        let _queue = foretoken_metrics::QueueGuard::backend_dispatch(
-                            &initial.admission_targets,
-                        );
-                        let result = execute_workflow(
-                            &*active.state.resolver,
-                            &mut *session,
-                            initial,
-                            generate_request.clone(),
-                            &admission,
-                            rules.priority,
-                        )
-                        .await;
-                        if matches!(result, Err(GenerationError::BackendBusy)) {
-                            busy_targets.push(selected);
-                        }
-                        result
-                    }
-                    Err(foretoken_router::RouteError::Busy) => {
-                        // Every currently eligible target has been tried or policy-filtered. A
-                        // later admission turn starts a fresh round with fresh route observations.
-                        busy_targets.clear();
-                        Err(GenerationError::BackendBusy)
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                (result, Some(session))
+                Err(foretoken_router::RouteError::Busy) => {
+                    // Every currently eligible target has been tried or policy-filtered. A
+                    // later admission turn starts a fresh round with fresh route observations.
+                    busy_targets.clear();
+                    Err(GenerationError::BackendBusy)
+                }
+                Err(error) => return Err(error.into()),
             };
             match result {
-                Ok((decision, stream)) => break (decision, stream, session, None),
+                Ok((decision, stream)) => break (decision, stream, session, active),
                 Err(GenerationError::BackendBusy) => {
                     drop(session);
                     if !admission.retry().await? {
@@ -917,15 +868,15 @@ impl RuntimeGeneration {
             let mut response_started = false;
             while let Some(output) = backend_stream.next().await {
                 if !response_started {
-                    if let Some(session) = &mut session { session.response_started(); }
+                    session.response_started();
                     response_started = true;
                 }
                 let terminal = output.as_ref().map_or(true, |output| output.finish_reason.is_some());
-                if terminal && let Some(session) = &mut session { session.stage_complete(); }
+                if terminal { session.stage_complete(); }
                 yield output;
                 if terminal { break; }
             }
-            if let Some(session) = &mut session { session.stage_complete(); }
+            session.stage_complete();
         });
         let routed = RoutedGenerate {
             routed_request: RoutedRequest {
@@ -967,7 +918,7 @@ impl AdmissionObservation {
         let error = match error {
             GenerationError::QueueTimeout => AdmissionError::QueueTimeout,
             GenerationError::DeadlineExceeded => AdmissionError::DeadlineExceeded,
-            GenerationError::InvalidRequest => {
+            GenerationError::InvalidRequest | GenerationError::UnsupportedRequest(_) => {
                 attempt.invalid_request();
                 return;
             }

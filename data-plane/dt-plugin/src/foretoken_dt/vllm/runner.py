@@ -30,29 +30,12 @@ class _ProposalSampler(Sampler):
 
     capture_proposals = False
 
-    def _sample_random(
-        self,
-        processed_logits,
-        expanded_idx_mapping,
-        idx_mapping_np,
-        pos,
-        top_k,
-        top_p,
-        use_fused_sampler,
-    ):
-        """Retain native truncated logits when the Worker exports Draft q."""
-        # Fused sampling does not materialize the truncated distribution. Keep
-        # all processing and sampling in the native implementation, selecting
-        # its existing materialized path only while exporting proposals.
-        sampled, processed = super()._sample_random(
-            processed_logits,
-            expanded_idx_mapping,
-            idx_mapping_np,
-            pos,
-            top_k,
-            top_p,
-            use_fused_sampler and not self.capture_proposals,
-        )
+    def sample(self, *args, **kwargs):
+        """Retain the native sampler's actual processed distribution for Worker export."""
+        # RoleService supplies an independent seed for every ordinary Draft
+        # request. Native seeded sampling materializes top-k/top-p logits rather
+        # than taking the fused FlashInfer path, so q matches the actual draw.
+        sampled, processed = super().sample(*args, **kwargs)
         if self.capture_proposals:
             self._proposal_logits = processed
         return sampled, processed

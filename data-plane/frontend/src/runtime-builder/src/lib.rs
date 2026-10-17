@@ -157,14 +157,7 @@ impl RuntimeBuilder {
         );
         let video_inventory: Arc<dyn foretoken_router::RouteInventory> = registry.clone();
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
-        let dt_models = backends
-            .snapshot
-            .dt_components
-            .iter()
-            .map(|role| role.model.clone())
-            .collect();
-        let mut state = RuntimeState::new(models, router, resolver, request_timeout, stream_idle)
-            .with_draft_target_models(dt_models);
+        let mut state = RuntimeState::new(models, router, resolver, request_timeout, stream_idle);
         if let Some(client) = &backends.video_client {
             state = state.with_video_backend(
                 backends.video_models.clone(),

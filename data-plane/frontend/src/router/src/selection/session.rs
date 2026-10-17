@@ -17,7 +17,7 @@ pub enum RoutingStage {
     Prefill,
     /// Selects Decode after Prefill.
     Decode,
-    /// Selects a Draft while retaining the selected Target reservation.
+    /// Selects compatible Drafts after initial Target selection.
     Draft,
 }
 
@@ -25,7 +25,7 @@ pub enum RoutingStage {
 ///
 /// `RouteSession` owns and constructs this view; Filter, Scorer, and Picker may read it but cannot
 /// mutate routing progress or treat it as client input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoutingProgress<'a> {
     /// Serving-snapshot version retained by this session; zero denotes an unversioned inventory.
     /// Shared algorithm state must not let older snapshots supersede newer observations.
@@ -36,10 +36,13 @@ pub struct RoutingProgress<'a> {
     pub completed_stages: &'a [ModelServerRole],
     /// E/P/D route-set identity bound by an earlier selection, if any.
     pub pipeline_scope_id: Option<&'a str>,
+    /// Selected Target, including compatibility and load observed when it was chosen.
+    pub selected_target: Option<&'a crate::RouteCandidate>,
 }
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
-/// P/D and E/P/D select sequential stages. DT uses independently reserved batch rounds.
+/// P/D and E/P/D select sequential stages. DT binds a Target and compatible Draft set
+/// once, retaining routing load for both until the request finishes.
 pub trait RouteSession: Send {
     /// Releases prompt-token load when the first response reaches the frontend.
     fn response_started(&mut self) {}
@@ -49,6 +52,9 @@ pub trait RouteSession: Send {
 
     /// Selects one Aggregate, Prefill, Encoder, or Target from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;
+
+    /// Selects the compatible Draft set for the already selected Target; the binding is request-local.
+    fn select_drafts(&mut self) -> Result<Vec<RouteDecision>, RouteError>;
 
     /// Selects the Prefill in the Encoder-selected E/P/D route set.
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError>;
@@ -62,19 +68,6 @@ pub trait RouteSession: Send {
 pub trait Router: Send + Sync {
     /// Binds a prepared request to fresh routing observations and retains its routing load.
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
-
-    /// Selects compatible DT workers for one round and reserves its members.
-    /// The baseline uses the first member's placement preference, with compatibility checked
-    /// for every member. The executor supplies Target affinity and known closed workers;
-    /// Router does not infer migration support or replay failed work.
-    /// The returned owner releases reservations as members return or the round drops.
-    async fn route_draft_target_round(
-        &self,
-        _requests: &[RouterRequest],
-        _placement: &crate::DraftTargetPlacement,
-    ) -> Result<crate::DraftTargetRoundRoute, RouteError> {
-        Err(RouteError::BatchRoutingUnsupported)
-    }
 }
 
 /// Failure returned while selecting one model-server routing stage.
@@ -83,12 +76,6 @@ pub enum RouteError {
     /// Compatible execution paths exist, but policy filtering temporarily excludes them.
     #[error("compatible model servers are temporarily busy")]
     Busy,
-    /// A batch must contain distinct generation requests for one logical model.
-    #[error("DT batch requires distinct generation requests for one model")]
-    InvalidBatch,
-    /// This router has no batch placement implementation.
-    #[error("this router does not support DT batch placement")]
-    BatchRoutingUnsupported,
     /// No ready Aggregate or Prefill model-server route matches the request.
     #[error("no ready model server route matches model {model}")]
     NoCompatibleTarget {
@@ -116,6 +103,9 @@ pub enum RouteError {
     /// Picker selected a position that is not present in its current scored slice.
     #[error("route picker selected out-of-range candidate index {index}")]
     InvalidPickerIndex { index: usize },
+    /// Draft assignment was requested without a selected Target.
+    #[error("draft assignment requires a selected target model server route")]
+    DraftBeforeTarget,
     /// Prefill selection was requested before an Encoder model-server route was selected.
     #[error("prefill selection requires a selected encoder model server route")]
     PrefillBeforeEncoder,

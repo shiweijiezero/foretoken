@@ -96,7 +96,11 @@ type ECProfileReference struct {
 // of ModelGroups sharing the same role, network, resources, and parallelism.
 // The controller instantiates it as a ModelPool owned by the ModelService.
 type ModelPoolTemplate struct {
-	// Model selects proposal weights for speculation.draftPool.
+	// Speculation binds this Target pool to the Draft pools it may use.
+	// +optional
+	Speculation *ModelSpeculation `json:"speculation,omitempty"`
+
+	// Model selects proposal weights for a referenced Draft pool.
 	// With native speculative-config, the service model remains the base model.
 	// The source and tokenizer remain those of the ModelService.
 	// +optional
@@ -140,7 +144,7 @@ type ModelPoolTemplate struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
 	// EngineArgs replaces service-level native options for this Pool when supplied.
-	// Configure neural speculation on the Draft pool; its speculative-config is shared with Targets.
+	// Configure neural speculation on a Draft pool; referencing Targets derive its profile.
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
 
@@ -219,12 +223,15 @@ type ProfilingConfig struct {
 	Engine string `json:"engine"`
 }
 
-// ModelSpeculation binds an independent Draft pool to the service's main model pools.
+// ModelSpeculation declares the Draft pools available to one Target pool.
+// Routing policy assigns instances at runtime; replicas remain owned by the deployment controller.
 type ModelSpeculation struct {
-	// DraftPool names one aggregate entry in modelPools with its own model weights.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	DraftPool string `json:"draftPool"`
+	// DraftPools names aggregate pools with explicit proposal model weights.
+	// Bounded by the service's modelPools cardinality for Kubernetes CEL evaluation.
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:MinItems=1
+	// +listType=set
+	DraftPools []string `json:"draftPools"`
 }
 
 // ModelServiceSpec defines the desired state of a model service.
@@ -233,12 +240,9 @@ type ModelSpeculation struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only or complete P/D or E/P/D"
 // +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
-// +kubebuilder:validation:XValidation:rule="!has(self.speculation) || (has(self.modelPools) && size(self.modelPools) >= 2 && self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') && self.modelPools.exists(pool, pool.name == self.speculation.draftPool && has(pool.model)))",message="speculation requires an aggregate draftPool with model weights and at least one main model pool"
-// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model) || (has(self.speculation) && pool.name == self.speculation.draftPool))",message="only speculation.draftPool may override model"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.speculation) || (!has(pool.model) && (!has(pool.role) || pool.role == 'aggregate') && pool.speculation.draftPools.all(name, self.modelPools.exists(draft, draft.name == name && has(draft.model) && !has(draft.speculation) && (!has(draft.role) || draft.role == 'aggregate')))))",message="Target speculation must reference aggregate Draft pools with model weights"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model) || self.modelPools.exists(target, has(target.speculation) && pool.name in target.speculation.draftPools))",message="model overrides require a referencing Target speculation.draftPools"
 type ModelServiceSpec struct {
-	// Speculation enables remote candidate generation using the named Draft pool.
-	// +optional
-	Speculation *ModelSpeculation `json:"speculation,omitempty"`
 	// DeploymentRevision requests current platform applications on an explicit deployment.
 	// It carries no executable, image or external URL supplied by model intent.
 	// +optional

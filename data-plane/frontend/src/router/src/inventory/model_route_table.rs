@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputConstraint;
 
-use crate::{RouteTarget, RouteTargetId, RouterRequest};
+use crate::{RouteTarget, RouterRequest};
 
 /// Immutable route targets matched by model and request requirements.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,21 +29,15 @@ impl ModelRouteTable {
 
     /// Returns static routes whose model and input limit match one router request.
     ///
-    /// A retained Target remains eligible during drain for sessions already owning its KV.
-    /// `PipelineRouter` applies dynamic health and capability checks; this table owns the results.
-    pub(crate) fn candidates(
-        &self,
-        request: &RouterRequest,
-        retained_target: Option<&RouteTargetId>,
-    ) -> Vec<&RouteTarget> {
+    /// `PipelineRouter` applies dynamic health and capability checks to these results.
+    pub(crate) fn candidates(&self, request: &RouterRequest) -> Vec<&RouteTarget> {
         self.routes
             .iter()
             .filter(|route| {
-                (route.ready
-                    || (route.role == foretoken_model_protocol::ModelServerRole::Target
-                        && retained_target == Some(&route.route_target_id)))
+                route.ready
                     && route.model == request.model
-                    && (request.allowed_pools.is_empty()
+                    && (route.role == foretoken_model_protocol::ModelServerRole::Draft
+                        || request.allowed_pools.is_empty()
                         || request.allowed_pools.contains(&route.target.name))
                     && route
                         .max_input_tokens

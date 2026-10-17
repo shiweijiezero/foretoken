@@ -12,6 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::{
+    Json, Router,
+    extract::{Query, State as HttpState},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
@@ -265,18 +272,88 @@ impl Handle {
     }
 }
 
+/// Builds the shared capture API for native and DT model-server supervisors.
+pub fn router(handle: Option<Handle>) -> Router {
+    Router::new()
+        .route(
+            "/v1/internal/profiling",
+            get(profile_observation).post(profile_control),
+        )
+        .with_state(handle)
+}
+
+#[derive(Deserialize)]
+struct ProfileQuery {
+    run_uid: Option<String>,
+}
+
+// Return runtime identity even before a run exists, so the reconciler can persist a fixed plan.
+async fn profile_observation(
+    HttpState(handle): HttpState<Option<Handle>>,
+    Query(query): Query<ProfileQuery>,
+) -> Response {
+    match handle {
+        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
+        None => StatusCode::NOT_IMPLEMENTED.into_response(),
+    }
+}
+
+// The handler acknowledges acceptance only; polling exposes the independently supervised result.
+async fn profile_control(
+    HttpState(handle): HttpState<Option<Handle>>,
+    Json(request): Json<Request>,
+) -> Response {
+    let Some(handle) = handle else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    let uid = request.run_uid.clone();
+    match handle.control(request) {
+        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+/// Selects the native control adapter while Supervisor retains capture and publication ownership.
+#[derive(Clone)]
+pub enum CaptureBackend {
+    Native(Arc<VllmBackend>),
+    DraftTarget {
+        endpoint: String,
+        client: reqwest::Client,
+    },
+}
+
+impl CaptureBackend {
+    /// Runs one native utility; Supervisor retains uncertain operations until engine exit.
+    async fn control(&self, start: bool, directory: Option<&Path>) -> Result<(), String> {
+        match self {
+            Self::Native(backend) => match directory {
+                Some(directory) => backend.set_mctracer(start, directory).await,
+                None => backend.set_profiling(start).await,
+            },
+            Self::DraftTarget { endpoint, client } => {
+                client.post(format!("{endpoint}/profiling"))
+                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy())}))
+                    .send().await.map_err(|error| error.to_string())?
+                    .error_for_status().map_err(|error| error.to_string())?;
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Owns native operations through stop/flush; an uncertain operation requires engine termination.
 pub struct Supervisor {
     handle: Handle,
     receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
-    backend: Arc<VllmBackend>,
+    backend: CaptureBackend,
     native: Option<JoinHandle<Result<(), String>>>,
     publication: Option<JoinHandle<io::Result<Record>>>,
 }
 
 impl Supervisor {
     /// Creates shared API state and the single supervisor driven by model-server's main loop.
-    pub fn new(config: Config, backend: Arc<VllmBackend>, health: Arc<RuntimeHealth>) -> Self {
+    pub fn new(config: Config, backend: CaptureBackend, health: Arc<RuntimeHealth>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         Self {
             handle: Handle {
@@ -346,9 +423,9 @@ impl Supervisor {
         let config = self.handle.config.clone();
         self.native = Some(tokio::spawn(async move {
             match config.engine {
-                Engine::Pytorch => backend.set_profiling(start).await,
+                Engine::Pytorch => backend.control(start, None).await,
                 Engine::Nsight => nsight::set_recording(&config, start).await,
-                Engine::Mctracer => backend.set_mctracer(start, &config.staging()).await,
+                Engine::Mctracer => backend.control(start, Some(&config.staging())).await,
             }
         }));
         let budget = if start { START_TIMEOUT } else { STOP_TIMEOUT };

@@ -132,14 +132,14 @@ class ExternalAsyncLLM(AsyncLLM):
         )
 
     async def submit_external_draft_batch(
-        self, entries: list[tuple[ExternalDraftRequest, list[int]]]
+        self, entries: list[tuple[ExternalDraftRequest, list[int], dict]]
     ) -> list[bool]:
         """Admit a ready batch in one EngineCore turn, before its scheduler runs."""
         return await self.engine_core.call_utility_async(
             "submit_external_draft_batch",
             [
-                (ticket.request_id, ticket.generation, tokens)
-                for ticket, tokens in entries
+                (ticket.request_id, ticket.generation, tokens, work)
+                for ticket, tokens, work in entries
             ],
         )
 
@@ -150,11 +150,15 @@ def install_engine_patches() -> None:
         return
     original_has_work = EngineCoreProc.has_work
 
-    def submit_batch(self, entries: list[tuple[str, int, list[int]]]) -> list[bool]:
+    def submit_batch(
+        self, entries: list[tuple[str, int, list[int], dict]]
+    ) -> list[bool]:
         """Release all valid members together; native scheduling still owns GPU capacity."""
         return [
-            self.scheduler.submit_external_draft_tokens(request_id, generation, tokens)
-            for request_id, generation, tokens in entries
+            self.scheduler.submit_external_draft_tokens(
+                request_id, generation, tokens, work
+            )
+            for request_id, generation, tokens, work in entries
         ]
 
     @wraps(original_has_work)

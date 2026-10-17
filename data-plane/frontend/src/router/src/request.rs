@@ -12,7 +12,7 @@ use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixUnavailableReason};
 pub struct RouterRequest {
     /// Requested logical model name.
     pub model: String,
-    /// Original client prompt length, excluding confirmed output appended between DT rounds.
+    /// Original client prompt length used for route admission.
     pub input_tokens: usize,
     /// Role-resolved logical Pool names; empty retains the normal compatible range.
     pub allowed_pools: Vec<String>,

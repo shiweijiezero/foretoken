@@ -73,6 +73,7 @@ func projectServiceDTComponents(service *inferencev1alpha1.ModelService, pools [
 			PipelineScopeID: "dt:" + string(service.UID), Role: group.Spec.SpeculationRole,
 			Model: reference.Model, EngineModel: artifacts.Model, EngineRevision: revision,
 			MaxInputTokens: copyOptionalInt32(poolForGroup.Spec.MaxInputTokens),
+			DraftPools:     slices.Clone(group.Spec.DraftPools),
 			Endpoint:       modelGroupEndpoint(group, group.Spec.Runtime.Port),
 		})
 	}

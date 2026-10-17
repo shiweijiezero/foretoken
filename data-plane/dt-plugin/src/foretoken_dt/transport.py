@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Registered tensor ownership for the repository-pinned Mooncake Python API."""
+"""Worker-owned tensor buffers and pinned Mooncake device transports."""
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import json
 import math
+import os
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -16,7 +20,7 @@ import torch
 # Registrations must outlive Python callers, including cancelled coroutines.
 # Only explicit, successful close removes this process-owned reference. Uncertain
 # DMA completion requires terminating the owning process, never reusing its tensor.
-_live_transports: set[MooncakeTransport] = set()
+_live_transports: set[TensorTransport] = set()
 
 # Wire names are explicit: Python attribute lookup must not define the protocol.
 _TENSOR_DTYPES = {
@@ -39,13 +43,26 @@ class PayloadRef:
 
     publication_id: str
     segment: str
-    address: int
+    address: int | None
     nbytes: int
     dtype: str
     shape: tuple[int, ...]
+    transport: str
 
     def __post_init__(self) -> None:
         """Validate dense tensor layout before allocating or submitting a read."""
+        if self.transport in ("rdma", "gpu_ipc"):
+            if type(self.address) is not int or self.address <= 0:
+                raise ValueError("device address must be a positive integer")
+        elif self.transport == "zmq":
+            if self.address is not None or not self.segment.startswith(
+                ("ipc://", "tcp://")
+            ):
+                raise ValueError(
+                    "ZMQ publications require a socket endpoint, without an address"
+                )
+        else:
+            raise ValueError("unsupported tensor transport")
         if self.dtype not in _TENSOR_DTYPES:
             raise ValueError("unsupported tensor dtype")
         if any(type(size) is not int or size <= 0 for size in self.shape):
@@ -66,6 +83,7 @@ class PayloadRef:
             "nbytes": self.nbytes,
             "dtype": self.dtype,
             "shape": list(self.shape),
+            "transport": self.transport,
         }
 
     @classmethod
@@ -73,31 +91,38 @@ class PayloadRef:
         """Decode a descriptor received from a trusted role control connection."""
         publication_id = value["publication_id"]
         segment = value["segment"]
-        address = value["address"]
+        address = value.get("address")
         nbytes = value["nbytes"]
         if not isinstance(publication_id, str) or not publication_id:
             raise ValueError("publication_id must be a nonempty string")
         if not isinstance(segment, str) or not segment:
             raise ValueError("segment must be a nonempty string")
-        if type(address) is not int or address <= 0:
-            raise ValueError("address must be a positive integer")
         if type(nbytes) is not int or nbytes <= 0:
             raise ValueError("nbytes must be a positive integer")
         dtype = value["dtype"]
         shape = value["shape"]
         if not isinstance(dtype, str) or not isinstance(shape, list):
             raise TypeError("tensor layout requires a dtype name and shape array")
-        return cls(publication_id, segment, address, nbytes, dtype, tuple(shape))
+        return cls(
+            publication_id,
+            segment,
+            address,
+            nbytes,
+            dtype,
+            tuple(shape),
+            value["transport"],
+        )
 
 
-class RegisteredTensor:
-    """A persistent buffer owned by one transport until explicit unregister."""
+class TensorBuffer:
+    """Retain reusable storage through publication, transfer and local GPU consumption."""
 
-    def __init__(self, owner: MooncakeTransport, tensor: torch.Tensor):
+    def __init__(self, owner: TensorTransport, tensor: torch.Tensor):
+        """Retain one allocation until its transport explicitly closes the buffer."""
         self.owner = owner
         self.tensor = tensor
         self.publication: PayloadRef | None = None
-        self.transfer: asyncio.Task[None] | None = None
+        self.transfer: asyncio.Task | None = None
         self.failed = False
         self.closed = False
 
@@ -112,22 +137,23 @@ class RegisteredTensor:
         """
         self.owner.require_accepting()
         self._require_idle()
+        self.transfer = asyncio.create_task(self._publish(ready_event, rows))
+        return await asyncio.shield(self.transfer)
+
+    async def _publish(
+        self, ready_event: torch.cuda.Event | None, rows: int | None
+    ) -> PayloadRef:
+        """Retain a host-staging copy even if its initiating caller is cancelled."""
         await self._wait_device(ready_event)
         self.owner.require_accepting()
-        self._require_idle()
         tensor = self.tensor
         if rows is not None:
             if not tensor.ndim or not 0 < rows <= tensor.shape[0]:
                 raise ValueError("publication rows exceed registered capacity")
             tensor = tensor[:rows]
-        self.publication = PayloadRef(
-            uuid4().hex,
-            self.owner.segment,
-            tensor.data_ptr(),
-            tensor.numel() * tensor.element_size(),
-            str(tensor.dtype).removeprefix("torch."),
-            tuple(tensor.shape),
-        )
+        self.failed = True
+        self.publication = await self.owner.publish(tensor)
+        self.failed = False
         return self.publication
 
     def release_source(self, publication_id: str) -> None:
@@ -137,17 +163,18 @@ class RegisteredTensor:
             or self.publication.publication_id != publication_id
         ):
             raise ValueError("acknowledgement does not match the live publication")
+        self.owner.release(publication_id)
         self.publication = None
 
     async def read(
         self, source: PayloadRef, *, ready_event: torch.cuda.Event | None = None
     ) -> None:
-        """Pull into this buffer; cancellation keeps DMA and memory ownership alive.
+        """Pull into this buffer; cancellation keeps transfer and memory ownership alive.
 
         The caller acknowledges the remote publication only after successful
         completion. A cancelled caller can await this buffer's transfer to obtain
         that result; cancellation never releases the producer automatically.
-        ready_event fences previous destination use before the RDMA overwrite;
+        ready_event fences previous destination use before the transfer overwrite;
         omit it to synchronize the device. Await read before launching consumers.
         The destination may have spare row capacity; only source.nbytes is written.
         """
@@ -167,36 +194,12 @@ class RegisteredTensor:
     async def _read(
         self, source: PayloadRef, ready_event: torch.cuda.Event | None
     ) -> None:
-        """Submit one native transfer and poll its terminal status without blocking."""
+        """Fence old consumers and retain failed or cancelled transfer ownership."""
         # The destination may have been used by the previous GPU computation.
         await self._wait_device(ready_event)
         self.failed = True
-        batch_id = await asyncio.to_thread(
-            self.owner.engine.batch_transfer_async_read,
-            source.segment,
-            [self.tensor.data_ptr()],
-            [source.address],
-            [source.nbytes],
-        )
-        if batch_id == 0:
-            raise RuntimeError("Mooncake could not submit the RDMA read")
-        while True:
-            # Exactly one entry: transfer_check_status checks task 0 and frees
-            # the batch on completion/failure. Never poll a terminal batch twice.
-            status = await asyncio.to_thread(
-                self.owner.engine.transfer_check_status, batch_id
-            )
-            if status == 1:
-                self.failed = False
-                return
-            if status == -1:
-                raise RuntimeError("Mooncake RDMA read failed; buffer is quarantined")
-            if status not in (0, -2):
-                raise RuntimeError(f"Unexpected Mooncake transfer status: {status}")
-            # TIMEOUT does not establish that DMA has stopped. Keep the buffer
-            # registered and poll until terminal; role drain may terminate the
-            # process if its existing lifecycle deadline expires.
-            await asyncio.sleep(0.001)
+        await self.owner.read(self.tensor, source)
+        self.failed = False
 
     def _require_idle(self) -> None:
         """Reject reuse while exported, transferring, closed, or quarantined."""
@@ -208,11 +211,11 @@ class RegisteredTensor:
             raise RuntimeError("buffer has an outstanding transfer")
 
     async def _wait_device(self, ready_event: torch.cuda.Event | None) -> None:
-        """Fence caller-owned GPU work without waiting on unrelated streams.
+        """Fence all caller-owned GPU uses before publication, overwrite or cleanup.
 
-        The Worker/Runner records the event after joining all streams using this
-        storage, and must not re-record it or submit new uses until this operation
-        completes. Events do not describe remote DMA completion.
+        The caller records the event after joining every stream using this storage
+        and must not re-record it or start new uses until the operation completes.
+        This fence does not establish remote transfer completion.
         """
         if ready_event is not None:
             if not self.tensor.is_cuda or ready_event.device != self.tensor.device:
@@ -222,48 +225,31 @@ class RegisteredTensor:
             await asyncio.to_thread(torch.cuda.synchronize, self.tensor.device)
 
     async def close(self, *, ready_event: torch.cuda.Event | None = None) -> None:
-        """Unregister after local consumers finish; ready_event fences their uses.
-
-        Without an event, synchronize the device before unregistering. The caller
-        must stop submitting work against this buffer before closing it.
-        """
+        """Release transport registration only after publication and local use end."""
         if self.closed:
             return
         self._require_idle()
         await self._wait_device(ready_event)
         self._require_idle()
-        result = self.owner.engine.unregister_memory(self.tensor.data_ptr())
-        if result != 0:
-            self.failed = True
-            raise RuntimeError(f"Mooncake unregister_memory failed: {result}")
+        self.failed = True
+        self.owner.unregister(self.tensor)
+        self.failed = False
         self.closed = True
         self.owner.buffers.remove(self)
 
 
-class MooncakeTransport:
-    """Process-local RDMA engine with explicit registration and drain ownership."""
+class TensorTransport:
+    """Own Worker buffer reuse and drain across device and host-staged transports."""
 
-    def __init__(self, hostname: str, device_name: str = ""):
-        from mooncake.engine import TransferEngine
-
-        self.engine = TransferEngine()
-        result = self.engine.initialize(hostname, "P2PHANDSHAKE", "rdma", device_name)
-        if result != 0:
-            raise RuntimeError(f"Mooncake RDMA initialization failed: {result}")
-        host = f"[{hostname}]" if ":" in hostname else hostname
-        self.segment = f"{host}:{self.engine.get_rpc_port()}"
-        self.buffers: set[RegisteredTensor] = set()
+    def __init__(self):
+        """Retain process ownership until a successful explicit drain."""
+        self.buffers: set[TensorBuffer] = set()
         self.draining = False
         self.closed = False
         _live_transports.add(self)
 
-    def register(self, tensor: torch.Tensor) -> RegisteredTensor:
-        """Retain and register contiguous storage for reuse across DT transfers.
-
-        The caller must not mutate a published tensor or submit GPU work against
-        a destination while its read is pending. This class owns registration,
-        not the model's allocation or CUDA stream.
-        """
+    def register(self, tensor: torch.Tensor) -> TensorBuffer:
+        """Retain contiguous storage until explicit close; the caller owns GPU streams."""
         self.require_accepting()
         if tensor.dtype not in _TENSOR_DTYPES.values():
             raise ValueError("unsupported tensor dtype")
@@ -274,31 +260,260 @@ class MooncakeTransport:
         start = tensor.data_ptr()
         size = tensor.numel() * tensor.element_size()
         for buffer in self.buffers:
-            other_start = buffer.tensor.data_ptr()
-            other_end = (
-                other_start + buffer.tensor.numel() * buffer.tensor.element_size()
-            )
-            if start < other_end and other_start < start + size:
+            if (
+                start < buffer.tensor.data_ptr() + buffer.tensor.nbytes
+                and buffer.tensor.data_ptr() < start + size
+            ):
                 raise ValueError("tensor overlaps an existing registration")
-        result = self.engine.register_memory(start, size)
-        if result != 0:
-            raise RuntimeError(f"Mooncake register_memory failed: {result}")
-        buffer = RegisteredTensor(self, tensor)
+        self.register_memory(tensor)
+        buffer = TensorBuffer(self, tensor)
         self.buffers.add(buffer)
         return buffer
 
+    def register_memory(self, tensor: torch.Tensor) -> None:
+        """Host-staged transports require no native device-memory registration."""
+
+    def unregister(self, tensor: torch.Tensor) -> None:
+        """Host-staged transports release storage with the owning TensorBuffer."""
+
+    def release(self, publication_id: str) -> None:
+        """Direct RDMA publications have no separately staged host snapshot."""
+
+    async def publish(self, tensor: torch.Tensor) -> PayloadRef:
+        """Publish immutable storage until the caller proves no future peer reads."""
+        raise NotImplementedError
+
+    async def read(self, tensor: torch.Tensor, source: PayloadRef) -> None:
+        """Return only when the received tensor is ready for GPU consumption."""
+        raise NotImplementedError
+
     def require_accepting(self) -> None:
-        """Reject new registration or transfer work once transport teardown starts."""
+        """Reject new transfers and registration once transport drain starts."""
         if self.draining or self.closed:
             raise RuntimeError("transport is draining or closed")
 
+    async def shutdown(self) -> None:
+        """Concrete transports release their engine or sockets after buffers drain."""
+        raise NotImplementedError
+
     async def close(self) -> None:
-        """Close only after all publications, transfers, and local uses are drained."""
+        """Close only after all publications, transfers and local uses are drained."""
         if self.closed:
             return
         self.draining = True
         for buffer in tuple(self.buffers):
             await buffer.close()
+        await self.shutdown()
         self.closed = True
-        self.engine = None
         _live_transports.remove(self)
+
+
+class TransportUnavailable(RuntimeError):
+    """An optional native backend failed initialization before any publication or DMA."""
+
+
+class MooncakeTransport(TensorTransport):
+    """Process-local Mooncake engine with explicit registration and drain ownership."""
+
+    kind = "rdma"
+    protocol = "rdma"
+
+    def __init__(
+        self, hostname: str, device_name: str = "", device: torch.device | None = None
+    ):
+        """Initialize the pinned RDMA engine before accepting Worker registrations."""
+        from mooncake import engine
+
+        self._submissions: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._open_segment = ctypes.CDLL(engine.__file__).openSegmentNoCache
+        self._open_segment.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self._open_segment.restype = ctypes.c_int32
+        self.engine = engine.TransferEngine()
+        # The pinned native engine auto-discovers its backend even when Python
+        # requests RDMA. Prevent a TCP/MACA/NVLink fallback from being labelled RDMA.
+        overrides = {}
+        if self.protocol == "rdma":
+            overrides = {
+                "MC_FORCE_HCA": "1",
+                "MC_MACA_HOST_TRANSPORT": "1",
+                "MC_FORCE_TCP": None,
+                "MC_FORCE_MNNVL": None,
+                "MC_INTRANODE_NVLINK": None,
+                "MC_USE_TENT": None,
+                "MC_USE_TEV1": None,
+                "USE_BAREX": None,
+                "MC_USE_RDMA_TWOSIDED": None,
+            }
+        saved = {name: os.environ.get(name) for name in overrides}
+        try:
+            for name, value in overrides.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+            if self.protocol == "rdma":
+                topology = json.loads(self.engine.get_local_topology(device_name))
+                if not any(any(groups) for groups in topology.values()):
+                    raise TransportUnavailable("Mooncake discovered no usable RDMA HCA")
+            result = self.engine.initialize(
+                hostname, "P2PHANDSHAKE", self.protocol, device_name
+            )
+            if result == 0 and device is not None:
+                # Registration is checked on this Worker's actual GPU before
+                # advertising RDMA. Pair reachability is checked at binding.
+                probe = torch.empty(65536, dtype=torch.uint8, device=device)
+                result = self.engine.register_memory(probe.data_ptr(), probe.nbytes)
+                if result == 0:
+                    code = self.engine.unregister_memory(probe.data_ptr())
+                    if code != 0:
+                        raise RuntimeError(f"Mooncake probe unregister failed: {code}")
+        except BaseException:
+            self.engine = None
+            raise
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        if result != 0:
+            self.engine = None
+            raise TransportUnavailable(
+                f"Mooncake {self.protocol} initialization failed: {result}"
+            )
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        self.segment = f"{host}:{self.engine.get_rpc_port()}"
+        # Generated by the actual Worker transport, never by its HTTP endpoint.
+        # Recreating the engine (including a GPU/NIC change) creates a new identity.
+        self.instance_id = uuid4().hex
+        super().__init__()
+
+    def register_memory(self, tensor: torch.Tensor) -> None:
+        """Register caller-owned storage with the pinned Mooncake engine."""
+        result = self.engine.register_memory(tensor.data_ptr(), tensor.nbytes)
+        if result != 0:
+            raise RuntimeError(f"Mooncake register_memory failed: {result}")
+
+    def unregister(self, tensor: torch.Tensor) -> None:
+        """Remove a registration only after TensorBuffer has fenced every use."""
+        result = self.engine.unregister_memory(tensor.data_ptr())
+        if result != 0:
+            raise RuntimeError(f"Mooncake unregister_memory failed: {result}")
+
+    async def publish(self, tensor: torch.Tensor) -> PayloadRef:
+        """Describe fenced device storage without copying it through the host."""
+        return PayloadRef(
+            uuid4().hex,
+            self.segment,
+            tensor.data_ptr(),
+            tensor.nbytes,
+            str(tensor.dtype).removeprefix("torch."),
+            tuple(tensor.shape),
+            self.kind,
+        )
+
+    async def read(self, tensor: torch.Tensor, source: PayloadRef) -> None:
+        """Submit a device read and poll until the native copy reaches a terminal state."""
+        if source.transport != self.kind:
+            raise ValueError("publication differs from this Mooncake transport")
+        batch_id = await self._submit_read(tensor, source)
+        while True:
+            # Exactly one entry: transfer_check_status checks task 0 and frees
+            # the batch on completion/failure. Never poll a terminal batch twice.
+            status = await asyncio.to_thread(
+                self.engine.transfer_check_status, batch_id
+            )
+            if status == 1:
+                return
+            if status == -1:
+                raise RuntimeError(
+                    f"Mooncake {self.kind} read failed; buffer is quarantined"
+                )
+            if status not in (0, -2):
+                raise RuntimeError(f"Unexpected Mooncake transfer status: {status}")
+            # TIMEOUT does not establish that DMA has stopped. Keep the buffer
+            # registered and poll until terminal; role drain may terminate the
+            # process if its existing lifecycle deadline expires.
+            await asyncio.sleep(0.001)
+
+    async def _submit_read(self, tensor: torch.Tensor, source: PayloadRef) -> int:
+        """Refresh registrations and submit per peer; completion polling stays concurrent."""
+        # Both RDMA and MACA cache remote registration descriptors. A binding
+        # probe can precede model allocations; serialize refresh with submission
+        # so concurrent refreshes cannot replace the descriptor before admission.
+        async with self._submissions[source.segment]:
+            segment = await asyncio.to_thread(
+                self._open_segment,
+                self.engine.get_engine_ptr(),
+                source.segment.encode(),
+            )
+            if segment < 0:
+                raise RuntimeError("Mooncake could not refresh peer registrations")
+            batch_id = await asyncio.to_thread(
+                self.engine.batch_transfer_async_read,
+                source.segment,
+                [tensor.data_ptr()],
+                [source.address],
+                [source.nbytes],
+            )
+        if batch_id == 0:
+            raise RuntimeError(f"Mooncake could not submit the {self.kind} read")
+        return batch_id
+
+    async def shutdown(self) -> None:
+        """Release the native engine after all registered buffers are gone."""
+        self.engine = None
+
+
+class MacaIpcTransport(MooncakeTransport):
+    """Reuse Mooncake's MACA IPC registration/copy with same-host peer capability."""
+
+    kind = "gpu_ipc"
+    protocol = "maca"
+
+    def __init__(self, hostname: str, device: torch.device):
+        """Initialize only granted MACA peers; source allocations remain owned by TensorBuffer."""
+        from .maca import peer_access
+
+        if not getattr(torch.version, "maca", None) or device.type != "cuda":
+            raise TransportUnavailable(
+                "GPU IPC requires the supported MACA GPU runtime"
+            )
+        self.capability = peer_access(device)
+        if self.capability is None:
+            raise TransportUnavailable("no granted MACA peer supports GPU P2P")
+        self._allocations: dict[int, int] = {}
+        # The pinned engine selects MACA during initialization. Keep the image's
+        # host-transport setting for other engines and restore it before execution.
+        host_transport = os.environ.pop("MC_MACA_HOST_TRANSPORT", None)
+        try:
+            super().__init__(hostname)
+        finally:
+            if host_transport is not None:
+                os.environ["MC_MACA_HOST_TRANSPORT"] = host_transport
+
+    def register_memory(self, tensor: torch.Tensor) -> None:
+        """Register each MACA allocation once, retaining every Torch suballocation user."""
+        from .maca import allocation_range
+
+        base, size = allocation_range(tensor.data_ptr())
+        count = self._allocations.get(base, 0)
+        if count == 0:
+            result = self.engine.register_memory(base, size)
+            if result != 0:
+                raise RuntimeError(f"Mooncake register_memory failed: {result}")
+        self._allocations[base] = count + 1
+
+    def unregister(self, tensor: torch.Tensor) -> None:
+        """Unregister an IPC allocation only after its last TensorBuffer is fenced and closed."""
+        from .maca import allocation_range
+
+        base, _ = allocation_range(tensor.data_ptr())
+        count = self._allocations[base]
+        if count == 1:
+            result = self.engine.unregister_memory(base)
+            if result != 0:
+                raise RuntimeError(f"Mooncake unregister_memory failed: {result}")
+            del self._allocations[base]
+        else:
+            self._allocations[base] = count - 1

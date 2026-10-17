@@ -11,6 +11,8 @@ Installation and update commands are in [Deploy Foretoken from Source](../custom
 
 Source operations from one workstation are serialized per cluster. Synchronization includes file deletions; engine updates must not restore deleted source from the runtime image. Compilation uses caches separate from model data and preserves compatibility with the selected runtime's Python and accelerator libraries.
 
+Rust-only vLLM inputs are replaced with the complete pinned upstream tree before repository patches are applied. Installed Python engine patches target the resolved package directory, including editable installations.
+
 A complete application version is published before use and remains immutable. Stop a build's abandoned publishers before reusing its output. The platform owns application storage independently of compiler and model caches.
 
 ## Select and recover

@@ -35,6 +35,7 @@ pub fn router(
     health: Arc<RuntimeHealth>,
     ledger: Option<(Arc<RequestLedger>, String, u64)>,
     body_limit: usize,
+    profiling: Option<crate::profiling::Handle>,
 ) -> io::Result<Router> {
     let state = Ingress {
         endpoint,
@@ -50,7 +51,10 @@ pub fn router(
         }),
         body_limit,
     };
-    Ok(Router::new().fallback(forward).with_state(state))
+    Ok(Router::new()
+        .fallback(forward)
+        .with_state(state)
+        .merge(crate::profiling::router(profiling)))
 }
 
 // Admission lives at the Rust listener; Python remains the owner of sessions and engine work.
@@ -356,17 +360,19 @@ async fn run_session(
         }
     }
     drop(permit);
-    let end = if refused {
-        ReservationEnd::NotSubmitted
-    } else if clean_eof {
-        ReservationEnd::StageTerminated
-    } else {
+    let end = if !clean_eof {
         ReservationEnd::RequestTerminated
+    } else if refused {
+        ReservationEnd::AdmissionRefused
+    } else {
+        ReservationEnd::StageTerminated
     };
+    // A definite refusal must return ownership before Frontend can retry admission.
     let handoff = clean_eof
-        && shared
-            .as_ref()
-            .is_some_and(|(_, reference)| !reference.final_stage);
+        && (refused
+            || shared
+                .as_ref()
+                .is_some_and(|(_, reference)| !reference.final_stage));
     if handoff {
         finish_shared(&shared, &owner, end).await;
     }

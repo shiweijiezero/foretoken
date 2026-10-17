@@ -51,6 +51,26 @@ For a Kustomize model service with Prometheus, performance runs report accepted 
 
 `metrics.json` and W&B Summary use Prometheus counter increases over the measured run window to estimate these values, accounting for counter resets. Short runs without enough scrapes or services without speculative metrics leave values unavailable, not zero. The Prometheus time curves instead use trailing five-minute rates at each observation; they must not be read as the run-window summary. Repeated sweeps retain these per-run estimates and show mean and standard deviation across runs when samples are available.
 
+## Draft/Target observations
+
+Kustomize DT performance runs save `metrics.json.draft_target`, print a DT summary, and publish the same values to W&B and sweep comparisons. Collection selects the deployment's frontend, namespace and logical model; it includes all matching traffic, not only benchmark requests.
+
+| Field | Meaning |
+| --- | --- |
+| `acceptance_ratio` | Accepted / verified candidate tokens in speculation rounds, including progress and terminal output; excludes correction/bonus tokens |
+| `accepted_tokens_per_round` | Accepted candidate tokens / speculation rounds, including progress and terminal output |
+| `round_mean_seconds` | Mean speculation round wall time |
+| `draft_mean_seconds`, `target_mean_seconds` | Mean frontend-observed Draft and Target call wall times, including preparation, queueing and HTTP overhead |
+| `transfer_read_mean_seconds`, `transfer_prepare_mean_seconds` | Mean proposal read and prepare wall times; preparation includes read, ACK and staging |
+| `context_read_mean_seconds`, `context_prepare_mean_seconds` | Mean Target-to-Draft feature read and preparation wall times |
+| `context_transfer_bytes_estimate` | Estimated Target-to-Draft feature bytes read |
+| `admitted_submissions_estimate`, `rejected_submissions_estimate` | Ticket admission results, separate from candidate token acceptance |
+| `transfer_bytes_estimate` | Estimated proposal bytes read across speculation rounds; excludes features and KV migration |
+
+These are Prometheus counter-increase estimates over the measured request window. Missing data remains unavailable, including short runs without sufficient scrapes. Stage intervals overlap; do not add them or interpret them as GPU execution time. Compare end-to-end latency and throughput to measure speedup.
+
+`prometheus_observations.json` retains queries and phase/outcome/stage labels for prefill, speculation, migration and incomplete rounds. Time-series charts use trailing one-minute rates; their stage means differ from the full-run summary. Saved experiment and sweep comparisons include DT acceptance, wall-time and transfer metrics automatically. A URL-only benchmark has no Kubernetes observation scope and reports client-side metrics only.
+
 ## SLO results
 
 When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Failed requests and requests missing required timing metrics count as not meeting the SLO. Attainment is the fraction of measured requests meeting all conditions; request goodput divides their count by run duration, and token goodput divides their output token total by the same duration. When request-level criteria are set, one-second completion-window curves also show attainment and request/token goodput on the elapsed-time axis. Each window counts failed requests in its attainment denominator; windows without completions have no attainment value. The run summary still scores all measured requests together, not an average of window fractions. Adding `--slo-search` enables [SLO concurrency search](perf/slo.md), which evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.

@@ -293,6 +293,11 @@ type ModelGroupSpec struct {
 	// +optional
 	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
 
+	// DraftPools names this Target revision's allowed Draft pools in its ModelService.
+	// +optional
+	// +listType=set
+	DraftPools []string `json:"draftPools,omitempty"`
+
 	Artifacts ModelGroupArtifacts `json:"artifacts"`
 	Runtime   ModelGroupRuntime   `json:"runtime"`
 
@@ -371,7 +376,6 @@ type ModelGroupStatus struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 

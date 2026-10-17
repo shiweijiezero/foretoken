@@ -14,7 +14,7 @@ use crate::snapshot::{ServingSnapshot, SnapshotError};
 use crate::snapshot_projection::pool_target;
 
 /// Materializes independent DT routes with one admission set and tokenizer per scope.
-/// Registry construction owns the resulting clients; no Draft endpoint is embedded in Target.
+/// Target components retain their committed Draft-pool references for runtime discovery.
 pub(crate) fn project(
     snapshot: &ServingSnapshot,
     admission: &BTreeMap<ScalingTarget, RouteTargetSet>,
@@ -34,6 +34,8 @@ pub(crate) fn project(
             || role.pool_name.is_empty()
             || role.route_target_id.as_str().is_empty()
             || role.pipeline_scope_id.is_empty()
+            || (role.role == ModelServerRole::Target && role.draft_pools.is_empty())
+            || (role.role == ModelServerRole::Draft && !role.draft_pools.is_empty())
             || role.engine_model.is_empty()
             || (role.role == ModelServerRole::Target
                 && (role.engine_model != model.model
@@ -98,6 +100,7 @@ pub(crate) fn project(
                 role.route_target_id.clone(),
                 Component::DraftTarget {
                     endpoint: role.endpoint.clone(),
+                    draft_pools: role.draft_pools.clone(),
                     client,
                     role: role.role,
                     model: role.engine_model.clone(),

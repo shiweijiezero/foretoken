@@ -60,6 +60,11 @@ class ExternalEngineArgs(AsyncEngineArgs):
 
     def create_engine_config(self, *args, **kwargs):
         """Validate the supported engine boundary before spawning GPU processes."""
+        mctracer = self.worker_cls == "foretoken_mctracer.Worker"
+        if mctracer:
+            # Platform selection still owns its Worker; add capture to the DT
+            # subclass after the native configuration has selected that base.
+            self.worker_cls = "auto"
         installed = version("vllm")
         if not supported_runtime():
             raise RuntimeError(
@@ -75,10 +80,19 @@ class ExternalEngineArgs(AsyncEngineArgs):
             raise ValueError("neural DT requires enable_adaptive_verification=false")
         if self.speculative_config is not None and context_role != "draft":
             self.scheduler_cls = "foretoken_dt.vllm.scheduler.ExternalScheduler"
+        # Native eager setup disables JIT warmup. DT warms sampling kernels before
+        # readiness, while preserving the user's native kernel configuration.
+        jit_warmup = (
+            self.kernel_config.enable_jit_warmup
+            if installed == SUPPORTED_VLLM_VERSION
+            else None
+        )
         result = super().create_engine_config(*args, **kwargs)
+        if jit_warmup is not None:
+            result.kernel_config.enable_jit_warmup = jit_warmup
         if context_role:
             spec = result.speculative_config
-            if installed != SUPPORTED_VLLM_VERSION or spec.method not in (
+            if spec.method not in (
                 "dflash",
                 "dspark",
                 "eagle",
@@ -86,7 +100,7 @@ class ExternalEngineArgs(AsyncEngineArgs):
                 "mtp",
             ):
                 raise ValueError(
-                    "Target context requires NVIDIA DFlash, DSpark, EAGLE or MTP"
+                    "Target context requires native DFlash, DSpark, EAGLE or MTP"
                 )
             if spec.method == "dflash" and spec.draft_model_config.architectures != [
                 "DFlashDraftModel"
@@ -120,11 +134,6 @@ class ExternalEngineArgs(AsyncEngineArgs):
             # outside the hashed prompt. Token-only APC keys cannot identify it.
             if context_role == "target" or spec.method not in ("dflash", "dspark"):
                 result.cache_config.enable_prefix_caching = False
-        if installed == SUPPORTED_VLLM_VERSION:
-            # Eager execution disables native JIT warmup by default. DT admits
-            # random-sampling requests, so compile those kernels before readiness
-            # rather than blocking an active round on its first sampling call.
-            result.kernel_config.enable_jit_warmup = True
         # Platform configuration must run before DT wraps its selected Worker.
         workers = {
             "vllm.v1.worker.gpu_worker.Worker": "foretoken_dt.vllm.worker.Worker",
@@ -134,6 +143,10 @@ class ExternalEngineArgs(AsyncEngineArgs):
         if selected not in workers:
             raise ValueError(f"DT has no adapter for platform worker {selected}")
         result.parallel_config.worker_cls = workers[selected]
+        if mctracer:
+            if selected != "vllm_metax.v1.worker.gpu_worker.MacaWorker":
+                raise ValueError("mcTracer requires the MetaX worker")
+            result.parallel_config.worker_cls = "foretoken_dt.vllm.metax_profile.Worker"
         if not result.use_v2_model_runner:
             raise ValueError("DT requires Model Runner V2")
         if (

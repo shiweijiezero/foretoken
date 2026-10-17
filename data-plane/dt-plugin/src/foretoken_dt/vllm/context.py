@@ -93,7 +93,7 @@ class TargetContext(BaseSpeculator):
 
 
 class SharedTargetLoader:
-    """Load embedding/output weights while keeping the Target backbone on meta."""
+    """Load shared embeddings, output heads and norms without Target attention/MLP weights."""
 
     def __init__(self, loader, runner):
         self.loader = loader
@@ -102,9 +102,14 @@ class SharedTargetLoader:
     def load_model(self, vllm_config, model_config):
         """Provide native speculator weight sharing and a feature-only Target forward."""
         from vllm.model_executor.layers import rotary_embedding
+        from vllm.model_executor.layers.layernorm import RMSNorm
         from vllm.model_executor.model_loader.reload.meta import materialize_meta_tensor
         from vllm.model_executor.model_loader.utils import initialize_model
         from vllm.utils.torch_utils import set_default_torch_dtype
+        from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import (
+            get_eagle3_aux_layers_from_config,
+        )
+        from vllm.v1.worker.gpu.spec_decode.eagle.utils import get_target_lm_head
 
         from .runner import replace_binding
 
@@ -130,21 +135,35 @@ class SharedTargetLoader:
                 raise ValueError(
                     "neural DT does not yet support Target-shared sparse attention indices"
                 )
-            output_modules = [language_model.model.embed_tokens, language_model.lm_head]
-            # Some Targets (MiMo) apply final normalization in compute_logits,
-            # which native profiling and warmup still execute on synthetic features.
-            norm = getattr(language_model.model, "norm", None)
-            if norm is not None:
-                output_modules.append(norm)
+            target_inner = language_model.model
+            embedding = getattr(target_inner, "embed_tokens", None) or getattr(
+                target_inner, "embedding", None
+            )
+            output_modules = [embedding, get_target_lm_head(model, language_model)]
+            # compute_logits may apply normalization outside the shared LM head.
+            # Select native normalization modules without assuming their position or name.
+            output_modules.extend(
+                layer
+                for layer in model.modules()
+                if isinstance(layer, (RMSNorm, torch.nn.LayerNorm))
+            )
+            materialized = {}
             with torch.device(self.runner.device):
                 for root in output_modules:
+                    if root is None:
+                        continue
                     for layer in root.modules():
                         tensors = list(layer.named_parameters(recurse=False)) + list(
                             layer.named_buffers(recurse=False)
                         )
                         for name, tensor in tensors:
                             if tensor.is_meta:
-                                setattr(layer, name, materialize_meta_tensor(tensor))
+                                # Preserve tied embedding/head weights across materialization.
+                                if tensor not in materialized:
+                                    materialized[tensor] = materialize_meta_tensor(
+                                        tensor
+                                    )
+                                setattr(layer, name, materialized[tensor])
             model.load_weights(self.loader.get_all_weights(model_config, model))
 
         runner = self.runner
@@ -165,8 +184,15 @@ class SharedTargetLoader:
                     dtype=model_config.dtype,
                     device=positions.device,
                 )
-                layers = getattr(language_model.model, "aux_hidden_state_layers", ())
-                return (hidden, [hidden] * len(layers)) if layers else hidden
+                if runner.use_aux_hidden_state_outputs:
+                    layers = (
+                        get_eagle3_aux_layers_from_config(
+                            vllm_config.speculative_config
+                        )
+                        or model.get_eagle3_default_aux_hidden_state_layers()
+                    )
+                    return hidden, [hidden] * len(layers)
+                return hidden
             batch = runner.context_batch
             rows = []
             for index, req_id in enumerate(batch.req_ids):

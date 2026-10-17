@@ -33,10 +33,10 @@ pub struct RouteCandidate {
     pub revision: String,
     /// E/P/D route-set identity, if this routable ModelGroup participates in one.
     pub pipeline_scope_id: Option<String>,
-    /// Observed DT format used to match peers before selection.
-    pub draft_target_format: Option<foretoken_model_protocol::DraftTargetCandidateFormat>,
-    /// Hidden-state context required or emitted by a DT role; None denotes token-only drafting.
-    pub draft_target_context: Option<serde_json::Value>,
+    /// Live candidate format, context, Target policy and actual method/engine capacity.
+    pub draft_target_capabilities: Option<foretoken_model_protocol::DraftTargetCapabilities>,
+    /// Draft pools associated with a Target by committed deployment configuration.
+    pub draft_pools: Vec<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
     /// Latest route-target gauges and available windowed statistics for this routing round.
@@ -62,10 +62,24 @@ impl RouteCandidate {
     pub fn future_stages(&self) -> &'static [ModelServerRole] {
         match self.role {
             ModelServerRole::Aggregate | ModelServerRole::Decode | ModelServerRole::Draft => &[],
-            ModelServerRole::Target => &[ModelServerRole::Draft],
+            ModelServerRole::Target => &[],
             ModelServerRole::Prefill => &[ModelServerRole::Decode],
             ModelServerRole::Encoder => &[ModelServerRole::Prefill, ModelServerRole::Decode],
         }
+    }
+
+    /// Checks whether this Draft can supply candidates to the selected Target.
+    pub fn is_draft_for(&self, target: &Self) -> bool {
+        self.role == ModelServerRole::Draft
+            && target.role == ModelServerRole::Target
+            && target.pipeline_scope_id.is_some()
+            && self.pipeline_scope_id == target.pipeline_scope_id
+            && self
+                .draft_target_capabilities
+                .as_ref()
+                .zip(target.draft_target_capabilities.as_ref())
+                .is_some_and(|(draft, target)| draft.supports_target(target))
+            && target.draft_pools.contains(&self.target.name)
     }
 
     /// Converts this internal scored candidate into the execution decision exposed by Router.
@@ -93,8 +107,10 @@ pub struct RouteScore {
     pub tier_preference: i8,
     /// Placement locality after equal prefix and tier: Local > Remote.
     pub locality_preference: i8,
-    /// Final tie breaker; the provided load scorers negate load so lower values rank higher.
+    /// Engine load preference; the provided load scorers negate load so lower values rank higher.
     pub load: i64,
+    /// Final DT tie breaker for frontend reservations not yet reflected in engine telemetry.
+    pub reserved_requests: i64,
 }
 
 impl PartialEq for RouteScore {
@@ -119,12 +135,14 @@ impl Ord for RouteScore {
                 self.tier_preference,
                 self.locality_preference,
                 self.load,
+                self.reserved_requests,
             )
                 .cmp(&(
                     other.matched_tokens,
                     other.tier_preference,
                     other.locality_preference,
                     other.load,
+                    other.reserved_requests,
                 ))
         })
     }

@@ -18,6 +18,7 @@ use prometheus_client::{
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct Labels {
+    model_name: String,
     phase: String,
     outcome: String,
     stage: &'static str,
@@ -26,6 +27,7 @@ struct Labels {
 struct Metrics {
     registry: Registry,
     rounds: Family<Labels, Counter>,
+    admissions: Family<Labels, Counter>,
     tokens: Family<Labels, Counter>,
     seconds: Family<Labels, Histogram, fn() -> Histogram>,
     bytes: Family<Labels, Counter>,
@@ -33,11 +35,17 @@ struct Metrics {
 static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     let mut registry = Registry::default();
     let rounds = Family::default();
+    let admissions = Family::default();
     let tokens = Family::default();
     let seconds = Family::new_with_constructor(
         (|| Histogram::new(exponential_buckets(0.0001, 2.0, 20))) as fn() -> Histogram,
     );
     let bytes = Family::default();
+    registry.register(
+        "foretoken_dt_admissions",
+        "Native ticket admissions and rejections, separate from token acceptance",
+        admissions.clone(),
+    );
     registry.register(
         "foretoken_dt_rounds",
         "Executed DT rounds by phase and outcome",
@@ -55,40 +63,38 @@ static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     );
     registry.register(
         "foretoken_dt_transfer_bytes",
-        "Completed proposal or KV checkpoint reads observed at the frontend, by round phase",
+        "Completed proposal and feature reads, distinguished by stage",
         bytes.clone(),
     );
     Metrics {
         registry,
         rounds,
+        admissions,
         tokens,
         seconds,
         bytes,
     }
 });
 
-/// Records a completed, cancelled or abandoned executor round for metrics and request tracing.
-/// The round owner calls exactly once; incomplete stages remain absent from aggregates.
-pub fn record_draft_target_round(observation: &DraftTargetRoundObservation) {
+/// Records a received Target round for frontend metrics and request tracing.
+/// Missing stages remain absent; failed streams may have no final observation.
+pub fn record_draft_target_round(model: &str, observation: &DraftTargetRoundObservation) {
     let labels = |stage| Labels {
+        model_name: model.to_owned(),
         phase: observation.phase.clone(),
         outcome: observation.outcome.clone(),
         stage,
     };
     METRICS.rounds.get_or_create(&labels("round")).inc();
+    if let Some(admitted) = observation.admitted {
+        let mut admission_labels = labels("admission");
+        admission_labels.outcome = if admitted { "admitted" } else { "rejected" }.to_owned();
+        METRICS.admissions.get_or_create(&admission_labels).inc();
+    }
     for (stage, value) in [
         ("round", Some(observation.elapsed_seconds)),
-        ("dispatch_wait", Some(observation.dispatch_wait_seconds)),
         ("draft", observation.draft_seconds),
-        ("proposal_wait", observation.proposal_wait_seconds),
         ("target", observation.target_seconds),
-        (
-            "kv_export",
-            observation
-                .migration
-                .as_ref()
-                .and_then(|m| m.export_seconds),
-        ),
     ] {
         if let Some(value) = value {
             METRICS.seconds.get_or_create(&labels(stage)).observe(value);
@@ -129,31 +135,37 @@ pub fn record_draft_target_round(observation: &DraftTargetRoundObservation) {
             observation.target.as_ref().map(|v| v.accepted_tokens),
         ),
         ("committed", observation.committed_tokens.map(|v| v as u64)),
-        (
-            "checkpoint",
-            observation
-                .migration
-                .as_ref()
-                .and_then(|m| m.checkpoint_tokens)
-                .map(|v| v as u64),
-        ),
     ] {
         if let Some(count) = count {
             METRICS.tokens.get_or_create(&labels(stage)).inc_by(count);
         }
     }
-    if let Some(transfer) = &observation.transfer {
+    for (transfer, stage, read, prepare) in [
+        (
+            &observation.transfer,
+            "transfer",
+            "transfer_read",
+            "transfer_prepare",
+        ),
+        (
+            &observation.context_transfer,
+            "context_transfer",
+            "context_read",
+            "context_prepare",
+        ),
+    ] {
+        let Some(transfer) = transfer else { continue };
         METRICS
             .bytes
-            .get_or_create(&labels("transfer"))
+            .get_or_create(&labels(stage))
             .inc_by(transfer.bytes);
         METRICS
             .seconds
-            .get_or_create(&labels("transfer_read"))
+            .get_or_create(&labels(read))
             .observe(transfer.read_seconds);
         METRICS
             .seconds
-            .get_or_create(&labels("transfer_prepare"))
+            .get_or_create(&labels(prepare))
             .observe(transfer.prepare_seconds);
     }
     tracing::info!(target: "foretoken::dt", request_id = %observation.request_id,

@@ -1,58 +1,63 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Request state, per-round placement and execution for independent DT roles.
+//! Target dispatch using the existing Frontend request and output processing.
 
 use foretoken_llm_facade::LlmFacadeError;
 use foretoken_llm_facade::draft_target::{
     DraftTargetRequest, DraftTargetSampling, RoleClient, TargetCommit,
 };
-use tokio_util::sync::CancellationToken;
 
-mod round;
-mod scheduler;
-pub use round::{
-    DraftTargetRequestState, DraftTargetRound, DraftTargetRoundOutput, DraftTargetRoundStream,
-    select_draft_target_round,
-};
-pub use scheduler::DraftTargetScheduler;
-
-/// Runs one request against explicitly supplied workers, for direct role integration.
-///
-/// The caller-selected workers are reused here. Batch schedulers instead call
-/// `select_draft_target_round` after each round to choose placement again.
-/// Dropping the output stream closes its request's remote sessions.
+/// Submits one normalized request and its Router-selected Draft set directly to Target.
 pub async fn generate_draft_target_tokens(
-    draft: RoleClient,
+    drafts: Vec<RoleClient>,
     target: RoleClient,
     request: vllm_llm::GenerateRequest,
 ) -> Result<foretoken_llm_facade::TokenStream, LlmFacadeError> {
-    use futures::StreamExt;
-    let state = DraftTargetRequestState::new(request, CancellationToken::new())?;
-    let first = DraftTargetRound::prepare(draft.clone(), target.clone(), vec![state], None).await?;
-    Ok(Box::pin(async_stream::try_stream! {
-        let mut round = first;
-        loop {
-            let mut stream = round.execute();
-            let mut next = None;
-            while let Some(event) = stream.next().await {
-                let event = event?;
-                next = event.continuation;
-                if let Some(output) = event.output {
-                    yield output;
-                }
-            }
-            let Some(state) = next else {
-                break;
-            };
-            round =
-                DraftTargetRound::prepare(draft.clone(), target.clone(), vec![state], None).await?;
-        }
-    }))
+    let input = normalize(&request)?;
+    let model = target.status().await?.model;
+    open_target(drafts, target, input, request, model)
+        .await?
+        .ok_or(LlmFacadeError::Unavailable)
 }
 
-/// Maps only supported normalized options; validation precedes routing and remote admission.
-fn normalize(request: &vllm_llm::GenerateRequest) -> Result<DraftTargetRequest, LlmFacadeError> {
+/// Retains the Target-owned generation through frontend output and stop processing.
+pub(crate) async fn open_target(
+    drafts: Vec<RoleClient>,
+    target: RoleClient,
+    input: DraftTargetRequest,
+    request: vllm_llm::GenerateRequest,
+    model: String,
+) -> Result<Option<foretoken_llm_facade::TokenStream>, LlmFacadeError> {
+    let Some(mut session) = target
+        .generate_with_drafts(&input, &request.request_id, &drafts)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let mut adapter = OutputAdapter::new(request);
+    Ok(Some(Box::pin(async_stream::try_stream! {
+        loop {
+            let mut commit = session.next_commit().await?;
+            if let Some(observation) = commit.round.take() {
+                foretoken_metrics::record_draft_target_round(&model, &observation);
+            }
+            let finished = commit.finished;
+            let output = adapter.convert(commit)?;
+            if finished {
+                session.close().await?;
+                yield output;
+                break;
+            }
+            yield output;
+        }
+    })))
+}
+
+/// Maps only supported normalized options; validation precedes remote admission.
+pub(crate) fn normalize(
+    request: &vllm_llm::GenerateRequest,
+) -> Result<DraftTargetRequest, LlmFacadeError> {
     use foretoken_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
     let sampling = &request.sampling_params;
     // Explicit allowlist against upstream defaults: a newly added sampling option must not
@@ -69,15 +74,49 @@ fn normalize(request: &vllm_llm::GenerateRequest) -> Result<DraftTargetRequest, 
         all_stop_token_ids: sampling.all_stop_token_ids.clone(),
         ..Default::default()
     };
-    if sampling != &supported
-        || request.mm_features.is_some()
-        || request.lora_request.is_some()
-        || request.reasoning_parser_kwargs.is_some()
-        || request.cache_salt.is_some()
-        || request.data_parallel_rank.is_some_and(|rank| rank != 0)
-        || request.trace_headers.is_some()
-    {
-        return Err(LlmFacadeError::InvalidRequest);
+    if sampling != &supported {
+        let message = if sampling.repetition_penalty != supported.repetition_penalty {
+            "DT requires repetition_penalty=1.0; set it explicitly if the model's generation_config enables a penalty"
+        } else if sampling.frequency_penalty != supported.frequency_penalty
+            || sampling.presence_penalty != supported.presence_penalty
+        {
+            "DT requires frequency_penalty=0 and presence_penalty=0"
+        } else if sampling.logprobs.is_some()
+            || sampling.prompt_logprobs.is_some()
+            || sampling.logprob_token_ids.is_some()
+        {
+            "DT does not return logprobs; remove logprobs, prompt_logprobs and logprob_token_ids"
+        } else {
+            "DT supports temperature, top_p, top_k, seed, max_tokens, min_tokens and stopping controls; remove other sampling options"
+        };
+        return Err(LlmFacadeError::UnsupportedRequest(message));
+    }
+    for (unsupported, message) in [
+        (request.mm_features.is_some(), "DT supports text input only"),
+        (
+            request.lora_request.is_some(),
+            "DT does not support LoRA requests",
+        ),
+        (
+            request.reasoning_parser_kwargs.is_some(),
+            "DT does not support reasoning_parser_kwargs",
+        ),
+        (
+            request.cache_salt.is_some(),
+            "DT does not support cache_salt; omit it",
+        ),
+        (
+            request.data_parallel_rank.is_some_and(|rank| rank != 0),
+            "DT requires data_parallel_rank=0; omit it or select rank 0",
+        ),
+        (
+            request.trace_headers.is_some(),
+            "DT does not support trace_headers",
+        ),
+    ] {
+        if unsupported {
+            return Err(LlmFacadeError::UnsupportedRequest(message));
+        }
     }
     // The frontend has already resolved ignore_eos and extra EOS tokens. Disable Python's
     // independent EOS decision, then pass exactly the normalized stopping tokens.

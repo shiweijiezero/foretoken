@@ -152,6 +152,7 @@ type servingSnapshotEPDPipelineScope struct {
 
 // servingSnapshotDTComponent exposes a role independently of its compatible peers.
 type servingSnapshotDTComponent struct {
+	DraftPools      []string                          `json:"draft_pools,omitempty"`
 	ServiceUID      string                            `json:"service_uid"`
 	PoolUID         string                            `json:"pool_uid"`
 	PoolName        string                            `json:"pool_name"`

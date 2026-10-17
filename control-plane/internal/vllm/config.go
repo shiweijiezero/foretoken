@@ -141,6 +141,12 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if err := validateParallelism(effective.Parallelism); err != nil {
 		return EffectiveConfig{}, err
 	}
+	// Encoder-only execution disables APC because it produces no decoder KV.
+	if template.Role == inferencev1alpha1.ModelRoleEncoder {
+		if _, exists := args["enable-prefix-caching"]; exists {
+			return EffectiveConfig{}, fmt.Errorf("encoder execution owns enable-prefix-caching")
+		}
+	}
 	capacity := int64(template.NodeCount) * int64(template.Resources.Requests.GPU.Count)
 	ranks := int64(effective.Parallelism.PP) * int64(effective.Parallelism.TP) * int64(effective.Parallelism.PCP) * int64(effective.Parallelism.DP)
 	if capacity != ranks {
@@ -377,7 +383,7 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 	}
 	for name := range names {
 		switch name {
-		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "mm-processor-cache-gb", "mm-encoder-only":
+		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "enable-prefix-caching", "mm-processor-cache-gb", "mm-encoder-only":
 			continue
 		}
 		var leftValue, rightValue any
@@ -415,11 +421,11 @@ var controllerOwnedArgs = []string{
 	"--data-parallel-rank", "--data-parallel-rpc-port",
 	"--data-parallel-size-local", "--data-parallel-start-rank",
 	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
-	"--enable-elastic-ep", "--enable-prefix-caching",
+	"--enable-elastic-ep",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--rdma-host", "--rdma-nic", "--revision", "--role",
-	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
+	"--runner", "--served-model-name", "--tensor-transport", "--tokenizer", "--tokenizer-revision", "--worker-cls", "--zmq-endpoint",
 }
 
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)

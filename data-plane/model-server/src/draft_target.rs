@@ -23,6 +23,7 @@ use vllm_managed_engine::allocate_handshake_port;
 pub(super) async fn run(
     config: &RuntimeConfig,
     cache: Option<&runtime_cache::Config>,
+    profiling: Option<&foretoken_model_server::profiling::Config>,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
     cache_shutdown: Arc<Notify>,
     ledger: Option<Arc<RequestLedger>>,
@@ -45,16 +46,41 @@ pub(super) async fn run(
     };
     let port = allocate_handshake_port("127.0.0.1")?;
     let endpoint = format!("http://127.0.0.1:{port}");
+    let (engine, mode) = super::start_with_cache_fallback(config, async |mode, deadline| {
+        start_role(
+            config,
+            cache,
+            profiling,
+            cache_server,
+            mode,
+            deadline,
+            (port, &endpoint),
+        )
+        .await
+    })
+    .await?;
+    let profile_client = reqwest::Client::builder().no_proxy().build()?;
+    let mut profiler = profiling
+        .filter(|_| mode == runtime_cache::Mode::Persistent)
+        .map(|config| {
+            foretoken_model_server::profiling::Supervisor::new(
+                config.clone(),
+                foretoken_model_server::profiling::CaptureBackend::DraftTarget {
+                    endpoint: endpoint.clone(),
+                    client: profile_client,
+                },
+                health.clone(),
+            )
+        });
     let app = dt_ingress::router(
         endpoint.clone(),
         health.clone(),
         execution_store,
         config.launch.internal_generate_request_body_limit_bytes,
+        profiler
+            .as_ref()
+            .map(foretoken_model_server::profiling::Supervisor::handle),
     )?;
-    let (engine, mode) = super::start_with_cache_fallback(config, async |mode, deadline| {
-        start_role(config, cache, cache_server, mode, deadline, port, &endpoint).await
-    })
-    .await?;
     health.set_process_alive(true);
     health.set_client_healthy(true);
     health.set_accepting(true);
@@ -74,6 +100,12 @@ pub(super) async fn run(
         } => match never {},
         () = super::shutdown_signal() => None,
         () = health.execution_failed() => Some("DT request termination could not be confirmed".into()),
+        result = async {
+            match &mut profiler {
+                Some(profiler) => profiler.run().await,
+                None => std::future::pending().await,
+            }
+        } => Some(result.err().unwrap_or_else(|| "capture supervisor stopped".into())),
         status = engine.wait_for_exit() => Some(format!("DT role exited: {status}")),
         reason = super::wait_cache_server(cache_server) => Some(reason),
         error = super::wait_cache_write_failure(cache, mode) => Some(error.to_string()),
@@ -81,7 +113,10 @@ pub(super) async fn run(
     };
     health.set_accepting(false);
     let deadline = tokio::time::Instant::now() + config.launch.drain_timeout();
-    if failure.is_none() {
+    let active_capture = profiler
+        .as_ref()
+        .is_some_and(|profiler| profiler.has_native_capture());
+    if failure.is_none() && !active_capture {
         // Keep the listener polling while admitted streams, verification and DMA ACKs drain.
         let drain = async {
             drain(&endpoint).await?;
@@ -99,9 +134,18 @@ pub(super) async fn run(
         }
     }
     cache_shutdown.notify_waiters();
-    engine
-        .shutdown_application(deadline.saturating_duration_since(tokio::time::Instant::now()))
-        .await?;
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if active_capture {
+        engine.shutdown(remaining).await?;
+        engine.wait_for_exit().await;
+        profiler
+            .as_mut()
+            .expect("active profiler")
+            .engine_stopped("diagnostic runtime terminated")
+            .await;
+    } else {
+        engine.shutdown_application(remaining).await?;
+    }
     health.set_process_alive(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
@@ -119,13 +163,14 @@ pub(super) async fn run(
 async fn start_role(
     config: &RuntimeConfig,
     cache: Option<&runtime_cache::Config>,
+    profiling: Option<&foretoken_model_server::profiling::Config>,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
     mode: runtime_cache::Mode,
     deadline: Instant,
-    port: u16,
-    endpoint: &str,
+    address: (u16, &str),
 ) -> Result<ManagedEngine, super::EngineStartupFailure> {
-    let prepared = super::prepare_engine_launch(config, cache, None, mode, deadline).await?;
+    let (port, endpoint) = address;
+    let prepared = super::prepare_engine_launch(config, cache, profiling, mode, deadline).await?;
     let artifacts = &config.launch.artifacts;
     let draft = config
         .launch
@@ -155,9 +200,12 @@ async fn start_role(
         .no_proxy()
         .build()
         .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
-    let engine = ManagedEngine::spawn(command, None)
-        .await
-        .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
+    let engine = ManagedEngine::spawn(
+        command,
+        profiling.filter(|_| mode == runtime_cache::Mode::Persistent),
+    )
+    .await
+    .map_err(|error| super::EngineStartupFailure::Other(io::Error::other(error)))?;
     let readiness = async {
         loop {
             if client
