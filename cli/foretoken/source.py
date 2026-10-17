@@ -128,7 +128,8 @@ def source_operation(
     directory = _state_directory(kubectl)
     locks = _source_home() / "locks"
     locks.mkdir(parents=True, exist_ok=True)
-    with (locks / directory.name).open("a") as lock:
+    # NFS shared locks require a readable descriptor; this file serves both lock modes.
+    with (locks / directory.name).open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
         try:
             if shared:
