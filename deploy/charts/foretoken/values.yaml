@@ -60,6 +60,14 @@ controller:
     requestTimeout: 1s
     concurrency: 8
 
+# Prepared by foretoken install --namespace for namespace-local service operations.
+namespaceAccess:
+  enabled: false
+  cacheAccessMode: ""
+  gateway: {}
+  # An administrator-selected NFS directory shared through a namespace-local claim.
+  sharedCache: {}
+
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []

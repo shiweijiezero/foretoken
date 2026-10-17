@@ -1,0 +1,100 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{- if and (eq .Values.scope "deployment") .Values.namespaceAccess.enabled }}
+{{- $controller := include "foretoken.fullname" . }}
+{{- $operation := include "foretoken.compactName" (printf "%s-operation" $controller) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-operator" $controller) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $controller | quote }}, {{ $operation | quote }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $operation | quote }}]
+    verbs: [patch]
+  - apiGroups: [inference.foretoken.io]
+    resources: [modelservices, frontendservices, runtimecaches, kvservices, profileruns, videotasks]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [inference.foretoken.io]
+    resources: [modelpools, modelgroups, kvpools, kvgroups]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods, services, persistentvolumeclaims, events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [leaderworkerset.x-k8s.io]
+    resources: [leaderworkersets]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [inference.foretoken.io]
+    verbs: [get]
+{{- with .Values.namespaceAccess.sharedCache }}
+{{- $claim := required "namespaceAccess.sharedCache requires workload.cache.claimName" $.Values.workload.cache.claimName }}
+{{- $volume := include "foretoken.compactName" (printf "%s-cache" (include "foretoken.clusterName" $)) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $volume }}
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .capacity | quote }}
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: {{ $.Release.Namespace }}
+    name: {{ $claim }}
+  nfs:
+    server: {{ .server | quote }}
+    path: {{ .path | quote }}
+  {{- with .mountOptions }}
+  mountOptions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $claim }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+  {{- with .directoryOwner }}
+  annotations:
+    inference.foretoken.io/directory-owner: {{ . | quote }}
+  {{- end }}
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: {{ $volume }}
+  resources:
+    requests:
+      storage: {{ .capacity | quote }}
+{{- end }}
+{{- end }}

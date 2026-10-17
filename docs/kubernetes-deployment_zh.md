@@ -5,7 +5,7 @@
 
 [English](kubernetes-deployment.md) | [中文](kubernetes-deployment_zh.md)
 
-K3s、RKE2、KubeSphere、云上 Kubernetes 或其他不属于本地 kind/k3d 指南的集群，使用本指南。
+管理员在 K3s、RKE2、KubeSphere、云上 Kubernetes 或其他不属于本地 kind/k3d 指南的集群中安装 Foretoken 时，使用本指南。平台安装后，可以为成员准备[部署命名空间](../cli/README_zh.md#为成员准备命名空间)，让其使用服务而无需平台管理权限。
 
 ## 1. 准备集群
 
@@ -75,7 +75,7 @@ workload:
 部署并更新代码：
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
 修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署模型服务)。

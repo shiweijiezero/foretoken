@@ -14,15 +14,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const cacheNodeNameEnv = "FORETOKEN_CACHE_NODE_NAME"
+const (
+	cacheNamespaceEnv = "FORETOKEN_CACHE_NAMESPACE"
+	cacheNodeNameEnv  = "FORETOKEN_CACHE_NODE_NAME"
+)
+
+// runtimeCacheDirectory isolates writable runtime state while model files remain shared.
+func runtimeCacheDirectory(root, namespace string) string {
+	return path.Join(root, "runtime", namespace)
+}
 
 // TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
-// Node identity isolates shared-filesystem clients without discarding cache on Pod replacement.
+// Namespace and node identity preserve candidate caches across Pod replacement without sharing writers.
 func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
 	if cache == nil {
 		return ""
 	}
-	return path.Join(cache.MountPath, "triton", "$("+cacheNodeNameEnv+")")
+	return path.Join(runtimeCacheDirectory(cache.MountPath, "$("+cacheNamespaceEnv+")"), "triton", "$("+cacheNodeNameEnv+")")
 }
 
 // RuntimeCacheEnv returns vLLM model and compilation cache environment for one ModelGroup.
@@ -33,15 +41,17 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tr
 	}
 	// Runtime identities need not have a passwd entry or a writable image home.
 	user := strconv.FormatInt(runtimeconfig.CacheStorageAccess(cache).Identity.UID, 10)
+	runtimeRoot := runtimeCacheDirectory(root, namespace)
 	env := []corev1.EnvVar{
-		{Name: "HOME", Value: root},
+		{Name: cacheNamespaceEnv, Value: namespace},
+		{Name: "HOME", Value: runtimeRoot},
 		{Name: "USER", Value: user},
 		{Name: "LOGNAME", Value: user},
-		{Name: "XDG_CACHE_HOME", Value: path.Join(root, ".cache")},
+		{Name: "XDG_CACHE_HOME", Value: path.Join(runtimeRoot, ".cache")},
 		{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(root)},
 		{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(root)},
-		{Name: "VLLM_CACHE_ROOT", Value: path.Join(root, "vllm")},
-		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(root, "torch")},
+		{Name: "VLLM_CACHE_ROOT", Value: path.Join(runtimeRoot, "vllm")},
+		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(runtimeRoot, "torch")},
 	}
 	if cache != nil {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: namespace + "/" + cache.ClaimName})

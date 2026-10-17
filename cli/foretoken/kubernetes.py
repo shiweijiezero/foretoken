@@ -866,6 +866,39 @@ def _load_balancer_endpoint(
     )
 
 
+def resolve_gateway_access(
+    kubectl: Kubectl, name: str, namespace: str, section_name: str, timeout: str,
+) -> dict[str, Any]:
+    """Resolve a public Gateway listener for namespace preparation and endpoint consumers."""
+    gateway = _wait_for_object(
+        lambda: kubectl.get_if_exists("gateway", name, namespace) or {},
+        lambda value: bool((value.get("status") or {}).get("addresses")),
+        time.monotonic() + timeout_seconds(timeout),
+        f"address for gateway/{name} in namespace {namespace}; inspect its Gateway controller Service and LoadBalancer",
+    )
+    address = str(gateway["status"]["addresses"][0].get("value") or "").strip()
+    if not address:
+        raise DeploymentError(f"gateway/{name} has an empty address")
+    listeners = tuple(
+        item for item in (gateway.get("spec") or {}).get("listeners") or []
+        if not section_name or item.get("name") == section_name
+    )
+    if len(listeners) != 1:
+        if not section_name and len(listeners) > 1:
+            raise DeploymentError(
+                f"gateway/{name} has multiple listeners; reinstall with --gateway-section-name to select one"
+            )
+        raise DeploymentError(f"gateway/{name} has no matching listener")
+    listener = listeners[0]
+    protocol = str(listener.get("protocol") or "HTTP").upper()
+    scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
+    return {
+        "name": name, "namespace": namespace, "sectionName": section_name,
+        "address": address, "scheme": scheme,
+        "port": int(listener.get("port") or (443 if scheme == "https" else 80)),
+    }
+
+
 def _gateway_endpoint(
     deployment: ForetokenDeployment,
     kubectl: Kubectl,
@@ -906,42 +939,26 @@ def _gateway_endpoint(
     if not parent or not parent.get("name"):
         raise DeploymentError(f"httproute/{deployment.frontend} has no Gateway parent")
 
+    from foretoken.namespace_access import NamespaceAccess
+
     gateway_name = str(parent["name"])
     gateway_namespace = str(parent.get("namespace") or deployment.namespace)
-    gateway = _wait_for_object(
-        lambda: kubectl.get_if_exists(
-            "gateway", gateway_name, gateway_namespace
-        )
-        or {},
-        lambda value: bool((value.get("status") or {}).get("addresses")),
-        deadline,
-        f"address for gateway/{gateway_name} in namespace {gateway_namespace}; "
-        f"run 'kubectl describe gateway/{gateway_name} --namespace "
-        f"{gateway_namespace}' and inspect the Gateway controller Service and cluster "
-        "LoadBalancer implementation",
-    )
-    address = str(gateway["status"]["addresses"][0].get("value") or "").strip()
-    if not address:
-        raise DeploymentError(f"gateway/{gateway_name} has an empty address")
-
-    listeners = (gateway.get("spec") or {}).get("listeners") or []
     section_name = str(parent.get("sectionName") or "")
-    matching_listeners = tuple(
-        item
-        for item in listeners
-        if not section_name or item.get("name") == section_name
-    )
-    if len(matching_listeners) != 1:
-        if not section_name and len(matching_listeners) > 1:
+    access = NamespaceAccess.read(kubectl, deployment.namespace)
+    if access is not None:
+        published = access.gateway
+        if not published or (published["namespace"], published["name"], published["sectionName"]) != (
+            gateway_namespace, gateway_name, section_name,
+        ):
             raise DeploymentError(
-                f"gateway/{gateway_name} has multiple listeners; reinstall with "
-                "--gateway-section-name to select one"
+                f"Gateway access for namespace {deployment.namespace} must be refreshed by its administrator"
             )
-        raise DeploymentError(f"gateway/{gateway_name} has no matching listener")
-    listener = matching_listeners[0]
-    protocol = str(listener.get("protocol") or "HTTP").upper()
-    scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
-    port = int(listener.get("port") or (443 if scheme == "https" else 80))
+    else:
+        published = resolve_gateway_access(
+            kubectl, gateway_name, gateway_namespace, section_name,
+            f"{max(1, int(deadline - time.monotonic()))}s",
+        )
+    address, scheme, port = published["address"], published["scheme"], published["port"]
     if scheme == "https":
         return FrontendEndpoint(
             _endpoint_url(scheme, deployment.hostname, port)

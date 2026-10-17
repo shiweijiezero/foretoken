@@ -20,9 +20,8 @@ from foretoken.kubernetes import (
     timeout_seconds,
 )
 from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
-from foretoken.namespace_mutation import NamespaceMutation
-
-_SERVICE_OPERATION_ANNOTATION = "inference.foretoken.io/service-operation"
+from foretoken.namespace_access import NamespaceAccess
+from foretoken.namespace_mutation import NamespaceMutation, _SERVICE_OPERATION_ANNOTATION
 
 
 def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str, str] | None:
@@ -59,7 +58,8 @@ class DeploymentSubmission:
         self.operation = uuid.uuid4().hex
         self.mutation = NamespaceMutation(kubectl, self.namespace, timeout)
         self.create_only = create_only
-        self.deployment = deployment
+        self.access = NamespaceAccess.read(kubectl, self.namespace)
+        self.deployment = self.access.select_resources(deployment) if self.access is not None else deployment
         self.expected = {
             ref: _intent_version(
                 kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
@@ -74,56 +74,55 @@ class DeploymentSubmission:
             )
         self.committed: dict[ResourceRef, tuple[str, int, str, str] | None] = {}
         self.created: dict[ResourceRef, dict[str, Any]] = {}
-        self._namespace: dict[str, Any] | None = None
+        self._scope: dict[str, Any] | None = None
+        self._namespace_uid: str | None = None
+
+    def _prepare_namespace(self) -> None:
+        """Prepare administrative resources once; members consume the existing operation record."""
+        if self._scope is not None or self.access is not None:
+            return
+        ref = ResourceRef("Namespace", self.namespace, "")
+        current = self.kubectl.get_if_exists(ref.kind, ref.name)
+        if current is None:
+            payload = copy.deepcopy(next(
+                (value for value in self.deployment.objects
+                 if value["kind"] == "Namespace" and value["metadata"]["name"] == self.namespace),
+                {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": self.namespace}},
+            ))
+            payload["metadata"].pop("namespace", None)
+            payload["metadata"].get("annotations", {}).pop(_SERVICE_OPERATION_ANNOTATION, None)
+            payload["metadata"]["resourceVersion"] = "0"
+            try:
+                created = self.kubectl.run(
+                    ["apply", "--server-side", "--filename=-", "--output=json"],
+                    input_text=yaml.safe_dump(payload, sort_keys=False), timeout=self.timeout,
+                )
+                current = json.loads(created.stdout)
+                self.created[ref] = current
+            except KubernetesVersionConflictError:
+                current = self.kubectl.get(ref.kind, ref.name)
+        self._namespace_uid = current["metadata"]["uid"]
+        self.mutation.prepare()
 
     def begin(self) -> None:
         """Claim namespace intent without allowing cleanup to interleave with the takeover."""
+        self._prepare_namespace()
         with self.mutation.hold():
             self._begin()
 
     def _begin(self) -> None:
-        """Record actual namespace creation and advance ownership under the mutation lock."""
-        if self._namespace is not None:
+        """Advance submitted intent on the namespace-local operation record under its mutation lock."""
+        if self._scope is not None:
             self.check()
             return
         for ref in self.expected:
             self._current(ref)
-        ref = ResourceRef("Namespace", self.namespace, "")
-        current = self.kubectl.get_if_exists(ref.kind, ref.name)
+        ref = ResourceRef("ConfigMap", self.mutation.name, self.namespace)
+        current = self.kubectl.get(ref.kind, ref.name, ref.namespace)
         deadline = time.monotonic() + self.timeout
-        if current is None:
-            payload = copy.deepcopy(
-                next(
-                    (
-                        value
-                        for value in self.deployment.objects
-                        if value["kind"] == "Namespace"
-                        and value["metadata"]["name"] == self.namespace
-                    ),
-                    {
-                        "apiVersion": "v1",
-                        "kind": "Namespace",
-                        "metadata": {"name": self.namespace},
-                    },
-                )
-            )
-            payload["metadata"].pop("namespace", None)
-            payload["metadata"].get("annotations", {}).pop(
-                _SERVICE_OPERATION_ANNOTATION, None
-            )
-            payload["metadata"]["resourceVersion"] = "0"
-            created = self.kubectl.run(
-                ["apply", "--server-side", "--filename=-", "--output=json"],
-                input_text=yaml.safe_dump(payload, sort_keys=False),
-                timeout=self.timeout,
-            )
-            current = json.loads(created.stdout)
-            self.created[ref] = current
         identity = (
             current["metadata"]["uid"],
-            current["metadata"]
-            .get("annotations", {})
-            .get(_SERVICE_OPERATION_ANNOTATION, ""),
+            current["metadata"].get("annotations", {}).get(_SERVICE_OPERATION_ANNOTATION, ""),
         )
         while True:
             metadata = current["metadata"]
@@ -132,39 +131,28 @@ class DeploymentSubmission:
                 metadata.get("annotations", {}).get(_SERVICE_OPERATION_ANNOTATION, ""),
             ):
                 raise DeploymentError(
-                    f"DeploymentSuperseded: Namespace/{self.namespace} was changed by another operation"
+                    f"DeploymentSuperseded: namespace {self.namespace} was changed by another operation"
                 )
             try:
-                self._namespace = self._claim_operation(ref, current, deadline)
-                if ref in self.created:
-                    self.created[ref] = self._namespace
+                self._scope = self._claim_operation(ref, current, deadline)
                 break
             except KubernetesVersionConflictError:
-                latest = self.kubectl.get_if_exists(ref.kind, ref.name)
-                if (
-                    latest is None
-                    or latest["metadata"]["resourceVersion"]
-                    == metadata["resourceVersion"]
-                ):
+                latest = self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
+                if latest is None or latest["metadata"]["resourceVersion"] == metadata["resourceVersion"]:
                     raise
                 current = latest
         self.check()
 
     def owns_namespace(self) -> bool:
         """Tell cleanup whether this operation still owns the same live namespace selection."""
-        if self._namespace is None:
+        if self._scope is None:
             return False
-        current = self.kubectl.get_if_exists("namespace", self.namespace)
+        current = self.kubectl.get_if_exists("configmap", self.mutation.name, self.namespace)
         return (
             current is not None
             and not current["metadata"].get("deletionTimestamp")
-            and (
-                current["metadata"]["uid"] == self._namespace["metadata"]["uid"]
-                and current["metadata"]
-                .get("annotations", {})
-                .get(_SERVICE_OPERATION_ANNOTATION)
-                == self.operation
-            )
+            and current["metadata"]["uid"] == self._scope["metadata"]["uid"]
+            and current["metadata"].get("annotations", {}).get(_SERVICE_OPERATION_ANNOTATION) == self.operation
         )
 
     def owns_created(self, ref: ResourceRef, current: dict[str, Any] | None) -> bool:
@@ -187,6 +175,7 @@ class DeploymentSubmission:
 
     def apply(self, rendered: str, *, patch_services: bool = False) -> None:
         """Submit configuration or suspension without interleaving temporary retirement."""
+        self._prepare_namespace()
         with self.mutation.hold():
             self._begin()
             self._submit(rendered, patch_services=patch_services)
@@ -197,6 +186,10 @@ class DeploymentSubmission:
         dependencies = []
         for value in yaml.safe_load_all(rendered):
             if value is None:
+                continue
+            if value["kind"] == "Namespace":
+                if self.access is None and not patch_services:
+                    self._apply_namespace(value)
                 continue
             metadata = value.get("metadata") or {}
             ref = ResourceRef(
@@ -297,31 +290,50 @@ class DeploymentSubmission:
         )
         return json.loads(result.stdout)
 
+    def _apply_namespace(self, value: dict[str, Any]) -> None:
+        """Apply administrator-supplied namespace metadata without storing service intent on it."""
+        ref = ResourceRef("Namespace", self.namespace, "")
+        if value["metadata"]["name"] != self.namespace:
+            raise DeploymentError("Namespace declarations must match the deployment namespace")
+        if self.create_only and ref not in self.created:
+            return
+        deadline = time.monotonic() + self.timeout
+        while True:
+            self.check()
+            current = self.kubectl.get("namespace", self.namespace)
+            metadata = current["metadata"]
+            if metadata["uid"] != self._namespace_uid or metadata.get("deletionTimestamp"):
+                raise DeploymentError(f"DeploymentSuperseded: Namespace/{self.namespace} was replaced")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeploymentError(f"Timed out applying Namespace/{self.namespace}")
+            payload = copy.deepcopy(value)
+            payload["metadata"].pop("namespace", None)
+            payload["metadata"].get("annotations", {}).pop(_SERVICE_OPERATION_ANNOTATION, None)
+            payload["metadata"].update(uid=metadata["uid"], resourceVersion=metadata["resourceVersion"])
+            try:
+                self.kubectl.run(
+                    ["apply", "--server-side", "--filename=-"],
+                    input_text=yaml.safe_dump(payload, sort_keys=False), timeout=remaining,
+                )
+                return
+            except KubernetesVersionConflictError:
+                latest = self.kubectl.get("namespace", self.namespace)
+                if latest["metadata"]["resourceVersion"] == metadata["resourceVersion"]:
+                    raise
+
     def _apply_dependency(self, value: dict[str, Any], *, claim_only: bool) -> None:
         """Apply dependencies with creation receipts; stops claim only existing metadata."""
         metadata = value["metadata"]
         ref = ResourceRef(
             value["kind"],
             metadata["name"],
-            ""
-            if value["kind"] == "Namespace"
-            else metadata.get("namespace") or self.namespace,
+            metadata.get("namespace") or self.namespace,
         )
         deadline = time.monotonic() + self.timeout
         while True:
             self.check()
             current = self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-            if ref.kind == "Namespace" and (
-                current is None
-                or current["metadata"]["uid"] != self._namespace["metadata"]["uid"]
-                or current["metadata"]
-                .get("annotations", {})
-                .get(_SERVICE_OPERATION_ANNOTATION)
-                != self.operation
-            ):
-                raise DeploymentError(
-                    f"DeploymentSuperseded: Namespace/{self.namespace} was changed by another operation"
-                )
             created_ref = (
                 ref
                 if current is None

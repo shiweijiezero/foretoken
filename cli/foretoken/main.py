@@ -18,6 +18,7 @@ from foretoken.arguments import (
     EndpointCommand,
     EvaluationCommand,
     InstallCommand,
+    NamespaceCommand,
     PerformanceCommand,
     PlotCommand,
     ProfileCommand,
@@ -39,6 +40,7 @@ from foretoken.kubernetes import (
     timeout_seconds,
 )
 from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.namespaces import NamespaceLifecycle
 from foretoken.platform import PlatformLifecycle
 from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
@@ -166,6 +168,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if isinstance(command, ClusterCommand):
             run_cluster(command)
+        elif isinstance(command, NamespaceCommand):
+            lifecycle = NamespaceLifecycle()
+            if command.action == "install":
+                lifecycle.install(command)
+            else:
+                lifecycle.uninstall(command)
         elif isinstance(command, InstallCommand):
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"

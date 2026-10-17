@@ -66,3 +66,16 @@ spec:
 需要挂载其他系统管理的 PVC 时，在平台 values 中设置 `workload.cache.claimName`，并在每个工作负载命名空间创建该 PVC。
 
 诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../benchmarks/docs/profile/README_zh.md)。
+
+## 跨命名空间复用模型文件
+
+多个实验使用同一模型时，管理员可以共享一张已有的 `ReadWriteMany` PVC，其存储需为原生 NFS 或 NFS CSI。以下使用 `model-library` 命名空间中的 `models`，实际使用时替换为自己的共享缓存：
+
+```bash
+foretoken install --namespace candidate-a --shared-cache model-library/models
+foretoken install --namespace candidate-b --shared-cache model-library/models
+```
+
+各候选复用同一份模型文件，推理编译缓存按命名空间分别保留，重新部署时仍可复用。源卷会设为 `Retain`，删除 PVC 后仍保留模型文件。
+
+为成员分配[命名空间服务权限](../cli/README_zh.md#为成员准备命名空间)后，继续使用正常部署命令。部署优先使用已提供的共享缓存，不再为清单中的 RuntimeCache 另建模型卷。删除一个候选不会影响共享模型和其他候选；不再需要的共享数据由存储管理员统一回收。

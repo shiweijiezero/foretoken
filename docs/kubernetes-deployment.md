@@ -5,7 +5,7 @@
 
 [English](kubernetes-deployment.md) | [中文](kubernetes-deployment_zh.md)
 
-Use this guide for K3s, RKE2, KubeSphere, cloud Kubernetes, or another cluster that is not created by the local kind or k3d guides.
+Use this guide to administer K3s, RKE2, KubeSphere, cloud Kubernetes, or another cluster that is not created by the local kind or k3d guides. To give members service access without platform permissions, prepare their [deployment namespaces](../cli/README.md#prepare-a-namespace-for-members) after installing the platform.
 
 ## 1. Prepare the cluster
 
@@ -75,7 +75,7 @@ The Quick Start uses the repository's `data/` directory on local k3d. On a remot
 Deploy and update code:
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
 After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.

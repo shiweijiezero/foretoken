@@ -29,6 +29,7 @@ from foretoken.manifest import (
     parse_deployment,
     service_requires_execution,
 )
+from foretoken.namespace_access import NamespaceAccess
 from foretoken.namespace_mutation import NamespaceMutation
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
@@ -74,6 +75,8 @@ class DeploymentLifecycle:
             self.kubectl, deployment, timeout, create_only=self.temporary
         )
         self.submission = submission
+        source_update = editable is not None or bool(engine_sources)
+        deployment = submission.deployment
         submission.begin()
         schema = json.loads(
             self.kubectl.get_raw(
@@ -109,17 +112,23 @@ class DeploymentLifecycle:
         # Builds publish complete applications before the controller and services select them.
         source = None
         with ExitStack() as locks:
-            locks.enter_context(source_operation(self.kubectl, timeout, shared=True))
-            values = self.helm.deployment_values(self.kubectl)
-            if not self.temporary:
-                source = EditableDeployment.discover(
-                    self.kubectl, editable, engine_sources
+            values = None
+            if submission.access is None or source_update:
+                locks.enter_context(source_operation(self.kubectl, timeout, shared=True))
+                values = (
+                    self.helm._release_values(self.helm.deployment_release(namespace))
+                    if submission.access is not None
+                    else self.helm.deployment_values(self.kubectl)
                 )
-                if source is not None:
-                    locks.enter_context(source.operation(deployment, timeout))
-                    source.prepare(timeout)
-                    deployment = source.apply(deployment, timeout)
-                    values = source.deployment_values(values)
+                if not self.temporary:
+                    source = EditableDeployment.discover(
+                        self.kubectl, editable, engine_sources
+                    )
+                    if source is not None:
+                        locks.enter_context(source.operation(deployment.service_refs(), timeout))
+                        source.prepare(timeout)
+                        deployment = source.apply(deployment, timeout)
+                        values = source.deployment_values(values)
             self.prepare_controller(
                 submission,
                 timeout,
@@ -132,6 +141,10 @@ class DeploymentLifecycle:
                     f"Applying {deployment.path} to namespace {namespace}", flush=True
                 )
                 self.volumes.apply(deployment, timeout, submit=submission.apply)
+            else:
+                namespaces = [obj for obj in deployment.objects if obj.get("kind") == "Namespace"]
+                if namespaces:
+                    submission.apply(yaml.safe_dump_all(namespaces, sort_keys=False))
         # Readiness observation releases build locks so another operation can stop the service.
         print(f"Waiting up to {timeout} for Foretoken services", flush=True)
         rollout_started = time.monotonic()
@@ -200,6 +213,10 @@ class DeploymentLifecycle:
         self.submission = submission
         namespace = submission.namespace
         release = self.helm.deployment_release(namespace)
+        if submission.access is not None and source_root is None:
+            self.helm.wait_control_plane(release, timeout)
+            submission.check()
+            return
         with submission.mutation.hold():
             submission.check()
             controllers = self.kubectl.list_resources(
@@ -390,17 +407,26 @@ class DeploymentLifecycle:
         return removed
 
     def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Drain an explicitly deleted deployment before removing its controller and namespace."""
+        """Drain submitted resources, preserving controllers and storage owned by an administrator."""
         timeout_seconds(timeout)
         namespace = deployment.namespace or self.kubectl.current_namespace()
-        with (
-            source_operation(self.kubectl, timeout),
-            NamespaceMutation(self.kubectl, namespace, timeout).hold(),
-        ):
-            self._delete(deployment, timeout)
+        access = NamespaceAccess.read(self.kubectl, namespace)
+        mutation = NamespaceMutation(self.kubectl, namespace, timeout)
+        with ExitStack() as locks:
+            if access is None:
+                locks.enter_context(source_operation(self.kubectl, timeout))
+                if self.kubectl.get_if_exists("namespace", namespace) is None:
+                    release_source_deployment(self.kubectl, deployment, timeout)
+                    return
+                mutation.prepare()
+            else:
+                deployment = access.select_resources(deployment, deleting=True)
+            locks.enter_context(mutation.hold())
+            mutation.supersede()
+            self._delete(deployment, timeout, preserve_namespace=access is not None)
 
-    def _delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Keep the finalizer owner alive until all namespace resources have retired."""
+    def _delete(self, deployment: ForetokenDeployment, timeout: str, *, preserve_namespace: bool = False) -> None:
+        """Keep the finalizer owner alive until the selected resources have retired."""
         namespace_objects = tuple(
             obj for obj in deployment.objects if obj.get("kind") == "Namespace"
         )
@@ -413,6 +439,8 @@ class DeploymentLifecycle:
             rendered=yaml.safe_dump_all(objects, sort_keys=False),
         )
         self.volumes.delete(resources, timeout)
+        if preserve_namespace:
+            return
         namespace = deployment.namespace or self.kubectl.current_namespace()
         if namespace_objects:
             for kind in (
