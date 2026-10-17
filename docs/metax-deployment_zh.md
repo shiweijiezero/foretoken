@@ -24,9 +24,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 1. 部署示例模型
 
-在 `examples/quickstart/simple/cache.yaml` 中填写管理员准备的目录或 StorageClass，配置方式见[模型存储](model-storage_zh.md)。
+在 `examples/quickstart/qwen3-0.6b/cache.yaml` 中填写管理员准备的目录或 StorageClass，配置方式见[模型存储](model-storage_zh.md)。
 
-在 `examples/quickstart/simple/frontend.yaml` 已有的 `spec` 中加入 `hostname`，将示例域名替换为管理员分配的域名，保留其余配置：
+在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 已有的 `spec` 中加入 `hostname`，将示例域名替换为管理员分配的域名，保留其余配置：
 
 ```yaml
 spec:
@@ -36,20 +36,20 @@ spec:
 然后部署：
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 命令在模型和前端服务 Ready 后退出。
 
-若要使用其他模型，修改 `examples/quickstart/simple/model.yaml`；资源和缓存配置说明见[单模型示例](../examples/quickstart/simple/README_zh.md)。在共享集群中使用其他 namespace 时，需要同时调整示例的 `namespace.yaml` 和 `kustomization.yaml`，不能只修改本机 kubectl 默认 namespace。
+若要使用其他模型，修改 `examples/quickstart/qwen3-0.6b/model.yaml`；资源和缓存配置说明见[单模型示例](../examples/quickstart/qwen3-0.6b/README_zh.md)。在共享集群中使用其他 namespace 时，需要同时调整示例的 `namespace.yaml` 和 `kustomization.yaml`，不能只修改本机 kubectl 默认 namespace。
 
 ## 2. 发送请求
 
 取得服务地址和 HTTP Host。Host 用于让 Gateway 将请求送到正确的服务：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -72,14 +72,14 @@ curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
 ## 3. 查看状态或删除示例
 
 ```bash
-foretoken status examples/quickstart/simple
+foretoken status examples/quickstart/qwen3-0.6b
 kubectl get pods --namespace foretoken-demo
 ```
 
 使用完后，删除同一份配置创建的资源：
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 示例需使用独立 namespace。删除时先等待服务完成清理，再移除控制器、namespace 及其中的 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。共享平台仍由管理员维护。

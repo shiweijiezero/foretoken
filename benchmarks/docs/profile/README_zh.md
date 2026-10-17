@@ -16,7 +16,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 从仓库根目录执行：
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
@@ -38,7 +38,7 @@ foretoken profile view
 ## 部署并采集外部流量
 
 ```bash
-foretoken deploy examples/quickstart/simple \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s
 ```
 
@@ -101,7 +101,7 @@ foretoken perf examples/feature/profile/nsight \
 不再需要该部署及采集记录时清理：
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 清理 Nsight 示例时将路径换为 `examples/feature/profile/nsight`。Profiling 会增加开销，延迟和吞吐量对比请使用不带 `--profile` 的评测。

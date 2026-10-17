@@ -16,7 +16,7 @@ Captures are saved in persistent RuntimeCache storage, already configured by the
 Run from the repository root:
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
@@ -38,7 +38,7 @@ Press Ctrl+C to stop the viewer; capture files remain available for download.
 ## Deploy and capture external traffic
 
 ```bash
-foretoken deploy examples/quickstart/simple \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s
 ```
 
@@ -101,7 +101,7 @@ For external traffic, use `foretoken deploy examples/feature/profile/nsight --pr
 When the deployment and capture records are no longer needed, clean up with:
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 Use `examples/feature/profile/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.

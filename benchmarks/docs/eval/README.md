@@ -14,7 +14,7 @@ Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [
 Run 100 GSM8K math problems:
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval \
   --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 \
@@ -32,10 +32,10 @@ The summary lists task scores, answer filters, sample counts, and standard error
 PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/custom-deployment.md) or an existing Completions service that returns input-token log probabilities:
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks piqa --limit 100 --output local
 
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks wikitext --limit 100 --output local
 ```
 
@@ -59,7 +59,7 @@ For [reference/candidate distribution or greedy sequence comparisons](distributi
 ## EvalScope
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator evalscope \
   --model Qwen/Qwen3-0.6B \
   --datasets gsm8k --limit 100 \
@@ -90,7 +90,7 @@ This mode uses no Kubernetes resources. Add `--api-key` when authentication is r
 For a single-deployment evaluation, keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --tasks gsm8k --limit 100 \
   --resume results/previous-run --output local
 ```

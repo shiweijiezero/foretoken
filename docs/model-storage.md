@@ -16,7 +16,7 @@ spec:
 Then deploy as usual:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 Foretoken creates the directory-backed volume for this configuration. The directory is retained when the service is deleted, so later deployments can reuse its contents. See [Model sources](model-sources.md) to select ModelScope or a Hugging Face-compatible endpoint.

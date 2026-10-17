@@ -24,9 +24,9 @@ If the platform exposes services directly through a `LoadBalancer` instead of Ga
 
 ## 1. Deploy the example model
 
-Configure `examples/quickstart/simple/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](model-storage.md).
+Configure `examples/quickstart/qwen3-0.6b/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](model-storage.md).
 
-Add `hostname` under the existing `spec` in `examples/quickstart/simple/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
+Add `hostname` under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
 
 ```yaml
 spec:
@@ -36,20 +36,20 @@ spec:
 Deploy the example:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 The command exits when the model and frontend services are Ready.
 
-To select another model, edit `examples/quickstart/simple/model.yaml`. See the [single-model example](../examples/quickstart/simple/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
+To select another model, edit `examples/quickstart/qwen3-0.6b/model.yaml`. See the [single-model example](../examples/quickstart/qwen3-0.6b/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
 
 ## 2. Send a request
 
 Resolve the service URL and HTTP Host. Gateway uses the Host to route the request to the correct service:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -72,14 +72,14 @@ For CPU/GPU execution traces, use [PyTorch profiling](../benchmarks/docs/profile
 ## 3. Inspect or remove the deployment
 
 ```bash
-foretoken status examples/quickstart/simple
+foretoken status examples/quickstart/qwen3-0.6b
 kubectl get pods --namespace foretoken-demo
 ```
 
 When finished, remove the resources created by the same configuration:
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 Use a namespace dedicated to the example. Deletion waits for service cleanup, then removes its controller and namespace, including the PVC objects. Directory-backed model files remain available for reuse; dynamic volumes follow their storage retention policy. The administrator maintains the shared platform.

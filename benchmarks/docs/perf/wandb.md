@@ -5,7 +5,7 @@ English | [简体中文](wandb_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), choose the project, group, and run name:
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --num-prompts 20 --output local,wandb \
   --wandb-project foretoken-bench \
   --wandb-group qwen-comparison \

@@ -74,7 +74,7 @@ foretoken install -e .
 ### 3. 部署快速开始示例
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
@@ -84,7 +84,7 @@ foretoken deploy examples/quickstart/simple --timeout 20m
 ### 4. 发送测试请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -99,7 +99,7 @@ curl --fail-with-body --no-buffer \
 #### 性能：测量延迟和吞吐量
 
 ```bash
-foretoken perf examples/quickstart/simple --num-prompts 20 --output local,wandb
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 --output local,wandb
 ```
 
 汇总结果展示请求成功率、延迟和吞吐量。其他数据集与负载设置见[性能评测示例](benchmarks/docs/perf/README_zh.md)。
@@ -107,7 +107,7 @@ foretoken perf examples/quickstart/simple --num-prompts 20 --output local,wandb
 #### 质量：评估回答正确率
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
 ```
 
@@ -118,7 +118,7 @@ foretoken eval examples/quickstart/simple \
 快速开始示例已配置持久化采集存储。其他采集工具的准备和用法见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 foretoken profile view
@@ -130,7 +130,7 @@ foretoken profile view
 
 网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
 
-在 `examples/quickstart/simple/frontend.yaml` 的 `spec` 中添加访问域名：
+在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
@@ -146,11 +146,11 @@ foretoken install -e . --frontend-mode gateway
 # foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 # 发送测试请求
 curl --fail-with-body --no-buffer \
@@ -166,7 +166,7 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 # 删除快速开始的资源，包括命名空间和运行时缓存 PVC
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 
 # 卸载 Foretoken 平台
 foretoken uninstall

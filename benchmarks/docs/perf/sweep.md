@@ -5,7 +5,7 @@ English | [简体中文](sweep_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), compare concurrency settings with the existing [parameter file](../../examples/sweep.jsonl):
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset random --min-prompt-length 128 --max-prompt-length 256 \
   --temperature 0 --sweep benchmarks/examples/sweep.jsonl \
   --warmup-requests 16 --num-runs 3 \
@@ -32,7 +32,7 @@ Common parameter files are maintained in [`scripts/common/`](../../scripts/commo
 For fixed-length workloads:
 
 ```bash
-foretoken perf examples/quickstart/simple --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 1 --num-prompts 32 \
   --warmup-requests 4 --temperature 0 --output local,wandb,plot
 ```
@@ -65,7 +65,7 @@ In a JSONL row, `"slo_params": [{"ttft": "<=250ms", "tpot": "<=100ms"}, {"ttft":
 Use the [long-context configuration](../../scripts/common/long-context.jsonl) with one concurrent request and a fixed 512-token output target:
 
 ```bash
-foretoken perf examples/quickstart/simple --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/long-context.jsonl \
   --min-output-length 512 --max-output-length 512 --max-concurrency 1 \
   --num-prompts 4 --warmup-requests 1 --num-runs 1 \
@@ -79,7 +79,7 @@ Keep only rows your model can serve: its context must fit the input, 512 output 
 For a StudyChat concurrency comparison:
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/studychat-conversation.jsonl \
   --max-tokens 128 --temperature 0 --num-runs 3 \
@@ -89,14 +89,14 @@ foretoken perf examples/quickstart/simple \
 To compare conversation start rates on ShareGPT and StudyChat, use the same [rate configuration](../../scripts/common/conversation-rate.jsonl) with each dataset:
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \
   --num-prompts 100 --warmup-requests 0 --num-runs 1 \
   --experiment-name sharegpt-rate --output local,wandb,plot
 
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --temperature 0 --random-seed 0 --max-concurrency -1 \
@@ -111,7 +111,7 @@ The rate controls conversation starts, while the request budget counts HTTP turn
 Pass multiple Kustomize examples to measure the same workload on each service:
 
 ```bash
-foretoken perf examples/quickstart/simple examples/quickstart3 \
+foretoken perf examples/quickstart/qwen3-0.6b examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 

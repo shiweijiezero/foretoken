@@ -114,14 +114,14 @@ foretoken install
 部署快速开始示例，解析 k3s ServiceLB 为前端分配的地址：
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 ```
 
 ### 4.3 网关模式
 
-先在 `examples/quickstart/simple/frontend.yaml` 中设置对外域名：
+先在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中设置对外域名：
 
 ```yaml
 spec:
@@ -133,14 +133,14 @@ spec:
 ```bash
 foretoken install -e . --frontend-mode gateway
 # 发布安装使用：foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 解析已配置的 Gateway 入口：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/simple --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 ```
 
 ### 4.4 发送 OpenAI API 兼容格式的请求

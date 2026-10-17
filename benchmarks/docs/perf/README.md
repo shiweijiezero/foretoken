@@ -6,12 +6,12 @@ Use `foretoken perf` to compare response latency, token generation speed, and th
 
 ## Setup
 
-Complete the [shared setup](../../README.md#get-started), then run commands from the repository root. The examples use `examples/quickstart/simple`.
+Complete the [shared setup](../../README.md#get-started), then run commands from the repository root. The examples use `examples/quickstart/qwen3-0.6b`.
 
 For an existing endpoint, replace that directory with `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`. For the deployed Quick Start, obtain those values with:
 
 ```bash
-MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/simple)"
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```

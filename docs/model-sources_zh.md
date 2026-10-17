@@ -36,7 +36,7 @@ spec:
 正常部署配置：
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 目录存储和 PVC 配置见[模型存储](model-storage_zh.md)。

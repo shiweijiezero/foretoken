@@ -38,13 +38,13 @@ Source builds automatically reuse persistent node-local compiler caches. To stor
 From the Foretoken repository root, deploy the Quick Start using the code in this directory:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 This creates a frontend and a `Qwen/Qwen3-0.6B` model service in the `foretoken-demo` namespace, using one GPU. Once deployment completes, send a request:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
@@ -52,14 +52,14 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
 
 After changing controller, frontend or model-server code, rerun `foretoken deploy`; it builds the changes and updates the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
 
-To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/simple -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
+To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
 CLI changes use the directory where `pip install -e .` was run. Reinstall the CLI when changing its Python dependencies.
 
 Remove the example when finished:
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 ### Run candidates in parallel
@@ -77,7 +77,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: candidate-a
 resources:
-  - ../quickstart/simple
+  - ../quickstart/qwen3-0.6b
 patches:
   - target:
       kind: RuntimeCache
@@ -116,7 +116,7 @@ Uninstall the platform only after all candidates have finished.
 To use vLLM code from a local directory, pass that directory on deployment. It must match the installed runtime's Python, PyTorch and accelerator environment. For vLLM at `../vllm`:
 
 ```bash
-foretoken deploy examples/quickstart/simple --engine-source ../vllm --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for each Foretoken source directory.
@@ -124,7 +124,7 @@ Subsequent deployments from this Foretoken directory reuse the selected vLLM dir
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
 ```bash
-foretoken deploy examples/quickstart/simple \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax --timeout 20m
 ```

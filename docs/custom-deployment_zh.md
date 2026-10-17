@@ -38,13 +38,13 @@ foretoken install -e .
 在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码：
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 这会在 `foretoken-demo` 命名空间中创建前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
@@ -52,14 +52,14 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
 
 修改控制器、前端或模型服务代码后，重新执行 `foretoken deploy`，即可构建改动并更新该部署命名空间。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新时会重启相应进程，并可能重新加载模型权重。
 
-从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/simple -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
+从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
 CLI 代码使用执行 `pip install -e .` 时的目录；修改其 Python 依赖后，需要重新安装 CLI。
 
 示例使用完后删除：
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
 ### 并行运行候选方案
@@ -77,7 +77,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: candidate-a
 resources:
-  - ../quickstart/simple
+  - ../quickstart/qwen3-0.6b
 patches:
   - target:
       kind: RuntimeCache
@@ -116,7 +116,7 @@ foretoken delete examples/candidate
 要使用本地修改的 vLLM，部署时指定它的目录。该代码需与已安装运行环境的 Python、PyTorch 和设备库匹配。假设 vLLM 位于 `../vllm`：
 
 ```bash
-foretoken deploy examples/quickstart/simple --engine-source ../vllm --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，重新执行 `foretoken deploy`，所需编译会自动完成。每个 Foretoken 源码目录的引擎目录需分别指定。
@@ -124,7 +124,7 @@ foretoken deploy examples/quickstart/simple --engine-source ../vllm --timeout 20
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 
 ```bash
-foretoken deploy examples/quickstart/simple \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --engine-source ../vllm \
   --engine-source vllm-metax=../vllm-metax --timeout 20m
 ```

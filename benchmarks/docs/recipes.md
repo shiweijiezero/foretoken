@@ -7,14 +7,14 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](recipes_zh.md) · [Evaluation and profiling](../README.md)
 
-Run these commands from the repository root, replacing `examples/quickstart/simple` with your model's configuration directory.
+Run these commands from the repository root, replacing `examples/quickstart/qwen3-0.6b` with your model's configuration directory.
 
 ## Input length, output length, and concurrency
 
 Compare latency and throughput across fixed input/output length pairs and concurrency levels, keeping only pairs that fit the model's context.
 
 ```bash
-foretoken perf examples/quickstart/simple --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/fixed-length.jsonl \
   --num-prompts 32 --warmup-requests 4 --num-runs 1 --temperature 0 \
   --experiment-name fixed-length --output local,wandb,plot
@@ -25,7 +25,7 @@ foretoken perf examples/quickstart/simple --dataset random \
 Vary input length at concurrency 1 with a fixed 512-token output, reserving room for the output within the model's context.
 
 ```bash
-foretoken perf examples/quickstart/simple --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/long-context.jsonl \
   --max-concurrency 1 --min-output-length 512 --max-output-length 512 \
   --num-prompts 4 --warmup-requests 1 --num-runs 1 --temperature 0 \
@@ -37,14 +37,14 @@ foretoken perf examples/quickstart/simple --dataset random \
 Use ShareGPT and StudyChat to start conversations using a Poisson process, averaging 2, 4, 8, or 16 new conversations per second; `--num-prompts` counts individual turns.
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
   --num-prompts 100 --warmup-requests 0 --num-runs 1 \
   --experiment-name sharegpt-rate --output local,wandb,plot
 
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
@@ -57,7 +57,7 @@ foretoken perf examples/quickstart/simple \
 Measure the fraction of requests meeting both latency targets and the throughput of requests or tokens that meet them.
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --slo-params '[{"ttft":"<=2s","tpot":"<=100ms"}]' \
@@ -71,7 +71,7 @@ foretoken perf examples/quickstart/simple \
 Vary the average number of conversations started per second and the first-token latency threshold, using Poisson arrivals to compare attainment and goodput.
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/slo-thresholds.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
@@ -84,13 +84,13 @@ foretoken perf examples/quickstart/simple \
 Replay eight-minute StudyChat and Mooncake windows to compare latency, throughput, and replay delay; Mooncake reconstructs shared prefixes for cache experiments.
 
 ```bash
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
   --trace-start 18609050.546s --trace-duration 8min \
   --max-concurrency 16 --max-tokens 4096 \
   --output local,wandb,plot
 
-foretoken perf examples/quickstart/simple \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --trace valeriol29/mooncake-traces:conversation --dataset random \
   --trace-start 57s --trace-duration 8min --max-concurrency 16 \
   --trace-synthetic-prefix-reuse --random-seed 0 --max-tokens 64 \
@@ -102,7 +102,7 @@ foretoken perf examples/quickstart/simple \
 Score five zero-shot tasks with up to 100 samples per task.
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks piqa,arc_easy,arc_challenge,hellaswag,winogrande \
   --num_fewshot 0 --limit 100 --output local,wandb,plot
 ```
@@ -112,7 +112,7 @@ foretoken eval examples/quickstart/simple \
 Measure WikiText perplexity using a service that returns input-token log probabilities.
 
 ```bash
-foretoken eval examples/quickstart/simple \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks wikitext --limit 100 --output local,wandb,plot
 ```
 

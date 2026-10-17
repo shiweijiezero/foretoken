@@ -36,7 +36,7 @@ An absolute directory already mounted in both frontend and model-server Pods is 
 Deploy the configuration normally:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 See [Model storage](model-storage.md) for directory-backed and PVC-backed storage.

@@ -18,7 +18,7 @@ Configure the model, replica count, resources, parallelism, and [inference param
 Install the [platform from source](../../../docs/custom-deployment.md) and prepare the [model storage](../../../docs/model-storage.md). Run from the repository root:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 The command reports each service state as it changes and exits when the current configuration is ready.
@@ -28,7 +28,7 @@ The command reports each service state as it changes and exits when the current 
 Resolve the frontend URL:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 ```
 
 Send an OpenAI-compatible request:
@@ -48,5 +48,5 @@ printf '\n'
 ## Clean up
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```

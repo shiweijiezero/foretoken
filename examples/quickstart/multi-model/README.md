@@ -10,7 +10,7 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At full scale, three Qwen replicas and one Llama replica request four GPUs, 20 CPU cores, and 196 GiB memory, including the frontend. Allow additional capacity for the platform. Models and runtime caches share the repository-root `data/` directory with the single-model example, as configured in `cache.yaml`. For the smallest deployment, see [Single-Model Quick Start](../simple/README.md).
+The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At full scale, three Qwen replicas and one Llama replica request four GPUs, 20 CPU cores, and 196 GiB memory, including the frontend. Allow additional capacity for the platform. Models and runtime caches share the repository-root `data/` directory with the single-model example, as configured in `cache.yaml`. For the smallest deployment, see [Single-Model Quick Start](../qwen3-0.6b/README.md).
 
 ## Deploy
 

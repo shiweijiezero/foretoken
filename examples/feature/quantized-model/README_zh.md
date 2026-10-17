@@ -60,4 +60,4 @@ foretoken eval examples/feature/quantized-model/bitsandbytes \
 
 每个示例的 `cache.yaml` 都使用项目根目录的 `data/`。远程集群需要在所部署示例中，将 `directory: ../../../../data` 改为目标节点可访问的绝对路径，详见[模型存储](../../../docs/model-storage_zh.md)。
 
-部署后使用 `foretoken endpoint` 获取对应前端地址，并在 OpenAI API 兼容格式的请求中填写该节列出的模型标识。请求格式和 Gateway 域名配置见[单模型快速开始](../../quickstart/simple/README_zh.md)。清理部署后，已经下载的模型文件仍保留在目录缓存中。
+部署后使用 `foretoken endpoint` 获取对应前端地址，并在 OpenAI API 兼容格式的请求中填写该节列出的模型标识。请求格式和 Gateway 域名配置见[单模型快速开始](../../quickstart/qwen3-0.6b/README_zh.md)。清理部署后，已经下载的模型文件仍保留在目录缓存中。

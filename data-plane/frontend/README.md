@@ -14,7 +14,7 @@ The frontend provides text and video generation APIs for deployed models.
 Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root:
 
 ```bash
-DEPLOYMENT=examples/quickstart/simple
+DEPLOYMENT=examples/quickstart/qwen3-0.6b
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 
@@ -165,7 +165,7 @@ A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPoo
 
 ## Update serving settings
 
-Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/simple/frontend.yaml`:
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
 
 ```yaml
 spec:
@@ -178,7 +178,7 @@ spec:
 Apply the Quick Start configuration:
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.

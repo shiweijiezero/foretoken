@@ -18,7 +18,7 @@
 从源码[安装平台](../../../docs/custom-deployment_zh.md)并准备[模型存储](../../../docs/model-storage_zh.md)，再从仓库根目录部署：
 
 ```bash
-foretoken deploy examples/quickstart/simple --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
@@ -28,7 +28,7 @@ foretoken deploy examples/quickstart/simple --timeout 20m
 解析前端服务 URL：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/simple)"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 ```
 
 发送 OpenAI API 兼容格式的请求：
@@ -48,5 +48,5 @@ printf '\n'
 ## 清理
 
 ```bash
-foretoken delete examples/quickstart/simple
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
