@@ -74,6 +74,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-The team provides the path to `report.md` when the experiment starts. The report stays current as the experiment progresses, summarizing performance comparisons, findings and the retained approach. Follow its links to inspect individual iterations, original results and W&B runs when enabled. See the [experiment records guide](experiment-records.md) for directory layout and recording conventions.
+The experiment report (`report.md`) compares performance across approaches, explains the findings and identifies the currently selected approach. It is updated as the experiment progresses, with links to detailed experiment records and original data.
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
