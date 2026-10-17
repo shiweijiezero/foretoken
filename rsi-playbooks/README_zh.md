@@ -13,7 +13,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-以下以 [Qwen 吞吐与解码延迟优化](tasks/qwen-decode_zh.md)为例。使用前确认具备任务要求的资源；自己的任务可按[任务模板](templates/task-template_zh.md)编写，并替换指令中的文件路径。
+以下以 [Qwen3.5-35B-A3B 优化](tasks/qwen3.5-35b-a3b_zh.md)为例。使用前确认具备任务要求的资源；自己的任务可按[任务模板](templates/task-template_zh.md)编写，并替换指令中的文件路径。
 
 ### Claude Code
 
@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在会话中输入：
 
 ```text
-/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen-decode_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
 ```
 
 需要暂停时，用 `/goal clear` 结束自动续轮，并要求团队停止本任务的实验和采集进程。
@@ -36,7 +36,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在仓库目录打开 Codex，输入：
 
 ```text
-/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen-decode_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
 ```
 
 用 `/goal pause` 暂停目标，并要求成员停止实验与采集；用 `/goal resume` 继续。

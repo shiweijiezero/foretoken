@@ -32,4 +32,4 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 评测负载可以引用已有配置或 [recipes](../../benchmarks/docs/recipes_zh.md)；多组负载的目标应说明按各组还是整体结果判断。
 
-填写可参考 [Qwen 吞吐与解码延迟优化任务](../tasks/qwen-decode_zh.md)。执行沿用[通用流程](../README_zh.md#使用步骤)，运行结果按[实验记录手册](../experiment-records_zh.md)保存。
+填写可参考 [Qwen3.5-35B-A3B 优化任务](../tasks/qwen3.5-35b-a3b_zh.md)。执行沿用[通用流程](../README_zh.md#使用步骤)，运行结果按[实验记录手册](../experiment-records_zh.md)保存。

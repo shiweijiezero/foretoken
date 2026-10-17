@@ -2,10 +2,11 @@
 
 [English](README.md) | 简体中文
 
-Foretoken 是一个面向 SLO/SLA 与异构硬件的生成式推理编排框架。
+Foretoken 是一个 RSI（Recursive Self-Improvement，递归自我改进）友好的生成式推理编排框架。
 
 Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成一套集群服务，负责请求路由、自动扩缩容、实例管理和性能评测。
 我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 Token。
+通过统一的部署、评测与性能剖析能力，Foretoken 支持 Agent 持续修改推理系统、验证效果，并依据实验结果开展下一轮优化，形成 [RSI 循环](rsi-playbooks/README_zh.md)。
 
 ## 什么时候需要 Foretoken
 
@@ -21,6 +22,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
+| [RSI](#用-rsi-持续优化推理) | Agent 通过研究、实现与评测持续优化推理系统 | 开发中 |
 | [评测](benchmarks/README_zh.md) | 评测模型服务性能和模型质量 | 开发中 |
 | [性能剖析](benchmarks/docs/profile/README_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
@@ -125,6 +127,24 @@ foretoken profile view
 ```
 
 打开打印的网址查看采集结果，按 Ctrl+C 关闭查看器；模型服务继续运行。
+
+## 用 RSI 持续优化推理
+
+Agent 可以围绕指定模型、负载和资源预算，研究优化方法、修改代码或配置、部署候选方案，再通过性能评测、质量评测和性能剖析决定下一步。实验报告随迭代更新，记录方案对比、实测收益和保留的改动。
+
+安装并登录 Claude Code 或 Codex 后，在仓库根目录选择一条命令启动 [Qwen3.5-35B-A3B 优化任务](rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md)。模型、资源、优化目标、时间预算和交付要求统一在任务文件中定义，运行前按实际环境调整。
+
+```bash
+# Claude Code
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+  '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+
+# Codex
+codex \
+  '/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+```
+
+命令会打开交互会话并提交优化任务。暂停时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，并要求 Agent 停止本任务的实验和采集进程。更详细的目标和约束可写入[任务模板](rsi-playbooks/templates/task-template_zh.md)，在提示词中引用任务文件；完整流程见 [RSI 手册](rsi-playbooks/README_zh.md)。
 
 ## 网关模式
 

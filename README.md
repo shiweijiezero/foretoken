@@ -2,10 +2,11 @@
 
 English | [简体中文](README_zh.md)
 
-Foretoken is a generative inference orchestration framework built for SLO/SLA targets and heterogeneous accelerators.
+Foretoken is an RSI-friendly (Recursive Self-Improvement) orchestration framework for generative inference.
 
 Built on inference engines such as vLLM and SGLang, Foretoken organizes multiple generation instances into a cluster service for request routing, autoscaling, instance management, and benchmarking.
 We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency and quality requirements.
+Unified deployment, evaluation, and profiling let agents change inference systems, measure the effects, and use the results to guide the next iteration in an [RSI loop](rsi-playbooks/README.md).
 
 ## When to Use Foretoken
 
@@ -21,6 +22,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
+| [RSI](#optimize-inference-with-rsi) | Agent-driven research, implementation, and evaluation for iterative inference optimization | In development |
 | [Evaluation](benchmarks/README.md) | Measure service performance and model quality | In development |
 | [Profiling](benchmarks/docs/profile/README.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
@@ -125,6 +127,24 @@ foretoken profile view
 ```
 
 Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; the model service remains running.
+
+## Optimize Inference with RSI
+
+Agents investigate optimization methods for a chosen model, workload, and resource budget, change code or configuration, and deploy candidates. Performance measurements, quality evaluations, and execution profiles guide the next iteration. A running experiment report compares approaches and records measured gains and retained changes.
+
+Install and sign in to Claude Code or Codex, then run either command from the repository root to start the [Qwen3.5-35B-A3B optimization task](rsi-playbooks/tasks/qwen3.5-35b-a3b.md). The task file defines the model, resources, objectives, time budget, and deliverables; adjust it to your environment before starting.
+
+```bash
+# Claude Code
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+  '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+
+# Codex
+codex \
+  '/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+```
+
+The command opens an interactive session and submits the optimization task. To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the agents to stop this task's experiments and collectors. For more detailed objectives and constraints, fill in the [task template](rsi-playbooks/templates/task-template.md) and reference the task file in your prompt. See the [RSI playbooks](rsi-playbooks/README.md) for the full workflow.
 
 ## Gateway Mode
 
