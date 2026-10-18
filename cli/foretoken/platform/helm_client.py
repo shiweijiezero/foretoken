@@ -13,8 +13,8 @@ from collections.abc import Iterable
 from typing import Any, NoReturn
 
 from foretoken.command_execution import run_command
-from foretoken.manifest import DeploymentError
-from foretoken.namespace_mutation import mutation_lock_fds
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.namespace import mutation_lock_fds
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 from foretoken.tools import resolve_tool

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from foretoken.cluster_build import ClusterBuilder
+    from foretoken.build.cluster import ClusterBuilder
 
 
 def resolve_vllm_base_image(

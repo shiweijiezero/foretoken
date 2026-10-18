@@ -23,10 +23,11 @@ except ImportError:
     from yaml import SafeLoader as _SafeLoader
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
-from foretoken.application_files import ApplicationFiles, application_references
+from foretoken.applications.files import ApplicationFiles, application_references
 from foretoken.command_execution import CommandExecution
-from foretoken.kubernetes import Kubectl, resource_ref, timeout_seconds
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.deployment.submission import _SERVICE_OPERATION_ANNOTATION
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
 from foretoken.network_sources import (
     select_github_download,
     select_platform_image_sources,
@@ -42,10 +43,9 @@ from foretoken.platform.types import (
     PlatformGatewayConfig,
     ReleaseRef,
 )
-from foretoken.submission import _SERVICE_OPERATION_ANNOTATION
 
 if TYPE_CHECKING:
-    from foretoken.source import SourceImages
+    from foretoken.build.source import SourceImages
 
 
 class Helm(HelmClient):
@@ -282,7 +282,7 @@ class Helm(HelmClient):
 
     def _installed_chart_images(self, release: ReleaseRef) -> set[str]:
         """Read prior images from native workloads and Prometheus Operator resources."""
-        from foretoken.source_state import application_images
+        from foretoken.build.state import application_images
 
         documents = self._installed_chart_manifest(release)
         images = application_images(documents)
@@ -1586,7 +1586,7 @@ class Helm(HelmClient):
 
     def image_history(self) -> set[str] | None:
         """Retain images selected by installed defaults or an available Helm rollback."""
-        from foretoken.source_state import application_images
+        from foretoken.build.state import application_images
 
         return self._history_references(application_images)
 

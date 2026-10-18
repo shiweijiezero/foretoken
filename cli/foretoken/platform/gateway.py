@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from foretoken.arguments import InstallCommand
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 from foretoken.platform.gateway_resources import (
     _discover_gateway_class,
     _gateway_classes_for_controller,

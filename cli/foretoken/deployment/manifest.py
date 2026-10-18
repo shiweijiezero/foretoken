@@ -5,29 +5,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-
-class DeploymentError(RuntimeError):
-    """A Foretoken deployment cannot be applied or inspected."""
-
-
-@dataclass(frozen=True)
-class ResourceRef:
-    """A namespaced Foretoken resource selected for status inspection."""
-
-    kind: str
-    name: str
-    namespace: str
-
-    @property
-    def display_name(self) -> str:
-        """Return the user-facing kind and resource name."""
-        return f"{self.kind}/{self.name}"
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef
 
 
 @dataclass(frozen=True)
@@ -191,3 +177,17 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
         runtime_caches=tuple(runtime_caches),
         objects=tuple(documents),
     )
+
+
+def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
+    """Render a deployment and resolve its services to the active Kubernetes namespace."""
+    path = deployment_path(path_value)
+    deployment = parse_deployment(path, kubectl.kustomize(path))
+    if deployment.namespace:
+        return deployment
+    config = json.loads(kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout)
+    namespace = config["contexts"][0]["context"].get("namespace") or "default"
+    for obj in deployment.objects:
+        if obj.get("kind") in {"ModelService", "FrontendService"}:
+            obj["metadata"]["namespace"] = namespace
+    return parse_deployment(path, yaml.safe_dump_all(deployment.objects, sort_keys=False))

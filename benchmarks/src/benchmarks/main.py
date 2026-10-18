@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments

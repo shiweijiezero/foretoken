@@ -24,18 +24,18 @@ from typing import Any, Self
 
 import yaml
 
-from foretoken.build_artifacts import prepare_artifact_volume
-from foretoken.build_storage import SOURCE_BUILD_UID
-from foretoken.command_execution import CommandExecution, run_command
-from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
-from foretoken.manifest import DeploymentError
-from foretoken.node_images import (
+from foretoken.build.artifacts import prepare_artifact_volume
+from foretoken.build.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     NodeImageStore,
     image_manifest_digest,
     images_container_spec,
 )
+from foretoken.build.storage import SOURCE_BUILD_UID
+from foretoken.command_execution import CommandExecution, run_command
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
@@ -738,7 +738,7 @@ fi
                         }
                     ),
                 )
-            _wait_for_object(
+            wait_for_object(
                 lambda: self.kubectl.get(
                     "pod", self.name, self.namespace,
                     timeout=max(1.0, deadline - time.monotonic()),

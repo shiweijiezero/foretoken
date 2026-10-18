@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 _SOURCE_METADATA = ".foretoken-sources.json"
 SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})

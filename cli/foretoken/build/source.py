@@ -15,32 +15,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foretoken.application_files import ApplicationFiles
+from foretoken.applications.files import ApplicationFiles
 from foretoken.arguments import InstallCommand
-from foretoken.build_environments import BuildEnvironments
-from foretoken.build_storage import (
-    build_configuration,
-    ensure_build_volumes,
-    local_build_nodes,
-    prepare_build_storage,
-)
-from foretoken.cluster_build import (
+from foretoken.build.cluster import (
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
 )
-from foretoken.command_execution import CommandExecution
-from foretoken.engine_environment import (
+from foretoken.build.engine import (
     engine_build_arguments,
     engine_cache_scope,
     export_engine_source,
     resolve_vllm_base_image,
 )
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError
-from foretoken.network_sources import select_build_sources
-from foretoken.node_images import image_tools_image
-from foretoken.source_inputs import (
+from foretoken.build.environments import BuildEnvironments
+from foretoken.build.inputs import (
     SNAPSHOT_METADATA,
     BuildInputs,
     build_sources,
@@ -50,13 +39,24 @@ from foretoken.source_inputs import (
     snapshot_versions,
     source_checkout,
 )
-from foretoken.source_state import (
+from foretoken.build.node_images import image_tools_image
+from foretoken.build.state import (
     capture_build_inputs,
     cluster_state_directory,
     context_identity,
     local_candidates,
     write_source_state,
 )
+from foretoken.build.storage import (
+    build_configuration,
+    ensure_build_volumes,
+    local_build_nodes,
+    prepare_build_storage,
+)
+from foretoken.command_execution import CommandExecution
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.network_sources import select_build_sources
 
 
 @dataclass(frozen=True)

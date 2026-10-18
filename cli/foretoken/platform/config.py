@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from foretoken import platform_version
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 from foretoken.platform.types import LoadBalancerConfig, RuntimeOverrides
 
 

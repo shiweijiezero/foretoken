@@ -10,9 +10,9 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
-from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
-from foretoken.manifest import DeploymentError
-from foretoken.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
+from foretoken.build.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 
 if TYPE_CHECKING:
     from foretoken.command_execution import CommandExecution
@@ -132,7 +132,7 @@ def _bind_artifact_claim(
     error = None
     try:
         cancellation.register(remove_binder)
-        return _wait_for_object(
+        return wait_for_object(
             lambda: kubectl.get("pvc", metadata["name"], namespace, timeout=max(1.0, deadline - time.monotonic())),
             bound, deadline, f"artifact PVC {namespace}/{metadata['name']} to bind",
         )

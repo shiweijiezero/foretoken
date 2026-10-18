@@ -19,7 +19,7 @@ from pathlib import Path
 from threading import Event, Lock
 from typing import Any, BinaryIO, Self
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 _EXECUTIONS: ContextVar[tuple[CommandExecution, ...]] = ContextVar(
     "foretoken_command_executions", default=()

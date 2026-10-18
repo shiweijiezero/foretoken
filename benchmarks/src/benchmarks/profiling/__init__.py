@@ -3,7 +3,7 @@
 
 """Coordinate benchmark requests with the existing service-owned capture lifecycle."""
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 
 class CaptureCleanupError(DeploymentError):

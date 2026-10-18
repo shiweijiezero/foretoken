@@ -11,8 +11,9 @@ import time
 from typing import Any, Literal
 
 from foretoken.arguments import ProfileCommand
-from foretoken.kubernetes import Kubectl, load_deployment, timeout_seconds
-from foretoken.manifest import DeploymentError, ForetokenDeployment
+from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
 
 
 class ProfileRun:

@@ -8,7 +8,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from foretoken.cluster_build import ClusterBuilder, ImageNotFoundError
+from foretoken.build.cluster import ClusterBuilder, ImageNotFoundError
 
 
 class BuildEnvironments:

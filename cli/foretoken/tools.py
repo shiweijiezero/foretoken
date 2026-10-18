@@ -9,7 +9,7 @@ import os
 import shutil
 from pathlib import Path
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 _TOOL_PATHS = {
     "kubectl": (

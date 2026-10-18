@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import foretoken
-from foretoken.application_files import ApplicationFiles
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.applications.files import ApplicationFiles
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 from foretoken.platform.config import default_platform_config
 
 from benchmarks.model_service import ModelService

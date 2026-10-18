@@ -93,7 +93,7 @@ image-vllm-metax: mooncake-source
 		-t "$(VLLM_METAX_IMAGE)" .
 
 image-model-server:
-	engine_image=$$("$(or $(FORETOKEN_PYTHON),python3)" cli/foretoken/engine_environment.py \
+	engine_image=$$("$(or $(FORETOKEN_PYTHON),python3)" cli/foretoken/build/engine.py \
 		--root "$(CURDIR)" --image "$(INFERENCE_ENGINE_IMAGE)" \
 		--docker-registry "$(DOCKER_REGISTRY)") && \
 	docker build \

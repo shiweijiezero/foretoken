@@ -19,32 +19,19 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import (
+from foretoken.applications.files import (
     SERVICE_COMPONENTS,
     SOURCE_REVISION,
     ApplicationFiles,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build_storage import ensure_build_volumes, local_build_nodes
-from foretoken.cluster_build import (
+from foretoken.build.cluster import (
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
 )
-from foretoken.engine_environment import export_engine_source
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import (
-    DeploymentError,
-    ForetokenDeployment,
-    ResourceRef,
-    parse_deployment,
-    service_requires_execution,
-)
-from foretoken.node_images import image_tools_image
-from foretoken.platform.config import default_platform_config
-from foretoken.platform.helm import Helm
-from foretoken.source import prepare_source_images
-from foretoken.source_inputs import (
+from foretoken.build.engine import export_engine_source
+from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
@@ -52,7 +39,9 @@ from foretoken.source_inputs import (
     snapshot_versions,
     source_checkout,
 )
-from foretoken.source_state import (
+from foretoken.build.node_images import image_tools_image
+from foretoken.build.source import prepare_source_images
+from foretoken.build.state import (
     SOURCE_INSTALL_ANNOTATION,
     checkout_operation,
     checkout_state_directory,
@@ -64,6 +53,16 @@ from foretoken.source_state import (
     runtime_settings,
     write_source_state,
 )
+from foretoken.build.storage import ensure_build_volumes, local_build_nodes
+from foretoken.deployment.manifest import (
+    ForetokenDeployment,
+    parse_deployment,
+    service_requires_execution,
+)
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.platform.config import default_platform_config
+from foretoken.platform.helm import Helm
 
 _APPLICATION_PARTS = {
     "control-plane": ("go",),
