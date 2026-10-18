@@ -3,12 +3,12 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-<!-- 必须保留概要、目的和验证。
+<!-- 必须保留 TLDR、目的和验证。
 其余章节按需保留，删除不适用的部分。英文模板：PULL_REQUEST_TEMPLATE.md -->
 
-## 概要
+## TLDR
 
-<!-- 说明问题和改动。新增功能先说明用户目标与预期结果。 -->
+<!-- 用一句话概括改动。 -->
 
 ## 目的
 
