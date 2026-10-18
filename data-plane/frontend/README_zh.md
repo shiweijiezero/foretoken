@@ -311,6 +311,6 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 负责执行的前端进程停止时，本次响应会失败，不会迁移到其他进程或重新生成。此前保存的结果和历史仍可取回，并用于后续请求。
 
-调整保留时间或使用外部 PostgreSQL 时，通过平台 [Helm values](../../deploy/charts/foretoken/values.yaml) 中的 `responseStore` 配置。`externalURLSecret` 引用保存数据库连接 URL 的 Secret，该 Secret 需存在于每个服务命名空间。
+通过平台 [Helm values](../../deploy/charts/foretoken/values.yaml) 中的 `responseStore` 调整保留期或使用外部 PostgreSQL。`retention` 和 `replayRetention` 使用带单位的时长，例如 `7d` 和 `30m`。`externalURLSecret` 引用保存数据库连接 URL 的 Secret，该 Secret 需存在于每个服务命名空间。
 
 网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。

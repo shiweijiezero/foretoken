@@ -43,13 +43,13 @@
     },
     "responseStore": {
       "type": "object",
-      "required": ["image", "storageClass", "storageSize", "retentionSeconds", "replayRetentionSeconds", "externalURLSecret"],
+      "required": ["image", "storageClass", "storageSize", "retention", "replayRetention", "externalURLSecret"],
       "properties": {
         "image": {"type": "string", "minLength": 1},
         "storageClass": {"type": "string"},
         "storageSize": {"type": "string", "minLength": 1},
-        "retentionSeconds": {"type": "integer", "minimum": 1},
-        "replayRetentionSeconds": {"type": "integer", "minimum": 1},
+        "retention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
+        "replayRetention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
         "externalURLSecret": {
           "type": "object",
           "required": ["name", "key"],

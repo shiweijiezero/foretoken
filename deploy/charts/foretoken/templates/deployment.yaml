@@ -139,8 +139,8 @@ spec:
             {{- $responseSecret := include "foretoken.responseStoreURLSecret" . | fromJson }}
             - {{ printf "--response-store-url-secret-name=%s" $responseSecret.name | quote }}
             - {{ printf "--response-store-url-secret-key=%s" $responseSecret.key | quote }}
-            - {{ printf "--response-retention-seconds=%d" (int64 .Values.responseStore.retentionSeconds) | quote }}
-            - {{ printf "--response-replay-retention-seconds=%d" (int64 .Values.responseStore.replayRetentionSeconds) | quote }}
+            - {{ printf "--response-retention=%s" .Values.responseStore.retention | quote }}
+            - {{ printf "--response-replay-retention=%s" .Values.responseStore.replayRetention | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
             - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}

@@ -7,8 +7,11 @@ package runtimeconfig
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/prometheus/common/model"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -19,6 +22,34 @@ const (
 	ResponseRetentionSecondsEnv       = "FORETOKEN_RESPONSE_RETENTION_SECONDS"
 	ResponseReplayRetentionSecondsEnv = "FORETOKEN_RESPONSE_REPLAY_RETENTION_SECONDS"
 )
+
+// ResponseStoreConfiguration resolves platform duration strings into the frontend's second-based selection.
+func ResponseStoreConfiguration(secretName, secretKey, retention, replayRetention string) (*inferencev1alpha1.ResponseStoreConfig, error) {
+	configuration := &inferencev1alpha1.ResponseStoreConfig{
+		URLSecretRef: corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+			Key:                  secretKey,
+		},
+	}
+	for _, setting := range []struct {
+		name    string
+		value   string
+		seconds *int64
+	}{
+		{"retention", retention, &configuration.RetentionSeconds},
+		{"replayRetention", replayRetention, &configuration.ReplayRetentionSeconds},
+	} {
+		duration, err := model.ParseDuration(setting.value)
+		if err != nil || duration <= 0 || time.Duration(duration)%time.Second != 0 {
+			return nil, fmt.Errorf("%s requires a positive whole-second duration, such as 30d or 10m", setting.name)
+		}
+		*setting.seconds = int64(time.Duration(duration) / time.Second)
+	}
+	if err := ValidateResponseStore(configuration); err != nil {
+		return nil, err
+	}
+	return configuration, nil
+}
 
 // ValidateResponseStore checks platform-owned connection and retention settings at selection.
 func ValidateResponseStore(configuration *inferencev1alpha1.ResponseStoreConfig) error {

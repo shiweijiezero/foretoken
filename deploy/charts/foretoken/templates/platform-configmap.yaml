@@ -27,7 +27,7 @@
 {{- if .Values.admissionStore.externalURLSecret.name }}
 {{- $_ := set $admission "externalURL" "" }}
 {{- end }}
-{{- $responseStore := dict "externalURLSecret" (include "foretoken.responseStoreURLSecret" . | fromJson) "retentionSeconds" .Values.responseStore.retentionSeconds "replayRetentionSeconds" .Values.responseStore.replayRetentionSeconds }}
+{{- $responseStore := dict "externalURLSecret" (include "foretoken.responseStoreURLSecret" . | fromJson) "retention" .Values.responseStore.retention "replayRetention" .Values.responseStore.replayRetention }}
 {{- $values := dict
     "scope" "deployment"
     "global" (dict "imageRegistry" "")

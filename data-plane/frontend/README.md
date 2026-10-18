@@ -311,6 +311,6 @@ Stored Responses and Chat archives are retained for 30 days after execution ends
 
 If the frontend process executing a response stops, that response fails rather than moving to another process or being rerun. Previously saved results and history remain available for retrieval and continuation.
 
-To change retention or use external PostgreSQL, configure `responseStore` in the platform's [Helm values](../../deploy/charts/foretoken/values.yaml). `externalURLSecret` references a database-URL Secret that must exist in each serving namespace.
+Configure `responseStore` in the platform's [Helm values](../../deploy/charts/foretoken/values.yaml) to change retention or use external PostgreSQL. `retention` and `replayRetention` accept durations such as `7d` and `30m`. `externalURLSecret` references a database-URL Secret that must exist in each serving namespace.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.
