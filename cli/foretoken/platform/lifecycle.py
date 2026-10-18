@@ -21,21 +21,20 @@ from foretoken.accelerators.discovery import ExporterDiscovery
 from foretoken.accelerators.metax import MetaXExporterLifecycle, MetaXMetricsDiscovery
 from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
-from foretoken.build_storage import (
+from foretoken.build.storage import (
     managed_build_storage_resources,
     remove_build_storage,
 )
 from foretoken.command_execution import CommandExecution
-from foretoken.kubernetes import (
-    Kubectl,
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.kubernetes.namespace import NamespaceMutation
+from foretoken.platform.resources import (
     control_plane_deployments,
     mark_managed_metrics_scraper_namespace,
     platform_service_resources,
-    timeout_seconds,
     unmark_managed_metrics_scraper_namespace,
 )
-from foretoken.manifest import DeploymentError
-from foretoken.namespace_mutation import NamespaceMutation
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
@@ -59,8 +58,8 @@ from foretoken.platform.rdma import (
     select_rdma,
 )
 from foretoken.platform.types import RuntimeOverrides
-from foretoken.source import prepare_source_images
-from foretoken.source_state import (
+from foretoken.build.source import prepare_source_images
+from foretoken.build.state import (
     forget_install,
     has_source_state,
     reconcile_source_resources,

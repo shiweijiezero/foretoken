@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from foretoken.command_execution import cleanup_commands
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 if TYPE_CHECKING:
-    from foretoken.kubernetes import Kubectl
+    from foretoken.kubernetes.client import Kubectl
 
 # Mutating subprocesses retain the local lock if their parent CLI exits first.
 mutation_lock_fds: ContextVar[tuple[int, ...]] = ContextVar(
@@ -31,7 +31,7 @@ class NamespaceMutation:
     """Coordinate namespace writes across deploy, stop and temporary retirement."""
 
     def __init__(self, kubectl: Kubectl, namespace: str, timeout: str) -> None:
-        from foretoken.kubernetes import timeout_seconds
+        from foretoken.kubernetes.client import timeout_seconds
 
         self.kubectl = kubectl
         self.namespace = namespace

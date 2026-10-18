@@ -13,14 +13,16 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import SOURCE_REVISION
-from foretoken.kubernetes import (
+from foretoken.applications.files import SOURCE_REVISION
+from foretoken.kubernetes.client import (
     Kubectl,
     KubernetesVersionConflictError,
     timeout_seconds,
 )
-from foretoken.manifest import DeploymentError, ForetokenDeployment, ResourceRef
-from foretoken.namespace_mutation import NamespaceMutation
+from foretoken.deployment.manifest import ForetokenDeployment
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import ResourceRef
+from foretoken.kubernetes.namespace import NamespaceMutation
 
 _SERVICE_OPERATION_ANNOTATION = "inference.foretoken.io/service-operation"
 

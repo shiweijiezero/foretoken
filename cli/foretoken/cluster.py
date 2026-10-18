@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from foretoken.arguments import ClusterCommand
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 _DEVICE_PLUGIN = (
     "https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/"

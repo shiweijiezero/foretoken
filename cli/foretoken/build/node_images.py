@@ -15,8 +15,8 @@ from typing import Any
 import yaml
 
 from foretoken.command_execution import CommandExecution, cleanup_commands
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
 
 _IMAGE_OWNER_LABEL = "inference.foretoken.io/source-image-owner"
 SOURCE_BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"

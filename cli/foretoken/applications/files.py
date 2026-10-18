@@ -16,13 +16,15 @@ from contextlib import contextmanager
 from contextvars import copy_context
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
-from foretoken.cluster_build import ClusterBuilder
 from foretoken.command_execution import CommandExecution, cleanup_commands
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+
+if TYPE_CHECKING:
+    from foretoken.build.cluster import ClusterBuilder
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
@@ -723,7 +725,7 @@ class ApplicationFiles:
             # publications and expires through its native deadline and TTL.
             with self.kubectl.until(deadline):
                 data = inputs() if inputs is not None else {}
-                data["publish.py"] = files("foretoken").joinpath("application_publish.py").read_text()
+                data["publish.py"] = files("foretoken.applications").joinpath("publish.py").read_text()
                 selection = {
                     "apiVersion": "v1", "kind": "ConfigMap",
                     "metadata": {

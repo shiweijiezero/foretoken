@@ -15,8 +15,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from foretoken.arguments import ProfileViewCommand
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.profiling.reader import CAPTURE_DIRECTORY
 from foretoken.profiling.storage import ProfileStorage
 

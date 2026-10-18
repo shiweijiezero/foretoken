@@ -18,9 +18,9 @@ from typing import Any
 import yaml
 
 from foretoken.command_execution import cleanup_commands
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import (
-    DeploymentError,
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.errors import DeploymentError
+from foretoken.deployment.manifest import (
     ForetokenDeployment,
     RuntimeCacheManifest,
 )

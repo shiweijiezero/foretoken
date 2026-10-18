@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 
 _PROMETHEUS_API_GROUP = "monitoring.coreos.com"
 _REQUIRED_PROMETHEUS_RESOURCES = frozenset(

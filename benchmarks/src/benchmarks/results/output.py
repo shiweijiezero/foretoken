@@ -24,7 +24,7 @@ from typing import Any, Protocol, Self, cast
 
 import wandb
 from foretoken.arguments import ProfileCommand
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 from foretoken.profiling import ProfileRun
 
 from benchmarks.config.benchmark import (

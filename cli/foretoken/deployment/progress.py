@@ -12,8 +12,9 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any, Self
 
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.kubernetes.client import Kubectl
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import ResourceRef
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 # Labels identify Foretoken workloads; ownership is resolved by UID, never by name prefix.

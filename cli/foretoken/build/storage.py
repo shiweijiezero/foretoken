@@ -13,14 +13,14 @@ from typing import Any
 
 import yaml
 
-from foretoken.kubernetes import Kubectl, resource_ref, timeout_seconds
-from foretoken.manifest import DeploymentError
-from foretoken.node_images import (
+from foretoken.build.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     image_tools_image,
     node_containerd_socket,
 )
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, resource_ref, timeout_seconds
 
 SOURCE_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 SOURCE_BUILD_UID = 65531

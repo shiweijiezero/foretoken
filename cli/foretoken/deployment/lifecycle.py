@@ -14,29 +14,24 @@ from typing import Any
 
 import yaml
 
-from foretoken.application_files import SOURCE_REVISION
+from foretoken.applications.files import SOURCE_REVISION
+from foretoken.build.editable import EditableDeployment
+from foretoken.build.state import release_source_deployment, source_operation
 from foretoken.command_execution import CommandExecution
-from foretoken.editable import EditableDeployment
-from foretoken.kubernetes import (
-    Kubectl,
-    resource_ref,
-    timeout_seconds,
-    wait_for_resources,
-)
-from foretoken.manifest import (
-    DeploymentError,
+from foretoken.deployment.manifest import (
     ForetokenDeployment,
-    ResourceRef,
     parse_deployment,
     service_requires_execution,
 )
-from foretoken.namespace_mutation import NamespaceMutation
+from foretoken.deployment.progress import StartupProgress
+from foretoken.deployment.status import report_progress, wait_for_resources
+from foretoken.deployment.storage import DirectoryVolumes
+from foretoken.deployment.submission import _SERVICE_OPERATION_ANNOTATION, DeploymentSubmission
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
+from foretoken.kubernetes.namespace import NamespaceMutation
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
-from foretoken.progress import StartupProgress
-from foretoken.source_state import release_source_deployment, source_operation
-from foretoken.storage import DirectoryVolumes
-from foretoken.submission import _SERVICE_OPERATION_ANNOTATION, DeploymentSubmission
 
 
 class DeploymentLifecycle:
@@ -170,12 +165,7 @@ class DeploymentLifecycle:
                     deployment.service_refs(),
                     self.kubectl,
                     timeout,
-                    report=lambda elapsed, progress: print(
-                        f"[{elapsed:6.1f}s] {progress.resource.display_name:<48} "
-                        f"{progress.state}"
-                        + (f" — {progress.detail}" if progress.detail else ""),
-                        flush=True,
-                    ),
+                    report=report_progress,
                     observe=observe,
                     expected_revisions={
                         resource_ref(obj): obj["spec"]["deploymentRevision"]
