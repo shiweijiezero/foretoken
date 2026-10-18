@@ -54,9 +54,9 @@ impl ChatArchive {
     }
 
     /// Stores the final public response atomically with its inputs before the client sees completion.
-    pub(super) async fn save(&self, body: &Value, streamed: bool) -> Result<(), StoreError> {
+    pub(super) async fn save(&self, body: &Value) -> Result<(), StoreError> {
         self.store
-            .chat_save(&self.caller, body, &self.original_messages, streamed)
+            .chat_save(&self.caller, body, &self.original_messages)
             .await
     }
 }

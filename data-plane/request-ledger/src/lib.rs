@@ -83,6 +83,13 @@ impl RequestLedger {
         }
     }
 
+    /// Identifies the configured capacity store so shared-cache maintenance uses the matching ledger.
+    /// The upstream address representation excludes authentication credentials.
+    pub fn storage_identity(&self) -> String {
+        let connection = self.client.get_connection_info();
+        json!([connection.addr.to_string(), connection.redis.db]).to_string()
+    }
+
     // Length-prefixed components keep model and service identities distinct without content hashes.
     fn key(scope: &str, model: &str) -> String {
         format!("{MODEL_KEY_PREFIX}{}:{scope}:{model}", scope.len())
@@ -445,16 +452,20 @@ impl RequestLedger {
         Ok(())
     }
 
-    /// Retains terminal evidence after durable registration and before input preparation starts.
-    /// Only an active frontend's unaccepted, unfinished batch can enable retention.
-    pub async fn retain_completion(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+    /// Retains terminal evidence for an opaque, credential-free consumer before input preparation starts.
+    /// The state owner supplies the consumer after registration; only an active, unaccepted batch can retain it.
+    pub async fn retain_completion(
+        &self,
+        reservation: &ReservationRef,
+        consumer: &str,
+    ) -> Result<(), LedgerError> {
         let state = self
             .transition(
                 &reservation.scope,
                 &reservation.model,
                 "retain_completion",
                 &reservation.request,
-                json!({}),
+                json!({"consumer": consumer}),
             )
             .await?;
         match state.as_str() {
@@ -463,6 +474,66 @@ impl RequestLedger {
             "unavailable" => Err(LedgerError::Unpublished),
             _ => Err(LedgerError::Protocol(state)),
         }
+    }
+
+    /// Discovers completed receipts with a literal consumer prefix, returning canonical batch references.
+    /// Consumers resolve their own opaque lookup identity before acknowledging terminal evidence.
+    pub async fn completed_consumers(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(ReservationRef, String)>, LedgerError> {
+        let mut connection = self.connection().await?;
+        let mut keys = std::collections::BTreeSet::new();
+        let mut cursor = 0_u64;
+        loop {
+            let (next, page): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(format!("{MODEL_KEY_PREFIX}*"))
+                .query_async(&mut connection)
+                .await?;
+            keys.extend(page);
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        let input = json!({"prefix": prefix}).to_string();
+        let mut completed = Vec::new();
+        for key in keys {
+            let receipts: Vec<(String, String)> = TRANSITION
+                .key(&key)
+                .arg("completed_consumers")
+                .arg("")
+                .arg(&input)
+                .invoke_async(&mut connection)
+                .await?;
+            if receipts.is_empty() {
+                continue;
+            }
+            // Decode the existing length-prefixed model key; consumers remain opaque to the ledger.
+            let malformed = || LedgerError::Protocol("invalid model reservation key".into());
+            let (length, identity) = key
+                .strip_prefix(MODEL_KEY_PREFIX)
+                .and_then(|key| key.split_once(':'))
+                .ok_or_else(malformed)?;
+            let length = length.parse().map_err(|_| malformed())?;
+            let (scope, model) = identity.split_at_checked(length).ok_or_else(malformed)?;
+            let model = model.strip_prefix(':').ok_or_else(malformed)?;
+            for (request, consumer) in receipts {
+                completed.push((
+                    ReservationRef {
+                        scope: scope.to_owned(),
+                        model: model.to_owned(),
+                        request,
+                        slot: 0,
+                        final_stage: true,
+                    },
+                    consumer,
+                ));
+            }
+        }
+        Ok(completed)
     }
 
     /// Reports whether every candidate and stage has terminated for a retained reservation.
@@ -486,7 +557,7 @@ impl RequestLedger {
     }
 
     /// Waits for retained execution evidence without treating cancellation or stage handoff as completion.
-    /// Storage failures return to the durable-state owner; they never imply termination.
+    /// Storage failures return to the API state owner; they never imply termination.
     pub async fn wait_finished(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
         while !self.finished(reservation).await? {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -494,7 +565,7 @@ impl RequestLedger {
         Ok(())
     }
 
-    /// Deletes retained terminal evidence after its consumer durably commits the request's final state.
+    /// Deletes terminal evidence after its consumer commits the final state or confirms its record is absent.
     /// Repeated acknowledgements succeed; pending or untracked reservations are not removed.
     pub async fn acknowledge(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
         let state = self

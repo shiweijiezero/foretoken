@@ -6,7 +6,6 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -155,10 +154,9 @@ type FrontendServiceSpec struct {
 	VideoTasks *VideoTaskStorage `json:"videoTasks,omitempty"`
 }
 
-// ResponseStoreConfig pins the PostgreSQL connection and retention selected for a frontend.
-// Workloads resolve the URL through kubelet's namespace-local Secret projection.
+// ResponseStoreConfig pins the shared API cache connection and retention selected for a frontend.
 type ResponseStoreConfig struct {
-	URLSecretRef corev1.SecretKeySelector `json:"urlSecretRef"`
+	RedisConnection `json:",inline"`
 
 	// +kubebuilder:validation:Minimum=1
 	RetentionSeconds int64 `json:"retentionSeconds"`

@@ -1,50 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# PostgreSQL and its credentials outlive frontend replicas and platform upgrades.
+# Frontend replicas share one ephemeral API cache, separate from the durable admission ledger.
 {{- if and (eq .Values.scope "platform") (eq (include "foretoken.responseStoreManaged" .) "true") }}
 {{- $name := include "foretoken.responseStoreName" . }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace $name }}
-{{- $data := get $secret "data" | default dict }}
-{{- if not $secret }}
-{{- $password := randAlphaNum 32 }}
-{{- $data = dict "password" ($password | b64enc) "url" (printf "postgresql://foretoken:%s@%s.%s.svc:5432/foretoken" $password $name .Release.Namespace | b64enc) }}
-{{- end }}
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $name }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: foretoken-response-store
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-  annotations:
-    helm.sh/resource-policy: keep
-type: Opaque
-data:
-  {{- toYaml $data | nindent 2 }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ $name }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: foretoken-response-store
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-  annotations:
-    helm.sh/resource-policy: keep
-spec:
-  accessModes: [ReadWriteOnce]
-  {{- with .Values.responseStore.storageClass }}
-  storageClassName: {{ . | quote }}
-  {{- end }}
-  resources:
-    requests:
-      storage: {{ .Values.responseStore.storageSize | quote }}
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -55,17 +14,17 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
-  clusterIP: None
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: foretoken-response-store
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-    - name: postgres
-      port: 5432
-      targetPort: postgres
+    - name: valkey
+      port: 6379
+      targetPort: valkey
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
@@ -74,8 +33,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
-  serviceName: {{ $name }}
   replicas: 1
+  # Never route replicas to two independent caches during an update.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: foretoken-response-store
@@ -94,52 +55,44 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
-        runAsGroup: 999
-        fsGroup: 999
+        runAsGroup: 1000
+        fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: postgres
-          image: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.responseStore.image) | quote }}
+        - name: valkey
+          image: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.admissionStore.image) | quote }}
           imagePullPolicy: IfNotPresent
-          env:
-            - name: POSTGRES_USER
-              value: foretoken
-            - name: POSTGRES_DB
-              value: foretoken
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $name }}
-                  key: password
-            - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
+          args:
+            - valkey-server
+            # Frontend Pods connect through the Service; NetworkPolicy restricts ingress.
+            - --protected-mode
+            - "no"
+            - --dir
+            - /data
+            - --appendonly
+            - "no"
+            - --save
+            - ""
+            - --maxmemory-policy
+            - noeviction
           ports:
-            - name: postgres
-              containerPort: 5432
+            - name: valkey
+              containerPort: 6379
           readinessProbe:
             exec:
-              command: [pg_isready, -h, 127.0.0.1, -U, foretoken, -d, foretoken]
+              command: [valkey-cli, -e, ping]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-            - name: socket
-              mountPath: /var/run/postgresql
-            - name: temporary
-              mountPath: /tmp
+            - name: cache
+              mountPath: /data
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ $name }}
-        - name: socket
-          emptyDir: {}
-        - name: temporary
+        - name: cache
           emptyDir: {}
 ---
 apiVersion: networking.k8s.io/v1
@@ -166,5 +119,5 @@ spec:
                 operator: Exists
       ports:
         - protocol: TCP
-          port: 5432
+          port: 6379
 {{- end }}

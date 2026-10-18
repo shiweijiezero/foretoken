@@ -59,7 +59,7 @@ spec:
 
 ### 延续对话
 
-平台安装会准备这些 API 使用的 PostgreSQL 存储。Responses 默认使用 `store: true` 保存响应。继续上面的第一轮对话时，将返回的 `id` 填入 `RESPONSE_ID`，替换示例中的 `resp_...`，下一轮只需发送新的输入：
+Responses 默认使用 `store: true`，将响应保存在同一 FrontendService 各副本共享的内存缓存中。继续上面的第一轮对话时，将返回的 `id` 填入 `RESPONSE_ID`，替换示例中的 `resp_...`，下一轮只需发送新的输入：
 
 ```bash
 RESPONSE_ID=resp_...
@@ -307,10 +307,10 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 模型启动或切换时，HTTP 前端保持可访问。合法的空模型配置也可接收 HTTP 请求，此时推理请求返回 HTTP 503。服务就绪状态见 `/statusz` 中的 `serving_ready`。
 
-保存的 Responses 和 Chat 存档默认从执行结束起保留 30 天。`store: false` 的后台响应及流式重放事件保留至请求进入终态后的十分钟。Conversation 及其条目不受这些到期时间影响。
+保存的 Responses 和 Chat Completions 默认从执行结束起保留 30 天。Conversation 使用相同保留期，修改条目、更新元数据或一轮执行结束后重新计时；正在执行的对话保持可用。`store: false` 的后台响应及流式重放事件保留至请求进入终态后的十分钟。
 
-负责执行的前端进程停止时，本次响应会失败，不会迁移到其他进程或重新生成。此前保存的结果和历史仍可取回，并用于后续请求。
+平台安装会自动准备共享的 Valkey 内存缓存。缓存重启后，已保存的文本 API 对象和事件会丢失；需要长期保留的历史应由应用自行保存。如果只是负责执行的前端进程停止，本次响应会失败且不重新生成，其他副本仍可读取缓存中的历史。
 
-通过平台 [Helm values](../../deploy/charts/foretoken/values.yaml) 中的 `responseStore` 调整保留期或使用外部 PostgreSQL。`retention` 和 `replayRetention` 使用带单位的时长，例如 `7d` 和 `30m`。`externalURLSecret` 引用保存数据库连接 URL 的 Secret，该 Secret 需存在于每个服务命名空间。
+需要调整保留期时，在[平台 values 文件](../../cli/README_zh.md#安装选项)中设置 `responseStore.retention` 和 `responseStore.replayRetention`，使用 `7d`、`30m` 等带单位的时长。通过安装命令的 `--values` 选项应用，再对需要更新的服务执行 `foretoken deploy`。外部缓存使用独立的 Valkey 或 Redis 实例，将 `maxmemory-policy` 设为 `noeviction`，并通过 `responseStore.externalURL` 指定地址。含凭据的 URL 通过 `responseStore.externalURLSecret` 引用，该 Secret 需存在于每个服务命名空间。字段说明见 [Helm values](../../deploy/charts/foretoken/values.yaml)。
 
 网关配置见[网关模式](../../README_zh.md#网关模式)。TLS 和身份认证由集群入口配置，运维接口的访问范围由网络策略控制。

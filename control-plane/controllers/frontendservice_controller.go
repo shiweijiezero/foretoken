@@ -80,7 +80,7 @@ type FrontendRuntimeProfile struct {
 	RuntimeCache         *inferencev1alpha1.RuntimeCacheBinding
 	VideoStorageIdentity *inferencev1alpha1.StorageIdentity
 	HuggingFaceAccess    *inferencev1alpha1.HuggingFaceAccess
-	AdmissionStore       *inferencev1alpha1.AdmissionStoreConnection
+	AdmissionStore       *inferencev1alpha1.RedisConnection
 	ResponseStore        *inferencev1alpha1.ResponseStoreConfig
 	Gateway              *GatewayParent
 }
@@ -409,17 +409,9 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 					},
 					ResponseStore: responseStore,
 				}
-				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
-					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
-						continue
-					}
-					selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
-					if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-						selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
-					}
-					if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
-						return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
-					}
+				selection.AdmissionStore, err = runtimeconfig.RedisConnectionFromEnv(current.Spec.Template.Spec.Containers[0].Env, runtimeconfig.AdmissionStoreURLEnv)
+				if err != nil {
+					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 				}
 				base := frontend.DeepCopy()
 				frontend.Status.Application = selection

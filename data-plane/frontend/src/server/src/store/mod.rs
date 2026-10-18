@@ -1,25 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! PostgreSQL ownership for saved API objects, immutable history, and response events.
+//! Shared, volatile API history and response events, independent of inference execution state.
 
 mod completions;
 mod conversations;
 mod records;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
-use serde::Deserialize;
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Postgres, Row, Transaction};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
-pub(crate) use records::NewResponse;
+pub(crate) use records::{NewResponse, ResponseRef};
 
-/// Storage failures stay separate from model execution and never expose SQL or credentials.
+static TRANSITION: LazyLock<redis::Script> =
+    LazyLock::new(|| redis::Script::new(include_str!("transition.lua")));
+
+/// Storage failures stay separate from model execution and never expose connections or credentials.
 #[derive(Debug, Error)]
 pub(crate) enum StoreError {
     #[error("API state storage is not configured")]
@@ -27,9 +30,7 @@ pub(crate) enum StoreError {
     #[error("invalid API state storage configuration")]
     Configuration,
     #[error("API state storage is unavailable")]
-    Database(#[from] sqlx::Error),
-    #[error("API state schema could not be initialized")]
-    Migration(#[from] sqlx::migrate::MigrateError),
+    Storage(#[from] redis::RedisError),
     #[error("the requested object was not found")]
     NotFound,
     #[error("{0}")]
@@ -40,28 +41,42 @@ pub(crate) enum StoreError {
     ResponseBusy,
     #[error("the response stream has expired")]
     StreamExpired,
+    #[error("API state changed during the update")]
+    Changed,
     #[error("stored API state is invalid")]
     Corrupt,
 }
 
-/// One service's database connection and process registration, independent of model snapshots.
+/// One service's shared cache connection and process registration, independent of model snapshots.
 pub(crate) struct ApiStore {
-    pool: PgPool,
-    namespace: String,
+    client: redis::Client,
+    connection: OnceCell<ConnectionManager>,
+    prefix: String,
+    completion_prefix: String,
+    ledger: Option<String>,
     pod: String,
     instance: String,
     execution_scope: String,
     retention_seconds: i64,
     replay_seconds: i64,
-    initialized: OnceCell<()>,
 }
 
-/// The ingress-resolved caller associated with a stored API object.
+/// The ingress-resolved caller associated with a cached API object.
 pub(crate) type Caller = Option<String>;
 
+/// Opaque JSON plus occurrence identities lets Lua resolve references without rewriting public data.
+#[derive(Serialize)]
+struct CachedItem {
+    id: String,
+    copy_id: String,
+    body: Option<String>,
+}
+
 impl ApiStore {
-    /// Opens the controller-projected connection lazily; stateless requests need no database.
-    pub(crate) fn from_env() -> Result<Option<Arc<Self>>, StoreError> {
+    /// Opens the controller-projected connection lazily; stateless requests need no API cache.
+    pub(crate) fn from_env(
+        ledger: Option<&foretoken_request_ledger::RequestLedger>,
+    ) -> Result<Option<Arc<Self>>, StoreError> {
         let url = match std::env::var("FORETOKEN_RESPONSE_STORE_URL") {
             Ok(value) if !value.is_empty() => value,
             Err(std::env::VarError::NotPresent) => return Ok(None),
@@ -80,166 +95,156 @@ impl ApiStore {
                 .filter(|value| *value > 0)
                 .ok_or(StoreError::Configuration)
         };
-        let pool = PgPoolOptions::new()
-            .connect_lazy(&url)
-            .map_err(|_| StoreError::Configuration)?;
+        let client = redis::Client::open(url).map_err(|_| StoreError::Configuration)?;
+        let namespace = required("FORETOKEN_RESPONSE_STORE_NAMESPACE")?;
+        let connection = client.get_connection_info();
+        // Completion cleanup must distinguish caches without retaining passwords or API credentials.
+        let completion_prefix = format!(
+            "api:{}:",
+            json!([connection.addr.to_string(), connection.redis.db])
+        );
         Ok(Some(Arc::new(Self {
-            pool,
-            namespace: required("FORETOKEN_RESPONSE_STORE_NAMESPACE")?,
+            client,
+            connection: OnceCell::new(),
+            prefix: format!("foretoken:api:{namespace}:"),
+            completion_prefix,
+            ledger: ledger.map(foretoken_request_ledger::RequestLedger::storage_identity),
             pod: required("FORETOKEN_POD_UID")?,
             instance: Uuid::new_v4().to_string(),
             execution_scope: required("FORETOKEN_FRONTEND_UID")?,
             retention_seconds: seconds("FORETOKEN_RESPONSE_RETENTION_SECONDS")?,
             replay_seconds: seconds("FORETOKEN_RESPONSE_REPLAY_RETENTION_SECONDS")?,
-            initialized: OnceCell::new(),
         })))
     }
 
-    /// Applies embedded migrations once, with SQLx's cross-process migration lock.
-    async fn pool(&self) -> Result<&PgPool, StoreError> {
-        self.initialized
+    /// Runs a service-scoped atomic transition using the shared upstream Redis connection.
+    async fn transition<T: redis::FromRedisValue>(
+        &self,
+        action: &str,
+        caller: &Caller,
+        input: Value,
+    ) -> Result<T, StoreError> {
+        let connection = self
+            .connection
             .get_or_try_init(|| async {
-                sqlx::migrate!("./migrations").run(&self.pool).await?;
-                sqlx::query(
-                    "INSERT INTO foretoken_api_frontends (namespace, pod, instance) VALUES ($1,$2,$3) \
-                     ON CONFLICT (namespace,pod) DO UPDATE SET instance=EXCLUDED.instance",
-                )
-                .bind(&self.namespace)
-                .bind(&self.pod)
-                .bind(&self.instance)
-                .execute(&self.pool)
-                .await?;
-                Ok::<(), StoreError>(())
+                let mut connection = self
+                    .client
+                    .get_connection_manager_with_config(
+                        ConnectionManagerConfig::new()
+                            .set_connection_timeout(Duration::from_secs(5))
+                            .set_max_delay(1_000),
+                    )
+                    .await?;
+                self.invoke::<()>(&mut connection, "register", &None, json!({}))
+                    .await?;
+                Ok::<_, StoreError>(connection)
             })
             .await?;
-        Ok(&self.pool)
+        self.invoke(&mut connection.clone(), action, caller, input)
+            .await
     }
 
-    /// Reads immutable items after the caller's response or conversation access was checked.
-    async fn record_items(
+    /// Keeps the script's domain errors separate from transport errors and malformed cache data.
+    async fn invoke<T: redis::FromRedisValue>(
         &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        record: &str,
-    ) -> Result<Vec<Value>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT i.body FROM foretoken_api_record_items r \
-             JOIN foretoken_api_items i ON i.namespace=r.namespace AND i.id=r.item_id \
-             WHERE r.namespace=$1 AND r.record_id=$2 \
-             ORDER BY r.stage,r.position",
-        )
-        .bind(&self.namespace)
-        .bind(record)
-        .fetch_all(&mut **transaction)
-        .await?;
-        rows.into_iter()
-            .map(|row| Ok(row.try_get("body")?))
-            .collect()
-    }
-
-    /// Reads one input page after the caller has locked and authorized its owning record.
-    async fn record_input_page(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        record: &str,
-        query: &PageQuery,
-        default_order: Order,
-    ) -> Result<Value, StoreError> {
-        let (limit, order) = query.bounds(default_order)?;
-        let direction = match order {
-            Order::Asc => "ASC",
-            Order::Desc => "DESC",
-        };
-        let comparison = if matches!(order, Order::Asc) == query.after.is_some() {
-            ">"
-        } else {
-            "<"
-        };
-        let cursor: Option<(i16, i64)> =
-            if let Some(item) = query.after.as_deref().or(query.before.as_deref()) {
-                let row = sqlx::query(
-                    "SELECT stage,position FROM foretoken_api_record_items \
-                 WHERE namespace=$1 AND record_id=$2 AND item_id=$3 AND stage<2",
-                )
-                .bind(&self.namespace)
-                .bind(record)
-                .bind(item)
-                .fetch_optional(&mut **transaction)
-                .await?
-                .ok_or_else(|| StoreError::Invalid("the pagination cursor was not found".into()))?;
-                Some((row.try_get("stage")?, row.try_get("position")?))
-            } else {
-                None
-            };
-        let sql = format!(
-            "SELECT i.body FROM foretoken_api_record_items r \
-             JOIN foretoken_api_items i ON i.namespace=r.namespace AND i.id=r.item_id \
-             WHERE r.namespace=$1 AND r.record_id=$2 AND r.stage<2 \
-             AND ($3::SMALLINT IS NULL OR (r.stage,r.position) {comparison} ($3,$4)) \
-             ORDER BY r.stage {direction},r.position {direction} LIMIT $5"
-        );
-        let items = sqlx::query_scalar(&sql)
-            .bind(&self.namespace)
-            .bind(record)
-            .bind(cursor.map(|(stage, _)| stage))
-            .bind(cursor.map(|(_, position)| position))
-            .bind((limit + 1) as i64)
-            .fetch_all(&mut **transaction)
-            .await?;
-        Ok(list_page(items, limit))
-    }
-
-    /// Creates immutable items and references in the same transaction as their owning object.
-    async fn insert_record_items(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        record: &str,
+        connection: &mut ConnectionManager,
+        action: &str,
         caller: &Caller,
-        stage: i16,
-        items: &[Value],
-    ) -> Result<(), StoreError> {
-        for (position, item) in items.iter().enumerate() {
-            let id = item
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or(StoreError::Corrupt)?;
-            sqlx::query(
-                "INSERT INTO foretoken_api_items (namespace,id,caller,body) VALUES ($1,$2,$3,$4) \
-                 ON CONFLICT (namespace,id) DO NOTHING",
-            )
-            .bind(&self.namespace)
-            .bind(id)
-            .bind(caller)
-            .bind(item)
-            .execute(&mut **transaction)
+        input: Value,
+    ) -> Result<T, StoreError> {
+        let (status, value): (String, redis::Value) = TRANSITION
+            .key(&self.prefix)
+            .arg(action)
+            .arg(serde_json::to_string(caller).expect("caller serialization"))
+            .arg(input.to_string())
+            .arg(&self.pod)
+            .arg(&self.instance)
+            .arg(self.retention_seconds.max(self.replay_seconds))
+            .invoke_async(connection)
             .await?;
-            sqlx::query(
-                "INSERT INTO foretoken_api_record_items \
-                 (namespace,record_id,item_id,stage,position) VALUES ($1,$2,$3,$4,$5)",
-            )
-            .bind(&self.namespace)
-            .bind(record)
-            .bind(id)
-            .bind(stage)
-            .bind(position as i64)
-            .execute(&mut **transaction)
-            .await?;
+        match status.as_str() {
+            "ok" => redis::from_redis_value(&value).map_err(|_| StoreError::Corrupt),
+            "not_found" => Err(StoreError::NotFound),
+            "invalid" => Err(StoreError::Invalid(
+                redis::from_redis_value(&value).map_err(|_| StoreError::Corrupt)?,
+            )),
+            "conversation_busy" => Err(StoreError::ConversationBusy),
+            "response_busy" => Err(StoreError::ResponseBusy),
+            "changed" => Err(StoreError::Changed),
+            "stream_expired" => Err(StoreError::StreamExpired),
+            _ => Err(StoreError::Corrupt),
         }
-        Ok(())
     }
 
-    /// Resolves public item references under the same access rules as saved responses.
+    /// Resolves a public item reference under the same caller scope as saved responses.
     pub(crate) async fn item(&self, caller: &Caller, id: &str) -> Result<Value, StoreError> {
-        sqlx::query_scalar(
-            "SELECT body FROM foretoken_api_items \
-             WHERE namespace=$1 AND id=$2 AND caller IS NOT DISTINCT FROM $3",
-        )
-        .bind(&self.namespace)
-        .bind(id)
-        .bind(caller)
-        .fetch_optional(self.pool().await?)
-        .await?
-        .ok_or(StoreError::NotFound)
+        let body = self.transition("item", caller, json!({"id":id})).await?;
+        let mut value = decode_json(body)?;
+        value["id"] = json!(id);
+        Ok(value)
     }
+
+    /// Identifies this cache's completion consumers without exposing its connection credentials.
+    pub(crate) fn completion_prefix(&self) -> &str {
+        &self.completion_prefix
+    }
+
+    /// Locates a response in this service's cache partition for completion and recovery.
+    pub(crate) fn response_ref(&self, id: &str) -> ResponseRef {
+        ResponseRef {
+            scope_prefix: self.prefix.clone(),
+            id: id.to_owned(),
+        }
+    }
+
+    /// Associates retained execution evidence with the cached response that consumes it.
+    pub(crate) fn completion_consumer(&self, id: &str) -> String {
+        format!("{}{}", self.completion_prefix, json!(self.response_ref(id)))
+    }
+
+    /// Checks physical record ownership before reclaiming a completed receipt after cache loss.
+    pub(crate) async fn has_response(&self, response: &ResponseRef) -> Result<bool, StoreError> {
+        self.transition("exists", &None, json!(response)).await
+    }
+}
+
+/// Encodes items for atomic reference resolution; a repeated reference receives its own cursor ID.
+fn cache_items(items: &[Value]) -> Result<Vec<CachedItem>, StoreError> {
+    items
+        .iter()
+        .map(|item| {
+            let reference = item.get("type").and_then(Value::as_str) == Some("item_reference");
+            let id = item.get("id").and_then(Value::as_str).ok_or_else(|| {
+                if reference {
+                    StoreError::Invalid("item_reference requires id".into())
+                } else {
+                    StoreError::Corrupt
+                }
+            })?;
+            Ok(CachedItem {
+                id: id.to_owned(),
+                copy_id: format!("item_{}", Uuid::new_v4().simple()),
+                body: (!reference).then(|| item.to_string()),
+            })
+        })
+        .collect()
+}
+
+fn decode_json(body: String) -> Result<Value, StoreError> {
+    serde_json::from_str(&body).map_err(|_| StoreError::Corrupt)
+}
+
+/// Restores occurrence IDs while preserving the original JSON content and numeric values.
+fn decode_items(rows: Vec<(String, String)>) -> Result<Vec<Value>, StoreError> {
+    rows.into_iter()
+        .map(|(id, body)| {
+            let mut item = decode_json(body)?;
+            item.as_object_mut()
+                .ok_or(StoreError::Corrupt)?
+                .insert("id".into(), json!(id));
+            Ok(item)
+        })
+        .collect()
 }
 
 /// Assigns public item IDs only to new inputs; inherited items retain their original identities.
@@ -286,7 +291,7 @@ pub(crate) struct PageQuery {
     pub order: Option<Order>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Order {
     Asc,
@@ -294,7 +299,7 @@ pub(crate) enum Order {
 }
 
 impl PageQuery {
-    /// Validates OpenAI cursor bounds once before the owning SQL query.
+    /// Validates public cursor bounds before the owning cache query.
     pub(crate) fn bounds(&self, default_order: Order) -> Result<(usize, Order), StoreError> {
         let limit = self.limit.unwrap_or(20);
         if !(1..=100).contains(&limit) {
@@ -311,7 +316,22 @@ impl PageQuery {
     }
 }
 
-/// Encodes the common API list envelope without exposing database cursor state.
+/// Builds the common cursor query for response inputs, conversation items, and chat messages.
+fn page_input(
+    id: &str,
+    query: &PageQuery,
+    default_order: Order,
+) -> Result<(usize, Value), StoreError> {
+    let (limit, order) = query.bounds(default_order)?;
+    Ok((
+        limit,
+        json!({"id":id,"limit":limit,"order":order,
+        "cursor":query.after.as_deref().or(query.before.as_deref()),
+        "after":query.after.is_some()}),
+    ))
+}
+
+/// Encodes the common API list envelope without exposing cache cursor state.
 pub(crate) fn list_page(mut data: Vec<Value>, limit: usize) -> Value {
     let has_more = data.len() > limit;
     data.truncate(limit);

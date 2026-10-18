@@ -59,7 +59,7 @@ Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separ
 
 ### Continue a conversation
 
-Platform installation prepares PostgreSQL storage for these APIs. Responses defaults to `store: true`. To continue the first request above without resending its history, replace `resp_...` with the returned `id`:
+Responses defaults to `store: true`, using a shared in-memory cache across a FrontendService's replicas. To continue the first request above without resending its history, replace `resp_...` with the returned `id`:
 
 ```bash
 RESPONSE_ID=resp_...
@@ -307,10 +307,10 @@ Use `foretoken status` to inspect a deployment and `foretoken delete` to remove 
 
 The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
 
-Stored Responses and Chat archives are retained for 30 days after execution ends by default. Background responses with `store: false` and replay events remain available for ten minutes after a terminal state. Conversations and their items are not subject to these expiry periods.
+Stored Responses and Chat Completions expire 30 days after execution ends by default. Conversations use the same retention window, renewed by item or metadata changes and when a turn ends; an active turn keeps its conversation available. Background responses with `store: false` and replay events expire ten minutes after a terminal state.
 
-If the frontend process executing a response stops, that response fails rather than moving to another process or being rerun. Previously saved results and history remain available for retrieval and continuation.
+Platform installation prepares a shared Valkey memory cache. Restarting this cache discards saved text API objects and events; keep history in your application if it must survive cache loss. If only an executing frontend process stops, its response fails without being rerun, while other replicas can still retrieve the cached history.
 
-Configure `responseStore` in the platform's [Helm values](../../deploy/charts/foretoken/values.yaml) to change retention or use external PostgreSQL. `retention` and `replayRetention` accept durations such as `7d` and `30m`. `externalURLSecret` references a database-URL Secret that must exist in each serving namespace.
+To customize retention, add `responseStore.retention` and `responseStore.replayRetention` to a [platform values file](../../cli/README.md#installation-options), using durations such as `7d` and `30m`. Apply it with the installation command's `--values` option, then run `foretoken deploy` for the affected service. For an external cache, use a dedicated Valkey or Redis instance with `maxmemory-policy noeviction` and set `responseStore.externalURL`. Authenticated URLs belong in `responseStore.externalURLSecret`, referencing a Secret in each serving namespace. See the [Helm values](../../deploy/charts/foretoken/values.yaml) for these fields.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.

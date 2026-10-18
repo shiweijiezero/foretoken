@@ -25,7 +25,7 @@ pub fn router(
     ledger: Option<Arc<foretoken_request_ledger::RequestLedger>>,
 ) -> Result<(Router, Arc<crate::ResponseTasks>), Box<dyn std::error::Error>> {
     let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
-    let store = crate::store::ApiStore::from_env()?;
+    let store = crate::store::ApiStore::from_env(ledger.as_deref())?;
     let response_tasks = crate::ResponseTasks::new(store.clone(), ledger);
     response_tasks.maintain();
     let app = Router::new()

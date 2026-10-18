@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Projects the frontend PostgreSQL connection and retention without resolving credentials.
+// Projects the frontend's shared API cache connection and retention without resolving credentials.
 
 package runtimeconfig
 
@@ -24,13 +24,8 @@ const (
 )
 
 // ResponseStoreConfiguration resolves platform duration strings into the frontend's second-based selection.
-func ResponseStoreConfiguration(secretName, secretKey, retention, replayRetention string) (*inferencev1alpha1.ResponseStoreConfig, error) {
-	configuration := &inferencev1alpha1.ResponseStoreConfig{
-		URLSecretRef: corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-			Key:                  secretKey,
-		},
-	}
+func ResponseStoreConfiguration(connection inferencev1alpha1.RedisConnection, retention, replayRetention string) (*inferencev1alpha1.ResponseStoreConfig, error) {
+	configuration := &inferencev1alpha1.ResponseStoreConfig{RedisConnection: *connection.DeepCopy()}
 	for _, setting := range []struct {
 		name    string
 		value   string
@@ -54,11 +49,10 @@ func ResponseStoreConfiguration(secretName, secretKey, retention, replayRetentio
 // ValidateResponseStore checks platform-owned connection and retention settings at selection.
 func ValidateResponseStore(configuration *inferencev1alpha1.ResponseStoreConfig) error {
 	if configuration == nil {
-		return errors.New("response store requires a namespace-local URL Secret reference")
+		return errors.New("response store requires a Redis connection")
 	}
-	secret := configuration.URLSecretRef
-	if secret.Name == "" || secret.Key == "" || secret.Optional != nil && *secret.Optional {
-		return errors.New("response store URL Secret requires a name, key, and non-optional reference")
+	if err := ValidateRedisConnection(&configuration.RedisConnection); err != nil {
+		return err
 	}
 	if configuration.RetentionSeconds <= 0 || configuration.ReplayRetentionSeconds <= 0 {
 		return errors.New("response and replay retention must be positive seconds")
@@ -71,29 +65,20 @@ func ResponseStoreEnv(configuration *inferencev1alpha1.ResponseStoreConfig, serv
 	if configuration == nil {
 		return nil
 	}
-	return []corev1.EnvVar{
-		{Name: ResponseStoreURLEnv, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: configuration.URLSecretRef.DeepCopy()}},
-		{Name: ResponseStoreNamespaceEnv, Value: service},
-		{Name: ResponseRetentionSecondsEnv, Value: strconv.FormatInt(configuration.RetentionSeconds, 10)},
-		{Name: ResponseReplayRetentionSecondsEnv, Value: strconv.FormatInt(configuration.ReplayRetentionSeconds, 10)},
-	}
+	return append(RedisConnectionEnv(&configuration.RedisConnection, ResponseStoreURLEnv),
+		corev1.EnvVar{Name: ResponseStoreNamespaceEnv, Value: service},
+		corev1.EnvVar{Name: ResponseRetentionSecondsEnv, Value: strconv.FormatInt(configuration.RetentionSeconds, 10)},
+		corev1.EnvVar{Name: ResponseReplayRetentionSecondsEnv, Value: strconv.FormatInt(configuration.ReplayRetentionSeconds, 10)},
+	)
 }
 
 // ResponseStoreFromEnv recovers an observed application's selection without reading its Secret.
 func ResponseStoreFromEnv(environment []corev1.EnvVar) (*inferencev1alpha1.ResponseStoreConfig, error) {
-	var configuration *inferencev1alpha1.ResponseStoreConfig
-	for _, env := range environment {
-		if env.Name != ResponseStoreURLEnv {
-			continue
-		}
-		if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
-			return nil, errors.New("response store URL requires a namespace-local Secret reference")
-		}
-		configuration = &inferencev1alpha1.ResponseStoreConfig{URLSecretRef: *env.ValueFrom.SecretKeyRef.DeepCopy()}
+	connection, err := RedisConnectionFromEnv(environment, ResponseStoreURLEnv)
+	if err != nil || connection == nil {
+		return nil, err
 	}
-	if configuration == nil {
-		return nil, nil
-	}
+	configuration := &inferencev1alpha1.ResponseStoreConfig{RedisConnection: *connection}
 	for _, env := range environment {
 		var destination *int64
 		switch env.Name {

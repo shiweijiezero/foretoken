@@ -40,14 +40,16 @@ impl ExecutionReservation {
         Self { ledger, reference }
     }
 
-    /// Returns the credential-free reference that a durable-state owner can persist for recovery.
+    /// Returns the credential-free execution reference that a state owner can record for recovery.
     pub fn reference(&self) -> &ReservationRef {
         &self.reference
     }
 
-    /// Retains completion evidence after durable registration and before input preparation starts.
-    pub async fn retain_completion(&self) -> Result<(), LedgerError> {
-        self.ledger.retain_completion(&self.reference).await
+    /// Retains evidence for the state owner's opaque, credential-free consumer before preparation starts.
+    pub async fn retain_completion(&self, consumer: &str) -> Result<(), LedgerError> {
+        self.ledger
+            .retain_completion(&self.reference, consumer)
+            .await
     }
 
     /// Cancels retired-owner or unstarted work; accepted execution remains charged until termination.
@@ -60,7 +62,7 @@ impl ExecutionReservation {
         self.ledger.wait_finished(&self.reference).await
     }
 
-    /// Removes terminal evidence only after its consumer has durably committed the final state.
+    /// Removes evidence after its consumer commits the final state or confirms its record is absent.
     pub async fn acknowledge(&self) -> Result<(), LedgerError> {
         self.ledger.acknowledge(&self.reference).await
     }

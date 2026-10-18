@@ -27,7 +27,10 @@
 {{- if .Values.admissionStore.externalURLSecret.name }}
 {{- $_ := set $admission "externalURL" "" }}
 {{- end }}
-{{- $responseStore := dict "externalURLSecret" (include "foretoken.responseStoreURLSecret" . | fromJson) "retention" .Values.responseStore.retention "replayRetention" .Values.responseStore.replayRetention }}
+{{- $responseStore := dict "externalURL" (include "foretoken.responseStoreURL" .) "externalURLSecret" .Values.responseStore.externalURLSecret "retention" .Values.responseStore.retention "replayRetention" .Values.responseStore.replayRetention }}
+{{- if .Values.responseStore.externalURLSecret.name }}
+{{- $_ := set $responseStore "externalURL" "" }}
+{{- end }}
 {{- $values := dict
     "scope" "deployment"
     "global" (dict "imageRegistry" "")
@@ -57,6 +60,5 @@ metadata:
   annotations:
     foretoken.io/install-source: {{ ternary "source" "release" .Values.development.enabled | quote }}
 data:
-  responseStoreSecret: {{ ternary (include "foretoken.responseStoreName" .) "" (eq (include "foretoken.responseStoreManaged" .) "true") | quote }}
   deploymentValues: {{ $values | toJson | quote }}
 {{- end }}

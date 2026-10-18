@@ -536,7 +536,7 @@ func (reconciler *FrontendServiceReconciler) projectConfiguredModels(ctx context
 		}
 		servicePools := ownedRoutingPools(service, pools.Items)
 		if config.MaxWaitingRequests != nil {
-			var store *inferencev1alpha1.AdmissionStoreConnection
+			var store *inferencev1alpha1.RedisConnection
 			if frontend.Status.Application != nil {
 				store = frontend.Status.Application.AdmissionStore
 			}

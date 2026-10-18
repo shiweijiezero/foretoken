@@ -374,7 +374,7 @@ pub(crate) fn chat_stream_with_options(
                     drop(stream);
                     if let Some(archive) = &archive {
                         let body = serde_json::to_value(&response).expect("chat response serialization");
-                        if let Err(error) = archive.save(&body, true).await {
+                        if let Err(error) = archive.save(&body).await {
                             yield Ok::<_, Infallible>(Event::default().json_data(json!({"error": {
                                 "message": error.to_string(), "type": "server_error", "code": "storage_error",
                             }})).unwrap());
@@ -478,7 +478,7 @@ pub(crate) async fn chat_collected(
                 if let Some(archive) = &archive {
                     let body =
                         serde_json::to_value(&response).expect("chat response serialization");
-                    if let Err(error) = archive.save(&body, false).await {
+                    if let Err(error) = archive.save(&body).await {
                         return crate::api::store_error(error);
                     }
                 }

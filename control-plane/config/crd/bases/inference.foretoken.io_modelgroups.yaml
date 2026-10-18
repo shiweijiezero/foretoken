@@ -633,8 +633,7 @@ spec:
                         x-kubernetes-map-type: atomic
                     type: object
                     x-kubernetes-validations:
-                    - message: exactly one admission store URL or Secret reference
-                        is required
+                    - message: exactly one Redis URL or Secret reference is required
                       rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     description: ApplicationURL pins the controller-selected executable

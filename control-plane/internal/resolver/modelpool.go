@@ -52,7 +52,7 @@ type RuntimeProfile struct {
 	Image              string
 	OmniImage          string
 	NsightImage        string
-	AdmissionStore     *inferencev1alpha1.AdmissionStoreConnection
+	AdmissionStore     *inferencev1alpha1.RedisConnection
 	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
@@ -289,7 +289,7 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
-	var admissionStore *inferencev1alpha1.AdmissionStoreConnection
+	var admissionStore *inferencev1alpha1.RedisConnection
 	var instanceAdmissionProtocol uint32
 	if template.Application != nil {
 		applicationURL = template.Application.ApplicationURL

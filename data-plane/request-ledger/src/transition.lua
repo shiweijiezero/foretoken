@@ -20,14 +20,9 @@ end
 
 local function save(request_id, request)
     local field = 'r:' .. request_id
-    if request.remaining == 0 then
-        if request.retain_completion then
-            -- Completion evidence owns no capacity or frontend/backend identity.
-            request = {retain_completion = true, remaining = 0}
-        elseif not request.cancelled or request.retired then
-            redis.call('HDEL', key, field)
-            return
-        end
+    if request.remaining == 0 and (not request.cancelled or request.retired) then
+        redis.call('HDEL', key, field)
+        return
     end
     redis.call('HSET', key, field, cjson.encode(request))
 end
@@ -57,7 +52,7 @@ local function retire_frontends(keep)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then
             local request = cjson.decode(redis.call('HGET', key, field))
-            if request.slots and not keep(request) then
+            if not keep(request) then
                 request.retired = true
                 for _, slot in ipairs(request.slots) do cancel_slot(request, slot) end
                 save(field:sub(3), request)
@@ -70,17 +65,15 @@ local function finish_backend_slots(terminated)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then
             local request = cjson.decode(redis.call('HGET', key, field))
-            if request.remaining > 0 then
-                local changed = false
-                for _, slot in ipairs(request.slots) do
-                    if (slot.state == 'accepted' or slot.state == 'cancelling')
-                        and slot.backend_pod and terminated(slot) then
-                        finish_slot(request, slot)
-                        changed = true
-                    end
+            local changed = false
+            for _, slot in ipairs(request.slots) do
+                if (slot.state == 'accepted' or slot.state == 'cancelling')
+                    and slot.backend_pod and terminated(slot) then
+                    finish_slot(request, slot)
+                    changed = true
                 end
-                if changed then save(field:sub(3), request) end
             end
+            if changed then save(field:sub(3), request) end
         end
     end
 end
@@ -130,23 +123,44 @@ if action == 'frontend_active' then
     return cjson.decode(encoded_frontends)[input.frontend] and 'active' or 'retired'
 end
 
+-- Retention follows successful enqueue; an uncertain enqueue never returns a permit.
+-- Every writer, including older applications, removes r: only after all slots terminate.
+-- Keeping c: independent preserves that registration across terminal writes and cache loss.
+if action == 'completed_consumers' then
+    local completed = {}
+    for _, field in ipairs(redis.call('HKEYS', key)) do
+        if field:sub(1, 2) == 'c:' then
+            local consumer = redis.call('HGET', key, field)
+            local active = redis.call('HGET', key, 'r:' .. field:sub(3))
+            if consumer:sub(1, #input.prefix) == input.prefix
+                and (not active or cjson.decode(active).remaining == 0) then
+                completed[#completed + 1] = {field:sub(3), consumer}
+            end
+        end
+    end
+    return completed
+end
+
 local record = redis.call('HGET', key, 'r:' .. id)
 local request = record and cjson.decode(record) or nil
+local completion = redis.call('HGET', key, 'c:' .. id)
 
--- Durable consumers read or acknowledge execution evidence independently of active settings.
--- A missing record cannot prove termination; only an explicit acknowledgement is idempotent.
+-- A retained registration is mandatory: losing the whole ledger never proves termination.
+-- Acknowledgement removes that registration, not an uncertain-enqueue cancellation fence.
 if action == 'finished' or action == 'acknowledge' then
-    if not request then return action == 'acknowledge' and 'ok' or 'unknown' end
-    if not request.retain_completion then return 'untracked' end
-    if request.remaining ~= 0 then return 'pending' end
+    if not completion then
+        if action == 'acknowledge' and (not request or request.remaining == 0) then return 'ok' end
+        return request and 'untracked' or 'unknown'
+    end
+    if request and request.remaining ~= 0 then return 'pending' end
     if action == 'acknowledge' then
-        redis.call('HDEL', key, 'r:' .. id)
+        redis.call('HDEL', key, 'c:' .. id)
         return 'ok'
     end
     return 'completed'
 end
 
-if request and request.retain_completion and request.remaining == 0 then
+if completion and (not request or request.remaining == 0) then
     if action == 'status' then return 'completed' end
     if action == 'drop' or action == 'complete' or action == 'reject_before_submission'
         or action == 'cancel_entry' then return 'ok' end
@@ -237,14 +251,13 @@ if not request then
     return 'closed'
 end
 
--- Durable consumers retain evidence before the original frontend starts preparation or submission.
+-- Consumers retain evidence before the original frontend starts preparation or submission.
 if action == 'retain_completion' then
     if request.cancelled or request.retired or request.accepted or request.remaining == 0
         or not frontends[request.frontend] or count('o:' .. request.frontend) ~= request.epoch then
         return 'closed'
     end
-    request.retain_completion = true
-    save(id, request)
+    redis.call('HSET', key, 'c:' .. id, input.consumer)
     return 'ok'
 end
 

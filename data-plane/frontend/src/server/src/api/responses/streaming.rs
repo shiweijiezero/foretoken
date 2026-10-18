@@ -41,7 +41,7 @@ impl ResponseStreamEvent {
         self.event_type
     }
 
-    /// Builds the wire object shared by live delivery, durable replay, and terminal snapshots.
+    /// Builds the wire object shared by live delivery, cached replay, and terminal snapshots.
     pub(crate) fn to_value(&self, sequence_number: u64) -> Value {
         let mut flattened = Map::with_capacity(self.payload.len() + 2);
         flattened.insert(

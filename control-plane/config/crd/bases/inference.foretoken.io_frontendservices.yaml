@@ -509,8 +509,7 @@ spec:
                         x-kubernetes-map-type: atomic
                     type: object
                     x-kubernetes-validations:
-                    - message: exactly one admission store URL or Secret reference
-                        is required
+                    - message: exactly one Redis URL or Secret reference is required
                       rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     type: string
@@ -541,8 +540,13 @@ spec:
                         format: int64
                         minimum: 1
                         type: integer
+                      url:
+                        description: URL is a credential-free Redis-compatible endpoint.
+                        pattern: ^rediss?://[^@]+$
+                        type: string
                       urlSecretRef:
-                        description: SecretKeySelector selects a key of a Secret.
+                        description: URLSecretRef contains the full connection URL
+                          in a namespace-local Secret.
                         properties:
                           key:
                             description: The key of the secret to select from.  Must
@@ -568,8 +572,10 @@ spec:
                     required:
                     - replayRetentionSeconds
                     - retentionSeconds
-                    - urlSecretRef
                     type: object
+                    x-kubernetes-validations:
+                    - message: exactly one Redis URL or Secret reference is required
+                      rule: has(self.url) != has(self.urlSecretRef)
                   sourceRevision:
                     description: SourceRevision retains the admitted source intent
                       independently of source-mode defaults.

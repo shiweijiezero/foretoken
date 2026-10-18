@@ -7,8 +7,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use foretoken_admission::{AdmissionRequest, CallerIdentity, ExecutionReservation, with_caller};
-use foretoken_chat::{ChatEvent, FinishReason};
+use foretoken_admission::{
+    AdmissionPermit, AdmissionRequest, CallerIdentity, ExecutionReservation, with_caller,
+};
+use foretoken_chat::{ChatEvent, ChatRequest, FinishReason};
 use foretoken_request_ledger::{RequestLedger, ReservationRef};
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -25,7 +27,7 @@ use super::types::{ResponseItemStatus, ResponsesInput, ResponsesRequest};
 use crate::api::RequestTiming;
 use crate::api::stream::chat_events;
 use crate::runtime::{GenerationError, RequestSnapshot};
-use crate::store::{ApiStore, NewResponse, StoreError, input_items};
+use crate::store::{ApiStore, NewResponse, ResponseRef, StoreError, input_items};
 
 pub(crate) enum ResponseReady {
     Stored(Value),
@@ -59,6 +61,7 @@ pub struct ResponseTasks {
 }
 
 impl ResponseTasks {
+    /// Creates frontend-owned execution and cache-maintenance state for the HTTP router.
     pub(crate) fn new(
         store: Option<Arc<ApiStore>>,
         ledger: Option<Arc<RequestLedger>>,
@@ -155,7 +158,7 @@ impl ResponseTasks {
         }
     }
 
-    /// Reconciles stopped executions against the ledger's monotonic membership authority.
+    /// Settles stopped or overdue executions against the ledger and reclaims shared API state.
     pub(crate) fn maintain(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
@@ -167,11 +170,12 @@ impl ResponseTasks {
                     if let Ok(pending) = store.pending_responses().await {
                         let mut observed_owners = HashMap::new();
                         for pending in pending {
-                            if tasks
-                                .active
-                                .lock()
-                                .expect("response task lock poisoned")
-                                .contains_key(&pending.id)
+                            if pending.local_execution
+                                && tasks
+                                    .active
+                                    .lock()
+                                    .expect("response task lock poisoned")
+                                    .contains_key(&pending.response.id)
                             {
                                 continue;
                             }
@@ -184,7 +188,7 @@ impl ResponseTasks {
                                 tracing::error!("stored response execution reference is invalid");
                                 continue;
                             };
-                            let mut retired = pending.process_replaced || !pending.same_service;
+                            let mut retired = pending.process_replaced || pending.service_replaced;
                             if !retired && !pending.local_execution {
                                 let key = (
                                     reference.scope.clone(),
@@ -203,14 +207,14 @@ impl ResponseTasks {
                                     observed_owners.insert(key, active);
                                     active
                                 };
-                                if active {
+                                if active && !pending.deadline_expired {
                                     continue;
                                 }
-                                retired = true;
+                                retired = !active;
                             }
                             let execution = ExecutionReservation::new(ledger.clone(), reference);
                             let Ok(Some(started)) = store
-                                .pending_started(&pending.id, &pending.execution_instance)
+                                .pending_started(&pending.response, &pending.execution_instance)
                                 .await
                             else {
                                 continue;
@@ -224,21 +228,43 @@ impl ResponseTasks {
                             {
                                 continue;
                             }
-                            if store.fail_abandoned(&pending.id).await.is_ok()
+                            let error = if pending.deadline_expired {
+                                ApiError::generation(GenerationError::DeadlineExceeded).body
+                            } else {
+                                json!({"code":"execution_lost","message":"The response execution process stopped"})
+                            };
+                            if store.fail_response(&pending.response, error).await.is_ok()
                                 && execution.acknowledge().await.is_ok()
                             {
-                                let _ = store.acknowledged_response(&pending.id).await;
+                                let _ = store.acknowledged_response(&pending.response).await;
                             }
                         }
                     }
                     if let Ok(pending) = store.pending_acknowledgements().await {
-                        for (id, reference) in pending {
+                        for (response, reference) in pending {
                             let Ok(reference) = serde_json::from_value::<ReservationRef>(reference)
                             else {
                                 continue;
                             };
                             if ledger.acknowledge(&reference).await.is_ok() {
-                                let _ = store.acknowledged_response(&id).await;
+                                let _ = store.acknowledged_response(&response).await;
+                            }
+                        }
+                    }
+                    if let Ok(completed) =
+                        ledger.completed_consumers(store.completion_prefix()).await
+                    {
+                        for (reference, consumer) in completed {
+                            let encoded = consumer
+                                .strip_prefix(store.completion_prefix())
+                                .expect("ledger filters completion consumers");
+                            let Ok(response) = serde_json::from_str::<ResponseRef>(encoded) else {
+                                tracing::error!("API completion consumer is invalid");
+                                continue;
+                            };
+                            // Absence in the API cache only releases evidence already confirmed terminal by the ledger.
+                            if matches!(store.has_response(&response).await, Ok(false)) {
+                                let _ = ledger.acknowledge(&reference).await;
                             }
                         }
                     }
@@ -295,13 +321,45 @@ impl ResponseExecution {
         }
     }
 
+    /// Applies the request budget to registration and generation, including stalled cache operations.
     async fn execute(&mut self) -> Result<(), ApiError> {
+        let cancel = self.cancel.clone();
+        let deadline =
+            tokio::time::Instant::from_std(self.timing.started_at + self.snapshot.request_timeout);
+        let (admission, chat, metadata) = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(ApiError::generation(GenerationError::RequestFailed)),
+            () = tokio::time::sleep_until(deadline) => return Err(ApiError::generation(GenerationError::DeadlineExceeded)),
+            result = self.prepare() => result?,
+        };
+        // Leaving this select drops preparation or streaming before termination evidence is awaited.
+        let cancelled = tokio::select! {
+            biased;
+            () = cancel.cancelled() => true,
+            () = tokio::time::sleep_until(deadline) => false,
+            result = self.generate(&metadata, chat, admission) => return result,
+        };
+        if cancelled {
+            self.finish_cancelled(&metadata, self.created_at).await
+        } else {
+            self.finish_failure(
+                &metadata,
+                self.created_at,
+                ResponseItemStatus::Failed,
+                ApiError::generation(GenerationError::DeadlineExceeded),
+            )
+            .await
+        }
+    }
+
+    /// Acquires admission, registers the input view, and transfers the prepared request and permit to generation.
+    async fn prepare(&mut self) -> Result<(AdmissionPermit, ChatRequest, ResponseMeta), ApiError> {
         convert::validate_request(&self.request)?;
         let stored = self.request.store.unwrap_or(true);
         let background = self.request.background.unwrap_or(false);
         let streamed = self.request.stream;
-        let persistent = stored || background || self.request.conversation.is_some();
-        if persistent && self.store.is_none() {
+        let stateful = stored || background || self.request.conversation.is_some();
+        if stateful && self.store.is_none() {
             return Err(StoreError::Disabled.into());
         }
         let model = self.request.model.clone().expect("validated model");
@@ -313,11 +371,11 @@ impl ResponseExecution {
                 caller: self.identity.clone(),
                 units: 1,
                 received_at: self.timing.started_at,
-                track_execution: persistent,
+                track_execution: stateful,
             })
             .await
             .map_err(ApiError::generation)?;
-        self.reservation = if persistent {
+        self.reservation = if stateful {
             Some(
                 admission
                     .execution()
@@ -331,7 +389,7 @@ impl ResponseExecution {
         let input = input_items(
             serde_json::to_value(&request.input).expect("request input serialization"),
         )?;
-        let expanded = if persistent {
+        let expanded = if stateful {
             self.registration_attempted = true;
             let store = self.store.as_ref().expect("configured store");
             // Only protocol metadata is saved; ingress headers and credentials never enter the payload.
@@ -359,6 +417,10 @@ impl ResponseExecution {
                         .map(|reference| reference.id().to_owned()),
                     input,
                     reservation,
+                    remaining: self
+                        .snapshot
+                        .request_timeout
+                        .saturating_sub(self.timing.started_at.elapsed()),
                 })
                 .await?;
             self.recorded = true;
@@ -406,17 +468,35 @@ impl ResponseExecution {
                 return Err(error);
             }
         };
-        // SQL now owns the execution reference; only then retain its eventual termination evidence.
+        // Retained evidence names its cache consumer so completed receipts remain reclaimable after cache loss.
         if let Some(reservation) = &self.reservation {
+            let consumer = self
+                .store
+                .as_ref()
+                .expect("recorded response")
+                .completion_consumer(&self.id);
             reservation
-                .retain_completion()
+                .retain_completion(&consumer)
                 .await
                 .map_err(|_| ApiError::generation(GenerationError::Unavailable))?;
         }
         // Every transport observes the same structured item stream and final item identities.
         chat.intermediate = true;
+        Ok((admission, chat, meta))
+    }
+
+    /// Runs the shared generation pipeline and commits output; its caller owns cancellation and the deadline.
+    async fn generate(
+        &mut self,
+        meta: &ResponseMeta,
+        chat: ChatRequest,
+        admission: AdmissionPermit,
+    ) -> Result<(), ApiError> {
+        let created_at = self.created_at;
+        let background = meta.background;
+        let streamed = self.request.stream;
         let initial = response_value(
-            &meta,
+            meta,
             &self.id,
             created_at,
             &[],
@@ -425,7 +505,7 @@ impl ResponseExecution {
         )?;
         if background && streamed {
             let queued = build_response(
-                &meta,
+                meta,
                 &self.id,
                 created_at,
                 vec![],
@@ -433,7 +513,7 @@ impl ResponseExecution {
                 None,
             );
             self.emit(
-                &meta,
+                meta,
                 vec![response_lifecycle_event("response.created", &queued)],
                 Some(initial.clone()),
             )
@@ -450,7 +530,7 @@ impl ResponseExecution {
         }
         // A queued record has never entered protected preparation or engine submission.
         let in_progress = build_response(
-            &meta,
+            meta,
             &self.id,
             created_at,
             vec![],
@@ -466,14 +546,12 @@ impl ResponseExecution {
             &in_progress,
         ));
         self.emit(
-            &meta,
+            meta,
             started,
             Some(serde_json::to_value(&in_progress).expect("response serialization")),
         )
         .await?;
         self.generation_started = true;
-        let deadline =
-            tokio::time::Instant::from_std(self.timing.started_at + self.snapshot.request_timeout);
         let snapshot = self.snapshot.clone();
         let model = meta.model.clone();
         let include_reasoning = meta.include_reasoning;
@@ -487,9 +565,6 @@ impl ResponseExecution {
         cancel_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let generated = loop {
             tokio::select! {
-                biased;
-                () = self.cancel.cancelled() => break Err(GenerationError::RequestFailed),
-                () = tokio::time::sleep_until(deadline) => break Err(GenerationError::DeadlineExceeded),
                 result = &mut generation => break result,
                 _ = cancel_poll.tick(), if self.recorded => {
                     if self.store.as_ref().expect("recorded response").cancellation_requested(&self.id).await? {
@@ -502,13 +577,9 @@ impl ResponseExecution {
         drop(generation);
         let generated = match generated {
             Ok(generated) => generated,
-            Err(_) if self.cancel.is_cancelled() => {
-                self.finish_cancelled(&meta, created_at).await?;
-                return Ok(());
-            }
             Err(error) => {
                 self.finish_failure(
-                    &meta,
+                    meta,
                     created_at,
                     ResponseItemStatus::Failed,
                     ApiError::generation(error),
@@ -526,16 +597,6 @@ impl ResponseExecution {
         }
         loop {
             let event = tokio::select! {
-                () = self.cancel.cancelled() => {
-                    drop(events);
-                    self.finish_cancelled(&meta, created_at).await?;
-                    return Ok(());
-                },
-                () = tokio::time::sleep_until(deadline) => {
-                    drop(events);
-                    self.finish_failure(&meta, created_at, ResponseItemStatus::Failed, ApiError::generation(GenerationError::DeadlineExceeded)).await?;
-                    return Ok(());
-                },
                 _ = cancel_poll.tick(), if self.recorded => {
                     if self.store.as_ref().expect("recorded response").cancellation_requested(&self.id).await? {
                         self.cancel.cancel();
@@ -547,7 +608,7 @@ impl ResponseExecution {
             let Some(chunk) = event else {
                 drop(events);
                 self.finish_failure(
-                    &meta,
+                    meta,
                     created_at,
                     ResponseItemStatus::Failed,
                     ApiError::generation(GenerationError::RequestFailed),
@@ -571,9 +632,9 @@ impl ResponseExecution {
                         };
                         if status == ResponseItemStatus::Failed {
                             drop(events);
-                            self.emit(&meta, outgoing, None).await?;
+                            self.emit(meta, outgoing, None).await?;
                             self.finish_failure(
-                                &meta,
+                                meta,
                                 created_at,
                                 status,
                                 ApiError::generation(GenerationError::RequestFailed),
@@ -589,7 +650,7 @@ impl ResponseExecution {
                             .map_err(|_| ApiError::generation(GenerationError::BackendProtocol))?;
                         let closing = self.items.finish(status, &meta.tool_names);
                         let response = build_response(
-                            &meta,
+                            meta,
                             &self.id,
                             created_at,
                             self.items.final_output_items(),
@@ -610,15 +671,15 @@ impl ResponseExecution {
                             serde_json::to_value(response).expect("response serialization");
                         super::restore_tools(&mut body, &meta.tool_names)?;
                         drop(events);
-                        self.finish(&meta, body, final_events, None).await?;
+                        self.finish(meta, body, final_events, None).await?;
                         return Ok(());
                     }
                     Ok(event) => outgoing.extend(self.items.on_event(&event, &meta.tool_names)),
                     Err(_) => {
                         drop(events);
-                        self.emit(&meta, outgoing, None).await?;
+                        self.emit(meta, outgoing, None).await?;
                         self.finish_failure(
-                            &meta,
+                            meta,
                             created_at,
                             ResponseItemStatus::Failed,
                             ApiError::generation(GenerationError::RequestFailed),
@@ -628,10 +689,11 @@ impl ResponseExecution {
                     }
                 }
             }
-            self.emit(&meta, outgoing, None).await?;
+            self.emit(meta, outgoing, None).await?;
         }
     }
 
+    /// Assigns per-response event cursors after restoring public tool names.
     fn encode(
         &mut self,
         meta: &ResponseMeta,
@@ -647,6 +709,7 @@ impl ResponseExecution {
         Ok(values)
     }
 
+    /// Checkpoints output before public delivery; background streams also retain each event batch.
     async fn emit(
         &mut self,
         meta: &ResponseMeta,
@@ -747,7 +810,9 @@ impl ResponseExecution {
             && reservation.acknowledge().await.is_ok()
             && let Some(store) = &self.store
         {
-            let _ = store.acknowledged_response(&self.id).await;
+            let _ = store
+                .acknowledged_response(&store.response_ref(&self.id))
+                .await;
         }
         if !meta.background {
             if self.ready.is_some()
@@ -756,7 +821,13 @@ impl ResponseExecution {
                 self.ready(Err(error));
             } else if self.request.stream {
                 self.ready(Ok(ResponseReady::Streaming));
-                let _ = self.deliver(values).await;
+                match self.delivery.try_send(values) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(values)) => {
+                        let _ = self.deliver(values).await;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => self.cancel.cancel(),
+                }
             } else {
                 self.ready(Ok(ResponseReady::Collected(body)));
             }
@@ -764,6 +835,7 @@ impl ResponseExecution {
         Ok(())
     }
 
+    /// Waits for existing execution guards to finish cancellation, or withdraws an unstarted reservation.
     async fn terminate(&self) -> Result<(), ApiError> {
         if let Some(reservation) = &self.reservation {
             if self.generation_started {
@@ -783,6 +855,7 @@ impl ResponseExecution {
         Ok(())
     }
 
+    /// Converts partial output to a cancelled response after execution has ended.
     async fn finish_cancelled(
         &mut self,
         meta: &ResponseMeta,
@@ -812,6 +885,7 @@ impl ResponseExecution {
         .await
     }
 
+    /// Commits failure and partial output before returning the transport error.
     async fn finish_failure(
         &mut self,
         meta: &ResponseMeta,
@@ -838,13 +912,13 @@ impl ResponseExecution {
         self.finish(meta, body, events, Some(error)).await
     }
 
+    /// Settles execution and conversation ownership before exposing a setup or storage error.
     async fn fail(&mut self, error: ApiError) {
         if self.terminate().await.is_ok() {
             let persisted = if self.registration_attempted {
-                self.store
-                    .as_ref()
-                    .expect("recorded response")
-                    .fail_response(&self.id, error.body.clone())
+                let store = self.store.as_ref().expect("recorded response");
+                store
+                    .fail_response(&store.response_ref(&self.id), error.body.clone())
                     .await
                     .is_ok()
             } else {
@@ -864,6 +938,7 @@ impl ResponseExecution {
     }
 }
 
+/// Builds a public response checkpoint with external tool names restored.
 fn response_value(
     meta: &ResponseMeta,
     id: &str,

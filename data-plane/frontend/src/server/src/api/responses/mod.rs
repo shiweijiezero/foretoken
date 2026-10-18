@@ -137,11 +137,11 @@ async fn retrieve(
         return ApiError::from(StoreError::StreamExpired).into_response();
     }
     if let Some(after) = query.starting_after {
-        let last = match store.last_sequence(&id).await {
-            Ok(last) => last,
+        let published = match store.has_event(&id, after).await {
+            Ok(published) => published,
             Err(error) => return ApiError::from(error).into_response(),
         };
-        if after < 0 || last.is_none_or(|last| after > last) {
+        if after < 0 || !published {
             return ApiError::invalid_request(
                 "starting_after is not a published event sequence",
                 Some("starting_after"),

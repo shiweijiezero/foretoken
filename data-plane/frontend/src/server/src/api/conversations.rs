@@ -200,8 +200,9 @@ async fn prepare_items(
     caller: &Caller,
     items: Vec<Value>,
 ) -> Result<Vec<Value>, StoreError> {
-    let mut items = input_items(Value::Array(items))?;
-    for item in &mut items {
+    let items = input_items(Value::Array(items))?;
+    let mut expanded = items.clone();
+    for item in &mut expanded {
         if item.get("type").and_then(Value::as_str) == Some("item_reference") {
             let id = item
                 .get("id")
@@ -210,6 +211,6 @@ async fn prepare_items(
             *item = store.item(caller, id).await?;
         }
     }
-    responses::validate_stored_items(&items).map_err(StoreError::Invalid)?;
+    responses::validate_stored_items(&expanded).map_err(StoreError::Invalid)?;
     Ok(items)
 }

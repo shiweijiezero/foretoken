@@ -19,7 +19,7 @@ imagePullSecrets: []
 
 # Shared durable admission ledger; an external endpoint replaces the managed Valkey instance.
 admissionStore:
-  image: docker.io/valkey/valkey:8.1.10-alpine
+  image: docker.io/valkey/valkey:8.1.10-alpine # Shared Valkey image for the ledger and API cache.
   storageClass: "" # Uses the cluster's default StorageClass.
   storageSize: 1Gi
   externalURL: "" # Credential-free redis:// or rediss:// URL.
@@ -28,14 +28,12 @@ admissionStore:
     name: ""
     key: url
 
-# Shared PostgreSQL storage for responses, conversations, and archived chat completions.
+# Shared in-memory API cache, separate from the durable admission ledger.
 responseStore:
-  image: docker.io/library/postgres:17-bookworm
-  storageClass: "" # Uses the cluster's default StorageClass.
-  storageSize: 10Gi
   retention: 30d
   replayRetention: 10m
-  # Set a namespace-local URL Secret in each serving namespace to use an external database.
+  externalURL: "" # Credential-free redis:// or rediss:// URL; empty prepares managed Valkey.
+  # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
   externalURLSecret:
     name: ""
     key: url

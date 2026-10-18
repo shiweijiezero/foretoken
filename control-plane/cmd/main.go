@@ -139,8 +139,8 @@ func main() {
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
 	flag.StringVar(&admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
-	flag.StringVar(&responseStoreURLSecretName, "response-store-url-secret-name", "", "Namespace-local Secret containing the frontend PostgreSQL URL.")
-	flag.StringVar(&responseStoreURLSecretKey, "response-store-url-secret-key", "", "Key in the frontend PostgreSQL URL Secret.")
+	flag.StringVar(&responseStoreURLSecretName, "response-store-url-secret-name", "", "Namespace-local Secret containing the shared API cache URL.")
+	flag.StringVar(&responseStoreURLSecretKey, "response-store-url-secret-key", "", "Key in the shared API cache URL Secret.")
 	flag.StringVar(&responseRetention, "response-retention", "", "Retention for stored responses and chat completions, such as 30d.")
 	flag.StringVar(&responseReplayRetention, "response-replay-retention", "", "Retention for response stream replay and temporary background results, such as 10m.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
@@ -186,24 +186,28 @@ func main() {
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
-	admissionStore := &inferencev1alpha1.AdmissionStoreConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
+	admissionStore := &inferencev1alpha1.RedisConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
 	if admissionStoreURLSecretName != "" || admissionStoreURLSecretKey != "" {
 		admissionStore.URLSecretRef = &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: admissionStoreURLSecretName},
 			Key:                  admissionStoreURLSecretKey,
 		}
 	}
-	if err := runtimeconfig.ValidateAdmissionStore(admissionStore); err != nil {
+	if err := runtimeconfig.ValidateRedisConnection(admissionStore); err != nil {
 		ctrl.Log.Error(err, "invalid admission store configuration")
 		os.Exit(1)
 	}
 	var responseStore *inferencev1alpha1.ResponseStoreConfig
 	if frontendEnabled {
+		connection := inferencev1alpha1.RedisConnection{URL: os.Getenv(runtimeconfig.ResponseStoreURLEnv)}
+		if responseStoreURLSecretName != "" || responseStoreURLSecretKey != "" {
+			connection.URLSecretRef = &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: responseStoreURLSecretName},
+				Key:                  responseStoreURLSecretKey,
+			}
+		}
 		var err error
-		responseStore, err = runtimeconfig.ResponseStoreConfiguration(
-			responseStoreURLSecretName, responseStoreURLSecretKey,
-			responseRetention, responseReplayRetention,
-		)
+		responseStore, err = runtimeconfig.ResponseStoreConfiguration(connection, responseRetention, responseReplayRetention)
 		if err != nil {
 			ctrl.Log.Error(err, "invalid response store configuration")
 			os.Exit(1)
