@@ -26,7 +26,7 @@ GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GIT
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
-	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers
+	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers docs docs-serve
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
@@ -36,6 +36,13 @@ dashboard:
 # Regenerates standalone Lark and DingTalk receivers from the shared alert text.
 alert-receivers:
 	python3 observability/integrations/generate_webhooks.py
+
+# Builds and previews documentation without installing the inference CLI dependencies.
+docs:
+	uv run --no-project --isolated --with-requirements docs/requirements.txt mkdocs build --config-file mkdocs.yml
+
+docs-serve:
+	uv run --no-project --isolated --with-requirements docs/requirements.txt mkdocs serve --config-file mkdocs.yml $(if $(DOCS_ADDR),--dev-addr "$(DOCS_ADDR)",)
 
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \

@@ -75,6 +75,7 @@ Use the same measurement tools for standalone service evaluation and RSI experim
 
 Start with [Contributing](../CONTRIBUTING.md) and the [code style](development/code-style.md).
 
+- [Preview and build the documentation](development/documentation.md) when updating guides or navigation.
 - Validate changes with the [testing guidelines](development/testing.md) and [CI guidelines](development/ci.md).
 - Maintain deployment and storage behavior using the [source-deployment](development/source-deployment.md) and [runtime-cache](development/runtime-cache.md) guides.
 - Build and publish versions with the [release guide](development/release.md).

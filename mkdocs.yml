@@ -1,0 +1,179 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+site_name: Foretoken
+site_url: https://shiweijiezero.github.io/foretoken/
+site_description: Generative inference orchestration and agent-driven optimization.
+repo_url: https://github.com/shiweijiezero/foretoken
+repo_name: Foretoken
+copyright: Copyright contributors to the Foretoken project
+edit_uri: edit/main/
+docs_dir: docs
+site_dir: tmp/docs-site/site
+use_directory_urls: true
+
+hooks:
+  - docs/site/hooks.py
+
+theme:
+  name: material
+  custom_dir: docs/site/overrides
+  logo: assets/foretoken.svg
+  favicon: assets/foretoken.svg
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - search:
+      lang:
+        - en
+        - zh
+  - i18n:
+      docs_structure: suffix
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: zh
+          name: 简体中文
+          build: true
+          nav_translations:
+            Home: 首页
+            Get started: 快速开始
+            RSI: RSI 持续优化
+            Overview: 概览
+            Define a task: 定义优化任务
+            Example tasks: 任务示例
+            Research guidance: 研究方法
+            Technical knowledge: 技术知识
+            Experiment records: 实验记录与报告
+            User guide: 用户指南
+            Installation and deployment: 安装与部署
+            Existing Kubernetes: 已有 Kubernetes 集群
+            k3d GPU cluster: k3d GPU 集群
+            kind development cluster: kind 开发集群
+            MetaX preparation: 沐曦平台准备
+            MetaX model deployment: 沐曦模型部署
+            Source deployment: 源码部署与候选方案
+            Model configuration: 模型配置
+            Model sources: 模型来源
+            Model storage: 模型存储与分发
+            Inference parameters: 推理参数
+            Model recipes: 模型配方
+            Observability: 监控与运维
+            Evaluation: 评测与剖析
+            Performance benchmarks: 性能评测
+            Quality evaluation: 质量评测
+            Candidate comparison: 候选模型对比
+            Profiling: 性能剖析
+            Workload recipes: 实验命令与负载
+            W&B results: W&B 结果
+            Reference: 参考
+            CLI commands: CLI 命令
+            Frontend APIs: 前端 API
+            Performance metrics: 性能指标
+            Helm values: Helm 配置
+            Developer guide: 开发者指南
+            Contributing: 参与贡献
+            Documentation: 文档维护
+            Code style: 代码风格
+            Testing: 测试规范
+            Continuous integration: CI 规范
+            Deployment maintenance: 部署维护
+            Runtime cache: 运行时缓存
+            Releases: 版本发布
+
+nav:
+  - Home: index.md
+  - Get started: quickstart.md
+  - RSI:
+      - Overview: rsi-playbooks/README.md
+      - Define a task: rsi-playbooks/templates/task-template.md
+      - Example tasks: rsi-playbooks/tasks/README.md
+      - Research guidance: rsi-playbooks/guidance/meta-knowledge/README.md
+      - Technical knowledge: rsi-playbooks/guidance/knowledge/README.md
+      - Experiment records: rsi-playbooks/experiment-records.md
+  - User guide:
+      - Installation and deployment:
+          - Existing Kubernetes: docs/deployment/kubernetes.md
+          - k3d GPU cluster: docs/deployment/k3d.md
+          - kind development cluster: docs/deployment/kind.md
+          - MetaX preparation: docs/deployment/metax-platform.md
+          - MetaX model deployment: docs/deployment/metax.md
+          - Source deployment: docs/deployment/source.md
+      - Model configuration:
+          - Model sources: docs/features/model-sources.md
+          - Model storage: docs/features/model-storage.md
+          - Inference parameters: docs/features/inference-parameters.md
+          - Model recipes: examples/recipes/README.md
+      - Observability: observability/README.md
+  - Evaluation:
+      - Overview: benchmarks/README.md
+      - Performance benchmarks: benchmarks/docs/perf/README.md
+      - Quality evaluation: benchmarks/docs/eval/README.md
+      - Candidate comparison: benchmarks/docs/eval/distribution-comparison.md
+      - Profiling: benchmarks/docs/profile/README.md
+      - Workload recipes: benchmarks/docs/recipes.md
+      - W&B results: benchmarks/docs/perf/wandb.md
+  - Reference:
+      - CLI commands: cli/README.md
+      - Frontend APIs: data-plane/frontend/README.md
+      - Performance metrics: benchmarks/docs/metrics.md
+      - Helm values: https://github.com/shiweijiezero/foretoken/blob/main/deploy/charts/foretoken/values.yaml
+  - Developer guide:
+      - Contributing: CONTRIBUTING.md
+      - Documentation: docs/development/documentation.md
+      - Code style: docs/development/code-style.md
+      - Testing: docs/development/testing.md
+      - Continuous integration: docs/development/ci.md
+      - Deployment maintenance: docs/development/source-deployment.md
+      - Runtime cache: docs/development/runtime-cache.md
+      - Releases: docs/development/release.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+extra_css:
+  - assets/foretoken.css
+
+extra_javascript:
+  - assets/home.js
+
+extra:
+  generator: false
