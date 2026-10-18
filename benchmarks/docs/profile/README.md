@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/metax-deployment.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
+Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/deployment/metax.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
 
 Captures are saved in persistent RuntimeCache storage, already configured by the Quick Start. After updating the platform, run `foretoken deploy` for existing model services before capturing. CLI installation and W&B sign-in are covered by the [shared setup](../../README.md#get-started).
 
@@ -16,7 +16,7 @@ Captures are saved in persistent RuntimeCache storage, already configured by the
 Run from the repository root:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
@@ -38,7 +38,7 @@ Press Ctrl+C to stop the viewer; capture files remain available for download.
 ## Deploy and capture external traffic
 
 ```bash
-foretoken deploy examples/quickstart \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s
 ```
 
@@ -86,22 +86,22 @@ Add `--values nsight-values.yaml` to the installation command used for this clus
 
 ### Capture
 
-The [Nsight example](../../../examples/profile/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
+The [Nsight example](../../../examples/feature/profile/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
 
 ```bash
-foretoken perf examples/profile/nsight \
+foretoken perf examples/feature/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
 
-For external traffic, use `foretoken deploy examples/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
+For external traffic, use `foretoken deploy examples/feature/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
 
 ## Clean up
 
 When the deployment and capture records are no longer needed, clean up with:
 
 ```bash
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-Use `examples/profile/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.
+Use `examples/feature/profile/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.

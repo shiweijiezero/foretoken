@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，生成随机输入，并为每次请求抽取目标输出长度：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --min-output-length 64 --max-output-length 256 \

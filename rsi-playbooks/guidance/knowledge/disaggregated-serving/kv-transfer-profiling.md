@@ -54,6 +54,6 @@ The AFD design-space paper's 450-versus-25 GB/s contrast is a modeled NVLink/Inf
 - [NIXLBench's README](https://github.com/ai-dynamo/nixl/blob/01656768741dc87922a2045feff72921e193d981/benchmark/nixlbench/README.md)
 - [AFD design-space paper](https://arxiv.org/html/2605.28302v1)
 - [MegaScale-Infer](https://arxiv.org/html/2504.02263)
-- [E/P/D deployment guide](../../../../examples/encoder-prefill-decode/README.md)
+- [E/P/D deployment guide](../../../../examples/feature/encoder-prefill-decode/README.md)
 - [workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)
 - [parallelism and communication](../parallelism-communication/)

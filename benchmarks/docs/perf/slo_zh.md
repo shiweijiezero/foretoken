@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，逐步提高客户端并发限额，测量满足服务级别目标（SLO）的最高请求并发峰值，例如要求延迟或吞吐量达到指定值：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \
@@ -66,4 +66,4 @@ foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
 
 搜索中断后，可用 [`--resume`](sweep_zh.md#继续已有扫描) 继续。
 
-显式部署的快速开始服务不再需要时，用 `foretoken delete examples/quickstart` 删除。
+显式部署的快速开始服务不再需要时，用 `foretoken delete examples/quickstart/qwen3-0.6b` 删除。

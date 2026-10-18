@@ -26,7 +26,7 @@ pip install foretoken
 ## 测量性能
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --prompt "用一句话解释什么是 token。" \
   --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
   --output local,wandb
@@ -41,7 +41,7 @@ foretoken perf examples/quickstart \
 ## 评测模型质量
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
@@ -84,15 +84,13 @@ foretoken eval examples/quickstart \
 使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 \
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
   --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
   --iteration baseline
 ```
 
-`perf`、`eval` 和 `perf video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[实验记录手册](../rsi-playbooks/experiment-records_zh.md)。
+`perf`、`eval` 和 `perf --video` 共用这些记录选项。相同目录与迭代名称下，每条命令新增独立运行；省略 `--iteration` 则每条命令新建编号迭代。`experiment` 已包含本地保存，可与 `wandb`、`plot`、`quiet` 组合。目录、源码记录和说明填写方式见[实验记录手册](../rsi-playbooks/experiment-records_zh.md)。
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
 
-测量已完成但输出失败时，使用 `foretoken perf --resume RESULT_DIR` 补齐结果，不重复发送请求，详见[结果恢复](docs/perf/wandb_zh.md#恢复上传)。
-
-使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果。指标选择、图宽和输出位置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)。
+使用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照已有结果，添加 `--sync_wandb` 可同步到 W&B。指标与图形设置见[绘图示例](docs/recipes_zh.md#绘制与对照结果)，离线补传见 [W&B 输出](docs/perf/wandb_zh.md#恢复上传)。

@@ -54,6 +54,6 @@ AFD 设计空间论文的 450／25 GB/s 是 NVLink／InfiniBand 放置模型条�
 - [NIXLBench README](https://github.com/ai-dynamo/nixl/blob/01656768741dc87922a2045feff72921e193d981/benchmark/nixlbench/README.md)
 - [AFD 设计空间论文](https://arxiv.org/html/2605.28302v1)
 - [MegaScale-Infer](https://arxiv.org/html/2504.02263)
-- [E/P/D 部署文档](../../../../examples/encoder-prefill-decode/README_zh.md)
+- [E/P/D 部署文档](../../../../examples/feature/encoder-prefill-decode/README_zh.md)
 - [执行工作流](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)
 - [并行与通信](../parallelism-communication/)

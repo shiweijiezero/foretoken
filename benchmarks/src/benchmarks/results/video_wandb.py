@@ -81,10 +81,30 @@ def publish_video_wandb(
     sdk_run: Any,
     run: BenchmarkRun,
 ) -> None:
-    """Publish video summaries, request rows, media, and artifacts to an open run."""
+    """Publish video summaries, request rows and media to the final online session."""
     raw_results = json.loads(
         run.artifacts["raw_results"].read_text(encoding="utf-8")
     )
+    directory = run.artifacts["raw_results"].parent
+    videos = []
+    for result in raw_results:
+        if not result.get("success") or not result.get("output_path"):
+            continue
+        relative = Path(result["output_path"])
+        # Legacy formal videos were saved beside raw_results.json.
+        if relative.is_absolute():
+            relative = Path(relative.name)
+        path = directory / relative
+        if not path.is_file():
+            raise ValueError(f"Recorded video is missing: {path}")
+        result["output_path"] = relative.as_posix()
+        videos.append(wandb.Video(
+            str(path), fps=result["fps"], format="mp4",
+            caption=(
+                f"{result['sample_id']}: {result['task']} "
+                f"{result['width']}x{result['height']} seed={result['seed']}"
+            ),
+        ))
     sdk_run.log(video_metrics_to_wandb(run.metrics))
 
     rows = [
@@ -100,31 +120,5 @@ def publish_video_wandb(
         }
     )
 
-    videos = [
-        wandb.Video(
-            result["output_path"],
-            fps=result["fps"],
-            format="mp4",
-            caption=(
-                f"{result['sample_id']}: {result['task']} "
-                f"{result['width']}x{result['height']} "
-                f"seed={result['seed']}"
-            ),
-        )
-        for result in raw_results
-        if result.get("success")
-        and result.get("output_path")
-        and Path(result["output_path"]).is_file()
-    ]
     if videos:
         sdk_run.log({"video/generated_videos": videos})
-
-    artifact = wandb.Artifact(
-        name=f"{run.record['name']}-{sdk_run.id}",
-        type="video-generation-benchmark",
-    )
-    for name in ("config", "raw_results", "metrics"):
-        path = run.artifacts.get(name)
-        if path is not None and path.is_file():
-            artifact.add_file(str(path), name=path.name)
-    sdk_run.log_artifact(artifact)

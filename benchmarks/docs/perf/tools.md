@@ -5,7 +5,7 @@ English | [简体中文](tools_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), send the repository's [tool request sample](../../examples/tools.jsonl) to a model service with tool-calling support:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset benchmarks/examples/tools.jsonl --num-prompts 1 \
   --output local,wandb
 ```

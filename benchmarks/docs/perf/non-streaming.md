@@ -5,7 +5,7 @@ English | [简体中文](non-streaming_zh.md) · [Performance examples](README.m
 After [setup](README.md#setup), run from the repository root:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --prompt "Name a planet." --no-stream \
   --num-prompts 20 --max-tokens 32 \
   --output local,wandb

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 from foretoken.platform.types import ReleaseRef
 
 if TYPE_CHECKING:

@@ -13,7 +13,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-以下以 [Qwen 吞吐与解码延迟优化](tasks/qwen-decode_zh.md)为例。使用前确认具备任务要求的资源；自己的任务可按[任务模板](templates/task-template_zh.md)编写，并替换指令中的文件路径。
+以下以 [Qwen3.5-35B-A3B 优化](tasks/qwen3.5-35b-a3b_zh.md)为例。使用前确认具备任务要求的资源；自己的任务可按[任务模板](templates/task-template_zh.md)编写，并替换指令中的文件路径。
 
 ### Claude Code
 
@@ -26,7 +26,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在会话中输入：
 
 ```text
-/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen-decode_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
 ```
 
 需要暂停时，用 `/goal clear` 结束自动续轮，并要求团队停止本任务的实验和采集进程。
@@ -36,7 +36,7 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 在仓库目录打开 Codex，输入：
 
 ```text
-/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen-decode_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
+/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。阅读已有实验记录和相关指导，遵守任务的资源、时间预算及结束条件，交付规定结果。
 ```
 
 用 `/goal pause` 暂停目标，并要求成员停止实验与采集；用 `/goal resume` 继续。
@@ -47,9 +47,11 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude
 
 Advisor 持续研究技术机制和优化方法，帮助团队发现新问题、反思当前方向。它既可以深入已有瓶颈，也可以探索尚未进入候选清单的新思路。
 
-Worker 围绕具体问题实现可以评测的代码或配置，再根据实验结果继续改进。Experimenter 负责构建和评测这些方案，同时观察资源使用、保存结果，并在实验结束后清理环境。
+Worker 围绕具体问题实现可以评测的代码或配置，再根据实验结果继续改进。
 
-下一方案的准备可以与当前方案的评测并行，团队根据资源和实际耗时分别安排两阶段的并发。小任务可以由同一成员兼任多个角色；准备保留的重要结论仍由未参与对应实现和实验的成员独立检查。
+Experimenter 负责构建和评测这些方案，同时观察资源使用、保存结果，并在实验结束后清理环境。
+
+下一方案的准备可以与当前方案的评测并行，团队根据资源和实际耗时分别安排两阶段的并发。
 
 具体的派工、工作区与资源交接方式见 [RSI skill](../.agents/skills/rsi/SKILL_zh.md)。
 
@@ -72,6 +74,6 @@ Worker 围绕具体问题实现可以评测的代码或配置，再根据实验�
 
 ## 查看结果
 
-评测命令会保存每轮的配置、指标和原始结果，团队据此维护实验总览与最终报告。任务文件指定了交付位置，目录结构和记录方式见[实验记录手册](experiment-records_zh.md)。使用 W&B 时，实验记录中也会保留对应运行的链接。
+实验报告（`report.md`）汇总各方案的性能对比、分析结论和当前采用的方案，并随实验进展更新。详细的实验过程和原始数据可通过报告中的链接查看。
 
 更多任务见[优化任务](tasks/README_zh.md)，可复用的技术认识见[知识库](guidance/knowledge/README_zh.md)。

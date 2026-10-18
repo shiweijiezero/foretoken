@@ -5,7 +5,7 @@ English | [简体中文](huggingface_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), use the public StudyChat dataset:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset KrisQ/StudyChat \
   --max-concurrency 2 --num-prompts 2 --output local,wandb
 ```
@@ -15,7 +15,7 @@ The repository's default configuration has one split, so no suffix is needed. Fo
 To select the repository's [JSONL file](https://huggingface.co/datasets/KrisQ/StudyChat/blob/main/data.jsonl) directly:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 2 --num-prompts 2 --output local,wandb
 ```

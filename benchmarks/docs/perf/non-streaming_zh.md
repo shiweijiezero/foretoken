@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，在仓库根目录运行：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --prompt "说出一颗行星。" --no-stream \
   --num-prompts 20 --max-tokens 32 \
   --output local,wandb

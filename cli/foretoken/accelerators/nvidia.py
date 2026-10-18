@@ -15,8 +15,8 @@ from foretoken.accelerators.discovery import (
     ExporterMonitor,
     MetricRequirement,
 )
-from foretoken.kubernetes import resource_ref
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import ResourceRef, resource_ref
 
 
 @dataclass(frozen=True)

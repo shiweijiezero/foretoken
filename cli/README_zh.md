@@ -11,7 +11,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.11 或更高版本、`kubectl` 和 Helm。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
+需要准备 Python 3.11 或更高版本、`kubectl`，以及 Helm 4.2.4 或更高版本。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
 
 ## 安装命令行工具
 
@@ -102,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-`foretoken deploy` 会从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
+`foretoken deploy` 会从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/deployment/source_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/deployment/source_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -110,7 +110,7 @@ foretoken install -e .
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-如果仓库需要认证，安装前按[源码部署指南](../docs/kubernetes-deployment_zh.md)配置拉取 Secret。
+如果仓库需要认证，安装前按[源码部署指南](../docs/deployment/kubernetes_zh.md)配置拉取 Secret。
 
 ### 模型分发
 
@@ -160,22 +160,24 @@ loadBalancer:
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
-资源要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart`。
+资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/features/model-storage_zh.md)。单模型部署使用 `examples/quickstart/qwen3-0.6b`。
 
 ```bash
-foretoken deploy examples/multi-model-quickstart --timeout 20m
+foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
+命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。部署内容未变时，复用已有控制器和运行实例。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
 
-等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
+等待期间显示服务状态和 Pod/容器日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
 
-目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
+`--timeout` 设置 CLI 等待集群操作和服务就绪的时限，默认为十分钟，源码编译单独执行。模型的准备和启动分别受模型配置中的 `spec.timeouts.startup` 约束。
+
+模型准备失败或就绪等待超时时，命令会给出原因并退出，已经部署的服务仍保留在 Kubernetes 中。集群会继续尝试恢复，可用下面的 `status` 命令跟踪进度、查看日志。若是配置错误，修改 Kustomize 文件后重新执行 `deploy`。
 
 不应用配置，直接查看同一部署的状态：
 
 ```bash
-foretoken status examples/multi-model-quickstart
+foretoken status examples/quickstart/multi-model
 ```
 
 状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
@@ -188,13 +190,13 @@ foretoken status -n foretoken-multi-model-demo --watch
 部署后解析前端服务的公开 URL：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 ```
 
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
 ```
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
@@ -202,7 +204,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ### 停止与恢复
 
 ```bash
-foretoken stop examples/multi-model-quickstart
+foretoken stop examples/quickstart/multi-model
 ```
 
 实验暂时不用 GPU 时，可以停止服务，同时保留配置、存储和构建缓存。命令等待前端和模型实例退出；之后对同一目录执行 `foretoken deploy` 即可恢复，模型进程会重新启动并加载权重。
@@ -219,6 +221,8 @@ foretoken stop examples/multi-model-quickstart
 
 评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
 
+添加 [`--sync_wandb`](../benchmarks/docs/perf/wandb_zh.md#恢复上传) 可将已有结果上传到 W&B。
+
 ## 性能剖析：执行瓶颈
 
 在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。
@@ -228,7 +232,7 @@ foretoken stop examples/multi-model-quickstart
 先删除服务及其不再使用的构建资源，再卸载平台：
 
 ```bash
-foretoken delete examples/multi-model-quickstart
+foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 

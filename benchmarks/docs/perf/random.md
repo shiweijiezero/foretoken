@@ -5,7 +5,7 @@ English | [简体中文](random_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), generate random inputs and sample an output target for each request:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --min-output-length 64 --max-output-length 256 \

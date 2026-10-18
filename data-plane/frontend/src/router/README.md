@@ -9,7 +9,7 @@ Route requests to healthy replicas that support the model, input length, and req
 
 ## Select a routing strategy
 
-To prefer replicas with fewer waiting requests, set the scorer in your `FrontendService` YAML. For the Quick Start, edit `examples/quickstart/frontend.yaml`:
+To prefer replicas with fewer waiting requests, set the scorer in your `FrontendService` YAML. For the Quick Start, edit `examples/quickstart/qwen3-0.6b/frontend.yaml`:
 
 ```yaml
 spec:
@@ -21,7 +21,7 @@ spec:
 Apply the edited configuration:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 The default strategy combines cache reuse and load balancing with `kv_least_loaded` and selects a target with `gamble_sampling`.

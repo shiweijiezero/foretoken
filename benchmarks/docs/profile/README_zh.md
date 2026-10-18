@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/metax-deployment_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
+采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/deployment/metax_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
 
 采集结果保存在持久存储（RuntimeCache）中，快速开始示例已配置。更新平台后，先对已有模型服务执行 `foretoken deploy`，再开始采集。CLI 安装与 W&B 登录见[通用准备](../../README_zh.md#开始使用)。
 
@@ -16,7 +16,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 从仓库根目录执行：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
@@ -38,7 +38,7 @@ foretoken profile view
 ## 部署并采集外部流量
 
 ```bash
-foretoken deploy examples/quickstart \
+foretoken deploy examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s
 ```
 
@@ -86,22 +86,22 @@ runtime:
 
 ### 采集
 
-[Nsight 示例](../../../examples/profile/nsight/README_zh.md)已选择该工具，并沿用快速开始示例的持久存储：
+[Nsight 示例](../../../examples/feature/profile/nsight/README_zh.md)已选择该工具，并沿用快速开始示例的持久存储：
 
 ```bash
-foretoken perf examples/profile/nsight \
+foretoken perf examples/feature/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
 
-如需采集外部流量，改用 `foretoken deploy examples/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m`。该命令在采集后保留运行中的服务，再次执行即可采集下一段。
+如需采集外部流量，改用 `foretoken deploy examples/feature/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m`。该命令在采集后保留运行中的服务，再次执行即可采集下一段。
 
 ## 清理
 
 不再需要该部署及采集记录时清理：
 
 ```bash
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-清理 Nsight 示例时将路径换为 `examples/profile/nsight`。Profiling 会增加开销，延迟和吞吐量对比请使用不带 `--profile` 的评测。
+清理 Nsight 示例时将路径换为 `examples/feature/profile/nsight`。Profiling 会增加开销，延迟和吞吐量对比请使用不带 `--profile` 的评测。

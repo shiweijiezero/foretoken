@@ -11,8 +11,8 @@ from typing import Any
 
 import yaml
 
-from foretoken.kubernetes import Kubectl, resource_ref
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, resource_ref
 from foretoken.platform.helm import Helm
 from foretoken.platform.types import ReleaseRef
 

@@ -5,7 +5,7 @@ English | [简体中文](studychat_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), replay a short populated window from the public trace:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
   --trace-start 18609050.546s --trace-duration 8min \
   --max-concurrency 16 --max-tokens 4096 \

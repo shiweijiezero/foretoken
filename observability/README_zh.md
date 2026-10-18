@@ -44,7 +44,7 @@ TTFT 是首 token 延迟，E2EL 是生成完成延迟。TPOT 是每个请求的�
 
 ## 告警
 
-在 `ModelService` 或 `FrontendService` 中选择规则，重新部署服务配置后生效。[告警参考](runbooks/alerts_zh.md)介绍可用规则、阈值和处理方法；[服务可观测性示例](../examples/observability/README_zh.md)提供完整可运行配置。
+在 `ModelService` 或 `FrontendService` 中选择规则，重新部署服务配置后生效。[告警参考](runbooks/alerts_zh.md)介绍可用规则、阈值和处理方法；[服务可观测性示例](../examples/feature/observability/README_zh.md)提供完整可运行配置。
 
 接收通知请配置 [Lark](integrations/lark/README_zh.md)、[Slack](integrations/slack/README_zh.md) 或[钉钉](integrations/dingtalk/README_zh.md)接收器。
 

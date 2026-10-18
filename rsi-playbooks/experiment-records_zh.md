@@ -48,6 +48,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
+├── workspace/                 # Agent 自行组织的辅助材料，按需创建
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -62,6 +63,12 @@ results/decode/parallelism/
 ```
 
 记录保存在执行评测命令的机器上，相对路径以该命令的工作目录为起点。在远端运行时，到远端按命令打印的路径查看。参数扫描的一次运行可以包含多个结果目录；使用 W&B 时，也可通过输出的链接查看曲线和比较结果。
+
+### Agent 辅助材料区
+
+研究资料、分析脚本、准备日志、复核证据和清理记录统一放在 `<output-dir>/workspace/`，不再散放到实验根目录。Agent 按需创建该目录，自行组织内部结构；`research/`、`preparation/`、`review/`、`cleanup/` 只是分类示例，不要求全部创建。评测命令不会自动生成 `workspace/`。
+
+报告、规定的实验笔记和原始运行产物仍保存在各自约定的位置。笔记和报告汇总发现，并链接 `workspace/` 中的支撑文件。任务结束清理临时文件时，保留仍被引用的证据。
 
 ## 分析结果
 
@@ -93,4 +100,10 @@ results/decode/parallelism/
 
 总览帮助读者了解当前状态，不另存一份决策历史。决定变化后及时更新摘要，并链接支撑条目。可复用知识也可随认识变化修订，保留指向实验历史的链接。
 
-用户汇报 `report.md` 使用[汇报模板](templates/report-template_zh.md)：先用表格汇总任务指标实测值和相对 base 的变化，再简述各轮改动与效果，最后给出保留方案及结果链接。
+## 持续维护用户报告
+
+实验开始时，由主 Agent 或指定作者按[报告模板](templates/report-template_zh.md)创建 `report.md`，并向用户提供文件路径。报告放在任务指定的交付位置；未指定时放在实验根目录。在 `notes/experiment.md` 开头链接报告，恢复实验时继续更新同一份文件。报告由作者维护，评测命令负责保存原始证据。
+
+每轮测量结束后，以及分析改变结论或保留方案时，及时更新报告。先汇总任务指标实测值和相对 base 的变化，再简述各轮尝试，说明当前保留方案并链接结果。面向未参与实验的读者，区分已有证据支持的结论、待验证假设和未完成验证。尚无测量结果时，说明目标、起始条件和未测项目。执行细节与决策历史留在报告引用的迭代笔记中。
+
+暂停、停止或完成时，更新同一份报告，写清原因、已取得的结果、保留改动和未完成验证，将过时安排改为实际状态，并再次提供报告路径。

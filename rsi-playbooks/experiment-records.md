@@ -48,6 +48,7 @@ For example, when logged in to W&B, replace the recipe's output options with:
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
+├── workspace/                 # Agent-managed supporting files, created as needed
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -62,6 +63,12 @@ results/decode/parallelism/
 ```
 
 Records are saved on the machine running the evaluation. Relative paths start from the command's working directory. For remote runs, inspect the printed paths on the remote machine. A parameter sweep can produce several result directories within one run. With W&B enabled, the printed links also let you inspect curves and compare results.
+
+### Agent-managed supporting files
+
+Keep research material, analysis scripts, preparation logs, review evidence and cleanup records under `<output-dir>/workspace/`, rather than adding auxiliary directories at the experiment root. Agents create this directory as needed and choose its internal layout; names such as `research/`, `preparation/`, `review/` and `cleanup/` are examples, not required subdirectories. Benchmark commands do not create `workspace/`.
+
+Keep the report, required experiment notes and original run artifacts in their documented locations. Summarize findings in the notes and report, linking supporting files in `workspace/`. Preserve cited evidence when removing temporary files at task completion.
 
 ## Analyze results
 
@@ -93,4 +100,10 @@ After each run, append its directory or W&B link, the hypothesis tested, the com
 
 The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
-Use the [report template](templates/report-template.md) for the user-facing `report.md`: start with a comparison table of measured task metrics and changes from base, briefly describe each iteration, and finish with the retained approach and result links.
+## Maintain the user-facing report
+
+At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the report at the start of `notes/experiment.md` and keep the same report when resuming. The writer maintains the report; benchmark commands save the underlying evidence.
+
+Update the report after each measured iteration and whenever analysis changes a conclusion or the retained approach. Start with measured task metrics and changes from base, briefly explain the iterations, and describe the currently retained approach with result links. Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured. Keep execution details and decision history in the linked iteration notes.
+
+On pause, stop or completion, update the same report with the reason, results obtained, retained changes and unfinished validation. Replace obsolete plans with the actual state and share the report path again.

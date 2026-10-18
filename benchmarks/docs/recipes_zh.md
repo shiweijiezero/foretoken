@@ -7,14 +7,14 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](recipes.md) | 简体中文 · [评测与性能剖析](../README_zh.md)
 
-在仓库根目录运行，将 `examples/quickstart` 换成待测模型的配置目录。
+在仓库根目录运行，将 `examples/quickstart/qwen3-0.6b` 换成待测模型的配置目录。
 
 ## 输入输出长度与并发
 
 在固定输入／输出长度组合下扫描并发，比较延迟与吞吐量；配置文件中只保留模型上下文能容纳的长度组合。
 
 ```bash
-foretoken perf examples/quickstart --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/fixed-length.jsonl \
   --num-prompts 32 --warmup-requests 4 --num-runs 1 --temperature 0 \
   --experiment-name fixed-length --output local,wandb,plot
@@ -25,7 +25,7 @@ foretoken perf examples/quickstart --dataset random \
 固定并发为 1、输出为 512 token，比较输入长度增长带来的性能变化；选择输入长度时，为输出预留 512 token。
 
 ```bash
-foretoken perf examples/quickstart --dataset random \
+foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
   --sweep benchmarks/scripts/common/long-context.jsonl \
   --max-concurrency 1 --min-output-length 512 --max-output-length 512 \
   --num-prompts 4 --warmup-requests 1 --num-runs 1 --temperature 0 \
@@ -37,14 +37,14 @@ foretoken perf examples/quickstart --dataset random \
 使用 ShareGPT 和 StudyChat，按泊松过程随机启动新对话，分别测试平均每秒 2、4、8、16 段对话；`--num-prompts` 按每轮请求计数。
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
   --num-prompts 100 --warmup-requests 0 --num-runs 1 \
   --experiment-name sharegpt-rate --output local,wandb,plot
 
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
@@ -57,7 +57,7 @@ foretoken perf examples/quickstart \
 统计同时满足两项延迟目标的请求比例，以及达标请求或 token 的吞吐量。
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/conversation-rate.jsonl \
   --slo-params '[{"ttft":"<=2s","tpot":"<=100ms"}]' \
@@ -71,7 +71,7 @@ foretoken perf examples/quickstart \
 改变平均每秒启动的对话数和首 token 延迟阈值，比较达标率和 goodput；新对话按泊松过程随机启动。
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
   --sweep benchmarks/scripts/common/slo-thresholds.jsonl \
   --max-concurrency -1 --temperature 0 --random-seed 0 \
@@ -84,13 +84,13 @@ foretoken perf examples/quickstart \
 分别回放 StudyChat 和 Mooncake 的八分钟窗口，比较延迟、吞吐与发送延后；Mooncake 重建共享前缀，可用于缓存实验。
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
   --trace-start 18609050.546s --trace-duration 8min \
   --max-concurrency 16 --max-tokens 4096 \
   --output local,wandb,plot
 
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --trace valeriol29/mooncake-traces:conversation --dataset random \
   --trace-start 57s --trace-duration 8min --max-concurrency 16 \
   --trace-synthetic-prefix-reuse --random-seed 0 --max-tokens 64 \
@@ -102,7 +102,7 @@ foretoken perf examples/quickstart \
 对五个零样本任务分别评测最多 100 个样本。
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks piqa,arc_easy,arc_challenge,hellaswag,winogrande \
   --num_fewshot 0 --limit 100 --output local,wandb,plot
 ```
@@ -112,7 +112,7 @@ foretoken eval examples/quickstart \
 使用支持输入 token 对数概率的服务，测量 WikiText 困惑度。
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks wikitext --limit 100 --output local,wandb,plot
 ```
 
@@ -126,7 +126,7 @@ foretoken perf --dataset random \
   --num-prompts 100 --warmup-requests 10 --num-runs 3 --temperature 0 \
   --experiment-name quantization --output local,wandb,plot
 
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+foretoken eval examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --tasks piqa,hellaswag --num_fewshot 0 --limit 100 \
   --output local,wandb,plot
 ```
@@ -136,8 +136,8 @@ foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbyt
 以 BF16 为参考比较完整词表 KL 散度和 token 一致率，候选文件提供图表所用的模型名称与权重位宽。
 
 ```bash
-foretoken eval --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+foretoken eval --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --context-length 512 --num-windows 4 --score-tokens 16 \
   --output local,wandb,plot
 ```
@@ -189,6 +189,8 @@ foretoken plot results/baseline results/candidate
 ```
 
 也可以选择整个实验目录或包含多次运行的文件夹。输出包括 PDF、SVG、PNG 和 CSV；单个输入保存到该目录的 `plots/`，多个输入或指定 `--base` 时保存到当前目录的 `plots/`。通过 `--output-dir` 修改输出位置。
+
+添加 `--sync_wandb` 可[将已有结果上传到 W&B](perf/wandb_zh.md#恢复上传)。
 
 比较性能结果时，用 `--base` 指定参考方案，直接生成实测值和相对变化：
 

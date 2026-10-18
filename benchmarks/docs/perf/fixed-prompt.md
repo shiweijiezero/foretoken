@@ -5,7 +5,7 @@ English | [简体中文](fixed-prompt_zh.md) · [Performance examples](README.md
 After [setup](README.md#setup), run from the repository root:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --prompt "Explain what a token is in one sentence." \
   --max-concurrency 4 --num-prompts 20 --max-tokens 64 \
   --output local,wandb

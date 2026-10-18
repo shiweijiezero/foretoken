@@ -5,7 +5,7 @@
 完成[准备步骤](README_zh.md#准备)后，直接使用公开的 StudyChat 数据集：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset KrisQ/StudyChat \
   --max-concurrency 2 --num-prompts 2 --output local,wandb
 ```
@@ -15,7 +15,7 @@ foretoken perf examples/quickstart \
 也可以直接指定仓库里的 [JSONL 文件](https://huggingface.co/datasets/KrisQ/StudyChat/blob/main/data.jsonl)：
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
   --max-concurrency 2 --num-prompts 2 --output local,wandb
 ```

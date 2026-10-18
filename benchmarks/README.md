@@ -26,7 +26,7 @@ Existing services are reused unchanged; run `foretoken deploy` first to measure 
 ## Measure performance
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --prompt "Explain what a token is in one sentence." \
   --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
   --output local,wandb
@@ -41,7 +41,7 @@ Performance time values may include a unit such as `s`, `min`, or `h`; unitless 
 ## Evaluate model quality
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
@@ -84,15 +84,13 @@ Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark p
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 \
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
   --output experiment --output-dir results/reduce-ttft/queue-aware-routing \
   --iteration baseline
 ```
 
-`perf`, `eval`, and `perf video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [experiment records guide](../rsi-playbooks/experiment-records.md) for the layout, source records, and author-written notes.
+`perf`, `eval`, and `perf --video` share these recording options. Commands with the same directory and iteration name add separate runs; omitting `--iteration` creates a new numbered iteration per command. `experiment` includes local storage and can be combined with `wandb`, `plot`, and `quiet`. See the [experiment records guide](../rsi-playbooks/experiment-records.md) for the layout, source records, and author-written notes.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 
-If measurement completed but output publication failed, use `foretoken perf --resume RESULT_DIR` to finish it without repeating requests; see [result recovery](docs/perf/wandb.md#resume-an-upload).
-
-Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection, layout and output locations.
+Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results; add `--sync_wandb` to upload them to W&B. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection and layout, or [W&B output](docs/perf/wandb.md#resume-an-upload) for offline uploads.

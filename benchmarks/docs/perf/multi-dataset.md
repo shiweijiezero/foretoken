@@ -5,7 +5,7 @@ English | [简体中文](multi-dataset_zh.md) · [Performance examples](README.m
 After [setup](README.md#setup), separate dataset selectors with commas:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```

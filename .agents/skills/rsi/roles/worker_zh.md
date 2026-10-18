@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](worker.md) | 简体中文
 
-Worker 负责研究具体问题，把有依据的想法实现为可以评测的方案，并根据实验结果继续改进。方案准备好后，Worker 将待测版本交给 Experimenter；评测进行期间，可以继续研究其他问题或准备下一版本。小任务也可以由同一成员兼任实验执行，资源安排遵循[团队协作说明](common_zh.md)。
+Worker 负责研究具体问题，把有依据的想法实现为可以评测的方案，并根据实验结果继续改进。方案准备好后，Worker 将待测版本交给 Experimenter；评测进行期间，可以继续研究其他问题或准备下一版本。资源安排遵循[团队协作说明](common_zh.md)。
 
 ## 理解问题并实现方案
 

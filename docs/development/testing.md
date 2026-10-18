@@ -78,7 +78,3 @@ Then independently review scope and maintenance cost:
 | Turning every failure branch into a permanent scenario | Select only what is necessary to verify a key feature |
 | Making a flaky test pass through retries or longer sleeps | Diagnose product, test, or environment failure; fix or explicitly isolate it |
 | Retaining debug scripts, fixtures, and dependencies after their purpose ends | Remove them with the obsolete scenario |
-
-## Further reading
-
-[llm-d's testing requirements](https://github.com/llm-d/llm-d/blob/main/CONTRIBUTING.md) distinguish component, integration, and deployed-system validation. [Kubebuilder's EnvTest reference](https://book.kubebuilder.io/reference/envtest) explains the limits of an API-server-only environment. These are useful for describing execution boundaries; Foretoken's feature selection and no-mock rules are defined above.

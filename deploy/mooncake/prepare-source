@@ -10,6 +10,11 @@ repo_root=$(git -C "${script_dir}/../.." rev-parse --show-toplevel)
 source_dir="${repo_root}/third_party/mooncake"
 mirror=${FORETOKEN_GITHUB_MIRROR:-}
 requested_version=${MOONCAKE_VERSION:-}
+operation=${1:-prepare}
+if [[ $# -gt 1 ]] || [[ "${operation}" != prepare && "${operation}" != --describe && "${operation}" != --check ]]; then
+    printf 'Usage: %s [--describe|--check]\n' "$0" >&2
+    exit 2
+fi
 
 git_cmd() {
     if [[ -n "${mirror}" ]]; then
@@ -79,34 +84,41 @@ load_patch_series() {
 }
 
 nested_submodules_are_clean() {
-    git -C "${source_dir}" submodule foreach --quiet --recursive \
-        'test -z "$(git status --porcelain --untracked-files=all)"'
+    git -C "${source_dir}" submodule foreach --quiet --recursive '
+        index=$(mktemp)
+        trap '\''rm -f "$index"'\'' EXIT
+        rm -f "$index"
+        GIT_INDEX_FILE="$index" git read-tree HEAD &&
+        GIT_INDEX_FILE="$index" git -c core.filemode=true diff --quiet --ignore-submodules=none &&
+        git diff --cached --quiet HEAD -- &&
+        test -z "$(git ls-files --others --exclude-standard)"
+    '
 }
 
-source_is_clean() {
-    git -C "${source_dir}" diff --quiet HEAD -- &&
-        [[ -z "$(git -C "${source_dir}" ls-files --others --exclude-standard)" ]] &&
-        nested_submodules_are_clean
-}
+# Private indexes compare actual files even when the working index hides changes.
+source_matches_head() (
+    local expected_index patch
+    if ! nested_submodules_are_clean; then
+        exit 1
+    fi
+    expected_index=$(mktemp)
+    trap 'rm -f "${expected_index}"' EXIT
+    rm -f "${expected_index}"
+    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" read-tree HEAD || exit
+    for patch in "$@"; do
+        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached --check "${patch}" || exit
+        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached "${patch}" || exit
+    done
+    cmp -s \
+        <(GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" ls-files -z | LC_ALL=C sort -zu) \
+        <(git -C "${source_dir}" ls-files --cached --others --exclude-standard -z | LC_ALL=C sort -zu) || exit 1
+    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" \
+        -c core.filemode=true diff --quiet --ignore-submodules=none
+)
 
 tree_matches_patch_series() {
-    local revision=$1 flavor=$2 expected_index expected_tree patch
-    load_patch_series "${revision}" "${flavor}" || return 1
-    if [[ -n "$(git -C "${source_dir}" ls-files --others --exclude-standard)" ]] ||
-        ! nested_submodules_are_clean; then
-        return 1
-    fi
-
-    expected_index=$(mktemp)
-    rm -f "${expected_index}"
-    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" read-tree HEAD
-    for patch in "${patches[@]}"; do
-        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached --check "${patch}"
-        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached "${patch}"
-    done
-    expected_tree=$(GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" write-tree)
-    rm -f "${expected_index}"
-    git -C "${source_dir}" diff --quiet "${expected_tree}" --
+    load_patch_series "$1" "$2" || return 1
+    source_matches_head "${patches[@]}"
 }
 
 reverse_patch_series() {
@@ -141,7 +153,23 @@ else
 fi
 IFS='|' read -r target_version target_revision _ <<<"${target_record}"
 
+# Source selection and reuse checks share the preparation recipe without fetching.
+if [[ "${operation}" == --describe ]]; then
+    load_patch_series "${target_revision}" current
+    printf '%s\n' "${target_revision}"
+    for patch in "${patches[@]}"; do
+        printf '%s\n' "${patch#"${repo_root}/"}"
+    done
+    exit 0
+fi
+
 source_top=$(git -C "${source_dir}" rev-parse --show-toplevel 2>/dev/null || true)
+if [[ "${operation}" == --check ]]; then
+    [[ "${source_top}" == "${source_dir}" ]] || exit 1
+    [[ "$(git -C "${source_dir}" rev-parse HEAD)" == "${target_revision}" ]] || exit 1
+    tree_matches_patch_series "${target_revision}" current
+    exit $?
+fi
 if [[ "${source_top}" != "${source_dir}" ]]; then
     if [[ -d "${source_dir}" ]] &&
         [[ -n "$(find "${source_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
@@ -153,7 +181,7 @@ fi
 
 current_revision=$(git -C "${source_dir}" rev-parse HEAD)
 source_state=unknown
-if source_is_clean; then
+if source_matches_head; then
     source_state=clean
 elif tree_matches_patch_series "${current_revision}" current; then
     source_state=current
@@ -173,7 +201,7 @@ fi
 if [[ "${source_state}" == current || "${source_state}" == legacy ]]; then
     reverse_patch_series "${current_revision}" "${source_state}"
 fi
-if ! source_is_clean; then
+if ! source_matches_head; then
     fail_dirty_source
 fi
 

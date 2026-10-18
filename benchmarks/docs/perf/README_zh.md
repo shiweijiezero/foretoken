@@ -6,12 +6,12 @@
 
 ## 准备
 
-完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart`。
+完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart/qwen3-0.6b`。
 
 评测已有端点时，将目录换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。默认模式下已部署的快速开始示例可这样获取地址和模型名：
 
 ```bash
-MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
@@ -31,4 +31,4 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 | 测量视频生成性能 | [视频负载](video_zh.md) |
 | 比较运行和查看图表 | [W&B 输出](wandb_zh.md) |
 
-指标定义见[性能指标](../metrics_zh.md)，全部参数见 `foretoken perf --help`。需要定位执行瓶颈时，在负载运行的同时[采集 profile](../profile/README_zh.md)。
+指标定义见[性能指标](../metrics_zh.md)，参数说明见 `foretoken perf --help`，视频生成参数见 `foretoken perf --video --help`。需要定位执行瓶颈时，在负载运行的同时[采集 profile](../profile/README_zh.md)。

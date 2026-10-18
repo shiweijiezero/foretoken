@@ -11,7 +11,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 
 ## Before you start
 
-You need Python 3.11 or later, `kubectl`, and Helm. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
+You need Python 3.11 or later, `kubectl`, and Helm 4.2.4 or later. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
 
 ## Install the command-line tool
 
@@ -102,7 +102,7 @@ The cluster needs a default StorageClass for application files. Run from the For
 foretoken install -e .
 ```
 
-`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/deployment/source.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/deployment/source.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -110,7 +110,7 @@ A standard active kind or k3d context loads the built images directly into its n
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
+If the registry requires authentication, follow the [source deployment guide](../docs/deployment/kubernetes.md) before installation.
 
 ### Model distribution
 
@@ -160,22 +160,24 @@ loadBalancer:
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-See the [multi-model example](../examples/multi-model-quickstart/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
+See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/features/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
 
 ```bash
-foretoken deploy examples/multi-model-quickstart --timeout 20m
+foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-The command installs or updates the controller for the deployment namespace and applies the selected services. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
+The command installs or updates the controller for the deployment namespace and applies the selected services. An unchanged deployment reuses its controller and running applications. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/observability/README.md) for alert configuration.
+While waiting, the command shows service status and Pod/container logs. It completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
-Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
+`--timeout` limits the CLI's waits for cluster operations and service readiness; the default is ten minutes. Source compilation runs separately. Each model's `spec.timeouts.startup` sets its own preparation and startup limits.
+
+If preparation fails or readiness times out, the command reports the cause and leaves the deployed services in Kubernetes. Recovery continues in the cluster; use `status` below to follow progress and inspect logs. For configuration errors, update the Kustomize files and rerun `deploy`.
 
 Inspect the same deployment without applying it:
 
 ```bash
-foretoken status examples/multi-model-quickstart
+foretoken status examples/quickstart/multi-model
 ```
 
 Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
@@ -188,13 +190,13 @@ foretoken status -n foretoken-multi-model-demo --watch
 Resolve the public frontend URL after deployment:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 ```
 
 For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
@@ -202,7 +204,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 ### Stop and resume
 
 ```bash
-foretoken stop examples/multi-model-quickstart
+foretoken stop examples/quickstart/multi-model
 ```
 
 Use this to release GPUs between experiments while keeping configuration, storage and build caches. The command waits for frontend and model execution to stop. Run `foretoken deploy` with the same directory to resume; model processes start and load weights again.
@@ -219,6 +221,8 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 
 Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
 
+Add [`--sync_wandb`](../benchmarks/docs/perf/wandb.md#resume-an-upload) to upload saved results to W&B.
+
 ## Find execution bottlenecks
 
 Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU execution, then browse captures with `foretoken profile view`. Setup and commands are in [Profiling](../benchmarks/docs/profile/README.md).
@@ -228,7 +232,7 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 Delete the deployed services and their unused build resources before uninstalling the platform:
 
 ```bash
-foretoken delete examples/multi-model-quickstart
+foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 

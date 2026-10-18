@@ -82,7 +82,7 @@ def prepare_task_resume(
         if not origin.is_dir():
             raise ValueError(f"Original task artifacts are missing: {origin}")
         if (origin / "context.json").is_file():
-            from benchmarks.results.recovery import recover_publication
+            from benchmarks.results.publication import recover_publication
 
             recover_publication(origin, outputs.for_child_run())
         target = destination / path.parent.relative_to(source)

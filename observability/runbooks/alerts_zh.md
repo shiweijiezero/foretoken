@@ -21,7 +21,7 @@ spec:
         - ForetokenMetricsTargetDown
 ```
 
-重新部署服务配置后生效。移除规则或设为 `rules: []` 即可关闭。完整可运行配置见[可观测性示例](../../examples/observability/README_zh.md)。
+重新部署服务配置后生效。移除规则或设为 `rules: []` 即可关闭。完整可运行配置见[可观测性示例](../../examples/feature/observability/README_zh.md)。
 
 配置 [Lark](../integrations/lark/README_zh.md)、[Slack](../integrations/slack/README_zh.md) 或[钉钉](../integrations/dingtalk/README_zh.md)接收器后，可接收通知。所选规则未出现在 Prometheus 中时，查看服务的 `AlertsReady` 状态。
 

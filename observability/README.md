@@ -44,7 +44,7 @@ Collection includes model servers and their inference engines, frontends, KV ser
 
 ## Alerts
 
-Select rules in a `ModelService` or `FrontendService` and redeploy its configuration. The [alert reference](runbooks/alerts.md) covers available rules, thresholds, and response actions; the [service observability example](../examples/observability/README.md) provides a runnable deployment.
+Select rules in a `ModelService` or `FrontendService` and redeploy its configuration. The [alert reference](runbooks/alerts.md) covers available rules, thresholds, and response actions; the [service observability example](../examples/feature/observability/README.md) provides a runnable deployment.
 
 To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
 

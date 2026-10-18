@@ -14,7 +14,7 @@ The frontend provides text and video generation APIs for deployed models.
 Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root:
 
 ```bash
-DEPLOYMENT=examples/quickstart
+DEPLOYMENT=examples/quickstart/qwen3-0.6b
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
 REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 
@@ -130,7 +130,7 @@ The waiting limit is shared across all FrontendService replicas, separately for 
 
 Apply the YAML through [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting.
 
-For limits on accepted work at each model instance, see [Instance concurrency](../../docs/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
+For limits on accepted work at each model instance, see [Instance concurrency](../../docs/features/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
 
 ### Caller limits and priorities
 
@@ -155,7 +155,7 @@ Each caller has separate waiting and concurrency allowances shared across fronte
 
 Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
-Role rules require an authentication gateway. Requests without an authenticated identity or matching role are rejected. Gateway integration is described in [Admission lifecycle](../../docs/development/admission-rules.md#gateway-integration); cache sharing is configured through [prefix cache isolation](../../docs/inference-parameters.md#prefix-cache-isolation).
+Role rules require an authentication gateway that overwrites `x-role` and `x-caller-id` with verified role and caller values. Use a stable, non-secret caller ID and restrict frontend access to that gateway. Requests without an authenticated identity or matching role are rejected. Configure cache sharing through [prefix cache isolation](../../docs/features/inference-parameters.md#prefix-cache-isolation).
 
 ### Override one model
 
@@ -165,7 +165,7 @@ A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPoo
 
 ## Update serving settings
 
-Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/frontend.yaml`:
+Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
 
 ```yaml
 spec:
@@ -178,7 +178,7 @@ spec:
 Apply the Quick Start configuration:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.

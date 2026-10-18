@@ -8,8 +8,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 from foretoken.platform.types import ReleaseRef
 
 

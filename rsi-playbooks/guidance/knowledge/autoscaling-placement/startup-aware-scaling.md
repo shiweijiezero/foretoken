@@ -51,5 +51,4 @@ This physical comparison forecasts running-plus-waiting request demand, not sepa
 - [AIBrix predictive documentation](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/docs/source/features/scaling-performance/autoscaling/predictive-autoscaling.rst)
 - [AIBrix autoscaler code](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/pkg/controller/podautoscaler/autoscaler.go)
 - [Foretoken autoscaling architecture](../../../../control-plane/internal/autoscaling/README.md)
-- [Foretoken public policies](../../../../docs/autoscaling.md)
 - [model loading and storage](../model-loading-storage/)

@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import numpy as np
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig

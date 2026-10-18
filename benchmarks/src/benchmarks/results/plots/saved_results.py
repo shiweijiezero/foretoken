@@ -286,7 +286,7 @@ def _selected_runs(
 
 
 @dataclass(frozen=True)
-class _ResultDirectory:
+class SavedResultDirectory:
     """A saved result set and the optional command record that owns its execution."""
 
     directory: Path
@@ -303,7 +303,7 @@ def _enclosing_context(directory: Path) -> Path | None:
 def _discover(
     directory: Path, visited: set[Path], *, group: Path | None = None,
     context: Path | None = None,
-) -> Iterator[_ResultDirectory]:
+) -> Iterator[SavedResultDirectory]:
     """Descend directory containers, stopping at result owners before their native children."""
     directory = directory.resolve()
     group = group.resolve() if group is not None else None
@@ -319,10 +319,10 @@ def _discover(
                     found = True
                     yield result
         if not found:
-            yield _ResultDirectory(directory, group or directory, command)
+            yield SavedResultDirectory(directory, group or directory, command)
         return
     if any((directory / name).is_file() for name in ("config.json", "slo_results.json", "task.json", "context.json")):
-        yield _ResultDirectory(directory, group or directory, context or _enclosing_context(directory))
+        yield SavedResultDirectory(directory, group or directory, context or _enclosing_context(directory))
         return
     if (directory / "iterations").is_dir():
         for child in sorted((directory / "iterations").iterdir()):
@@ -338,7 +338,7 @@ def _discover(
     if parent is not None and parent[1] != "slo_search":
         # A selected sweep point still owns its planned repetitions, including
         # children that have not created their directories yet.
-        yield _ResultDirectory(directory, group or directory, context or _enclosing_context(directory))
+        yield SavedResultDirectory(directory, group or directory, context or _enclosing_context(directory))
         return
     for child in sorted(directory.iterdir()):
         if child.is_dir() and not child.name.startswith("."):
@@ -357,6 +357,29 @@ def _directory_labels(paths: list[Path]) -> dict[Path, str]:
     return labels
 
 
+def discover_result_directories(
+    sources: tuple[Path, ...], *, base: Path | None = None,
+) -> list[SavedResultDirectory]:
+    """Resolve plotting and publication inputs to their result owners and experiment groups."""
+    base = base.resolve() if base is not None else None
+    selected = list(dict.fromkeys(path.resolve() for path in ((base, *sources) if base is not None else sources)))
+    for path in selected:
+        if not path.is_dir():
+            raise NotADirectoryError(f"Result directory does not exist: {path}")
+    # Keep an explicit base first so it owns shared resumed measurements. Other
+    # enclosing selections own traversal; leaf evidence is still counted only once.
+    selected = [path for path in selected if path == base or not any(
+        path != parent and path.is_relative_to(parent) for parent in selected
+    )]
+    directories: list[SavedResultDirectory] = []
+    for source in selected:
+        discovered = list(_discover(source, set()))
+        if not discovered:
+            raise FileNotFoundError(f"No saved benchmark results in {source}")
+        directories.extend(discovered)
+    return directories
+
+
 def read_saved_results(
     sources: tuple[Path, ...], *, methods: tuple[str, ...] = (), base: Path | None = None,
 ) -> SavedResults:
@@ -369,21 +392,7 @@ def read_saved_results(
     when selected inside a broader candidate directory.
     """
     base = base.resolve() if base is not None else None
-    selected = list(dict.fromkeys(path.resolve() for path in ((base, *sources) if base is not None else sources)))
-    for path in selected:
-        if not path.is_dir():
-            raise NotADirectoryError(f"Result directory does not exist: {path}")
-    # Keep an explicit base first so it owns shared resumed measurements. Other
-    # enclosing selections own traversal; leaf evidence is still counted only once.
-    selected = [path for path in selected if path == base or not any(
-        path != parent and path.is_relative_to(parent) for parent in selected
-    )]
-    directories: list[_ResultDirectory] = []
-    for source in selected:
-        discovered = list(_discover(source, set()))
-        if not discovered:
-            raise FileNotFoundError(f"No saved benchmark results in {source}")
-        directories.extend(discovered)
+    directories = discover_result_directories(sources, base=base)
     labels = _directory_labels(list(dict.fromkeys(item.group for item in directories)))
     base_approaches: set[str] = set()
     runs: list[dict[str, Any]] = []

@@ -17,7 +17,9 @@ Executable configuration is authoritative for mechanical formatting and generate
 
 ## Design and ownership
 
-Design the complete configuration, execution, observation, decision, and cleanup path before changing one stage. Keep shared identities, state scopes, and lifecycle ownership consistent across producers and consumers. When extending to more replicas, shards, or nodes, update those relationships together rather than accumulating case-specific branches. Then choose the smallest maintainable implementation that preserves the required behavior and failure semantics.
+Start with the user's intended outcome and the interface they can most easily understand and operate. Minimize the concepts they must learn, information they must supply, and manual steps they must perform. Keep genuine choices and external prerequisites explicit; let the owning component derive values and prepare or coordinate resources it already controls.
+
+Design the complete configuration, execution, observation, decision, and cleanup path around that interface before changing one stage. Keep shared identities, state scopes, and lifecycle ownership consistent across producers and consumers. When the existing structure forces repeated special cases, duplicate decisions, or manual coordination, restructure, merge, or replace the path at its owning boundary and migrate affected consumers together. Prefer a coherent system design over the smallest diff; use a local correction when the existing boundary is sound. Keep the work focused on the current outcome, preserve required behavior and failure semantics, and remove superseded paths.
 
 - Every type, helper, configuration field, validation, fallback, and test must have a current responsibility. Remove it when its consumer is removed.
 - Prefer deleting duplicate paths, reusing an existing owner, or calling a mature upstream API before adding another abstraction.
@@ -99,12 +101,12 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
-- **Rust data plane:** run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
-- **Go control plane:** run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
-- **Python CLI:** keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
-- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
-- **Helm and Kubernetes YAML:** run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
-- **Repository-wide files:** run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
+- Rust data plane: run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
+- Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
+- Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
+- Python benchmarks: follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
+- Helm and Kubernetes YAML: run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
+- Repository-wide files: run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
 
 Generated files must identify or have a documented source. Change the source and regenerate the artifact; do not maintain generated output as a second implementation.
 
@@ -117,6 +119,8 @@ This guide only establishes the code-style boundary: tests and CI must have a cu
 ## Documentation
 
 Write documentation for the person who will use or maintain the final system, not for the current PR discussion or the author's implementation process. Start from the task readers need to complete, then decide which background, commands, choices, and results belong on the page.
+
+Organize information with headings, paragraphs, lists, and tables. Do not use bold emphasis.
 
 Before adding or substantially rewriting user documentation:
 

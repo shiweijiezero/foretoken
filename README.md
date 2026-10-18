@@ -1,11 +1,12 @@
 # Foretoken
 
-English | [简体中文](README_zh.md)
+English | [简体中文](README_zh.md) | [Documentation](docs/README.md)
 
-Foretoken is a generative inference orchestration framework built for SLO/SLA targets and heterogeneous accelerators.
+Foretoken is an RSI-friendly (Recursive Self-Improvement) orchestration framework for generative inference.
 
 Built on inference engines such as vLLM and SGLang, Foretoken organizes multiple generation instances into a cluster service for request routing, autoscaling, instance management, and benchmarking.
 We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency and quality requirements.
+Unified deployment, evaluation, and profiling let agents change inference systems, measure the effects, and use the results to guide the next iteration in an [RSI loop](rsi-playbooks/README.md).
 
 ## When to Use Foretoken
 
@@ -21,9 +22,10 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
+| [RSI](#optimize-inference-with-rsi) | Agent-driven research, implementation, and evaluation for iterative inference optimization | In development |
 | [Evaluation](benchmarks/README.md) | Measure service performance and model quality | In development |
 | [Profiling](benchmarks/docs/profile/README.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
+| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/deployment/metax.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
@@ -35,9 +37,9 @@ Choose the deployment path before running the common steps:
 
 | Situation | Guide |
 |---|---|
-| Single-host local deployment | [k3d deployment](docs/k3d-deployment.md) · [kind deployment](docs/kind-deployment.md) |
-| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
-| MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
+| Single-host local deployment | [k3d deployment](docs/deployment/k3d.md) · [kind deployment](docs/deployment/kind.md) |
+| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/deployment/kubernetes.md) |
+| MetaX GPU deployment | [MetaX deployment](docs/deployment/metax.md) |
 
 The steps below use k3d as the example.
 
@@ -69,22 +71,22 @@ foretoken install -e .
 
 Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
 
-The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and Helm, and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
+The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](cli/README.md#before-you-start), and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
 ### 3. Deploy the Quick Start
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
-To try different code changes side by side, see [parallel candidates](docs/custom-deployment.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/custom-deployment.md#edit-an-inference-engine).
+To try different code changes side by side, see [parallel candidates](docs/deployment/source.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/deployment/source.md#edit-an-inference-engine).
 
 ### 4. Send a test request
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -99,7 +101,7 @@ The examples save results locally and to W&B. Run `wandb login` once before usin
 #### Performance: latency and throughput
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 --output local,wandb
 ```
 
 Read request success, latency, and throughput in the summary. [Performance examples](benchmarks/docs/perf/README.md) cover other workloads and load settings.
@@ -107,7 +109,7 @@ Read request success, latency, and throughput in the summary. [Performance examp
 #### Quality: score model answers
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
 ```
 
@@ -118,7 +120,7 @@ This scores 100 GSM8K math problems. See [Quality evaluation](benchmarks/docs/ev
 The Quick Start already configures persistent capture storage. See the [profiling guide](benchmarks/docs/profile/README.md) for tool setup and other capture options.
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 foretoken profile view
@@ -126,11 +128,29 @@ foretoken profile view
 
 Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; the model service remains running.
 
+## Optimize Inference with RSI
+
+Agents investigate optimization methods for a chosen model, workload, and resource budget, change code or configuration, and deploy candidates. Performance measurements, quality evaluations, and execution profiles guide the next iteration. A running experiment report compares approaches and records measured gains and retained changes.
+
+Install and sign in to Claude Code or Codex, then run either command from the repository root to start the [Qwen3.5-35B-A3B optimization task](rsi-playbooks/tasks/qwen3.5-35b-a3b.md). The task file defines the model, resources, objectives, time budget, and deliverables; adjust it to your environment before starting.
+
+```bash
+# Claude Code
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+  '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+
+# Codex
+codex \
+  '/goal Use the RSI skill to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+```
+
+The command opens an interactive session and submits the optimization task. To pause, use `/goal clear` in Claude Code or `/goal pause` in Codex, and ask the agents to stop this task's experiments and collectors. For more detailed objectives and constraints, fill in the [task template](rsi-playbooks/templates/task-template.md) and reference the task file in your prompt. See the [RSI playbooks](rsi-playbooks/README.md) for the full workflow.
+
 ## Gateway Mode
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Add the public hostname under `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
 
 ```yaml
 spec:
@@ -146,11 +166,11 @@ foretoken install -e . --frontend-mode gateway
 # foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # Resolve the Gateway address and request hostname
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 # Send a test request
 curl --fail-with-body --no-buffer \
@@ -166,7 +186,7 @@ The command installs Envoy Gateway when needed. See the [command-line tool guide
 
 ```bash
 # Delete the Quick Start resources, including its namespace and runtime cache PVC
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/qwen3-0.6b
 
 # Uninstall the Foretoken platform
 foretoken uninstall

@@ -11,11 +11,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 比较量化模型
 
-按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备源码安装的平台及模型存储后，在仓库根目录运行：
+按[量化模型示例](../../../examples/feature/quantized-model/README_zh.md)准备源码安装的平台及模型存储后，在仓库根目录运行：
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes \
-  --reference examples/quantized-model/bf16 \
+foretoken eval examples/feature/quantized-model/bitsandbytes \
+  --reference examples/feature/quantized-model/bf16 \
   --output local,plot
 ```
 
@@ -55,16 +55,16 @@ foretoken eval examples/quantized-model/bitsandbytes \
 常用场景直接把候选 Kustomize 部署目录写在选项前：
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes examples/quantized-model/bf16 \
-  --reference examples/quantized-model/bf16 --output local,wandb,plot
+foretoken eval examples/feature/quantized-model/bitsandbytes examples/feature/quantized-model/bf16 \
+  --reference examples/feature/quantized-model/bf16 --output local,wandb,plot
 ```
 
-每个候选分别与参考模型比较。需要自定义名称或模型大小信息时，可以使用[候选配置文件](../../../examples/quantized-model/candidates.jsonl)：
+每个候选分别与参考模型比较。需要自定义名称或模型大小信息时，可以使用[候选配置文件](../../../examples/feature/quantized-model/candidates.jsonl)：
 
 ```bash
 foretoken eval \
-  --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+  --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --output local,wandb,plot
 ```
 
@@ -99,8 +99,8 @@ foretoken eval \
 使用维护中的候选列表，在相同输入下比较参考模型和候选模型实际生成的 token ID：
 
 ```bash
-foretoken eval --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+foretoken eval --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --greedy-compare --context-length 128 --num-windows 4 --max-tokens 64 \
   --output local,wandb,plot
 ```
@@ -116,8 +116,8 @@ foretoken eval --reference examples/quantized-model/bf16 \
 保留概率分布对比的完整本地结果目录。中断后，在原命令中追加 `--resume`，指向该目录。将下面的 `results/previous-run` 换成运行时打印的实际路径：
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes \
-  --reference examples/quantized-model/bf16 \
+foretoken eval examples/feature/quantized-model/bitsandbytes \
+  --reference examples/feature/quantized-model/bf16 \
   --resume results/previous-run --output local,plot
 ```
 

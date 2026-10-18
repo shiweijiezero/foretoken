@@ -9,7 +9,7 @@
 
 ## 选择路由策略
 
-优先选择等待请求较少的副本时，在 `FrontendService` YAML 中设置评分算法。以快速开始示例为例，修改 `examples/quickstart/frontend.yaml`：
+优先选择等待请求较少的副本时，在 `FrontendService` YAML 中设置评分算法。以快速开始示例为例，修改 `examples/quickstart/qwen3-0.6b/frontend.yaml`：
 
 ```yaml
 spec:
@@ -21,7 +21,7 @@ spec:
 重新部署修改后的配置：
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 默认使用 `kv_least_loaded` 兼顾缓存复用和负载均衡，再由 `gamble_sampling` 选择目标。

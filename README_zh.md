@@ -1,11 +1,12 @@
 # Foretoken
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [文档](docs/README_zh.md)
 
-Foretoken 是一个面向 SLO/SLA 与异构硬件的生成式推理编排框架。
+Foretoken 是一个 RSI（Recursive Self-Improvement，递归自我改进）友好的生成式推理编排框架。
 
 Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成一套集群服务，负责请求路由、自动扩缩容、实例管理和性能评测。
 我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 Token。
+通过统一的部署、评测与性能剖析能力，Foretoken 支持 Agent 持续修改推理系统、验证效果，并依据实验结果开展下一轮优化，形成 [RSI 循环](rsi-playbooks/README_zh.md)。
 
 ## 什么时候需要 Foretoken
 
@@ -21,9 +22,10 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
+| [RSI](#用-rsi-持续优化推理) | Agent 通过研究、实现与评测持续优化推理系统 | 开发中 |
 | [评测](benchmarks/README_zh.md) | 评测模型服务性能和模型质量 | 开发中 |
 | [性能剖析](benchmarks/docs/profile/README_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
-| 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
+| 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/deployment/metax_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
@@ -35,9 +37,9 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 使用场景 | 指南 |
 |---|---|
-| 本地单机集群部署 | [k3d 部署指南](docs/k3d-deployment_zh.md) · [kind 部署指南](docs/kind-deployment_zh.md) |
-| 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md) |
-| 沐曦 GPU 集群部署 | [沐曦部署指南](docs/metax-deployment_zh.md) |
+| 本地单机集群部署 | [k3d 部署指南](docs/deployment/k3d_zh.md) · [kind 部署指南](docs/deployment/kind_zh.md) |
+| 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/deployment/kubernetes_zh.md) |
+| 沐曦 GPU 集群部署 | [沐曦部署指南](docs/deployment/metax_zh.md) |
 
 下面以 k3d 部署为例。
 
@@ -69,22 +71,22 @@ foretoken install -e .
 
 安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
 
-宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 Helm，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
+宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/deployment/k3d_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例
 
 ```bash
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
 该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
-同时尝试不同代码改动，见[并行运行候选方案](docs/custom-deployment_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/custom-deployment_zh.md#修改推理引擎)。
+同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -99,7 +101,7 @@ curl --fail-with-body --no-buffer \
 #### 性能：测量延迟和吞吐量
 
 ```bash
-foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 --output local,wandb
 ```
 
 汇总结果展示请求成功率、延迟和吞吐量。其他数据集与负载设置见[性能评测示例](benchmarks/docs/perf/README_zh.md)。
@@ -107,7 +109,7 @@ foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
 #### 质量：评估回答正确率
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
 ```
 
@@ -118,7 +120,7 @@ foretoken eval examples/quickstart \
 快速开始示例已配置持久化采集存储。其他采集工具的准备和用法见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 foretoken profile view
@@ -126,11 +128,29 @@ foretoken profile view
 
 打开打印的网址查看采集结果，按 Ctrl+C 关闭查看器；模型服务继续运行。
 
+## 用 RSI 持续优化推理
+
+Agent 可以围绕指定模型、负载和资源预算，研究优化方法、修改代码或配置、部署候选方案，再通过性能评测、质量评测和性能剖析决定下一步。实验报告随迭代更新，记录方案对比、实测收益和保留的改动。
+
+安装并登录 Claude Code 或 Codex 后，在仓库根目录选择一条命令启动 [Qwen3.5-35B-A3B 优化任务](rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md)。模型、资源、优化目标、时间预算和交付要求统一在任务文件中定义，运行前按实际环境调整。
+
+```bash
+# Claude Code
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+  '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+
+# Codex
+codex \
+  '/goal 使用 RSI skill，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+```
+
+命令会打开交互会话并提交优化任务。暂停时，Claude Code 使用 `/goal clear`，Codex 使用 `/goal pause`，并要求 Agent 停止本任务的实验和采集进程。更详细的目标和约束可写入[任务模板](rsi-playbooks/templates/task-template_zh.md)，在提示词中引用任务文件；完整流程见 [RSI 手册](rsi-playbooks/README_zh.md)。
+
 ## 网关模式
 
 网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
 
-在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
+在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
@@ -146,11 +166,11 @@ foretoken install -e . --frontend-mode gateway
 # foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
-foretoken deploy examples/quickstart --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 # 发送测试请求
 curl --fail-with-body --no-buffer \
@@ -166,7 +186,7 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 # 删除快速开始的资源，包括命名空间和运行时缓存 PVC
-foretoken delete examples/quickstart
+foretoken delete examples/quickstart/qwen3-0.6b
 
 # 卸载 Foretoken 平台
 foretoken uninstall

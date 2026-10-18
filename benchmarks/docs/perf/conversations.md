@@ -5,7 +5,7 @@ English | [简体中文](conversations_zh.md) · [Performance examples](README.m
 After [setup](README.md#setup), run the repository's [conversation dataset](../../examples/conversations.jsonl):
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset benchmarks/examples/conversations.jsonl \
   --num-prompts 3 --max-concurrency 2 --output local,wandb
 ```
@@ -21,7 +21,7 @@ A row's `output_length` takes precedence, followed by an explicit `--min-output-
 `--num-prompts` limits the total HTTP requests across conversations. To run only the first user turn of each conversation:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset benchmarks/examples/conversations.jsonl \
   --max-turns 1 --num-prompts 2 --output local,wandb
 ```

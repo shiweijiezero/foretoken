@@ -5,7 +5,7 @@ English | [简体中文](slo_zh.md) · [Performance examples](README.md)
 After [setup](README.md#setup), increase the client concurrency limit and measure the highest observed request peak that meets a service-level objective (SLO), such as a latency or throughput target:
 
 ```bash
-foretoken perf examples/quickstart \
+foretoken perf examples/quickstart/qwen3-0.6b \
   --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \
@@ -66,4 +66,4 @@ The console and `slo_results.json` report each criterion group's highest passing
 
 Use [`--resume`](sweep.md#continue-a-saved-sweep) to continue an interrupted search.
 
-If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart` when it is no longer needed.
+If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart/qwen3-0.6b` when it is no longer needed.

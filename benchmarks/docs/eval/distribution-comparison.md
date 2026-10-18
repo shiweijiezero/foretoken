@@ -11,11 +11,11 @@ Add `--reference` to `foretoken eval` to compare a candidate with a reference. B
 
 ## Compare a quantized model
 
-Use the [quantized-model examples](../../../examples/quantized-model/README.md) with a source-installed Foretoken platform and their configured model storage. From the repository root:
+Use the [quantized-model examples](../../../examples/feature/quantized-model/README.md) with a source-installed Foretoken platform and their configured model storage. From the repository root:
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes \
-  --reference examples/quantized-model/bf16 \
+foretoken eval examples/feature/quantized-model/bitsandbytes \
+  --reference examples/feature/quantized-model/bf16 \
   --output local,plot
 ```
 
@@ -55,16 +55,16 @@ Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for recor
 List candidate Kustomize deployments directly before the options for the usual case:
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes examples/quantized-model/bf16 \
-  --reference examples/quantized-model/bf16 --output local,wandb,plot
+foretoken eval examples/feature/quantized-model/bitsandbytes examples/feature/quantized-model/bf16 \
+  --reference examples/feature/quantized-model/bf16 --output local,wandb,plot
 ```
 
-Each candidate is compared against the reference. To give candidates custom labels or size coordinates, use a [candidate file](../../../examples/quantized-model/candidates.jsonl):
+Each candidate is compared against the reference. To give candidates custom labels or size coordinates, use a [candidate file](../../../examples/feature/quantized-model/candidates.jsonl):
 
 ```bash
 foretoken eval \
-  --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+  --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --output local,wandb,plot
 ```
 
@@ -99,8 +99,8 @@ With a shared endpoint, omit `--reference-url`. Authentication uses `--api-key`,
 To see whether a candidate generates the same token IDs as a reference on identical prompts, use the maintained candidate list:
 
 ```bash
-foretoken eval --reference examples/quantized-model/bf16 \
-  --candidates examples/quantized-model/candidates.jsonl \
+foretoken eval --reference examples/feature/quantized-model/bf16 \
+  --candidates examples/feature/quantized-model/candidates.jsonl \
   --greedy-compare --context-length 128 --num-windows 4 --max-tokens 64 \
   --output local,wandb,plot
 ```
@@ -116,8 +116,8 @@ To compare draft configurations that share a served model ID, give each candidat
 Keep the complete local result directory from a distribution comparison. After an interruption, repeat the original command with `--resume` pointing to that directory. Replace `results/previous-run` below with the printed path:
 
 ```bash
-foretoken eval examples/quantized-model/bitsandbytes \
-  --reference examples/quantized-model/bf16 \
+foretoken eval examples/feature/quantized-model/bitsandbytes \
+  --reference examples/feature/quantized-model/bf16 \
   --resume results/previous-run --output local,plot
 ```
 

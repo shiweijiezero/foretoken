@@ -14,7 +14,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 先评测 100 道 GSM8K 数学题：
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval \
   --model Qwen/Qwen3-0.6B \
   --tasks gsm8k --limit 100 \
@@ -29,13 +29,13 @@ foretoken eval examples/quickstart \
 
 ### 候选答案似然与困惑度
 
-PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
+PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/deployment/source_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks piqa --limit 100 --output local
 
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --tasks wikitext --limit 100 --output local
 ```
 
@@ -45,10 +45,10 @@ foretoken eval examples/quickstart \
 
 ## 比较多个部署的任务评分
 
-按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
+按[量化模型示例](../../../examples/feature/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
 
 ```bash
-foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+foretoken eval examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --tasks piqa --limit 100 --output local,wandb,plot
 ```
 
@@ -59,7 +59,7 @@ foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbyt
 ## EvalScope
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator evalscope \
   --model Qwen/Qwen3-0.6B \
   --datasets gsm8k --limit 100 \
@@ -90,7 +90,7 @@ foretoken eval \
 单部署评测保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
 
 ```bash
-foretoken eval examples/quickstart \
+foretoken eval examples/quickstart/qwen3-0.6b \
   --evaluator lm-eval --tasks gsm8k --limit 100 \
   --resume results/previous-run --output local
 ```

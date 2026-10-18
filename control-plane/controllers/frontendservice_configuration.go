@@ -26,6 +26,9 @@ import (
 // Workload readiness and Gateway acknowledgement remain separate conditions.
 func (reconciler *FrontendServiceReconciler) observeConfiguration(ctx context.Context, frontend *api.FrontendService, deployment *appsv1.Deployment) metav1.Condition {
 	result := metav1.Condition{Status: metav1.ConditionFalse, Reason: "ConfigurationPending", Message: "Waiting for frontend replicas to apply the serving configuration"}
+	if deployment == nil {
+		return result
+	}
 	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
 		result.Reason, result.Message = "ScaledToZero", "No frontend replicas are requested"
 		return result

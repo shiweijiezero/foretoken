@@ -13,8 +13,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 from foretoken.observability import (
     PrometheusRef,
     prometheus_api_path,

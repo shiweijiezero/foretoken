@@ -51,5 +51,4 @@ Dynamo 提供 constant／ARIMA／Prophet／Kalman 的 `predict_next` 与 pending
 - [AIBrix 预测文档](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/docs/source/features/scaling-performance/autoscaling/predictive-autoscaling.rst)
 - [AIBrix autoscaler 代码](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/pkg/controller/podautoscaler/autoscaler.go)
 - [Foretoken 扩缩容架构](../../../../control-plane/internal/autoscaling/README_zh.md)
-- [Foretoken 公开策略](../../../../docs/autoscaling_zh.md)
 - [模型加载与存储](../model-loading-storage/)
