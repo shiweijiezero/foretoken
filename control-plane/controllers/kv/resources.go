@@ -208,22 +208,6 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (kvMasterRes
 	return output, nil
 }
 
-// preservePVCBindingAndMetadata keeps provider-assigned PVC fields and metadata during updates.
-// Callers initialize desired.Annotations; resource owners retain capacity, StorageClass, and retention decisions.
-func preservePVCBindingAndMetadata(desired, existing *corev1.PersistentVolumeClaim) {
-	desired.Spec.VolumeName = existing.Spec.VolumeName
-	desired.Spec.VolumeMode = existing.Spec.VolumeMode
-	if desired.Spec.StorageClassName == nil {
-		desired.Spec.StorageClassName = existing.Spec.StorageClassName
-	}
-	desired.Finalizers = existing.Finalizers
-	for key, value := range existing.Annotations {
-		if _, present := desired.Annotations[key]; !present {
-			desired.Annotations[key] = value
-		}
-	}
-}
-
 func kvResources(resources inferencev1alpha1.KVResources) (corev1.ResourceList, corev1.ResourceList, error) {
 	cpu, err := resource.ParseQuantity(string(resources.Requests.CPU))
 	if err != nil {

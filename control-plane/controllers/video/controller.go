@@ -213,18 +213,9 @@ func (r *Reconciler) prepareVideoTask(ctx context.Context, task *inferencev1alph
 	if err != nil {
 		return inferencev1alpha1.VideoExecutionPlan{}, err
 	}
-	timeout, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.Request)
+	plan, err := r.prepareVideoStoragePlan(ctx, task, frontend)
 	if err != nil {
-		return inferencev1alpha1.VideoExecutionPlan{}, fmt.Errorf("parse frontend video request timeout: %w", err)
-	}
-	identity, err := runtimeconfig.VideoOutputIdentity(ctx, r.APIReader, task.Namespace, frontend.Spec.VideoTasks.ClaimName)
-	if err != nil {
-		return inferencev1alpha1.VideoExecutionPlan{}, err
-	}
-	plan := inferencev1alpha1.VideoExecutionPlan{
-		JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName, OutputIdentity: &identity,
-		OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
-		WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds, TimeoutSeconds: timeout,
+		return plan, err
 	}
 	service := new(inferencev1alpha1.ModelService)
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); err != nil {
@@ -239,6 +230,24 @@ func (r *Reconciler) prepareVideoTask(ctx context.Context, task *inferencev1alph
 	plan.Model, plan.ServiceUID, plan.ServingGeneration = service.Spec.Model, string(service.UID), service.Status.ServingGeneration
 	plan.Revisions = append([]inferencev1alpha1.ServingPoolRevision(nil), service.Status.ServingPoolRevisions...)
 	return plan, nil
+}
+
+// prepareVideoStoragePlan freezes storage, worker selection, and retention after the caller verifies frontend authority.
+// The caller persists this plan before starting either generation or file-cleanup Jobs.
+func (r *Reconciler) prepareVideoStoragePlan(ctx context.Context, task *inferencev1alpha1.VideoTask, frontend *inferencev1alpha1.FrontendService) (inferencev1alpha1.VideoExecutionPlan, error) {
+	timeout, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.Request)
+	if err != nil {
+		return inferencev1alpha1.VideoExecutionPlan{}, fmt.Errorf("parse frontend video request timeout: %w", err)
+	}
+	identity, err := runtimeconfig.VideoOutputIdentity(ctx, r.APIReader, task.Namespace, frontend.Spec.VideoTasks.ClaimName)
+	if err != nil {
+		return inferencev1alpha1.VideoExecutionPlan{}, err
+	}
+	return inferencev1alpha1.VideoExecutionPlan{
+		JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName, OutputIdentity: &identity,
+		OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
+		WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds, TimeoutSeconds: timeout,
+	}, nil
 }
 
 // newVideoWorkerJob runs either inference or idempotent task-directory cleanup under the same storage identity.
@@ -371,20 +380,11 @@ func (r *Reconciler) cleanupVideoTask(ctx context.Context, task *inferencev1alph
 			}
 			return ctrl.Result{}, r.Delete(ctx, task)
 		}
-		identity, err := runtimeconfig.VideoOutputIdentity(ctx, r.APIReader, task.Namespace, frontend.Spec.VideoTasks.ClaimName)
+		plan, err := r.prepareVideoStoragePlan(ctx, task, frontend)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		task.Status.Plan = &inferencev1alpha1.VideoExecutionPlan{
-			JobName: task.Name, OutputClaimName: frontend.Spec.VideoTasks.ClaimName, OutputIdentity: &identity,
-			OutputPath:  fmt.Sprintf("tasks/%s/result.mp4", task.Name),
-			WorkerImage: r.WorkerImage, WorkerApplicationURL: r.WorkerApplicationURL, RetentionSeconds: frontend.Spec.VideoTasks.RetentionSeconds,
-		}
-		if timeout, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.Request); err == nil {
-			task.Status.Plan.TimeoutSeconds = timeout
-		} else {
-			return ctrl.Result{}, err
-		}
+		task.Status.Plan = &plan
 		return ctrl.Result{Requeue: true}, r.writeVideoTaskStatus(ctx, task)
 	}
 	done, err := r.stopVideoWorker(ctx, task)

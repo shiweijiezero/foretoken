@@ -113,8 +113,17 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 			StreamIdleSeconds:     streamIdle,
 			LogLevel:              frontend.Spec.LogLevel,
 		}
+		// Catalog and routes use the same observed resources for this publication.
+		var pools inferencev1alpha1.ModelPoolList
+		if err := reconciler.List(ctx, &pools, client.InNamespace(frontend.Namespace)); err != nil {
+			return false, fmt.Errorf("list ModelPools for model catalog: %w", err)
+		}
+		var modelGroups inferencev1alpha1.ModelGroupList
+		if err := reconciler.List(ctx, &modelGroups, client.InNamespace(frontend.Namespace)); err != nil {
+			return false, fmt.Errorf("list ModelGroups for model catalog: %w", err)
+		}
 		var catalogErr error
-		models, admission, catalogErr = reconciler.projectConfiguredModels(ctx, frontend, services, previous.Models)
+		models, admission, catalogErr = projectConfiguredModels(frontend, services, pools.Items, modelGroups.Items, previous.Models)
 		if catalogErr != nil {
 			var unavailable *modelCatalogProjectionError
 			if !errors.As(catalogErr, &unavailable) {
@@ -128,7 +137,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 				routingServices = append(routingServices, service)
 			}
 		}
-		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr = reconciler.projectableRouting(ctx, frontend.Namespace, routingServices)
+		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr = projectableRouting(routingServices, pools.Items, modelGroups.Items)
 		if projectionErr != nil {
 			var splitProjectionError *servingconfig.SplitRoutingProjectionError
 			if !errors.As(projectionErr, &splitProjectionError) {

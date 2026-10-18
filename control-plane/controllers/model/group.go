@@ -45,8 +45,6 @@ const (
 type GroupReconciler struct {
 	client.Client
 	APIReader             client.Reader
-	DrainClient           ModelGroupDrainClient
-	Now                   func() time.Time
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
 	ModelDistribution     runtimeconfig.ModelDistributionProfile
@@ -164,7 +162,7 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("parse ModelGroup startup timeout: %w", err)
 		}
-		now := reconciler.now()
+		now := time.Now()
 		started := executionWorkload.createdAt
 		// Preparation does not spend the serving budget. Keep one continuous
 		// unavailable interval across container restarts and LWS member replacement.
@@ -359,7 +357,7 @@ func (reconciler *GroupReconciler) updateStatus(ctx context.Context, group *infe
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionModelPreparation, Status: state.preparation.status, Reason: state.preparation.reason, Message: state.preparation.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: state.scheduling.status, Reason: state.scheduling.reason, Message: state.scheduling.message, ObservedGeneration: group.Generation})
-	availability := metav1.Condition{Type: conditionWorkloadAvailable, Status: workload.ConditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation, LastTransitionTime: metav1.NewTime(reconciler.now())}
+	availability := metav1.Condition{Type: conditionWorkloadAvailable, Status: workload.ConditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation, LastTransitionTime: metav1.NewTime(time.Now())}
 	if state.materialized.status != metav1.ConditionTrue {
 		availability.Status = metav1.ConditionUnknown
 		availability.Reason = "NotMaterialized"

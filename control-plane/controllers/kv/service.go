@@ -32,6 +32,7 @@ import (
 
 const (
 	kvServiceFinalizer           = "inference.foretoken.io/kvservice-protection"
+	kvServiceFieldOwner          = "foretoken-kvservice"
 	conditionInfrastructureReady = "InfrastructureReady"
 	conditionKVPoolsMaterialized = "PoolsMaterialized"
 	snapshotRetentionAnnotation  = "inference.foretoken.io/snapshot-retention"
@@ -183,7 +184,7 @@ func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context
 		objects = append(objects, resources.statefulSet)
 	}
 	for _, object := range objects {
-		if err := reconciler.applyOwned(ctx, service, object); err != nil {
+		if err := applyOwnedResource(ctx, reconciler.Client, service, object, kvServiceFieldOwner); err != nil {
 			return nil, err
 		}
 	}
@@ -196,7 +197,7 @@ func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context
 		return nil, err
 	}
 	if resources.pvc != nil {
-		if err := reconciler.applyOwned(ctx, service, resources.pvc); err != nil {
+		if err := applyOwnedResource(ctx, reconciler.Client, service, resources.pvc, kvServiceFieldOwner); err != nil {
 			return nil, err
 		}
 	} else if service.Spec.Master.HighAvailability == nil {
@@ -212,14 +213,14 @@ func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context
 func (reconciler *ServiceReconciler) reconcileMasterWorkloadMode(ctx context.Context, service *inferencev1alpha1.KVService, desired kvMasterResources) (bool, error) {
 	masterName, _, _, _ := kvMasterNames(service)
 	if desired.statefulSet != nil {
-		present, err := reconciler.deleteIfPresent(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
+		present, err := deleteIfPresent(ctx, reconciler.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
 		return present, err
 	}
-	present, err := reconciler.deleteIfPresent(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
+	present, err := deleteIfPresent(ctx, reconciler.Client, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
 	if err != nil || present {
 		return present, err
 	}
-	present, err = reconciler.deleteIfPresent(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvMasterHeadlessServiceName(service), Namespace: service.Namespace}})
+	present, err = deleteIfPresent(ctx, reconciler.Client, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvMasterHeadlessServiceName(service), Namespace: service.Namespace}})
 	return present, err
 }
 
@@ -345,50 +346,8 @@ func (reconciler *ServiceReconciler) reconcileSnapshotRemoval(ctx context.Contex
 	if pvc.Annotations[snapshotRetentionAnnotation] == string(inferencev1alpha1.RetentionPolicyRetain) {
 		return reconciler.releaseSnapshotPVC(ctx, service, pvc)
 	}
-	_, err := reconciler.deleteIfPresent(ctx, pvc)
+	_, err := deleteIfPresent(ctx, reconciler.Client, pvc)
 	return err
-}
-
-// applyOwned creates or updates one KVService-owned resource while retaining allocated fields.
-func (reconciler *ServiceReconciler) applyOwned(ctx context.Context, owner *inferencev1alpha1.KVService, desired client.Object) error {
-	current := desired.DeepCopyObject().(client.Object)
-	key := client.ObjectKeyFromObject(desired)
-	err := reconciler.Get(ctx, key, current)
-	missing := apierrors.IsNotFound(err)
-	if err != nil && !missing {
-		return err
-	}
-	if !missing && !metav1.IsControlledBy(current, owner) {
-		return fmt.Errorf("%T %q is not controlled by KVService", current, current.GetName())
-	}
-	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-		return err
-	}
-	switch desired.(type) {
-	case *appsv1.Deployment, *appsv1.StatefulSet:
-		// Workload controllers own their revision metadata; server-side apply keeps
-		// the KVService controller responsible only for the desired workload spec.
-		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
-	}
-	if missing {
-		return reconciler.Create(ctx, desired)
-	}
-	if desiredPVC, ok := desired.(*corev1.PersistentVolumeClaim); ok {
-		currentPVC := current.(*corev1.PersistentVolumeClaim)
-		preservePVCBindingAndMetadata(desiredPVC, currentPVC)
-		if retention, recorded := currentPVC.Annotations[snapshotRetentionAnnotation]; recorded {
-			desiredPVC.Annotations[snapshotRetentionAnnotation] = retention
-		}
-	}
-	if desiredService, ok := desired.(*corev1.Service); ok {
-		currentService := current.(*corev1.Service)
-		desiredService.Spec.ClusterIP = currentService.Spec.ClusterIP
-		desiredService.Spec.ClusterIPs = currentService.Spec.ClusterIPs
-		desiredService.Spec.IPFamilies = currentService.Spec.IPFamilies
-		desiredService.Spec.IPFamilyPolicy = currentService.Spec.IPFamilyPolicy
-	}
-	desired.SetResourceVersion(current.GetResourceVersion())
-	return reconciler.Update(ctx, desired)
 }
 
 // reconcilePools converges the KVService storage-pool intent into owned KVPools.
@@ -710,7 +669,7 @@ func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, servic
 	pending := false
 	masterName, configName, pvcName, serviceName := kvMasterNames(service)
 	for _, object := range []client.Object{&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}}, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: service.Namespace}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvMasterHeadlessServiceName(service), Namespace: service.Namespace}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: service.Namespace}}} {
-		present, err := reconciler.deleteIfPresent(ctx, object)
+		present, err := deleteIfPresent(ctx, reconciler.Client, object)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -725,7 +684,7 @@ func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, servic
 				return ctrl.Result{}, err
 			}
 		} else {
-			present, err := reconciler.deleteIfPresent(ctx, pvc)
+			present, err := deleteIfPresent(ctx, reconciler.Client, pvc)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -743,19 +702,6 @@ func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, servic
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-func (reconciler *ServiceReconciler) deleteIfPresent(ctx context.Context, object client.Object) (bool, error) {
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := reconciler.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
-	}
-	return true, nil
 }
 
 func (reconciler *ServiceReconciler) releaseSnapshotPVC(ctx context.Context, service *inferencev1alpha1.KVService, pvc *corev1.PersistentVolumeClaim) error {

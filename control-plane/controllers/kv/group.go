@@ -35,6 +35,7 @@ import (
 
 const (
 	kvGroupFinalizer               = "inference.foretoken.io/kvgroup-protection"
+	kvGroupFieldOwner              = "foretoken-kvgroup"
 	kvGroupLabel                   = "inference.foretoken.io/kv-group"
 	kvGroupDiskRetentionAnnotation = "inference.foretoken.io/disk-retention"
 	conditionClientPodReady        = "ClientPodReady"
@@ -133,7 +134,7 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 		objects = append([]client.Object{pvc}, objects...)
 	}
 	for _, object := range objects {
-		if err := reconciler.applyOwned(ctx, group, object); err != nil {
+		if err := applyOwnedResource(ctx, reconciler.Client, group, object, kvGroupFieldOwner); err != nil {
 			statusErr := reconciler.updateStatus(ctx, group, inferencev1alpha1.KVGroupPhaseDegraded, false, false, "ApplyFailed", err.Error(), kvGroupCondition{reason: "ApplyFailed", message: err.Error()})
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
@@ -291,42 +292,6 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 	return deployment, service, pvc, networkPolicy, nil
 }
 
-// applyOwned creates or updates one KVGroup-owned resource while preserving provider-assigned fields.
-func (reconciler *GroupReconciler) applyOwned(ctx context.Context, group *inferencev1alpha1.KVGroup, desired client.Object) error {
-	current := desired.DeepCopyObject().(client.Object)
-	err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current)
-	missing := apierrors.IsNotFound(err)
-	if err != nil && !missing {
-		return err
-	}
-	if !missing && !metav1.IsControlledBy(current, group) {
-		return fmt.Errorf("%T %q is not controlled by KVGroup", current, current.GetName())
-	}
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return err
-	}
-	if _, ok := desired.(*appsv1.Deployment); ok {
-		// The stable field owner preserves the Deployment controller's revision annotation.
-		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvgroup"), client.ForceOwnership)
-	}
-	if missing {
-		return reconciler.Create(ctx, desired)
-	}
-	if desiredService, ok := desired.(*corev1.Service); ok {
-		existing := current.(*corev1.Service)
-		desiredService.Spec.ClusterIP, desiredService.Spec.ClusterIPs, desiredService.Spec.IPFamilies, desiredService.Spec.IPFamilyPolicy = existing.Spec.ClusterIP, existing.Spec.ClusterIPs, existing.Spec.IPFamilies, existing.Spec.IPFamilyPolicy
-	}
-	if desiredPVC, ok := desired.(*corev1.PersistentVolumeClaim); ok {
-		existing := current.(*corev1.PersistentVolumeClaim)
-		preservePVCBindingAndMetadata(desiredPVC, existing)
-		if retention := existing.Annotations[kvGroupDiskRetentionAnnotation]; retention != "" {
-			desiredPVC.Annotations[kvGroupDiskRetentionAnnotation] = retention
-		}
-	}
-	desired.SetResourceVersion(current.GetResourceVersion())
-	return reconciler.Update(ctx, desired)
-}
-
 // reconcileDelete stops the client before removing its network resources and disk.
 // Mooncake expires departed clients through its heartbeat lifecycle; Pod termination
 // does not assert that remote readers completed or that cached values were migrated.
@@ -367,7 +332,7 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 	}
 	pending := false
 	for _, object := range []client.Object{&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvGroupWorkloadName(group), Namespace: group.Namespace}}, &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: kvGroupWorkloadName(group), Namespace: group.Namespace}}} {
-		present, err := reconciler.deleteIfPresent(ctx, object)
+		present, err := deleteIfPresent(ctx, reconciler.Client, object)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -381,7 +346,7 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 					return ctrl.Result{}, err
 				}
 			} else {
-				present, err := reconciler.deleteIfPresent(ctx, pvc)
+				present, err := deleteIfPresent(ctx, reconciler.Client, pvc)
 				if err != nil {
 					return ctrl.Result{}, err
 				}
@@ -397,19 +362,6 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 	base := group.DeepCopy()
 	controllerutil.RemoveFinalizer(group, kvGroupFinalizer)
 	return ctrl.Result{}, reconciler.Patch(ctx, group, client.MergeFrom(base))
-}
-
-func (reconciler *GroupReconciler) deleteIfPresent(ctx context.Context, object client.Object) (bool, error) {
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := reconciler.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
-	}
-	return true, nil
 }
 
 // releaseDiskPVC removes KVGroup ownership from a retained offload PVC.

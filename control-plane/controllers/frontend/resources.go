@@ -17,10 +17,12 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -307,4 +309,17 @@ func parentReferenceMatches(actual gatewayv1.ParentReference, expected GatewayPa
 		return false
 	}
 	return expected.SectionName == "" || actual.SectionName != nil && string(*actual.SectionName) == expected.SectionName
+}
+
+// desiredVideoTaskAccess builds the namespace permissions delegated to video-enabled frontend replicas.
+func desiredVideoTaskAccess(frontend *inferencev1alpha1.FrontendService) []client.Object {
+	metadata := metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: map[string]string{workload.FrontendServiceLabel: frontend.Name}}
+	return []client.Object{
+		&corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metadata},
+		&rbacv1.Role{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "Role"}, ObjectMeta: metadata,
+			Rules: []rbacv1.PolicyRule{{APIGroups: []string{"inference.foretoken.io"}, Resources: []string{"videotasks"}, Verbs: []string{"get", "create", "patch", "delete"}}}},
+		&rbacv1.RoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "RoleBinding"}, ObjectMeta: metadata,
+			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: frontend.Name},
+			Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: frontend.Name, Namespace: frontend.Namespace}}},
+	}
 }

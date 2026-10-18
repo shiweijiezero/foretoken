@@ -8,6 +8,7 @@ kind: Kustomization
 resources:
   - bases/inference.foretoken.io_profileruns.yaml
   - bases/inference.foretoken.io_videotasks.yaml
+  - bases/inference.foretoken.io_runtimecaches.yaml
   - bases/inference.foretoken.io_frontendservices.yaml
   - bases/inference.foretoken.io_kvservices.yaml
   - bases/inference.foretoken.io_kvpools.yaml

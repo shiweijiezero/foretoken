@@ -9,9 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
-	"slices"
-	"strconv"
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -37,27 +34,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const (
-	frontendServiceFieldOwner               = "foretoken-frontendservice-controller"
-	frontendConditionMaterialized           = "WorkloadMaterialized"
-	frontendConditionAvailable              = "WorkloadAvailable"
-	frontendConditionRouteReady             = "RouteAccepted"
-	frontendResourcesAppliedMessage         = "Frontend resources were applied"
-	frontendResourcesNotMaterializedMessage = "Frontend resources were not materialized"
-	frontendDeploymentAvailableMessage      = "The frontend Deployment is available"
-	frontendDeploymentUnavailableMessage    = "The frontend Deployment is not available"
-	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
-	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
-	frontendRouteNotRequiredMessage         = "Local mode exposes the frontend through its LoadBalancer Service"
-)
-
-var frontendConditionTypes = [...]string{
-	frontendConditionMaterialized,
-	frontendConditionAvailable,
-	frontendConditionRouteReady,
-	servingconfig.ConditionRoutingReady,
-	workload.ConditionReady,
-}
+const frontendServiceFieldOwner = "foretoken-frontendservice-controller"
 
 // GatewayParent identifies the platform-owned Gateway that accepts frontend traffic.
 type GatewayParent struct {
@@ -129,80 +106,6 @@ func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 		Complete(reconciler)
 }
 
-// frontendsForPod wakes only affected frontends; unpublished Pods are never recognized by provenance.
-// Unlabelled terminal and delete events use the published UID lists instead of broadcasting ordinary Pod updates.
-func (reconciler *Reconciler) frontendsForPod(ctx context.Context, object client.Object) []reconcile.Request {
-	if name := object.GetLabels()[workload.FrontendServiceLabel]; name != "" {
-		return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: name}}}
-	}
-	if object.GetLabels()[workload.ModelGroupLabel] != "" {
-		return reconciler.frontendsInNamespace(ctx, object)
-	}
-	reader := reconciler.APIReader
-	if reader == nil {
-		reader = reconciler.Client
-	}
-	var configurations corev1.ConfigMapList
-	if err := reader.List(ctx, &configurations, client.InNamespace(object.GetNamespace()), client.HasLabels{workload.FrontendServiceLabel}); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "read published instance membership for Pod termination")
-		return reconciler.frontendsInNamespace(ctx, object)
-	}
-	requests := make([]reconcile.Request, 0)
-	for index := range configurations.Items {
-		configuration := &configurations.Items[index]
-		owner := metav1.GetControllerOf(configuration)
-		if owner == nil || owner.APIVersion != inferencev1alpha1.GroupVersion.String() || owner.Kind != "FrontendService" {
-			continue
-		}
-		payload, exists := configuration.Data[servingconfig.SnapshotKey]
-		if !exists {
-			continue
-		}
-		snapshot, _, err := readServingPublication([]byte(payload))
-		if err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "read published instance membership", "configMap", configuration.Name)
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
-			continue
-		}
-		uid := string(object.GetUID())
-		if !slices.Contains(snapshot.FrontendInstances, uid) && !slices.Contains(snapshot.BackendInstances, uid) {
-			continue
-		}
-		frontend := new(inferencev1alpha1.FrontendService)
-		if err := reader.Get(ctx, client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}, frontend); apierrors.IsNotFound(err) {
-			continue
-		} else if err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "read frontend for published instance membership")
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: configuration.Namespace, Name: owner.Name}})
-			continue
-		}
-		if slices.ContainsFunc(servingconfig.ProtocolVersions(frontend), func(version uint32) bool {
-			return configuration.Name == servingconfig.ConfigMapName(frontend, version)
-		}) && workload.ControllerOwnerMatches(configuration, inferencev1alpha1.GroupVersion.String(), "FrontendService", frontend.Name, frontend.UID) {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
-		}
-	}
-	return requests
-}
-
-// frontendsForClaim refreshes consumers when a borrowed cache or video claim changes identity.
-func (reconciler *Reconciler) frontendsForClaim(ctx context.Context, object client.Object) []reconcile.Request {
-	var frontends inferencev1alpha1.FrontendServiceList
-	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "list frontends for storage claim")
-		return nil
-	}
-	requests := make([]reconcile.Request, 0, len(frontends.Items))
-	for index := range frontends.Items {
-		frontend := &frontends.Items[index]
-		video := frontend.Spec.VideoTasks
-		if object.GetName() == reconciler.CacheProfile.ClaimName || video != nil && video.ClaimName == object.GetName() {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
-		}
-	}
-	return requests
-}
-
 // frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
 func (reconciler *Reconciler) frontendsInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
 	var frontends inferencev1alpha1.FrontendServiceList
@@ -214,78 +117,6 @@ func (reconciler *Reconciler) frontendsInNamespace(ctx context.Context, object c
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&frontends.Items[index])})
 	}
 	return requests
-}
-
-// servingCacheReady lets frontends share a cache only after a serving workload has bound it.
-// Every selected cohort must use that cache before the frontend changes its mount.
-func (reconciler *Reconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, services []inferencev1alpha1.ModelService) (bool, error) {
-	var pools inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelPools for frontend runtime cache: %w", err)
-	}
-	var groups inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelGroups for frontend runtime cache: %w", err)
-	}
-	selectedRevision := false
-	for serviceIndex := range services {
-		service := &services[serviceIndex]
-		if !service.DeletionTimestamp.IsZero() {
-			continue
-		}
-		for _, selected := range service.Status.ServingPoolRevisions {
-			selectedRevision = true
-			var pool *inferencev1alpha1.ModelPool
-			for poolIndex := range pools.Items {
-				candidate := &pools.Items[poolIndex]
-				if candidate.Spec.PoolName == selected.PoolName && string(candidate.UID) == selected.PoolUID && servingconfig.RoutingPoolOwnedBy(candidate, service) {
-					pool = candidate
-					break
-				}
-			}
-			if pool == nil {
-				return false, nil
-			}
-			matched := false
-			for groupIndex := range groups.Items {
-				group := &groups.Items[groupIndex]
-				if servingconfig.RoutingGroupOwnedBy(group, pool) && group.Spec.Revision == selected.Revision {
-					matched = true
-					if !servingconfig.RoutingGroupReady(group) || !reflect.DeepEqual(group.Spec.Artifacts.Cache, cache) {
-						return false, nil
-					}
-				}
-			}
-			if !matched {
-				return false, nil
-			}
-		}
-	}
-	return cache == nil || selectedRevision, nil
-}
-
-// placeFrontendCache shares the cache placement contract and permits its accelerator-node taint.
-func (reconciler *Reconciler) placeFrontendCache(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
-	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, namespace, cache, pod); err != nil {
-		return err
-	}
-	if pod.Spec.Affinity == nil {
-		return nil
-	}
-	var groups inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
-		return err
-	}
-	for _, group := range groups.Items {
-		if binding := group.Spec.Artifacts.Cache; binding != nil && binding.ClaimName == cache.ClaimName {
-			for _, toleration := range workload.AcceleratorTolerations(group.Spec.Accelerator.DeviceResourceName) {
-				if !slices.Contains(pod.Spec.Tolerations, toleration) {
-					pod.Spec.Tolerations = append(pod.Spec.Tolerations, toleration)
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
@@ -300,30 +131,6 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	}
 	result, err := reconciler.reconcileFrontend(ctx, frontend)
 	return result, errors.Join(err, reconciler.reconcileAlerts(ctx, frontend))
-}
-
-// sourceSelectionAllowed preserves an already-selected source publication without
-// reopening source admission when the platform disables new source selections.
-func (reconciler *Reconciler) sourceSelectionAllowed(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (bool, error) {
-	profile := reconciler.RuntimeProfile
-	if profile.SourceMode {
-		return true, nil
-	}
-	revision := frontend.Annotations[runtimeconfig.SourceRevisionAnnotation]
-	if revision == "" {
-		return false, nil
-	}
-	if selected := frontend.Status.Application; selected != nil {
-		return selected.DeploymentRevision == frontend.Spec.DeploymentRevision && (selected.SourceRevision == revision || (selected.SourceRevision == "" && selected.ApplicationURL == profile.ApplicationFiles.Ref("frontend", revision))), nil
-	}
-	if frontend.Spec.DeploymentRevision != "" {
-		return false, nil
-	}
-	deployment := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), deployment); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return metav1.IsControlledBy(deployment, frontend) && deployment.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation] == revision && deployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == profile.ApplicationFiles.Ref("frontend", revision), nil
 }
 
 // reconcileFrontend keeps serving state independent of optional alert configuration failures.
@@ -360,105 +167,10 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: admissionErr.Error()})
 		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
 	}
-	if err := reconciler.RuntimeProfile.validate(); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeProfileIncomplete", FailureMessage: err.Error()})
-	}
-	sourceAllowed, err := reconciler.sourceSelectionAllowed(ctx, frontend)
-	if err != nil {
+	profile, err := reconciler.reconcileApplication(ctx, frontend, services.Items)
+	if err != nil || profile == nil {
 		return ctrl.Result{}, err
 	}
-	sourceRevision, err := runtimeconfig.SourceRevision(frontend.Annotations, sourceAllowed)
-	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
-	}
-	profile := reconciler.RuntimeProfile
-	profile.SourceRevision = sourceRevision
-	deploymentRevision := frontend.Spec.DeploymentRevision
-	selection := frontend.Status.Application
-	deploymentRequired := frontendState{
-		FailureReason:  "FrontendDeploymentRequired",
-		FailureMessage: "Redeploy the frontend with the current platform application before applying its serving configuration",
-	}
-	if selection == nil {
-		current := new(appsv1.Deployment)
-		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
-			if !metav1.IsControlledBy(current, frontend) {
-				return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: "The existing frontend Deployment belongs to another owner"})
-			}
-			// Adopting observed state must not consume an explicit request for a new application.
-			if deploymentRevision == "" {
-				selection = &inferencev1alpha1.ApplicationSelection{
-					Image:              current.Spec.Template.Spec.Containers[0].Image,
-					ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
-					SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
-					DeploymentRevision: deploymentRevision,
-				}
-				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
-					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
-						continue
-					}
-					selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
-					if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-						selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
-					}
-					if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
-						return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
-					}
-				}
-				base := frontend.DeepCopy()
-				frontend.Status.Application = selection
-				frontend.Status.ServingConfigVersion = 0
-				if version, err := strconv.ParseUint(current.Spec.Template.Annotations[servingconfig.ProtocolAnnotation], 10, 32); err == nil && version >= uint64(servingconfig.AdmissionProtocol) && version <= uint64(servingconfig.CurrentProtocol) {
-					frontend.Status.ServingConfigVersion = uint32(version)
-				}
-				if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-					return ctrl.Result{}, fmt.Errorf("retain frontend application configuration: %w", err)
-				}
-			}
-		} else if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-	}
-	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
-	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
-		if sourceRevision != "" {
-			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
-			if err != nil {
-				statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ApplicationResolutionFailed", FailureMessage: err.Error()})
-				return ctrl.Result{}, errors.Join(err, statusErr)
-			}
-			selection.Image = image
-			selection.ApplicationURL = profile.ApplicationFiles.Ref("frontend", sourceRevision)
-		}
-	} else {
-		selection = selection.DeepCopy()
-		selection.SourceRevision = sourceRevision
-	}
-	// Application selection and its serving protocol advance together. A platform update
-	// leaves an explicitly retained application and its existing configuration untouched.
-	requiresModelRouting := slices.ContainsFunc(services.Items, func(service inferencev1alpha1.ModelService) bool {
-		return service.DeletionTimestamp.IsZero() && (service.Spec.Backend == "vllm" || service.Spec.Backend == "vllm-omni") && service.Spec.RouterPipeline != nil
-	})
-	if retained && (frontend.Status.ServingConfigVersion < servingconfig.AdmissionProtocol || requiresModelRouting && frontend.Status.ServingConfigVersion < servingconfig.ModelRoutingProtocol) {
-		_, membershipErr := reconciler.reconcileServingSnapshot(ctx, frontend, nil, true)
-		statusErr := reconciler.updateStatus(ctx, frontend, deploymentRequired)
-		return ctrl.Result{}, errors.Join(membershipErr, statusErr)
-	}
-	selectedVersion := frontend.Status.ServingConfigVersion
-	if !retained {
-		selectedVersion = servingconfig.CurrentProtocol
-	}
-	if !reflect.DeepEqual(frontend.Status.Application, selection) || frontend.Status.ServingConfigVersion != selectedVersion {
-		base := frontend.DeepCopy()
-		frontend.Status.Application = selection
-		frontend.Status.ServingConfigVersion = selectedVersion
-		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return ctrl.Result{}, fmt.Errorf("persist frontend application selection: %w", err)
-		}
-	}
-	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
-	profile.AdmissionStore = selection.AdmissionStore.DeepCopy()
 	if err := servingconfig.EnsureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
@@ -470,16 +182,12 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 	}
 
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
+	if err == nil && cacheReady {
+		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache, services.Items)
+	}
 	if err != nil {
 		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
 		return ctrl.Result{}, errors.Join(err, statusErr)
-	}
-	if cacheReady {
-		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache, services.Items)
-		if err != nil {
-			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
-			return ctrl.Result{}, errors.Join(err, statusErr)
-		}
 	}
 	// Start with the selected cache instead of creating a temporary frontend that
 	// must be replaced once model placement completes. Existing replicas stay live.
@@ -494,7 +202,7 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 		}
 		profile.VideoStorageIdentity = &identity
 	}
-	deployment, service, route, err := frontendDesiredResources(frontend, profile)
+	deployment, service, route, err := frontendDesiredResources(frontend, *profile)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
@@ -505,12 +213,7 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 	}
 	objects := []client.Object{service}
 	if frontend.Spec.VideoTasks != nil {
-		labels := map[string]string{workload.FrontendServiceLabel: frontend.Name}
-		objects = append(objects,
-			&corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}},
-			&rbacv1.Role{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "Role"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{"inference.foretoken.io"}, Resources: []string{"videotasks"}, Verbs: []string{"get", "create", "patch", "delete"}}}},
-			&rbacv1.RoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "RoleBinding"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: frontend.Name}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: frontend.Name, Namespace: frontend.Namespace}}},
-		)
+		objects = append(objects, desiredVideoTaskAccess(frontend)...)
 	}
 	if applyDeployment {
 		objects = append(objects, deployment)
@@ -561,8 +264,8 @@ func (reconciler *Reconciler) reconcileFrontend(ctx context.Context, frontend *i
 		currentDeployment.Spec.Replicas != nil && *currentDeployment.Spec.Replicas == targetReplicas &&
 		currentDeployment.Status.UpdatedReplicas == targetReplicas &&
 		currentDeployment.Status.Replicas == targetReplicas &&
-		currentDeployment.Spec.Template.Spec.Containers[0].Image == selection.Image &&
-		currentDeployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == selection.ApplicationURL
+		currentDeployment.Spec.Template.Spec.Containers[0].Image == profile.Image &&
+		currentDeployment.Spec.Template.Annotations["inference.foretoken.io/application-url"] == profile.ApplicationURL
 	configuration := reconciler.observeConfiguration(ctx, frontend, currentDeployment)
 	if projectionErr != nil {
 		configuration = metav1.Condition{Status: metav1.ConditionFalse, Reason: "ServingSnapshotProjectionFailed", Message: projectionErr.Error()}
@@ -664,19 +367,6 @@ func (reconciler *Reconciler) reconcileStoppedFrontend(ctx context.Context, fron
 	return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{Stopped: true})
 }
 
-func (profile FrontendRuntimeProfile) validate() error {
-	if profile.Image == "" {
-		return fmt.Errorf("frontend runtime image is not configured")
-	}
-	if profile.Port < 1 || profile.Port > 65535 {
-		return fmt.Errorf("frontend runtime port must be between 1 and 65535")
-	}
-	if profile.Gateway != nil && profile.Gateway.Name == "" {
-		return fmt.Errorf("Gateway parent name is not configured")
-	}
-	return nil
-}
-
 // applyOwned server-side applies a FrontendService-owned resource after checking ownership.
 func (reconciler *Reconciler) applyOwned(ctx context.Context, owner *inferencev1alpha1.FrontendService, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
@@ -736,146 +426,6 @@ func (reconciler *Reconciler) deleteOwnedVideoTaskAccess(ctx context.Context, fr
 		}
 	}
 	return nil
-}
-
-type frontendState struct {
-	// ExecutionReady concerns the selected application and target capacity; Available
-	// still reports a previous Deployment that is serving during deferred replacement.
-	ExecutionReady bool
-	Stopped        bool
-	Materialized   bool
-	CachePending   bool
-	Available      bool
-	RouteRequired  bool
-	RouteReady     bool
-	Configuration  metav1.Condition
-	FailureReason  string
-	FailureMessage string
-}
-
-// updateStatus publishes workload, route, and serving-snapshot readiness for the frontend.
-func (reconciler *Reconciler) updateStatus(ctx context.Context, frontend *inferencev1alpha1.FrontendService, state frontendState) error {
-	base := frontend.DeepCopy()
-	frontend.Status.ObservedGeneration = frontend.Generation
-	if state.FailureReason != "" {
-		for _, conditionType := range frontendConditionTypes {
-			setFrontendCondition(frontend, conditionType, metav1.ConditionFalse, state.FailureReason, state.FailureMessage)
-		}
-	} else if state.Stopped {
-		for _, conditionType := range []string{frontendConditionMaterialized, frontendConditionRouteReady} {
-			setFrontendCondition(frontend, conditionType, metav1.ConditionUnknown, "NotReconciled", "No frontend replicas are requested; retained resources are unchanged")
-		}
-		for _, conditionType := range []string{frontendConditionAvailable, servingconfig.ConditionRoutingReady, workload.ConditionReady} {
-			setFrontendCondition(frontend, conditionType, metav1.ConditionFalse, "ScaledToZero", "All frontend replicas have stopped")
-		}
-	} else {
-		setFrontendCondition(
-			frontend,
-			frontendConditionMaterialized,
-			workload.ConditionStatus(state.Materialized),
-			frontendBooleanReason(state.Materialized, "Applied", "NotMaterialized"),
-			frontendBooleanMessage(state.Materialized, frontendResourcesAppliedMessage, frontendResourcesNotMaterializedMessage),
-		)
-		setFrontendCondition(
-			frontend,
-			frontendConditionAvailable,
-			workload.ConditionStatus(state.Available),
-			frontendBooleanReason(state.Available, "Available", "Unavailable"),
-			frontendBooleanMessage(state.Available, frontendDeploymentAvailableMessage, frontendDeploymentUnavailableMessage),
-		)
-		if state.RouteRequired {
-			setFrontendCondition(
-				frontend,
-				frontendConditionRouteReady,
-				workload.ConditionStatus(state.RouteReady),
-				frontendBooleanReason(state.RouteReady, "Accepted", "Pending"),
-				frontendBooleanMessage(state.RouteReady, frontendRouteAcceptedMessage, frontendRoutePendingMessage),
-			)
-		} else {
-			setFrontendCondition(frontend, frontendConditionRouteReady, metav1.ConditionTrue, "NotRequired", frontendRouteNotRequiredMessage)
-		}
-		if state.Configuration.Status == metav1.ConditionTrue {
-			frontend.Status.AppliedServingSnapshotVersion = frontend.Status.ServingSnapshotVersion
-		}
-		setFrontendCondition(
-			frontend,
-			servingconfig.ConditionRoutingReady,
-			state.Configuration.Status,
-			state.Configuration.Reason,
-			state.Configuration.Message,
-		)
-		reason, message := frontendReadyFailure(state)
-		setFrontendCondition(frontend, workload.ConditionReady, workload.ConditionStatus(reason == "Ready"), reason, message)
-	}
-	target := frontendTargetReadiness(state)
-	setFrontendCondition(frontend, workload.ConditionTargetReady, target.Status, target.Reason, target.Message)
-	if reflect.DeepEqual(base.Status, frontend.Status) {
-		return nil
-	}
-	if err := reconciler.Status().Patch(ctx, frontend, client.MergeFrom(base)); err != nil {
-		return fmt.Errorf("update FrontendService status: %w", err)
-	}
-	return nil
-}
-
-func setFrontendCondition(frontend *inferencev1alpha1.FrontendService, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&frontend.Status.Conditions, metav1.Condition{Type: conditionType, Status: status, Reason: reason, Message: message, ObservedGeneration: frontend.Generation})
-}
-
-func frontendReadyFailure(state frontendState) (string, string) {
-	switch {
-	case state.CachePending:
-		return "WaitingForCache", "Waiting for model workloads to prepare the shared runtime cache"
-	case !state.Materialized:
-		return "NotMaterialized", "Frontend resources are not materialized"
-	case !state.Available:
-		return "WorkloadUnavailable", "The frontend Deployment is not available"
-	case !state.ExecutionReady:
-		return "ExecutionPending", "The selected frontend application and target replicas are not ready"
-	case state.RouteRequired && !state.RouteReady:
-		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
-	case state.Configuration.Status != metav1.ConditionTrue:
-		return state.Configuration.Reason, state.Configuration.Message
-	default:
-		return "Ready", "The frontend workload and backend routing are ready"
-	}
-}
-
-// frontendTargetReadiness separates rejected intent from recoverable workload and API waits.
-func frontendTargetReadiness(state frontendState) metav1.Condition {
-	if state.Stopped {
-		return metav1.Condition{Status: metav1.ConditionTrue, Reason: "ScaledToZero", Message: "All frontend replicas have stopped"}
-	}
-	reason, message := frontendReadyFailure(state)
-	if state.FailureReason != "" {
-		reason, message = state.FailureReason, state.FailureMessage
-	}
-	switch state.Configuration.Reason {
-	case "ConfigurationRejected", "BackendDeploymentRequired", "FrontendDeploymentRequired":
-		reason, message = state.Configuration.Reason, state.Configuration.Message
-	}
-	status := metav1.ConditionUnknown
-	switch reason {
-	case "Ready":
-		status = metav1.ConditionTrue
-	case "InvalidIntent", "RuntimeProfileIncomplete", "ConfigurationRejected", "BackendDeploymentRequired", "FrontendDeploymentRequired":
-		status = metav1.ConditionFalse
-	}
-	return metav1.Condition{Status: status, Reason: reason, Message: message}
-}
-
-func frontendBooleanReason(value bool, trueReason, falseReason string) string {
-	if value {
-		return trueReason
-	}
-	return falseReason
-}
-
-func frontendBooleanMessage(value bool, trueMessage, falseMessage string) string {
-	if value {
-		return trueMessage
-	}
-	return falseMessage
 }
 
 // reconcileAlerts keeps HTTP alert scope on the frontend rather than assigning shared failures to models.

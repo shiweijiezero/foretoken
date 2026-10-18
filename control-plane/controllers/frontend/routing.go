@@ -7,29 +7,18 @@ package frontend
 
 import (
 	"cmp"
-	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // projectableRouting publishes service-selected cohorts whose Groups satisfy ownership,
 // readiness, and aggregate or split-topology compatibility.
-func (reconciler *Reconciler) projectableRouting(ctx context.Context, namespace string, services []inferencev1alpha1.ModelService) ([]servingconfig.Group, []servingconfig.PDComponent, []servingconfig.PDPipelineScope, []servingconfig.EPDComponent, []servingconfig.EPDPipelineScope, error) {
-	var pools inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("list ModelPools for routing: %w", err)
-	}
-	var modelGroups inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &modelGroups, client.InNamespace(namespace)); err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("list ModelGroups for routing: %w", err)
-	}
+func projectableRouting(services []inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, modelGroups []inferencev1alpha1.ModelGroup) ([]servingconfig.Group, []servingconfig.PDComponent, []servingconfig.PDPipelineScope, []servingconfig.EPDComponent, []servingconfig.EPDPipelineScope, error) {
 
-	groups := make([]servingconfig.Group, 0, len(modelGroups.Items))
+	groups := make([]servingconfig.Group, 0, len(modelGroups))
 	pdComponents := make([]servingconfig.PDComponent, 0)
 	pdPipelineScopes := make([]servingconfig.PDPipelineScope, 0)
 	epdComponents := make([]servingconfig.EPDComponent, 0)
@@ -40,12 +29,12 @@ func (reconciler *Reconciler) projectableRouting(ctx context.Context, namespace 
 		if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !servingconfig.HasServingCohort(service) {
 			continue
 		}
-		servicePools := servingconfig.OwnedRoutingPools(service, pools.Items)
+		servicePools := servingconfig.OwnedRoutingPools(service, pools)
 		servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 			return servingconfig.ServingRevision(service, pool) == ""
 		})
 		if servingconfig.PoolsHaveEPD(servicePools) {
-			components, pipelineScopes, err := servingconfig.ProjectServiceEPDComponents(service, servicePools, modelGroups.Items)
+			components, pipelineScopes, err := servingconfig.ProjectServiceEPDComponents(service, servicePools, modelGroups)
 			if err != nil {
 				// An incomplete E/P/D Service must not withdraw other Services' routes.
 				projectionErr = errors.Join(projectionErr, err)
@@ -56,7 +45,7 @@ func (reconciler *Reconciler) projectableRouting(ctx context.Context, namespace 
 			continue
 		}
 		if servingconfig.PoolsHavePD(servicePools) {
-			components, pipelineScope, err := servingconfig.ProjectServicePDComponents(service, servicePools, modelGroups.Items)
+			components, pipelineScope, err := servingconfig.ProjectServicePDComponents(service, servicePools, modelGroups)
 			if err != nil {
 				// A transiently incomplete P/D Service must not withdraw other Services' routes.
 				projectionErr = errors.Join(projectionErr, err)
@@ -71,8 +60,8 @@ func (reconciler *Reconciler) projectableRouting(ctx context.Context, namespace 
 			if servingconfig.ServingRevision(service, pool) == "" {
 				continue
 			}
-			for groupIndex := range modelGroups.Items {
-				group := &modelGroups.Items[groupIndex]
+			for groupIndex := range modelGroups {
+				group := &modelGroups[groupIndex]
 				if !servingconfig.RoutingGroupOwnedBy(group, pool) || group.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
 					continue
 				}

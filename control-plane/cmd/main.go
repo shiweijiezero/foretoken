@@ -438,7 +438,7 @@ func main() {
 	}
 	if err := (&model.PoolReconciler{
 		Client: manager.GetClient(),
-		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
+		RuntimeProfile: resolver.RuntimeProfile{
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
@@ -452,7 +452,7 @@ func main() {
 			RDMA:               rdma,
 			EC:                 ec,
 			MooncakeStore:      mooncakeStore,
-		}},
+		},
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)

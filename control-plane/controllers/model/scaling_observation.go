@@ -119,7 +119,6 @@ type HTTPScalingMetricsProvider struct {
 	optionsMu          sync.Mutex
 	options            AutoscalingTelemetryOptions
 	configurationError string
-	now                func() time.Time
 }
 
 // NewHTTPScalingMetricsProvider loads the platform file before starting the autoscaling collector.
@@ -133,7 +132,6 @@ func NewHTTPScalingMetricsProvider(kubeClient client.Client, configurationPath s
 		httpClient:        &http.Client{},
 		configurationPath: configurationPath,
 		options:           options,
-		now:               time.Now,
 	}, nil
 }
 
@@ -185,7 +183,7 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 		return core.MetricsSnapshot{}, fmt.Errorf("scaling metrics provider is not configured")
 	}
 	options := provider.copyOptions(ctx)
-	startedAt := provider.now()
+	startedAt := time.Now()
 	collectionCtx, cancel := context.WithTimeout(ctx, options.CollectionTimeout.Duration)
 	defer cancel()
 	var runtimeQueuedRequests, dispatchQueuedRequests uint64
@@ -206,7 +204,7 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	if err := group.Wait(); err != nil {
 		return core.MetricsSnapshot{}, err
 	}
-	collectedAt := provider.now()
+	collectedAt := time.Now()
 	samples := queueSamples + demand.samples
 	if samples > math.MaxInt32 {
 		samples = math.MaxInt32

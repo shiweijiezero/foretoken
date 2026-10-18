@@ -33,16 +33,11 @@ const (
 	conditionRolloutPending = "RolloutPending"
 )
 
-// ModelPoolTemplateResolver selects platform runtime settings and resolves one Group template.
-type ModelPoolTemplateResolver interface {
-	Resolve(inferencev1alpha1.NormalizedPoolTemplate) (resolver.ModelGroupTemplate, error)
-}
-
 // PoolReconciler resolves Pool templates and owns ModelGroup specs.
 type PoolReconciler struct {
 	client.Client
-	APIReader        client.Reader
-	TemplateResolver ModelPoolTemplateResolver
+	APIReader      client.Reader
+	RuntimeProfile resolver.RuntimeProfile
 }
 
 // SetupWithManager registers the ModelPool controller and its owned Groups.
@@ -69,7 +64,7 @@ func (reconciler *PoolReconciler) poolsForStorageClaim(ctx context.Context, obje
 	var requests []reconcile.Request
 	for index := range pools.Items {
 		pool := &pools.Items[index]
-		template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
+		template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
 		if err == nil && template.ECRuntime != nil && template.ECRuntime.SharedStorageClaim == object.GetName() {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
 		}
@@ -151,10 +146,7 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
 		return ctrl.Result{}, nil
 	}
-	if reconciler.TemplateResolver == nil {
-		return ctrl.Result{}, fmt.Errorf("ModelPool template resolver is not configured")
-	}
-	template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
+	template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
 	if err == nil && template.ECRuntime != nil {
 		claim := new(corev1.PersistentVolumeClaim)
 		err = reader.Get(ctx, client.ObjectKey{Namespace: pool.Namespace, Name: template.ECRuntime.SharedStorageClaim}, claim)

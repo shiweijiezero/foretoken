@@ -7,7 +7,6 @@ package frontend
 
 import (
 	"cmp"
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -19,20 +18,11 @@ import (
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // projectConfiguredModels resolves model discovery and admission together, independently of capacity.
 // Missing selected artifacts exclude only their service unless its published provenance still matches.
-func (reconciler *Reconciler) projectConfiguredModels(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, previousModels []servingconfig.Model) ([]servingconfig.Model, map[string]servingconfig.Admission, error) {
-	var pools inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &pools, client.InNamespace(frontend.Namespace)); err != nil {
-		return nil, nil, fmt.Errorf("list ModelPools for model catalog: %w", err)
-	}
-	var groups inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &groups, client.InNamespace(frontend.Namespace)); err != nil {
-		return nil, nil, fmt.Errorf("list ModelGroups for model catalog: %w", err)
-	}
+func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, previousModels []servingconfig.Model) ([]servingconfig.Model, map[string]servingconfig.Admission, error) {
 
 	models := make([]servingconfig.Model, 0, len(services))
 	admission := make(map[string]servingconfig.Admission)
@@ -51,7 +41,7 @@ func (reconciler *Reconciler) projectConfiguredModels(ctx context.Context, front
 		if err != nil {
 			return nil, nil, fmt.Errorf("ModelService %q admission: %w", service.Name, err)
 		}
-		servicePools := servingconfig.OwnedRoutingPools(service, pools.Items)
+		servicePools := servingconfig.OwnedRoutingPools(service, pools)
 		if config.MaxWaitingRequests != nil {
 			var store *inferencev1alpha1.AdmissionStoreConnection
 			if frontend.Status.Application != nil {
@@ -66,8 +56,8 @@ func (reconciler *Reconciler) projectConfiguredModels(ctx context.Context, front
 				if selected == "" {
 					continue
 				}
-				for index := range groups.Items {
-					group := &groups.Items[index]
+				for index := range groups {
+					group := &groups[index]
 					if servingconfig.ModelGroupOwnedBy(group, pool) && group.Spec.Revision == selected && !reflect.DeepEqual(group.Spec.Runtime.AdmissionStore, store) {
 						return nil, nil, &backendDeploymentRequiredError{service: service.Name}
 					}
@@ -94,7 +84,7 @@ func (reconciler *Reconciler) projectConfiguredModels(ctx context.Context, front
 			servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 				return servingconfig.ServingRevision(service, pool) == ""
 			})
-			identity, selectedTopology, err := selectedCatalogIdentity(service, pools.Items, groups.Items, previousModels)
+			identity, selectedTopology, err := selectedCatalogIdentity(service, pools, groups, previousModels)
 			if err != nil {
 				var unavailable *modelCatalogProjectionError
 				if !errors.As(err, &unavailable) {

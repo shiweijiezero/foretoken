@@ -54,39 +54,13 @@ func (telemetry modelServerTelemetry) validateVersion() error {
 	return nil
 }
 
-// ModelGroupDrainClient observes frontend generations and controls group-local admission.
-type ModelGroupDrainClient interface {
-	FrontendGeneration(context.Context, string) (uint64, error)
-	CloseAdmission(context.Context, string) (modelServerTelemetry, error)
-}
-
-type httpModelGroupDrainClient struct {
-	client *http.Client
-}
-
-func newHTTPModelGroupDrainClient() ModelGroupDrainClient {
-	return &httpModelGroupDrainClient{client: &http.Client{}}
-}
-
-// FrontendGeneration reads the active serving snapshot generation from one frontend Pod.
-func (client *httpModelGroupDrainClient) FrontendGeneration(ctx context.Context, endpoint string) (uint64, error) {
-	diagnostics, err := servingconfig.ReadDiagnostics(ctx, client.client, endpoint)
-	if err != nil {
-		return 0, err
-	}
-	if diagnostics.ActiveGeneration == nil {
-		return 0, fmt.Errorf("frontend has no active serving generation")
-	}
-	return *diagnostics.ActiveGeneration, nil
-}
-
-// CloseAdmission closes model-server admission and returns its current drain telemetry.
-func (client *httpModelGroupDrainClient) CloseAdmission(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
+// closeModelAdmission closes model-server admission and returns its current drain telemetry.
+func closeModelAdmission(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/internal/admission/close", nil)
 	if err != nil {
 		return modelServerTelemetry{}, err
 	}
-	response, err := client.client.Do(request)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return modelServerTelemetry{}, err
 	}
@@ -144,7 +118,7 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 		return reconciler.retireGroupWorkloads(ctx, group, workloads)
 	}
 
-	now := reconciler.now()
+	now := time.Now()
 	if group.Status.DrainStartedAt == nil {
 		started := metav1.NewTime(now)
 		if err := reconciler.updateDrainStatus(ctx, group, &started, false, false, false, "DrainStarted", "Closing model-server admission before route withdrawal"); err != nil {
@@ -163,7 +137,7 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 	drainCtx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 
-	telemetry, err := reconciler.drainClient().CloseAdmission(drainCtx, workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port))
+	telemetry, err := closeModelAdmission(drainCtx, workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port))
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(drainCtx.Err(), context.DeadlineExceeded) {
 		return reconciler.finishDrainTimeout(ctx, group)
 	}
@@ -369,11 +343,14 @@ func (reconciler *GroupReconciler) routingWithdrawn(ctx context.Context, group *
 			if err != nil {
 				return false, err
 			}
-			generation, err := reconciler.drainClient().FrontendGeneration(ctx, endpoint)
+			diagnostics, err := servingconfig.ReadDiagnostics(ctx, http.DefaultClient, endpoint)
 			if err != nil {
 				return false, fmt.Errorf("observe frontend Pod %q: %w", pod.Name, err)
 			}
-			if generation < snapshotVersion {
+			if diagnostics.ActiveGeneration == nil {
+				return false, fmt.Errorf("observe frontend Pod %q: frontend has no active serving generation", pod.Name)
+			}
+			if *diagnostics.ActiveGeneration < snapshotVersion {
 				return false, nil
 			}
 		}
@@ -392,20 +369,6 @@ func (reconciler *GroupReconciler) routingWithdrawn(ctx context.Context, group *
 		}
 	}
 	return true, nil
-}
-
-func (reconciler *GroupReconciler) drainClient() ModelGroupDrainClient {
-	if reconciler.DrainClient != nil {
-		return reconciler.DrainClient
-	}
-	return newHTTPModelGroupDrainClient()
-}
-
-func (reconciler *GroupReconciler) now() time.Time {
-	if reconciler.Now != nil {
-		return reconciler.Now()
-	}
-	return time.Now()
 }
 
 // updateDrainStatus publishes the current ModelGroup deletion-drain milestone.
