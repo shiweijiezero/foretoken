@@ -53,6 +53,31 @@
 {{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.admissionStoreName" .) .Release.Namespace) .Values.admissionStore.externalURL -}}
 {{- end }}
 
+{{- define "foretoken.responseStoreName" -}}
+{{- include "foretoken.compactName" (printf "%s-response-store" .Release.Name) -}}
+{{- end }}
+
+{{/* Retain the managed database when later deployments select an external default. */}}
+{{- define "foretoken.responseStoreManaged" -}}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace (include "foretoken.responseStoreName" .) -}}
+{{- $metadata := get $secret "metadata" | default dict -}}
+{{- $annotations := get $metadata "annotations" | default dict -}}
+{{- $labels := get $metadata "labels" | default dict -}}
+{{- if or (not .Values.responseStore.externalURLSecret.name) (and (eq (get $labels "app.kubernetes.io/managed-by") .Release.Service) (eq (get $annotations "meta.helm.sh/release-name") .Release.Name) (eq (get $annotations "meta.helm.sh/release-namespace") .Release.Namespace)) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.responseStoreURLSecret" -}}
+{{- if .Values.responseStore.externalURLSecret.name -}}
+{{- .Values.responseStore.externalURLSecret | toJson -}}
+{{- else -}}
+{{- dict "name" (include "foretoken.responseStoreName" .) "key" "url" | toJson -}}
+{{- end -}}
+{{- end }}
+
 {{- define "foretoken.clusterName" -}}
 {{- include "foretoken.compactName" (printf "%s-%s-control-plane" .Release.Namespace .Release.Name) -}}
 {{- end }}

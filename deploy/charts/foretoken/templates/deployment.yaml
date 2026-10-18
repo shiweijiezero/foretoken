@@ -136,6 +136,11 @@ spec:
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
             - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
             - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            {{- $responseSecret := include "foretoken.responseStoreURLSecret" . | fromJson }}
+            - {{ printf "--response-store-url-secret-name=%s" $responseSecret.name | quote }}
+            - {{ printf "--response-store-url-secret-key=%s" $responseSecret.key | quote }}
+            - {{ printf "--response-retention-seconds=%d" (int64 .Values.responseStore.retentionSeconds) | quote }}
+            - {{ printf "--response-replay-retention-seconds=%d" (int64 .Values.responseStore.replayRetentionSeconds) | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
             - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}

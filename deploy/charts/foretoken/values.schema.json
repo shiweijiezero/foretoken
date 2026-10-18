@@ -7,6 +7,7 @@
     "imagePullSecrets",
     "controller",
     "admissionStore",
+    "responseStore",
     "workload",
     "modelDistribution",
     "loadBalancer",
@@ -28,6 +29,27 @@
           "type": "string",
           "description": "Credential-free endpoint; authenticated URLs use externalURLSecret."
         },
+        "externalURLSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "responseStore": {
+      "type": "object",
+      "required": ["image", "storageClass", "storageSize", "retentionSeconds", "replayRetentionSeconds", "externalURLSecret"],
+      "properties": {
+        "image": {"type": "string", "minLength": 1},
+        "storageClass": {"type": "string"},
+        "storageSize": {"type": "string", "minLength": 1},
+        "retentionSeconds": {"type": "integer", "minimum": 1},
+        "replayRetentionSeconds": {"type": "integer", "minimum": 1},
         "externalURLSecret": {
           "type": "object",
           "required": ["name", "key"],

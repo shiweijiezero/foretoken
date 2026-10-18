@@ -3,9 +3,11 @@
 
 //! Client API adapters sharing one generation service and response-stream lifecycle.
 
+mod conversations;
 mod messages;
 mod openai;
 mod responses;
+pub use responses::ResponseTasks;
 mod stream;
 
 use std::sync::Arc;
@@ -27,6 +29,8 @@ pub(crate) struct ApiState {
     pub generation: Arc<dyn Generation>,
     pub models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub video_tasks: Option<Arc<VideoTaskClient>>,
+    pub store: Option<Arc<crate::store::ApiStore>>,
+    pub response_tasks: Arc<ResponseTasks>,
 }
 
 impl RequestSnapshot {
@@ -39,8 +43,21 @@ impl RequestSnapshot {
         include_reasoning: bool,
         timing: RequestTiming,
     ) -> Result<GeneratedChat, GenerationError> {
+        self.generate_admitted_chat(model, chat, include_reasoning, timing, None)
+            .await
+    }
+
+    /// Continues a request that already reserved waiting capacity before resolving stored history.
+    async fn generate_admitted_chat(
+        &self,
+        model: String,
+        chat: ChatRequest,
+        include_reasoning: bool,
+        timing: RequestTiming,
+        admission: Option<foretoken_admission::AdmissionPermit>,
+    ) -> Result<GeneratedChat, GenerationError> {
         let request = GenerationRequest {
-            admission: None,
+            admission,
             model,
             request_id: chat.request_id.clone(),
             prompt: Prompt::Text(String::new()),
@@ -85,6 +102,7 @@ impl RequestTiming {
 /// Combines client endpoints without adding another state, middleware, or execution lifecycle.
 pub(crate) fn router() -> Router<ApiState> {
     openai::router()
+        .merge(conversations::router())
         .merge(messages::router())
         .merge(responses::router())
 }
@@ -99,6 +117,12 @@ pub(crate) fn generation_error(path: &str, error: GenerationError) -> axum::resp
     } else {
         openai::openai_error(error)
     }
+}
+
+/// Maps persistence failures through the OpenAI error envelope shared by stored-object APIs.
+pub(crate) fn store_error(error: crate::store::StoreError) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    responses::error::ApiError::from(error).into_response()
 }
 
 /// Creates the request identity used by the backend and the corresponding API response.

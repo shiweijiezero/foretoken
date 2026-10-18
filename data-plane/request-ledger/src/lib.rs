@@ -25,7 +25,7 @@ pub struct ReservationRef {
 }
 
 /// Redis-compatible atomic ledger shared by frontend replicas and execution owners.
-/// Connections are opened on demand so unrestricted services need no request-path store access.
+/// Connections open on demand so untracked requests need no request-path store access.
 pub struct RequestLedger {
     client: redis::Client,
     connection: OnceCell<ConnectionManager>,
@@ -44,7 +44,7 @@ pub enum Outcome {
     BackendUnavailable,
 }
 
-/// Storage and protocol failures prevent new bounded reservations.
+/// Storage, ownership, and execution-evidence failures returned to ledger callers.
 #[derive(Debug, Error)]
 pub enum LedgerError {
     #[error("invalid request capacity store configuration")]
@@ -55,6 +55,12 @@ pub enum LedgerError {
     Unpublished,
     #[error("frontend execution owner is no longer active")]
     OwnerClosed,
+    #[error("completion retention requires an active, unaccepted reservation")]
+    RetentionUnavailable,
+    #[error("request has no retained execution completion record")]
+    CompletionUnavailable,
+    #[error("request execution has not finished")]
+    NotFinished,
     #[error("unexpected request capacity response: {0}")]
     Protocol(String),
 }
@@ -154,26 +160,45 @@ impl RequestLedger {
         Ok(())
     }
 
-    /// Publishes authoritative Pod membership without changing the model's active admission rules.
-    /// Snapshot observation uses this even when candidate serving settings cannot be activated.
+    /// Publishes controller-observed owners for current and retired models in one service.
+    /// Existing ledger keys keep receiving recovery updates after model removal or frontend restart.
     pub async fn publish_membership(
         &self,
         scope: &str,
-        model: &str,
+        models: &[String],
         version: u64,
         frontend_instances: &[String],
         backend_instances: &[String],
     ) -> Result<(), LedgerError> {
-        Self::outcome(
-            self.transition(
-                scope,
-                model,
-                "publish_membership",
-                "",
-                json!({"version": version, "frontends": frontend_instances, "backends": backend_instances}),
-            )
-            .await?,
-        )?;
+        let mut connection = self.connection().await?;
+        let prefix = Self::key(scope, "");
+        let mut keys: std::collections::BTreeSet<String> =
+            models.iter().map(|model| Self::key(scope, model)).collect();
+        let mut cursor = 0_u64;
+        loop {
+            let (next, page): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(format!("{MODEL_KEY_PREFIX}*"))
+                .query_async(&mut connection)
+                .await?;
+            keys.extend(page.into_iter().filter(|key| key.starts_with(&prefix)));
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        let members = json!({"version": version, "frontends": frontend_instances, "backends": backend_instances}).to_string();
+        for key in keys {
+            let result: String = TRANSITION
+                .key(key)
+                .arg("publish_membership")
+                .arg("")
+                .arg(&members)
+                .invoke_async(&mut connection)
+                .await?;
+            Self::outcome(result)?;
+        }
         Ok(())
     }
 
@@ -209,6 +234,30 @@ impl RequestLedger {
             }
         }
         Ok(epoch)
+    }
+
+    /// Reads controller-authoritative frontend membership for recovery independently of request lifetime.
+    /// Missing membership is an error, including when no model snapshot has been published.
+    pub async fn frontend_active(
+        &self,
+        reservation: &ReservationRef,
+        pod: &str,
+    ) -> Result<bool, LedgerError> {
+        let state = self
+            .transition(
+                &reservation.scope,
+                &reservation.model,
+                "frontend_active",
+                "",
+                json!({"frontend": pod}),
+            )
+            .await?;
+        match state.as_str() {
+            "active" => Ok(true),
+            "retired" => Ok(false),
+            "unavailable" => Err(LedgerError::Unpublished),
+            _ => Err(LedgerError::Protocol(state)),
+        }
     }
 
     /// Starts a process ownership epoch, reclaiming only its predecessor's unsubmitted work.
@@ -394,6 +443,75 @@ impl RequestLedger {
         Self::outcome(self.transition(&reservation.scope, &reservation.model, "complete", &reservation.request,
             json!({"slot": reservation.slot, "owner": owner, "final_stage": reservation.final_stage})).await?)?;
         Ok(())
+    }
+
+    /// Retains terminal evidence after durable registration and before input preparation starts.
+    /// Only an active frontend's unaccepted, unfinished batch can enable retention.
+    pub async fn retain_completion(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+        let state = self
+            .transition(
+                &reservation.scope,
+                &reservation.model,
+                "retain_completion",
+                &reservation.request,
+                json!({}),
+            )
+            .await?;
+        match state.as_str() {
+            "ok" => Ok(()),
+            "closed" => Err(LedgerError::RetentionUnavailable),
+            "unavailable" => Err(LedgerError::Unpublished),
+            _ => Err(LedgerError::Protocol(state)),
+        }
+    }
+
+    /// Reports whether every candidate and stage has terminated for a retained reservation.
+    /// Missing evidence is an error, including a record already acknowledged by its consumer.
+    pub async fn finished(&self, reservation: &ReservationRef) -> Result<bool, LedgerError> {
+        let state = self
+            .transition(
+                &reservation.scope,
+                &reservation.model,
+                "finished",
+                &reservation.request,
+                json!({}),
+            )
+            .await?;
+        match state.as_str() {
+            "completed" => Ok(true),
+            "pending" => Ok(false),
+            "unknown" | "untracked" => Err(LedgerError::CompletionUnavailable),
+            _ => Err(LedgerError::Protocol(state)),
+        }
+    }
+
+    /// Waits for retained execution evidence without treating cancellation or stage handoff as completion.
+    /// Storage failures return to the durable-state owner; they never imply termination.
+    pub async fn wait_finished(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+        while !self.finished(reservation).await? {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Ok(())
+    }
+
+    /// Deletes retained terminal evidence after its consumer durably commits the request's final state.
+    /// Repeated acknowledgements succeed; pending or untracked reservations are not removed.
+    pub async fn acknowledge(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+        let state = self
+            .transition(
+                &reservation.scope,
+                &reservation.model,
+                "acknowledge",
+                &reservation.request,
+                json!({}),
+            )
+            .await?;
+        match state.as_str() {
+            "ok" => Ok(()),
+            "pending" => Err(LedgerError::NotFinished),
+            "untracked" => Err(LedgerError::CompletionUnavailable),
+            _ => Err(LedgerError::Protocol(state)),
+        }
     }
 
     /// Lets the execution owner observe cancellation independently of an HTTP response consumer.

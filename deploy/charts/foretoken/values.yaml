@@ -28,6 +28,18 @@ admissionStore:
     name: ""
     key: url
 
+# Shared PostgreSQL storage for responses, conversations, and archived chat completions.
+responseStore:
+  image: docker.io/library/postgres:17-bookworm
+  storageClass: "" # Uses the cluster's default StorageClass.
+  storageSize: 10Gi
+  retentionSeconds: 2592000
+  replayRetentionSeconds: 600
+  # Set a namespace-local URL Secret in each serving namespace to use an external database.
+  externalURLSecret:
+    name: ""
+    key: url
+
 # Allows source installations to select newly published application files.
 development:
   enabled: false

@@ -11,7 +11,7 @@ The frontend provides text and video generation APIs for deployed models.
 
 ## Generate text
 
-Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root:
+Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root. If your gateway uses API keys, set `API_KEY` to the key it issued and add `-H "Authorization: Bearer $API_KEY"` to every request below.
 
 ```bash
 DEPLOYMENT=examples/quickstart/qwen3-0.6b
@@ -22,7 +22,7 @@ REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512,"store":false}'
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512}'
 
 # Anthropic Messages
 curl --fail-with-body "$FRONTEND_URL/v1/messages" \
@@ -36,14 +36,14 @@ Add `"stream": true` and `curl --no-buffer` to receive output as it is generated
 | API | Path | Request input |
 | --- | --- | --- |
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `model`, `messages` |
-| OpenAI Responses | `POST /v1/responses` | `model`, `input`; set `store: false` and send the conversation history on each turn |
+| OpenAI Responses | `POST /v1/responses` | `model`, `input` |
 | Anthropic Messages | `POST /v1/messages` | `model`, `messages`, and a required `max_tokens` budget |
 | Anthropic token counting | `POST /v1/messages/count_tokens` | The same model, messages, system prompt, and tools used for generation |
 | Text completions | `POST /v1/completions` | `model`, `prompt` |
 
 `GET /v1/models` lists configured model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs. Image-capable text models accept base64 image `data:` URLs.
 
-Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools, but not server-hosted tools or background execution. Forced tool choice and strict tool schemas require structured-output support in the model.
+Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools, but not server-hosted tools. Forced tool choice and strict tool schemas require structured-output support in the model.
 
 Some tool parsers use a structural-tag grammar to constrain forced or strict tool calls. If the model's parser and grammar backend support it, add `structuralTag` to the ModelService's existing structured-output formats:
 
@@ -55,7 +55,109 @@ spec:
 
 For configurations with `spec.modelPools`, declare this capability in each applicable pool's `features.structuredOutputs` instead of the top-level `features`.
 
-Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls.
+Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens`; Responses reports `status: "incomplete"` with `incomplete_details.reason: "max_output_tokens"`. Responses JSON, terminal SSE events, and stored retrieval have the same final status, output items, and usage. Execute only complete tool calls.
+
+### Continue a conversation
+
+Platform installation prepares PostgreSQL storage for these APIs. Responses defaults to `store: true`. To continue the first request above without resending its history, replace `resp_...` with the returned `id`:
+
+```bash
+RESPONSE_ID=resp_...
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"previous_response_id\":\"$RESPONSE_ID\",\"input\":\"What did I just say?\",\"max_output_tokens\":512}"
+```
+
+Resend any `instructions` or `tools` needed for the new turn. To reuse an individual stored item instead, pass `[{"type":"item_reference","id":"..."}]` as `input`; use an item ID from `output[].id` or the input listing's `data[].id`.
+
+| Action | Endpoint |
+| --- | --- |
+| Retrieve status and output | `GET /v1/responses/{id}` |
+| List the expanded input history | `GET /v1/responses/{id}/input_items` |
+| Delete a saved response | `DELETE /v1/responses/{id}` |
+
+To keep multiple turns in one conversation, create it once:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/conversations" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Replace `conv_...` with this response's `id`, then use `conversation` instead of `previous_response_id`:
+
+```bash
+CONVERSATION_ID=conv_...
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"conversation\":\"$CONVERSATION_ID\",\"input\":\"Hello\",\"max_output_tokens\":512,\"store\":false}"
+```
+
+Each turn loads the conversation history and appends its new input and output. Here `store: false` opts out of saving the Response object, not the conversation history. Wait for the active response to finish before starting another turn or changing items. For fully client-managed history, use `store: false` without `conversation` or `previous_response_id`, and include the required prior input and output items in each request.
+
+| Action | Endpoint |
+| --- | --- |
+| Retrieve a conversation or replace metadata with `{"metadata":{...}}` | `GET` or `POST /v1/conversations/{id}` |
+| Delete the container while retaining its items | `DELETE /v1/conversations/{id}` |
+| List items or append `{"items":[...]}` | `GET` or `POST /v1/conversations/{id}/items` |
+| Retrieve an item or remove it from the conversation | `GET` or `DELETE /v1/conversations/{id}/items/{item_id}` |
+
+Item listings support `limit`, `order`, and `after` or `before` item-ID cursors.
+
+### Run Responses in the background
+
+Set `background: true` to return a response ID while generation continues independently of the HTTP connection:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"Explain how a rainbow forms.","max_output_tokens":512,"background":true}'
+```
+
+Set `RESPONSE_ID` to this request's returned `id` and poll:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID" \
+  -H "Host: $REQUEST_HOST"
+```
+
+Keep polling while `status` is `queued` or `in_progress`. Terminal states are `completed`, `incomplete`, `failed`, and `cancelled`. To request cancellation, send `POST /v1/responses/{id}/cancel`, then poll until execution ends. Deleting a response does not cancel it. Background work still uses the service's admission rules and request timeout.
+
+For resumable SSE, create the request with both `background: true` and `stream: true`, using `curl --no-buffer`. Set `RESPONSE_ID` from `response.id` in the `response.created` event and replace `42` below with the last event `sequence_number` your client processed:
+
+```bash
+SEQUENCE_NUMBER=42
+curl --fail-with-body --no-buffer \
+  "$FRONTEND_URL/v1/responses/$RESPONSE_ID?stream=true&starting_after=$SEQUENCE_NUMBER" \
+  -H "Host: $REQUEST_HOST"
+```
+
+This delivers events after that sequence and follows any remaining generation; it does not rerun the request. Stream recovery requires both flags on the original request and is limited to the [event retention window](#operations).
+
+### Save Chat Completions
+
+Chat Completions defaults to `store: false`. Set `store: true` to archive the final completion and its original input messages, for either JSON or streaming requests:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"max_tokens":512,"store":true}'
+```
+
+Use the returned completion `id` for `{id}` below:
+
+| Action | Endpoint |
+| --- | --- |
+| List archives; optionally filter by `model` or `metadata[key]` | `GET /v1/chat/completions` |
+| Retrieve the final completion | `GET /v1/chat/completions/{id}` |
+| List original input messages | `GET /v1/chat/completions/{id}/messages` |
+| Replace metadata with a `{"metadata":{...}}` body | `POST /v1/chat/completions/{id}` |
+| Delete an archive | `DELETE /v1/chat/completions/{id}` |
 
 ## Generate video
 
@@ -204,5 +306,11 @@ Use `foretoken status` to inspect a deployment and `foretoken delete` to remove 
 | `/metrics` | Prometheus metrics |
 
 The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
+
+Stored Responses and Chat archives are retained for 30 days after execution ends by default. Background responses with `store: false` and replay events remain available for ten minutes after a terminal state. Conversations and their items are not subject to these expiry periods.
+
+If the frontend process executing a response stops, that response fails rather than moving to another process or being rerun. Previously saved results and history remain available for retrieval and continuation.
+
+To change retention or use external PostgreSQL, configure `responseStore` in the platform's [Helm values](../../deploy/charts/foretoken/values.yaml). `externalURLSecret` references a database-URL Secret that must exist in each serving namespace.
 
 For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.

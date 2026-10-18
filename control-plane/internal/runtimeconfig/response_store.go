@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Projects the frontend PostgreSQL connection and retention without resolving credentials.
+
+package runtimeconfig
+
+import (
+	"errors"
+	"strconv"
+
+	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+)
+
+const (
+	ResponseStoreURLEnv               = "FORETOKEN_RESPONSE_STORE_URL"
+	ResponseStoreNamespaceEnv         = "FORETOKEN_RESPONSE_STORE_NAMESPACE"
+	ResponseRetentionSecondsEnv       = "FORETOKEN_RESPONSE_RETENTION_SECONDS"
+	ResponseReplayRetentionSecondsEnv = "FORETOKEN_RESPONSE_REPLAY_RETENTION_SECONDS"
+)
+
+// ValidateResponseStore checks platform-owned connection and retention settings at selection.
+func ValidateResponseStore(configuration *inferencev1alpha1.ResponseStoreConfig) error {
+	if configuration == nil {
+		return errors.New("response store requires a namespace-local URL Secret reference")
+	}
+	secret := configuration.URLSecretRef
+	if secret.Name == "" || secret.Key == "" || secret.Optional != nil && *secret.Optional {
+		return errors.New("response store URL Secret requires a name, key, and non-optional reference")
+	}
+	if configuration.RetentionSeconds <= 0 || configuration.ReplayRetentionSeconds <= 0 {
+		return errors.New("response and replay retention must be positive seconds")
+	}
+	return nil
+}
+
+// ResponseStoreEnv gives frontend replicas one stable service partition; kubelet reads the URL Secret.
+func ResponseStoreEnv(configuration *inferencev1alpha1.ResponseStoreConfig, service string) []corev1.EnvVar {
+	if configuration == nil {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: ResponseStoreURLEnv, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: configuration.URLSecretRef.DeepCopy()}},
+		{Name: ResponseStoreNamespaceEnv, Value: service},
+		{Name: ResponseRetentionSecondsEnv, Value: strconv.FormatInt(configuration.RetentionSeconds, 10)},
+		{Name: ResponseReplayRetentionSecondsEnv, Value: strconv.FormatInt(configuration.ReplayRetentionSeconds, 10)},
+	}
+}
+
+// ResponseStoreFromEnv recovers an observed application's selection without reading its Secret.
+func ResponseStoreFromEnv(environment []corev1.EnvVar) (*inferencev1alpha1.ResponseStoreConfig, error) {
+	var configuration *inferencev1alpha1.ResponseStoreConfig
+	for _, env := range environment {
+		if env.Name != ResponseStoreURLEnv {
+			continue
+		}
+		if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+			return nil, errors.New("response store URL requires a namespace-local Secret reference")
+		}
+		configuration = &inferencev1alpha1.ResponseStoreConfig{URLSecretRef: *env.ValueFrom.SecretKeyRef.DeepCopy()}
+	}
+	if configuration == nil {
+		return nil, nil
+	}
+	for _, env := range environment {
+		var destination *int64
+		switch env.Name {
+		case ResponseRetentionSecondsEnv:
+			destination = &configuration.RetentionSeconds
+		case ResponseReplayRetentionSecondsEnv:
+			destination = &configuration.ReplayRetentionSeconds
+		default:
+			continue
+		}
+		value, err := strconv.ParseInt(env.Value, 10, 64)
+		if err != nil {
+			return nil, errors.New("response and replay retention must be positive seconds")
+		}
+		*destination = value
+	}
+	if err := ValidateResponseStore(configuration); err != nil {
+		return nil, err
+	}
+	return configuration, nil
+}

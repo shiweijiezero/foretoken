@@ -96,6 +96,10 @@ func main() {
 	var cacheMountPath string
 	var admissionStoreURLSecretName string
 	var admissionStoreURLSecretKey string
+	var responseStoreURLSecretName string
+	var responseStoreURLSecretKey string
+	var responseRetentionSeconds int64
+	var responseReplayRetentionSeconds int64
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
@@ -135,6 +139,10 @@ func main() {
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
 	flag.StringVar(&admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
+	flag.StringVar(&responseStoreURLSecretName, "response-store-url-secret-name", "", "Namespace-local Secret containing the frontend PostgreSQL URL.")
+	flag.StringVar(&responseStoreURLSecretKey, "response-store-url-secret-key", "", "Key in the frontend PostgreSQL URL Secret.")
+	flag.Int64Var(&responseRetentionSeconds, "response-retention-seconds", 0, "Platform retention for stored responses and chat completions in seconds.")
+	flag.Int64Var(&responseReplayRetentionSeconds, "response-replay-retention-seconds", 0, "Platform retention for response stream replay in seconds.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
@@ -188,6 +196,21 @@ func main() {
 	if err := runtimeconfig.ValidateAdmissionStore(admissionStore); err != nil {
 		ctrl.Log.Error(err, "invalid admission store configuration")
 		os.Exit(1)
+	}
+	var responseStore *inferencev1alpha1.ResponseStoreConfig
+	if frontendEnabled {
+		responseStore = &inferencev1alpha1.ResponseStoreConfig{
+			URLSecretRef: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: responseStoreURLSecretName},
+				Key:                  responseStoreURLSecretKey,
+			},
+			RetentionSeconds:       responseRetentionSeconds,
+			ReplayRetentionSeconds: responseReplayRetentionSeconds,
+		}
+		if err := runtimeconfig.ValidateResponseStore(responseStore); err != nil {
+			ctrl.Log.Error(err, "invalid response store configuration")
+			os.Exit(1)
+		}
 	}
 	var applicationFiles runtimeconfig.ApplicationFiles
 	if err := json.Unmarshal([]byte(applicationFilesJSON), &applicationFiles); err != nil {
@@ -392,6 +415,7 @@ func main() {
 				ImagePullSecrets:  workloadImagePullSecrets,
 				HuggingFaceAccess: huggingFaceAccessProfile.Access(),
 				AdmissionStore:    admissionStore,
+				ResponseStore:     responseStore,
 				Gateway:           gateway,
 			},
 		}

@@ -35,6 +35,29 @@ pub enum ResponsesInput {
     Items(Vec<Value>),
 }
 
+impl Default for ResponsesInput {
+    fn default() -> Self {
+        Self::Items(Vec::new())
+    }
+}
+
+/// A conversation reference accepted in either OpenAI request form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConversationReference {
+    Id(String),
+    Object { id: String },
+}
+
+impl ConversationReference {
+    /// Returns the referenced resource without changing its public identity.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Id(id) | Self::Object { id } => id,
+        }
+    }
+}
+
 /// Responses API reasoning configuration.
 ///
 /// The automatic summary setting exposes model reasoning without running a second model.
@@ -103,6 +126,7 @@ pub struct ResponsesRequest {
     #[serde(default)]
     pub model: Option<String>,
     /// Request input: a string or an ordered item list.
+    #[serde(default)]
     pub input: ResponsesInput,
     /// Unsupported semantic fields are rejected instead of silently discarded.
     #[serde(flatten)]
@@ -128,6 +152,8 @@ pub struct ResponsesRequest {
     pub metadata: Option<Value>,
     #[serde(default)]
     pub previous_response_id: Option<String>,
+    #[serde(default)]
+    pub conversation: Option<ConversationReference>,
     #[serde(default)]
     pub prompt: Option<Value>,
     #[serde(default)]
@@ -212,8 +238,8 @@ fn default_true() -> bool {
 /// Variants cover the supported Responses API history surface: messages,
 /// function calls, function call outputs, and reasoning items. Custom-text
 /// tool calls and outputs are normalized to function items before parsing.
-/// Item types requiring server-side state or unsupported modalities
-/// (`item_reference`, `mcp_call`, file inputs, ...) are rejected explicitly.
+/// Stored item references are expanded before conversion. Server-hosted tools
+/// and unsupported modalities remain outside this input representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum ResponseInputItem {
@@ -474,6 +500,8 @@ pub struct ResponsesResponse {
     pub parallel_tool_calls: bool,
     #[serde(default)]
     pub previous_response_id: Option<String>,
+    #[serde(default)]
+    pub conversation: Option<ConversationReference>,
     #[serde(default)]
     pub prompt: Option<Value>,
     #[serde(default)]

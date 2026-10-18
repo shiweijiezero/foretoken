@@ -81,6 +81,7 @@ type FrontendRuntimeProfile struct {
 	VideoStorageIdentity *inferencev1alpha1.StorageIdentity
 	HuggingFaceAccess    *inferencev1alpha1.HuggingFaceAccess
 	AdmissionStore       *inferencev1alpha1.AdmissionStoreConnection
+	ResponseStore        *inferencev1alpha1.ResponseStoreConfig
 	Gateway              *GatewayParent
 }
 
@@ -395,11 +396,18 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 			}
 			// Adopting observed state must not consume an explicit request for a new application.
 			if deploymentRevision == "" {
-				selection = &inferencev1alpha1.ApplicationSelection{
-					Image:              current.Spec.Template.Spec.Containers[0].Image,
-					ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
-					SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
-					DeploymentRevision: deploymentRevision,
+				responseStore, err := runtimeconfig.ResponseStoreFromEnv(current.Spec.Template.Spec.Containers[0].Env)
+				if err != nil {
+					return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+				}
+				selection = &inferencev1alpha1.FrontendApplicationSelection{
+					ApplicationSelection: inferencev1alpha1.ApplicationSelection{
+						Image:              current.Spec.Template.Spec.Containers[0].Image,
+						ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
+						SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
+						DeploymentRevision: deploymentRevision,
+					},
+					ResponseStore: responseStore,
 				}
 				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
 					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
@@ -429,7 +437,13 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
+		selection = &inferencev1alpha1.FrontendApplicationSelection{
+			ApplicationSelection: inferencev1alpha1.ApplicationSelection{
+				Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision,
+				DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy(),
+			},
+			ResponseStore: profile.ResponseStore.DeepCopy(),
+		}
 		if sourceRevision != "" {
 			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
 			if err != nil {
@@ -467,6 +481,7 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
 	profile.AdmissionStore = selection.AdmissionStore.DeepCopy()
+	profile.ResponseStore = selection.ResponseStore.DeepCopy()
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}

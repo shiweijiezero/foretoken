@@ -357,10 +357,14 @@ class Helm(HelmClient):
                 )
         source_mode = values["development"]["enabled"]
         configuration = self.platform_configuration(kubectl)
+        if "responseStoreSecret" not in configuration["data"]:
+            raise DeploymentError(
+                "update the installed Foretoken platform with foretoken install before deployment"
+            )
         with ExitStack() as charts:
             prepared = charts.enter_context(self._deployment_chart(source_root))
-            # The platform owns registry credentials; this release owns the copies
-            # needed by its controller.
+            # The platform owns managed credentials; this release owns the copies
+            # needed by its controller and frontend.
             installed = json.loads(configuration["data"]["deploymentValues"])
             credentials = []
             pull_secrets = []
@@ -373,6 +377,15 @@ class Helm(HelmClient):
                     "type": secret["type"], "data": secret["data"],
                 })
                 pull_secrets.append({"name": name})
+            # A previously managed database still serves applications that retained
+            # its connection after platform defaults switched to an external store.
+            if name := configuration["data"]["responseStoreSecret"]:
+                secret = kubectl.get("secret", name, configuration["metadata"]["namespace"])
+                credentials.append({
+                    "apiVersion": "v1", "kind": "Secret",
+                    "metadata": {"name": name, "namespace": release.namespace},
+                    "type": "Opaque", "data": {"url": secret["data"]["url"]},
+                })
             values = {**values, "imagePullSecrets": pull_secrets}
             labels = (
                 ("foretoken.io/scope", "deployment"),
@@ -885,6 +898,14 @@ class Helm(HelmClient):
                     == "foretoken-admission-store"
                 ):
                     images["admissionStore.image"] = container["image"]
+                if (
+                    container["name"] == "postgres"
+                    and document["metadata"]
+                    .get("labels", {})
+                    .get("app.kubernetes.io/name")
+                    == "foretoken-response-store"
+                ):
+                    images["responseStore.image"] = container["image"]
                 if container["name"] == "rdma-device-plugin":
                     images["rdma.image"] = container["image"]
                 if container["name"] == "manager":

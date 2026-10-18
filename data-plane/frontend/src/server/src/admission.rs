@@ -21,6 +21,7 @@ pub(crate) fn generation(request: &GenerationRequest) -> AdmissionRequest {
         model: request.model.clone(),
         caller: CallerIdentity::current(),
         units: 1,
+        track_execution: false,
         received_at: request.started_at,
     }
 }
@@ -31,6 +32,7 @@ pub(crate) fn preprocessing(model: &str, origin: AdmissionOrigin) -> AdmissionRe
         model: model.to_owned(),
         caller: CallerIdentity::current(),
         units: 1,
+        track_execution: false,
         received_at: origin.received_at,
     }
 }

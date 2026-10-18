@@ -20,11 +20,16 @@ end
 
 local function save(request_id, request)
     local field = 'r:' .. request_id
-    if request.remaining == 0 and (not request.cancelled or request.retired) then
-        redis.call('HDEL', key, field)
-    else
-        redis.call('HSET', key, field, cjson.encode(request))
+    if request.remaining == 0 then
+        if request.retain_completion then
+            -- Completion evidence owns no capacity or frontend/backend identity.
+            request = {retain_completion = true, remaining = 0}
+        elseif not request.cancelled or request.retired then
+            redis.call('HDEL', key, field)
+            return
+        end
     end
+    redis.call('HSET', key, field, cjson.encode(request))
 end
 
 local function finish_slot(request, slot)
@@ -52,7 +57,7 @@ local function retire_frontends(keep)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then
             local request = cjson.decode(redis.call('HGET', key, field))
-            if not keep(request) then
+            if request.slots and not keep(request) then
                 request.retired = true
                 for _, slot in ipairs(request.slots) do cancel_slot(request, slot) end
                 save(field:sub(3), request)
@@ -65,15 +70,17 @@ local function finish_backend_slots(terminated)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then
             local request = cjson.decode(redis.call('HGET', key, field))
-            local changed = false
-            for _, slot in ipairs(request.slots) do
-                if (slot.state == 'accepted' or slot.state == 'cancelling')
-                    and slot.backend_pod and terminated(slot) then
-                    finish_slot(request, slot)
-                    changed = true
+            if request.remaining > 0 then
+                local changed = false
+                for _, slot in ipairs(request.slots) do
+                    if (slot.state == 'accepted' or slot.state == 'cancelling')
+                        and slot.backend_pod and terminated(slot) then
+                        finish_slot(request, slot)
+                        changed = true
+                    end
                 end
+                if changed then save(field:sub(3), request) end
             end
-            if changed then save(field:sub(3), request) end
         end
     end
 end
@@ -116,6 +123,36 @@ if action == 'publish' or action == 'publish_membership' then
     return 'ok'
 end
 
+-- Recovery observes the latest controller membership, not a frontend's local snapshot.
+if action == 'frontend_active' then
+    local encoded_frontends = redis.call('HGET', key, 'frontends')
+    if not encoded_frontends then return 'unavailable' end
+    return cjson.decode(encoded_frontends)[input.frontend] and 'active' or 'retired'
+end
+
+local record = redis.call('HGET', key, 'r:' .. id)
+local request = record and cjson.decode(record) or nil
+
+-- Durable consumers read or acknowledge execution evidence independently of active settings.
+-- A missing record cannot prove termination; only an explicit acknowledgement is idempotent.
+if action == 'finished' or action == 'acknowledge' then
+    if not request then return action == 'acknowledge' and 'ok' or 'unknown' end
+    if not request.retain_completion then return 'untracked' end
+    if request.remaining ~= 0 then return 'pending' end
+    if action == 'acknowledge' then
+        redis.call('HDEL', key, 'r:' .. id)
+        return 'ok'
+    end
+    return 'completed'
+end
+
+if request and request.retain_completion and request.remaining == 0 then
+    if action == 'status' then return 'completed' end
+    if action == 'drop' or action == 'complete' or action == 'reject_before_submission'
+        or action == 'cancel_entry' then return 'ok' end
+    return 'closed'
+end
+
 local encoded = redis.call('HGET', key, 'config')
 if not encoded then return 'unavailable' end
 local config = cjson.decode(encoded)
@@ -153,8 +190,6 @@ local function rule_for(role, caller)
     return nil
 end
 
-local record = redis.call('HGET', key, 'r:' .. id)
-local request = record and cjson.decode(record) or nil
 if config.closed and (action == 'enqueue' or action == 'dispatch') then return 'closed' end
 
 if action == 'enqueue' then
@@ -200,6 +235,17 @@ end
 if not request then
     if action == 'drop' or action == 'complete' then return 'ok' end
     return 'closed'
+end
+
+-- Durable consumers retain evidence before the original frontend starts preparation or submission.
+if action == 'retain_completion' then
+    if request.cancelled or request.retired or request.accepted or request.remaining == 0
+        or not frontends[request.frontend] or count('o:' .. request.frontend) ~= request.epoch then
+        return 'closed'
+    end
+    request.retain_completion = true
+    save(id, request)
+    return 'ok'
 end
 
 if action == 'dispatch' then

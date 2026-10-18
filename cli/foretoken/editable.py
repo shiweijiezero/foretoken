@@ -259,7 +259,7 @@ class EditableDeployment:
             elif name.startswith("data-plane/model-server/python/"):
                 components.setdefault("model-server", set()).add("python")
             elif name.startswith("data-plane/") and (
-                name.endswith(".rs") or Path(name).name in {"Cargo.toml", "Cargo.lock"}
+                name.endswith((".rs", ".sql", ".lua")) or Path(name).name in {"Cargo.toml", "Cargo.lock"}
             ):
                 targets = (
                     {"frontend"}

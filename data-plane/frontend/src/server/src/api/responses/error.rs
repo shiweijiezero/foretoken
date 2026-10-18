@@ -52,6 +52,26 @@ impl ApiError {
     }
 }
 
+impl From<crate::store::StoreError> for ApiError {
+    fn from(error: crate::store::StoreError) -> Self {
+        use crate::store::StoreError;
+        let (status, kind) = match &error {
+            StoreError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            StoreError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_request_error"),
+            StoreError::ConversationBusy | StoreError::ResponseBusy => {
+                (StatusCode::CONFLICT, "state_conflict")
+            }
+            StoreError::StreamExpired => (StatusCode::GONE, "stream_expired"),
+            StoreError::Corrupt => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            _ => (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"),
+        };
+        Self {
+            status,
+            body: json!({"message":error.to_string(),"type":kind,"code":kind,"param":null}),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.status, Json(json!({"error": self.body}))).into_response()
