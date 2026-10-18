@@ -29,7 +29,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 
 ### 候选答案似然与困惑度
 
-PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
+PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/deployment/source_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
 
 ```bash
 foretoken eval examples/quickstart/qwen3-0.6b \

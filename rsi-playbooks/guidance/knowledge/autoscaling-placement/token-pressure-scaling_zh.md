@@ -39,7 +39,7 @@ Token 与 KV 信号能识别请求率不变时的长度变化，以及 rank 局�
 ## 参考
 
 - [Foretoken token-load 算法](../../../../control-plane/internal/autoscaling/algorithm/decision/token_load.go)
-- [Foretoken 指南](../../../../docs/autoscaling_zh.md)
+- [自动扩缩容实现](../../../../control-plane/internal/autoscaling/README_zh.md)
 - [llm-d 在途 producer](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/requestcontrol/dataproducer/inflightload/producer.go)
 - [llm-d P/D prefill trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/prefill-scaledobject.yaml)
 - [llm-d decode trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/decode-scaledobject.yaml)

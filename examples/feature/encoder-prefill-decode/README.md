@@ -88,7 +88,7 @@ PY
 
 ## Adjust capacity
 
-Each stage has one Pool; its `replicas`, resource requests and `engineArgs` can be adjusted independently. A Pool-level `engineArgs` replaces the service-level dictionary; the YAML anchor preserves shared settings in the example. Match GPU requests to the chosen parallelism as described in [Inference parameters](../../../docs/inference-parameters.md).
+Each stage has one Pool; its `replicas`, resource requests and `engineArgs` can be adjusted independently. A Pool-level `engineArgs` replaces the service-level dictionary; the YAML anchor preserves shared settings in the example. Match GPU requests to the chosen parallelism as described in [Inference parameters](../../../docs/features/inference-parameters.md).
 
 Reapply the directory with `foretoken deploy` after editing it. Use `foretoken status examples/feature/encoder-prefill-decode` to inspect readiness. Encoder output travels through the shared volume, while Prefill transfers KV cache to Decode over the platform-selected Mooncake transport; clients do not supply transfer addresses or intermediate results.
 

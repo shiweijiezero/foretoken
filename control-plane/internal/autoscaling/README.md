@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-This package turns controller-owned observations into `ModelPool` capacity. Users configure autoscaling through `ModelService.spec.autoscaling`; configuration and status usage are documented in the [autoscaling guide](../../../../docs/autoscaling.md).
+This package turns controller-owned observations into `ModelPool` capacity. Users configure autoscaling through `ModelService.spec.autoscaling`. The [multi-model example](../../../examples/quickstart/multi-model/README.md#observe-queue-autoscaling) demonstrates queue-based scaling and status inspection.
 
 ## Ownership
 

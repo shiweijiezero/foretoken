@@ -3,9 +3,9 @@
 
 # 源码部署生命周期
 
-[English](source-image-lifecycle.md) | 简体中文
+[English](source-deployment.md) | 简体中文
 
-本文说明维护源码部署功能时应保持的行为。安装、部署和并行实验的命令见[从源码部署 Foretoken](../custom-deployment_zh.md)。
+本文说明维护源码部署功能时应保持的行为。安装、部署和并行实验的命令见[从源码部署 Foretoken](../deployment/source_zh.md)。
 
 ## 安装与更新
 

@@ -130,7 +130,7 @@ spec:
 
 按[修改服务配置](#修改服务配置)应用 YAML。响应开始前，队列已满或准入等待超时返回 503，请求总超时返回 504，批次超过容量返回 400。启用限额时，已在等待的请求可能被拒绝。
 
-限制单个模型实例已接收的工作，见[实例并发上限](../../docs/inference-parameters_zh.md#实例并发上限)；查看等待和派发指标，见[可观测性](../../observability/README_zh.md)。
+限制单个模型实例已接收的工作，见[实例并发上限](../../docs/features/inference-parameters_zh.md#实例并发上限)；查看等待和派发指标，见[可观测性](../../observability/README_zh.md)。
 
 ### 调用方限额与优先级
 
@@ -155,7 +155,7 @@ spec:
 
 可派发请求中，`priority` 越大越先派发；同优先级在各前端内按调用方轮转，保持调用方内部的请求顺序。并发已满的调用方不阻塞其他调用方。如需同时启用 vLLM 队列的优先级调度，在模型的 `engineArgs` 中设置 `scheduling-policy: priority`。
 
-角色规则需要接入认证网关，缺少已认证身份或角色不匹配的请求会被拒绝。网关接入方式见[准入生命周期](../../docs/development/admission-rules_zh.md#网关接入)，缓存共享方式见[前缀缓存隔离](../../docs/inference-parameters_zh.md#前缀缓存隔离)。
+角色规则需要认证网关校验身份，并覆盖 `x-role` 和 `x-caller-id` 后转发。调用方标识使用稳定、非秘密值，前端只允许该网关访问。缺少已认证身份或角色不匹配的请求会被拒绝。缓存共享方式见[前缀缓存隔离](../../docs/features/inference-parameters_zh.md#前缀缓存隔离)。
 
 ### 为单个模型覆盖配置
 

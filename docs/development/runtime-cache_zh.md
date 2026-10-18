@@ -5,7 +5,7 @@
 
 [English](runtime-cache.md) | 简体中文
 
-部署配置见[模型存储](../model-storage_zh.md)。
+部署配置见[模型存储](../features/model-storage_zh.md)。
 
 ## 存储职责
 

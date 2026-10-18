@@ -99,12 +99,12 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
-- **Rust data plane:** run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
-- **Go control plane:** run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
-- **Python CLI:** keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
-- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
-- **Helm and Kubernetes YAML:** run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
-- **Repository-wide files:** run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
+- Rust data plane: run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
+- Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
+- Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
+- Python benchmarks: follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
+- Helm and Kubernetes YAML: run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
+- Repository-wide files: run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
 
 Generated files must identify or have a documented source. Change the source and regenerate the artifact; do not maintain generated output as a second implementation.
 
@@ -117,6 +117,8 @@ This guide only establishes the code-style boundary: tests and CI must have a cu
 ## Documentation
 
 Write documentation for the person who will use or maintain the final system, not for the current PR discussion or the author's implementation process. Start from the task readers need to complete, then decide which background, commands, choices, and results belong on the page.
+
+Organize information with headings, paragraphs, lists, and tables. Do not use bold emphasis.
 
 Before adding or substantially rewriting user documentation:
 

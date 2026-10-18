@@ -99,12 +99,12 @@ YAML 应便于阅读和修改：
 
 遵循相邻代码的既有惯例，以及各子目录配置的可执行检查。
 
-- **Rust 数据面：**运行 `make verify-data-plane`，检查 Foretoken 自有工作区包的格式、编译、测试和 Clippy。
-- **Go 控制面：**运行 `make -C control-plane verify`。生成代码和 CRD 通过 Makefile 目标重新生成，不单独手工修改。
-- **Python CLI：**公共参数定义和解析应与命令执行分离，跨越该边界时返回明确的命令类型，不传递 `argparse.Namespace`；应在 Kubernetes 环境中实际执行受影响的已安装命令。
-- **Python 基准测试：**遵循 `benchmarks/` 中现有的包结构和类型标注风格，运行相关测试，并实际执行受影响的评测命令或运行流程。
-- **Helm 与 Kubernetes YAML：**运行 Helm lint，并渲染受影响的模板。把生成资源、values schema、选择器、端口、命名空间和网络访问作为一条部署契约验证。
-- **全仓库文件：**运行 `pre-commit run --all-files`，检查文件规范、结构化格式、合并冲突、密钥和 GitHub Actions。
+- Rust 数据面：运行 `make verify-data-plane`，检查 Foretoken 自有工作区包的格式、编译、测试和 Clippy。
+- Go 控制面：运行 `make -C control-plane verify`。生成代码和 CRD 通过 Makefile 目标重新生成，不单独手工修改。
+- Python CLI：公共参数定义和解析应与命令执行分离，跨越该边界时返回明确的命令类型，不传递 `argparse.Namespace`；应在 Kubernetes 环境中实际执行受影响的已安装命令。
+- Python 基准测试：遵循 `benchmarks/` 中现有的包结构和类型标注风格，运行相关测试，并实际执行受影响的评测命令或运行流程。
+- Helm 与 Kubernetes YAML：运行 Helm lint，并渲染受影响的模板。把生成资源、values schema、选择器、端口、命名空间和网络访问作为一条部署契约验证。
+- 全仓库文件：运行 `pre-commit run --all-files`，检查文件规范、结构化格式、合并冲突、密钥和 GitHub Actions。
 
 生成文件必须能找到明确的来源。修改来源文件后重新生成制品，不要将生成结果作为另一份实现单独维护。
 
@@ -117,6 +117,8 @@ YAML 应便于阅读和修改：
 ## 文档
 
 文档面向实际使用或维护最终系统的人，不面向当前 PR 讨论，也不记录作者的实现过程。先确定读者要完成的任务，再决定本页需要哪些背景、命令、选择和结果。
+
+用标题、段落、列表和表格组织信息，不使用加粗。
 
 新增或大幅重写用户文档前：
 

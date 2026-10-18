@@ -42,6 +42,5 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 `rust/engine-request-completion.patch` 提供在传输提交前订阅的 `RequestCompletion`。只有引擎返回的终止输出或已完成请求通知能确认执行结束。该信号独立于输出消费者，丢弃流、收到 abort 应答或客户端本地产生 abort 输出都不能完成它。传输关闭会让观测以错误结束，不能当作成功终止。
 
 `common/engine-abort-completion.patch` 让 Python EngineCore 在各传输路径上发布调度器已确认终止的请求 ID，包括即时取消。上游请求注册、调度终止或输出传递发生变化时，须同步核对这两个补丁。
-完成信号表示请求调度结束，不表示 GPU 同步或连接器释放 KV。模型服务的容量回收与阶段交接见[准入生命周期](../../../docs/development/admission-rules_zh.md)。
-
+完成信号表示请求调度结束，不表示 GPU 同步或连接器释放 KV。
 修改该契约后，在受影响的传输路径上执行正常完成、取消和丢弃输出消费者的流程，同时检查独立完成信号和返回的输出。

@@ -14,7 +14,7 @@ The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At f
 
 ## Deploy
 
-Install the [platform from source](../../../docs/custom-deployment.md) and prepare the [model storage](../../../docs/model-storage.md). Run from the repository root:
+Install the [platform from source](../../../docs/deployment/source.md) and prepare the [model storage](../../../docs/features/model-storage.md). Run from the repository root:
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
@@ -23,7 +23,7 @@ export FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 
 ## Observe queue autoscaling
 
-The Qwen service evaluates queue demand every five seconds. It starts with one replica, changes by at most one replica per evaluation, and delays scale down for five minutes. See the [autoscaling guide](../../../docs/autoscaling.md) for the configuration and status contract.
+The Qwen service evaluates queue demand every five seconds. It starts with one replica, changes by at most one replica per evaluation, and delays scale down for five minutes. The settings used by this example are in the [Qwen model configuration](model-qwen3-0.6b.yaml).
 
 Open a separate terminal to watch the Qwen capacity resources:
 

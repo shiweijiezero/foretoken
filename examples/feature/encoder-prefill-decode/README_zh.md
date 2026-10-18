@@ -88,7 +88,7 @@ PY
 
 ## 调整容量
 
-每个阶段各有一个 Pool，其 `replicas`、资源请求和 `engineArgs` 可以独立调整。Pool 的 `engineArgs` 会整体替换服务级字典，示例通过 YAML anchor 复用共同设置。GPU 请求数量与并行参数的对应关系见[推理参数](../../../docs/inference-parameters_zh.md)。
+每个阶段各有一个 Pool，其 `replicas`、资源请求和 `engineArgs` 可以独立调整。Pool 的 `engineArgs` 会整体替换服务级字典，示例通过 YAML anchor 复用共同设置。GPU 请求数量与并行参数的对应关系见[推理参数](../../../docs/features/inference-parameters_zh.md)。
 
 修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/feature/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过平台选择的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
 

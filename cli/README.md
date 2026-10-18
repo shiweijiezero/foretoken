@@ -102,7 +102,7 @@ The cluster needs a default StorageClass for application files. Run from the For
 foretoken install -e .
 ```
 
-`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
+`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/deployment/source.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/deployment/source.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -110,7 +110,7 @@ A standard active kind or k3d context loads the built images directly into its n
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
+If the registry requires authentication, follow the [source deployment guide](../docs/deployment/kubernetes.md) before installation.
 
 ### Model distribution
 
@@ -160,7 +160,7 @@ loadBalancer:
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
+See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/features/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m

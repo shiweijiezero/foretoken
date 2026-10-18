@@ -3,7 +3,7 @@
 
 # Deploy Foretoken on Kubernetes
 
-[English](kubernetes-deployment.md) | [中文](kubernetes-deployment_zh.md)
+[English](kubernetes.md) | [中文](kubernetes_zh.md)
 
 Use this guide for K3s, RKE2, KubeSphere, cloud Kubernetes, or another cluster that is not created by the local kind or k3d guides.
 
@@ -18,7 +18,7 @@ kubectl get nodes
 
 The cluster needs:
 
-- Kubernetes access through `kubectl` and [Helm 4](../cli/README.md#before-you-start);
+- Kubernetes access through `kubectl` and [Helm 4](../../cli/README.md#before-you-start);
 - a default StorageClass for platform persistent storage;
 - GPU drivers and the vendor device plugin when deploying GPU models; and
 - a registry reachable by the Build Pods and every node when using source-built images.
@@ -78,7 +78,7 @@ Deploy and update code:
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](custom-deployment.md#deploy-a-model-service) for engine checkouts and runtime changes.
+After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 

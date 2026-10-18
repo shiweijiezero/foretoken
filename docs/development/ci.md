@@ -94,7 +94,3 @@ Then independently review necessity and simplicity:
 | Skipping GPU execution while reporting the feature passed | Report the missing execution explicitly |
 | Adding retries or ignoring exit codes to stabilize CI | Diagnose the failure and keep its outcome visible |
 | Automatically making each new job a required check | Decide merge requirements separately with explicit approval |
-
-## Further reading
-
-[Dynamo's PR workflow](https://github.com/ai-dynamo/dynamo/blob/main/.github/workflows/pr.yaml) illustrates change-based selection, hardware-specific execution, and cancellation of superseded runs. [vLLM's contribution guide](https://docs.vllm.ai/en/latest/contributing/) describes selective CI execution under limited compute resources. Borrow their separation of responsibilities, not their infrastructure size or complete job matrices.

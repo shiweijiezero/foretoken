@@ -16,7 +16,7 @@
 
 ## 部署
 
-使用[从源码安装的平台](../../../docs/custom-deployment_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。模型目录的配置见[模型存储](../../../docs/model-storage_zh.md)。
+使用[从源码安装的平台](../../../docs/deployment/source_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。模型目录的配置见[模型存储](../../../docs/features/model-storage_zh.md)。
 
 在仓库根目录构建 Store 镜像。使用本地 k3d 时，将镜像导入当前集群：
 
