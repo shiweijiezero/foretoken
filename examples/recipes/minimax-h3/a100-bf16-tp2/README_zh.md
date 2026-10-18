@@ -11,14 +11,14 @@
 
 ## 部署前
 
-平台需使用 [vLLM-Omni 运行时](../../../../docs/custom-deployment_zh.md#vllm-omni-运行时)。
+平台需使用 [vLLM-Omni 运行时](../../../../docs/deployment/source_zh.md#vllm-omni-运行时)。
 下方配方命令均从 Foretoken 仓库根目录执行。
 
 ## 部署
 
 默认从公开 Hugging Face 仓库 `MiniMaxAI/MiniMax-H3` 自动下载权重，
 与 Quick Start 示例共用仓库根目录的 `data/`。本地 k3d 复用建集群时的数据挂载；
-远程集群按[模型存储指南](../../../../docs/model-storage_zh.md)，将 `cache.yaml`
+远程集群按[模型存储指南](../../../../docs/features/model-storage_zh.md)，将 `cache.yaml`
 中的 `directory` 改为目标节点可访问的目录。
 
 使用 Gateway 时，先在本配方的 `frontend.yaml` 中设置 `spec.hostname`，
@@ -102,7 +102,7 @@ runtime:
 ```
 
 保留同一文件中的 `runtime.vllmOmni.image`。此地址用于 Hugging Face 下载。
-使用离线权重时，按[模型来源指南](../../../../docs/model-sources_zh.md)选择 `source: local`，
+使用离线权重时，按[模型来源指南](../../../../docs/features/model-sources_zh.md)选择 `source: local`，
 并将模型标识设为模型根目录或所选 FL2VA/Ref2VA 目录；请求中使用相同的模型标识。
 
 ## 清理

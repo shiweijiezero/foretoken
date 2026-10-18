@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/metax-deployment_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
+采集一段短负载的 CPU/GPU 执行过程，定位耗时与瓶颈。NVIDIA 和[沐曦 GPU](../../../docs/deployment/metax_zh.md) 均可使用 PyTorch Profiler，NVIDIA 另支持 Nsight Systems，沐曦另支持 mcTracer。
 
 采集结果保存在持久存储（RuntimeCache）中，快速开始示例已配置。更新平台后，先对已有模型服务执行 `foretoken deploy`，再开始采集。CLI 安装与 W&B 登录见[通用准备](../../README_zh.md#开始使用)。
 

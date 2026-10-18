@@ -3,13 +3,13 @@
 
 # 从源码部署 Foretoken
 
-[English](custom-deployment.md) | [中文](custom-deployment_zh.md)
+[English](source.md) | [中文](source_zh.md)
 
 从本地源码构建 Foretoken，并将源码改动部署到 Kubernetes 集群。
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 [Helm 4](../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
+准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes-deployment_zh.md#2-从源码安装-foretoken)。
+这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes_zh.md#2-从源码安装-foretoken)。
 
 源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
@@ -95,11 +95,11 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](model-storage_zh.md)配置。
+候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。若要共用已有模型目录，按[模型存储指南](../features/model-storage_zh.md)配置。
 
 其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
-结果保存在各自源码目录中。[实验记录手册](../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
+结果保存在各自源码目录中。[实验记录手册](../../rsi-playbooks/experiment-records_zh.md#分析结果)说明了比较候选时应查看哪些文件。共享 CPU、存储和网络的活动仍可能影响测量。GPU 全部占用时，替换服务可能需要短暂停止旧服务，释放设备。
 
 候选结束后删除部署：
 
@@ -133,7 +133,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b \
 
 普通部署不需要修改基础镜像。默认镜像包含运行模型服务所需的 Python、PyTorch、CUDA 和 vLLM。
 
-如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
+如果需要使用自定义环境，修改 [`deploy/inference-engines/vllm/source-environment.json`](../../deploy/inference-engines/vllm/source-environment.json) 中的 `baseImage`：
 
 ```json
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
@@ -151,7 +151,7 @@ runtime:
 
 重新执行安装命令，传入 `--values deploy/platform-values.yaml`，并保留镜像仓库和引擎源码选项。使用 `-e` 时，Foretoken 以此镜像为构建基础；将该字段设为 `auto` 可恢复自动选择。安装完成后重新部署工作负载。
 
-沐曦基础镜像构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
+沐曦基础镜像构建见[准备沐曦 Foretoken 平台](metax-platform_zh.md#从源码安装)。
 
 ### vLLM-Omni 运行时
 
@@ -171,7 +171,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-远程集群沿用 [Kubernetes 部署指南](kubernetes-deployment_zh.md) 中的 `REGISTRY` 设置；仓库需要认证时，先完成登录，再推送模型服务镜像：
+远程集群沿用 [Kubernetes 部署指南](kubernetes_zh.md) 中的 `REGISTRY` 设置；仓库需要认证时，先完成登录，再推送模型服务镜像：
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

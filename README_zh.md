@@ -1,6 +1,6 @@
 # Foretoken
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [文档](docs/README_zh.md)
 
 Foretoken 是一个 RSI（Recursive Self-Improvement，递归自我改进）友好的生成式推理编排框架。
 
@@ -25,7 +25,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | [RSI](#用-rsi-持续优化推理) | Agent 通过研究、实现与评测持续优化推理系统 | 开发中 |
 | [评测](benchmarks/README_zh.md) | 评测模型服务性能和模型质量 | 开发中 |
 | [性能剖析](benchmarks/docs/profile/README_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
-| 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
+| 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/deployment/metax_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
@@ -37,9 +37,9 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 使用场景 | 指南 |
 |---|---|
-| 本地单机集群部署 | [k3d 部署指南](docs/k3d-deployment_zh.md) · [kind 部署指南](docs/kind-deployment_zh.md) |
-| 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/kubernetes-deployment_zh.md) |
-| 沐曦 GPU 集群部署 | [沐曦部署指南](docs/metax-deployment_zh.md) |
+| 本地单机集群部署 | [k3d 部署指南](docs/deployment/k3d_zh.md) · [kind 部署指南](docs/deployment/kind_zh.md) |
+| 使用 K3s、RKE2、KubeSphere、云上或其他 Kubernetes 集群部署 | [Kubernetes 部署指南](docs/deployment/kubernetes_zh.md) |
+| 沐曦 GPU 集群部署 | [沐曦部署指南](docs/deployment/metax_zh.md) |
 
 下面以 k3d 部署为例。
 
@@ -71,7 +71,7 @@ foretoken install -e .
 
 安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
 
-宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/k3d-deployment_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
+宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/deployment/k3d_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
 ### 3. 部署快速开始示例
 
@@ -81,7 +81,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
-同时尝试不同代码改动，见[并行运行候选方案](docs/custom-deployment_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/custom-deployment_zh.md#修改推理引擎)。
+同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 

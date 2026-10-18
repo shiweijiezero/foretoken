@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/metax-deployment.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
+Record a short workload to inspect CPU/GPU execution and locate bottlenecks. Use PyTorch Profiler on NVIDIA or [MetaX GPUs](../../../docs/deployment/metax.md), Nsight Systems on NVIDIA, or mcTracer on MetaX.
 
 Captures are saved in persistent RuntimeCache storage, already configured by the Quick Start. After updating the platform, run `foretoken deploy` for existing model services before capturing. CLI installation and W&B sign-in are covered by the [shared setup](../../README.md#get-started).
 

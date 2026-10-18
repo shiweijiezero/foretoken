@@ -42,6 +42,5 @@ Patches for another library belong in a separate directory alongside `vllm/`.
 `rust/engine-request-completion.patch` provides a `RequestCompletion` handle subscribed before transport submission. It confirms termination only from an engine-origin terminal output or finished-request notification. The handle outlives the output consumer: stream drop, an abort acknowledgement, and locally generated abort output cannot complete it. Transport closure ends the observation with an error, not successful termination.
 
 `common/engine-abort-completion.patch` makes Python EngineCore publish scheduler-confirmed aborted request IDs on every transport, including eager aborts. Keep both patches aligned when upstream request registration, scheduler termination, or output delivery changes.
-Completion marks the end of request scheduling, not GPU synchronization or connector KV release. Model-server capacity and stage handoff are described in [Admission lifecycle](../../../docs/development/admission-rules.md).
-
+Completion marks the end of request scheduling, not GPU synchronization or connector KV release.
 When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.

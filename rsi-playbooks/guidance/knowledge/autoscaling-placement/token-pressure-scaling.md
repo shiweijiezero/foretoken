@@ -39,7 +39,7 @@ Token and KV signals distinguish a length-mix change at constant request rate an
 ## References
 
 - [Foretoken token-load algorithm](../../../../control-plane/internal/autoscaling/algorithm/decision/token_load.go)
-- [Foretoken guide](../../../../docs/autoscaling.md)
+- [Autoscaling implementation](../../../../control-plane/internal/autoscaling/README.md)
 - [llm-d in-flight producer](https://github.com/llm-d/llm-d-inference-scheduler/blob/5253f55516f496129248766d1e4b745daba68887/pkg/epp/framework/plugins/requestcontrol/dataproducer/inflightload/producer.go)
 - [llm-d P/D prefill trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/prefill-scaledobject.yaml)
 - [llm-d decode trigger](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/keda-epp-token-aware/pd-disaggregation/base/decode-scaledobject.yaml)

@@ -94,7 +94,3 @@ Workflow 准备环境、调用仓库负责该行为的命令、收集诊断并�
 | GPU 场景未执行，却报告特征通过 | 明确报告缺失的执行 |
 | 用重试或忽略退出码稳定 CI | 定位原因，保留真实失败结果 |
 | 新任务自动成为合并必需检查 | 单独取得扩大合并要求的明确认可 |
-
-## 参考资料
-
-[Dynamo 的 PR workflow](https://github.com/ai-dynamo/dynamo/blob/main/.github/workflows/pr.yaml)展示按变更选择、按硬件执行和取消过时运行；[vLLM 贡献指南](https://docs.vllm.ai/en/latest/contributing/)说明有限计算资源下的选择性 CI。借鉴它们的职责划分，不照搬基础设施规模和完整任务矩阵。

@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-本包将控制器拥有的观测转换为 `ModelPool` 容量。用户通过 `ModelService.spec.autoscaling` 配置自动扩缩容；配置和状态使用方式见[自动扩缩容指南](../../../../docs/autoscaling_zh.md)。
+本包将控制器拥有的观测转换为 `ModelPool` 容量。用户通过 `ModelService.spec.autoscaling` 配置自动扩缩容。[多模型示例](../../../examples/quickstart/multi-model/README_zh.md#观察队列自动扩缩容)演示了队列扩缩容和状态查询。
 
 ## 职责归属
 

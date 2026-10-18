@@ -5,7 +5,7 @@
 
 English | [简体中文](runtime-cache_zh.md)
 
-For deployment configuration, see [Model storage](../model-storage.md).
+For deployment configuration, see [Model storage](../features/model-storage.md).
 
 ## Storage ownership
 

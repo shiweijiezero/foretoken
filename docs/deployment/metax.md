@@ -5,15 +5,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Deploy a model on MetaX GPUs
 
-English | [简体中文](metax-deployment_zh.md)
+English | [简体中文](metax_zh.md)
 
 Deploy a model on a MetaX-enabled Foretoken cluster and call it through an OpenAI-compatible HTTP API.
 
-This guide uses `Qwen/Qwen3-0.6B`. If the cluster is not ready yet, its administrator should complete [MetaX platform setup](development/metax-platform.md) first.
+This guide uses `Qwen/Qwen3-0.6B`. If the cluster is not ready yet, its administrator should complete [MetaX platform setup](metax-platform.md) first.
 
 ## Before you start
 
-You need the Foretoken CLI, kubectl, curl, cluster access supplied by your administrator, and a checkout of the Foretoken examples. Run commands from the repository root. If the CLI is not installed, follow the [CLI installation instructions](../cli/README.md#install-the-command-line-tool).
+You need the Foretoken CLI, kubectl, curl, cluster access supplied by your administrator, and a checkout of the Foretoken examples. Run commands from the repository root. If the CLI is not installed, follow the [CLI installation instructions](../../cli/README.md#install-the-command-line-tool).
 
 Confirm the following with the administrator:
 
@@ -24,7 +24,7 @@ If the platform exposes services directly through a `LoadBalancer` instead of Ga
 
 ## 1. Deploy the example model
 
-Configure `examples/quickstart/qwen3-0.6b/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](model-storage.md).
+Configure `examples/quickstart/qwen3-0.6b/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](../features/model-storage.md).
 
 Add `hostname` under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
 
@@ -41,7 +41,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 The command exits when the model and frontend services are Ready.
 
-To select another model, edit `examples/quickstart/qwen3-0.6b/model.yaml`. See the [single-model example](../examples/quickstart/qwen3-0.6b/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
+To select another model, edit `examples/quickstart/qwen3-0.6b/model.yaml`. See the [single-model example](../../examples/quickstart/qwen3-0.6b/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
 
 ## 2. Send a request
 
@@ -67,7 +67,7 @@ curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
   -H "Host: $FORETOKEN_REQUEST_HOST"
 ```
 
-For CPU/GPU execution traces, use [PyTorch profiling](../benchmarks/docs/profile/README.md) with `--profile-engine pytorch`.
+For CPU/GPU execution traces, use [PyTorch profiling](../../benchmarks/docs/profile/README.md) with `--profile-engine pytorch`.
 
 ## 3. Inspect or remove the deployment
 
@@ -86,6 +86,6 @@ Use a namespace dedicated to the example. Deletion waits for service cleanup, th
 
 ## If the request does not succeed
 
-- **Deployment keeps waiting or a Pod is Pending:** run `kubectl describe pod --namespace foretoken-demo <pod-name>`. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
-- **HTTP 404:** check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
-- **HTTP 503:** inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.
+- Deployment keeps waiting or a Pod is Pending: run `kubectl describe pod --namespace foretoken-demo <pod-name>`. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
+- HTTP 404: check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
+- HTTP 503: inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.

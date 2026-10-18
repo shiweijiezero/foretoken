@@ -3,9 +3,9 @@
 
 # Source deployment lifecycle
 
-English | [简体中文](source-image-lifecycle_zh.md)
+English | [简体中文](source-deployment_zh.md)
 
-This guide describes the behavior to preserve when maintaining source deployments. For commands and examples, see [Deploy Foretoken from Source](../custom-deployment.md).
+This guide describes the behavior to preserve when maintaining source deployments. For commands and examples, see [Deploy Foretoken from Source](../deployment/source.md).
 
 ## Installation and updates
 

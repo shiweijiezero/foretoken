@@ -3,13 +3,13 @@
 
 # Deploy Foretoken from Source
 
-[English](custom-deployment.md) | [中文](custom-deployment_zh.md)
+[English](source.md) | [中文](source_zh.md)
 
 Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and [Helm 4](../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
+Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d-deployment.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes-deployment.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
+This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
 Source builds automatically reuse persistent node-local compiler caches. To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
 
@@ -95,11 +95,11 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](model-storage.md).
+The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](../features/model-storage.md).
 
 Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
-Results are saved in each source directory. The [experiment records guide](../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
+Results are saved in each source directory. The [experiment records guide](../../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
 Delete the candidate when finished:
 
@@ -133,7 +133,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b \
 
 A standard deployment does not require changing the base image. The default image includes the Python, PyTorch, CUDA, and vLLM components needed to run the model service.
 
-To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../deploy/inference-engines/vllm/source-environment.json):
+To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm/source-environment.json`](../../deploy/inference-engines/vllm/source-environment.json):
 
 ```json
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
@@ -151,7 +151,7 @@ runtime:
 
 Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base. Set the field to `auto` to restore automatic runtime selection. Then deploy the workload again.
 
-MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
+MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](metax-platform.md#install-from-source).
 
 ### vLLM-Omni runtime
 
@@ -171,7 +171,7 @@ CLUSTER=foretoken-qwen-test
 k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
 ```
 
-For a remote cluster, use the `REGISTRY` configured in the [Kubernetes deployment guide](kubernetes-deployment.md). Log in first when that registry requires authentication:
+For a remote cluster, use the `REGISTRY` configured in the [Kubernetes deployment guide](kubernetes.md). Log in first when that registry requires authentication:
 
 ```bash
 docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"

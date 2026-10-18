@@ -78,7 +78,3 @@ Foretoken 只为关键功能和特征维护少量测试。测试使用真实组�
 | 把每个失败分支变成永久场景 | 只选择验证关键特征所必需的场景 |
 | 用重试或更长的 sleep 让偶发失败变绿 | 区分产品、测试和环境问题，修复或明确隔离 |
 | 场景失效后仍保留调试脚本、fixture 和依赖 | 随旧场景一并清理 |
-
-## 参考资料
-
-[llm-d 的测试要求](https://github.com/llm-d/llm-d/blob/main/CONTRIBUTING.md)区分组件、集成和已部署系统的验证；[Kubebuilder 的 EnvTest 文档](https://book.kubebuilder.io/reference/envtest)说明只有 API server 的环境能覆盖哪些行为。这些资料用于理解执行边界；Foretoken 的特征选择和不使用 mock 的要求以上文为准。

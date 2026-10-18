@@ -3,7 +3,7 @@
 
 # 在 Kubernetes 上部署 Foretoken
 
-[English](kubernetes-deployment.md) | [中文](kubernetes-deployment_zh.md)
+[English](kubernetes.md) | [中文](kubernetes_zh.md)
 
 K3s、RKE2、KubeSphere、云上 Kubernetes 或其他不属于本地 kind/k3d 指南的集群，使用本指南。
 
@@ -18,7 +18,7 @@ kubectl get nodes
 
 集群需要具备：
 
-- 可通过 `kubectl` 和 [Helm 4](../cli/README_zh.md#开始前)访问；
+- 可通过 `kubectl` 和 [Helm 4](../../cli/README_zh.md#开始前)访问；
 - 用于平台持久存储的默认 StorageClass；
 - 部署 GPU 模型时，节点已安装 GPU 驱动和对应设备插件；
 - 使用源码构建镜像时，构建 Pod 和所有节点都能访问同一个镜像仓库。
@@ -78,7 +78,7 @@ workload:
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](custom-deployment_zh.md#部署模型服务)。
+修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 
