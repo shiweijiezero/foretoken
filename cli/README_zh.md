@@ -217,9 +217,9 @@ foretoken stop examples/quickstart/multi-model
 
 ## 上传已有结果与导出图表
 
-使用 `foretoken sync RESULT_DIR` 上传已有 W&B 结果，不重新测量。离线补传和跨机器搬迁结果的操作见 [W&B 输出](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
-
 评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
+
+添加 `--sync_wandb` 可将已有结果及其图表同步到各自原来的 W&B 运行，不重新测量。离线补传和跨机器搬迁结果的操作见 [W&B 输出](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
 
 ## 性能剖析：执行瓶颈
 

@@ -33,17 +33,13 @@ Warmup is excluded from performance metrics and panels. Its records remain in th
 Set `WANDB_MODE=offline` when running a benchmark to record locally without attempting uploads. To upload later, or retry a failed background upload, pass the result directory printed by the command:
 
 ```bash
-foretoken sync RESULT_DIR
+foretoken plot RESULT_DIR --sync_wandb
 ```
 
-This uploads to the original W&B run without starting a model service or sending requests. It also uploads available records and diagnostics from interrupted runs. A directory containing several runs synchronizes each recorded run; repeating a completed sync skips already published results.
+This redraws local figures and synchronizes saved metrics, tables, media and logs to the original W&B runs without sending model requests. Interrupted runs can upload their available records and diagnostics. Figure export errors are reported, but do not prevent result synchronization; the command exits unsuccessfully if either stage fails.
+
+Individual-run figures are uploaded with that run, including when using `--output-dir`. Cross-run comparison figures remain local. Repeating the command refreshes per-run figures without replaying published measurement history.
 
 To upload from another machine, install Foretoken, run `wandb login`, and copy the complete result tree, including hidden files. Its absolute location may change. If a resumed experiment references earlier task results, copy those directories too, preserving their relative layout. For a self-hosted W&B server, set `WANDB_BASE_URL` to the original server.
 
-To regenerate plots as well, use the following command for a completed measurement:
-
-```bash
-foretoken perf --resume RESULT_DIR --output local,wandb,plot
-```
-
-Unlike `sync`, `perf --resume` can continue unfinished measurements. Use `sync` when only uploading saved data. Older recordings with missing external W&B files still require those files to be restored.
+Without `--sync_wandb`, `foretoken plot` only exports local files. Use `perf --resume` to continue unfinished measurements. Older recordings with missing external W&B files still require those files to be restored.

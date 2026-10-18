@@ -8,10 +8,11 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import re
 import textwrap
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -428,6 +429,24 @@ def default_output_directory(source: Path, *others: Path, base: Path | None = No
     return Path("plots") if others or base is not None else Path(source) / "plots"
 
 
+@dataclass(frozen=True)
+class FigureExport:
+    """Files and optional single-run owner captured together by the figure exporter."""
+
+    files: dict[str, Path]
+    source: Path | None
+
+
+def figure_source(directory: Path) -> Path | None:
+    """Return the recorded owner of a complete figure export; comparisons have no single run owner."""
+    manifest = directory / ".foretoken-plots.json"
+    if not manifest.is_file():
+        return None
+    record = json.loads(manifest.read_text(encoding="utf-8"))
+    source = record.get("source") if isinstance(record, dict) else None
+    return (directory / source).resolve() if source is not None else None
+
+
 def render_results(
     source: Path,
     *others: Path,
@@ -436,15 +455,44 @@ def render_results(
     metrics: tuple[str, ...] = (),
     methods: tuple[str, ...] = (),
     base: Path | None = None,
-) -> dict[str, Path]:
-    """Render saved results from one or more directories into figures and comparison tables.
+) -> FigureExport:
+    """Export figures under an output-directory lock shared with W&B artifact staging."""
+    from benchmarks.results.wandb_sync import publication_lock
+
+    for selected in (source, *others, *((base,) if base is not None else ())):
+        if not Path(selected).is_dir():
+            raise NotADirectoryError(f"Result directory does not exist: {selected}")
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
+    out.mkdir(parents=True, exist_ok=True)
+    with publication_lock(out, scope="plots"):
+        # A failed redraw must not leave partially replaced files attributed to the previous export.
+        manifest = out / ".foretoken-plots.json"
+        if manifest.is_file():
+            previous = json.loads(manifest.read_text(encoding="utf-8"))
+            if isinstance(previous, dict):
+                previous["source"] = None
+                manifest.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
+        return _render_results(source, *others, output_dir=out, columns=columns,
+                               metrics=metrics, methods=methods, base=base)
+
+
+def _render_results(
+    source: Path,
+    *others: Path,
+    output_dir: Path,
+    columns: int,
+    metrics: tuple[str, ...],
+    methods: tuple[str, ...],
+    base: Path | None,
+) -> FigureExport:
+    """Render saved results while the caller owns the output lock.
 
     The caller owns the source and destination directory. This function only reads
     persisted measurement and summary artifacts; it neither runs benchmarks nor
     changes the existing JSON or native evaluator outputs.
     """
     source = Path(source)
-    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
+    out = output_dir
     if columns not in (1, 2):
         raise ValueError("columns must be 1 or 2")
     if base is None and not others:
@@ -464,8 +512,8 @@ def render_results(
         if comparison_results.runs[0].get("measured") and measured is not None and (
             not metrics or not set(metrics) <= collection_metrics
         ):
-            return render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
-                                  methods=comparison_results.method_filters.get(Path(measured), ()))
+            return _render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
+                                   methods=comparison_results.method_filters.get(Path(measured), ()), base=None)
     config_path = source / "config.json"
     if comparison_results is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
@@ -607,9 +655,13 @@ def render_results(
     previous = (
         json.loads((manifest).read_text(encoding="utf-8")) if manifest.is_file() else []
     )
+    previous = previous["files"] if isinstance(previous, dict) else previous
     current = sorted(file.name for file in result.values())
     for filename in set(previous) - set(current):
         if Path(filename).name == filename:
             (out / filename).unlink(missing_ok=True)
-    manifest.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
-    return result
+    manifest.write_text(json.dumps({
+        "files": current,
+        "source": Path(os.path.relpath(source, out)).as_posix() if comparison_results is None else None,
+    }, indent=2) + "\n", encoding="utf-8")
+    return FigureExport(result, source.resolve() if comparison_results is None else None)

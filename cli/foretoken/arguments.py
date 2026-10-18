@@ -115,13 +115,6 @@ class PlotCommand:
 
 
 @dataclass(frozen=True)
-class SyncCommand:
-    """Publish saved W&B results without starting or resuming a measurement."""
-
-    result_directory: str
-
-
-@dataclass(frozen=True)
 class ProfileCommand:
     """Describe one runtime-owned capture requested by deploy or perf."""
 
@@ -178,7 +171,6 @@ ParsedCommand = (
     | PerformanceCommand
     | EvaluationCommand
     | PlotCommand
-    | SyncCommand
     | ProfileViewCommand
 )
 
@@ -433,10 +425,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "plot", add_help=False,
         help="Export publication figures and tables from saved benchmark results",
     )
-    sync = subparsers.add_parser(
-        "sync", help="Publish saved W&B results without sending model requests",
-    )
-    sync.add_argument("result_directory", metavar="RESULT_DIR", help="saved run or experiment directory")
     return parser
 
 
@@ -499,8 +487,6 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.grafana_auth,
             tuple(parsed_args.engine_source or ()),
         )
-    if parsed_args.command == "sync":
-        return SyncCommand(parsed_args.result_directory)
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)
     if parsed_args.command == "deploy":

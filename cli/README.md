@@ -217,9 +217,9 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 
 ## Publish saved results and export figures
 
-Use `foretoken sync RESULT_DIR` to upload saved W&B results without running a measurement. See [W&B output](../benchmarks/docs/perf/wandb.md#resume-an-upload) for offline uploads and moving results between machines.
-
 Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
+
+Add `--sync_wandb` to synchronize saved results and per-run figures to their original W&B runs without repeating measurements. See [W&B output](../benchmarks/docs/perf/wandb.md#resume-an-upload) for offline uploads and moving results between machines.
 
 ## Find execution bottlenecks
 

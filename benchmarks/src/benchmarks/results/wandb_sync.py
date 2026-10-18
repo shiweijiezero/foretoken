@@ -13,6 +13,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 
 def start_sync(directory: Path, native: Path) -> subprocess.Popen[bytes]:
@@ -31,9 +32,9 @@ def start_sync(directory: Path, native: Path) -> subprocess.Popen[bytes]:
 
 
 @contextmanager
-def publication_lock(directory: Path) -> Iterator[None]:
-    """Serialize original synchronization and same-run recovery so old exit records cannot arrive last."""
-    with (directory / ".foretoken-publish.lock").open("a+b") as lock:
+def publication_lock(directory: Path, *, scope: Literal["publish", "plots"] = "publish") -> Iterator[None]:
+    """Serialize publication or figure exports; distinct scopes may safely share a directory."""
+    with (directory / f".foretoken-{scope}.lock").open("a+b") as lock:
         if os.name == "nt":
             import msvcrt
 
@@ -64,7 +65,7 @@ def synchronize(directory: Path, native: Path) -> int:
     from benchmarks.results.publication import sync_publication
 
     configure_logging(True)
-    retry = f"foretoken sync {shlex.quote(str(directory))}"
+    retry = f"foretoken plot {shlex.quote(str(directory))} --sync_wandb"
     with publication_lock(native):
         status = _synchronize(native, retry)
     if status:

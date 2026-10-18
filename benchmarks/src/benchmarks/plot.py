@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from collections.abc import Sequence
+from contextlib import ExitStack
 from pathlib import Path
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse the standalone plotting command and report the exported figure directory."""
+    """Export saved figures and optionally synchronize original W&B runs without measuring again."""
     parser = argparse.ArgumentParser(
         prog="foretoken plot",
         description="Export PDF, SVG, PNG, and CSV from one or more saved-result directories.",
@@ -48,23 +50,56 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--base", type=Path, metavar="RESULT_DIR",
         help="Saved performance result or iteration directory to use as the base",
     )
+    parser.add_argument(
+        "--sync_wandb", action="store_true",
+        help="Also synchronize saved results and per-run figures to their original W&B runs; never send model requests",
+    )
     options = parser.parse_args(argv)
     from benchmarks.results.plots.figures import (
         default_output_directory,
         render_results,
     )
 
+    output = (options.output_dir or default_output_directory(*options.sources, base=options.base)).resolve()
+    sources = []
+    errors = []
+    owner = None
+    if options.sync_wandb:
+        from benchmarks.results.console import configure_logging
+        from benchmarks.results.publication import result_sources, sync_results
+        from benchmarks.results.wandb_sync import publication_lock
+
+        configure_logging(True)
+        selected = [*options.sources, *([options.base] if options.base is not None else [])]
+        try:
+            sources = result_sources(*selected)
+        except (OSError, ValueError) as error:
+            raise SystemExit(str(error)) from error
     try:
-        artifacts = render_results(
-            *options.sources,
-            output_dir=options.output_dir,
-            columns=options.columns,
-            metrics=tuple(options.metric),
-            methods=tuple(options.method),
-            base=options.base,
-        )
-    except (OSError, ValueError) as exc:
-        raise SystemExit(str(exc)) from exc
-    print(
-        f"Exported {len(artifacts)} files to {options.output_dir or default_output_directory(*options.sources, base=options.base)}"
-    )
+        # Seal measurements before drawing and exclude background publication while files change.
+        # Release every result lock before the publisher acquires its own result/native locks.
+        with ExitStack() as locks:
+            for source in sorted(sources):
+                locks.enter_context(publication_lock(source))
+            artifacts = render_results(
+                *options.sources,
+                output_dir=output,
+                columns=options.columns,
+                metrics=tuple(options.metric),
+                methods=tuple(options.method),
+                base=options.base,
+            )
+            owner = artifacts.source
+        print(f"Exported {len(artifacts.files)} files to {output}")
+    except (OSError, ValueError) as error:
+        if not options.sync_wandb:
+            raise SystemExit(str(error)) from error
+        logging.getLogger(__name__).error("Figure export failed: %s; synchronizing saved results", error)
+        errors.append(error)
+    if options.sync_wandb:
+        try:
+            sync_results(sources, figures=output, figure_owner=owner)
+        except (OSError, ValueError, RuntimeError) as error:
+            errors.append(error)
+    if errors:
+        raise SystemExit("; ".join(str(error) for error in errors))
