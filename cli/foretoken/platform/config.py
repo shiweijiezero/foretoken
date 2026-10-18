@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,23 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
     )
 
 
+def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
+    """Update saved Foretoken release values while retaining their runtime and image selections."""
+    migrated = deepcopy(values)
+    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
+    for old, new in (
+        ("rdmaResourceName", "resourceName"),
+        ("rdmaResourceCount", "resourceCount"),
+    ):
+        if old in pd:
+            value = pd.pop(old)
+            migrated.setdefault("rdma", {}).setdefault(new, value)
+    distribution = migrated.get("modelDistribution", {})
+    distribution.pop("modelexpress", None)
+    distribution.pop("dragonfly", None)
+    return migrated
+
+
 def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     """Read Helm values files and keep frontend topology under the CLI contract."""
     loaded: list[dict[str, Any]] = []
@@ -214,14 +232,11 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             raise DeploymentError(
                 f"Helm values file {path} sets observability.prometheus; use --prometheus"
             )
-        distribution = values.get("modelDistribution", {})
-        if isinstance(distribution, dict):
-            dragonfly = distribution.get("dragonfly", {})
-            if isinstance(dragonfly, dict) and "socketPath" in dragonfly:
-                raise DeploymentError(
-                    f"Helm values file {path} sets modelDistribution.dragonfly.socketPath; "
-                    "foretoken install resolves it from the managed or existing Dragonfly release"
-                )
+        if "modelDistribution" in values:
+            raise DeploymentError(
+                f"Helm values file {path} sets modelDistribution; "
+                "model downloads and weight sharing are selected automatically; remove this section"
+            )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
             reserved = tuple(key for key in ("mode", "gateway") if key in frontend)

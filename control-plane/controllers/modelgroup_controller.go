@@ -244,19 +244,7 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	if err := reconciler.reconcilePreparationSource(ctx, group, pool); err != nil {
 		return false, err
 	}
-	// Honor explicit Pod Security restrictions before mounting an optional host socket.
-	distribution := reconciler.ModelDistribution
-	if group.Spec.Artifacts.Cache != nil && distribution.DragonflySocketPath != "" {
-		namespace := new(corev1.Namespace)
-		if err := reconciler.APIReader.Get(ctx, client.ObjectKey{Name: group.Namespace}, namespace); err != nil {
-			return false, fmt.Errorf("read model preparation namespace: %w", err)
-		}
-		switch namespace.Labels["pod-security.kubernetes.io/enforce"] {
-		case "baseline", "restricted":
-			distribution.DragonflySocketPath = ""
-		}
-	}
-	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, distribution, reconciler.ApplicationFiles)
+	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, reconciler.ModelDistribution, reconciler.ApplicationFiles)
 	if err != nil {
 		return false, err
 	}
@@ -411,19 +399,14 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	if cache != nil {
 		command = "prepare"
 		env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
-		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
+		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
 		nodeSelector = maps.Clone(group.Spec.Accelerator.NodeSelector)
 		tolerations = acceleratorTolerations(group.Spec.Accelerator.DeviceResourceName)
 	}
-	if cache != nil && distribution.DragonflySocketPath != "" {
-		// Mount the directory so daemon restarts can replace the socket without rebinding the Pod.
-		directory := path.Dir(distribution.DragonflySocketPath)
-		directoryType := corev1.HostPathDirectory
-		volumes = append(volumes, corev1.Volume{Name: "dragonfly", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: directory, Type: &directoryType}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "dragonfly", MountPath: directory, ReadOnly: true})
-		env = append(env, corev1.EnvVar{Name: runtimeconfig.DragonflySocketEnv, Value: distribution.DragonflySocketPath})
+	if cache != nil && distribution.ProxyURL != "" {
+		env = append(env, corev1.EnvVar{Name: runtimeconfig.ModelDownloadProxyEnv, Value: distribution.ProxyURL})
 	}
 	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
@@ -646,7 +629,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
 		if group.Spec.Runtime.Backend == "vllm" {
-			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
+			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 			env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
 		} else {
 			env = append(env,

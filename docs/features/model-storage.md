@@ -69,38 +69,8 @@ Diagnostic captures use the same data root and store results below `profiles/`; 
 
 ## Distribute models across nodes
 
-`foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. Missing files from anonymously accessible models on the official Hugging Face and ModelScope services can be downloaded through node peers. Authenticated downloads and custom model endpoints use their provider directly.
+`foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. For anonymously accessible models on the official Hugging Face and ModelScope services, preparation uses node peers when the shared download service is available. Otherwise, files come directly from the model provider. Authenticated downloads and custom model endpoints use their provider directly.
 
-### Load weights from running replicas
+Compatible replicas automatically reuse loaded weights when their runtime has the required CUDA and RDMA support. When weight sharing is unavailable, they load the prepared model files.
 
-On NVIDIA clusters with RDMA, ModelExpress can also load weights from running replicas. To enable this optional optimization, save the following in `deploy/platform-values.yaml`:
-
-```yaml
-modelDistribution:
-  modelexpress:
-    enabled: true
-```
-
-Weight transfer applies to remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged; replicas without a compatible source load the prepared files. Set `modelexpress.enabled` to `false` to disable weight transfer.
-
-### Customize shared downloads
-
-The installer manages Dragonfly for shared downloads. A namespace's `pod-security.kubernetes.io/enforce` label disables node-peer downloads when set to `baseline` or `restricted`.
-
-To use direct downloads throughout the platform, or when other cluster policies prohibit `hostPath` mounts, set:
-
-```yaml
-modelDistribution:
-  dragonfly:
-    enabled: false
-```
-
-Set `enabled: true` to re-enable shared downloads. If several Dragonfly installations exist, select one by setting `modelDistribution.dragonfly.existingRelease` to `{name: dragonfly, namespace: dragonfly-system}`, using the existing release's name and namespace.
-
-Apply custom settings with the original installation command, adding `--values deploy/platform-values.yaml`. Source installations retain `-e .`, registry settings, and any engine-source bindings. For a published platform:
-
-```bash
-foretoken install --values deploy/platform-values.yaml
-```
-
-Redeploy the affected services after changing these settings. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
+`foretoken uninstall` removes managed download services once no workloads or controllers use them; independently installed services are retained.

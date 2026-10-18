@@ -99,8 +99,7 @@ func main() {
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
-	var dragonflySocketPath string
-	var modelExpress bool
+	var modelDownloadProxyURL string
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
 
@@ -138,8 +137,7 @@ func main() {
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
-	flag.StringVar(&dragonflySocketPath, "model-distribution-dragonfly-socket", "", "Node-local Dragonfly download socket used by model preparation.")
-	flag.BoolVar(&modelExpress, "model-distribution-modelexpress", false, "Use ModelExpress weight sources for compatible inference workloads.")
+	flag.StringVar(&modelDownloadProxyURL, "model-distribution-download-proxy", "", "Optional internal HTTP proxy for model preparation.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.StringVar(&omniInferenceEngineImage, "omni-inference-engine-image", "", "Optional vLLM-Omni image containing the Foretoken Omni adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
@@ -176,7 +174,7 @@ func main() {
 	}
 	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
-	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
+	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{ProxyURL: modelDownloadProxyURL}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	admissionStore := &inferencev1alpha1.AdmissionStoreConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
 	if admissionStoreURLSecretName != "" || admissionStoreURLSecretKey != "" {
@@ -437,7 +435,6 @@ func main() {
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
-			ModelExpress:       modelExpress,
 			ModelServerPort:    int32(modelServerPort),
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,
