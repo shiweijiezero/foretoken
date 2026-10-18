@@ -19,9 +19,9 @@ from foretoken.platform.types import ReleaseRef
 
 @dataclass(frozen=True)
 class DragonflyConfig:
-    """The platform's P2P choice and optional independently managed release."""
+    """Resolved shared-download settings and an optional independently managed release."""
 
-    enabled: bool = False
+    enabled: bool
     existing_release: ReleaseRef | None = None
     image_pull_secrets: tuple[dict[str, str], ...] = ()
 
@@ -36,8 +36,8 @@ class DragonflyPlan:
 
 
 def dragonfly_config_from_values(values: tuple[dict[str, Any], ...]) -> DragonflyConfig:
-    """Resolve the explicit P2P choice from stored values followed by current overrides."""
-    enabled = False
+    """Enable shared model downloads unless stored or current administrator settings opt out."""
+    enabled = True
     existing: dict[str, str] = {}
     image_pull_secrets: tuple[dict[str, str], ...] = ()
     for item in values:
@@ -65,7 +65,7 @@ def dragonfly_config_from_values(values: tuple[dict[str, Any], ...]) -> Dragonfl
 
 
 class ModelDistributionLifecycle:
-    """Own only the CLI-managed Dragonfly release; preserve an explicit shared release."""
+    """Own managed model downloads while reusing independently installed node peers."""
 
     def __init__(self, helm: Helm, kubectl: Kubectl) -> None:
         self._helm = helm
@@ -81,18 +81,19 @@ class ModelDistributionLifecycle:
             if not exists:
                 raise DeploymentError(f"Dragonfly release {release.display_name} does not exist")
             return DragonflyPlan(config, release, "Reuse")
-        if not exists:
-            existing = self._existing_releases()
-            if len(existing) > 1:
-                raise DeploymentError("multiple Dragonfly releases exist; select modelDistribution.dragonfly.existingRelease")
-            if existing:
-                return DragonflyPlan(config, existing[0], "Reuse")
-        if exists and not self._helm.is_cli_managed(release):
+        if exists and self._helm.is_cli_managed(release):
+            return DragonflyPlan(config, release, "Upgrade")
+        existing = self._existing_releases()
+        if len(existing) > 1:
+            raise DeploymentError("multiple Dragonfly releases exist; select modelDistribution.dragonfly.existingRelease")
+        if existing:
+            return DragonflyPlan(config, existing[0], "Reuse")
+        if exists:
             raise DeploymentError(
-                f"Helm release {release.display_name} is not managed by foretoken; "
-                "select it with modelDistribution.dragonfly.existingRelease"
+                f"Helm release {release.display_name} is not managed by foretoken "
+                "and has no discoverable Dragonfly daemon"
             )
-        return DragonflyPlan(config, release, "Upgrade" if exists else "Install")
+        return DragonflyPlan(config, release, "Install")
 
     def _existing_releases(self) -> tuple[ReleaseRef, ...]:
         """Find native daemon installations before another DaemonSet can claim their sockets."""
@@ -178,7 +179,7 @@ class ModelDistributionLifecycle:
         return sockets.pop()
 
     def finish_uninstall(self, timeout: str) -> tuple[str, str]:
-        """Remove our daemon only when no remaining workload mounts its socket directory."""
+        """Remove our daemon only when no workload or controller still uses its socket."""
         release = self._helm.dragonfly_release()
         if not self._helm.release_exists(release):
             return "Preserve", "no CLI-managed Dragonfly release"
@@ -189,7 +190,9 @@ class ModelDistributionLifecycle:
         if daemon is not None:
             socket = self._daemon_socket(daemon, daemon_ref.namespace)
             socket_mounts = {socket, str(PurePosixPath(socket).parent)}
-            for resource in self._kubectl.list_all_resources(("pod", "job.batch")):
+            socket_argument = f"--model-distribution-dragonfly-socket={socket}"
+            # Namespace controllers can create preparation Jobs after platform defaults change.
+            for resource in self._kubectl.list_all_resources(("pod", "job.batch", "deployment.apps")):
                 status = resource.get("status", {})
                 if status.get("phase") in {"Succeeded", "Failed"} or any(
                     condition["type"] in {"Complete", "Failed"} and condition["status"] == "True"
@@ -198,8 +201,11 @@ class ModelDistributionLifecycle:
                     continue
                 if any(owner.get("uid") == daemon["metadata"]["uid"] for owner in resource["metadata"].get("ownerReferences", [])):
                     continue
-                spec = resource["spec"]["template"]["spec"] if resource["kind"] == "Job" else resource["spec"]
-                if any(volume.get("hostPath", {}).get("path") in socket_mounts for volume in spec.get("volumes", [])):
+                spec = resource["spec"] if resource["kind"] == "Pod" else resource["spec"]["template"]["spec"]
+                if any(
+                    volume.get("hostPath", {}).get("path") in socket_mounts
+                    for volume in spec.get("volumes", [])
+                ) or any(socket_argument in container.get("args", []) for container in spec["containers"]):
                     ref = resource_ref(resource)
                     return "Preserve", f"{ref.namespace}/{ref.display_name} still uses Dragonfly"
         self._helm.uninstall(release, timeout)

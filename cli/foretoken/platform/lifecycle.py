@@ -522,6 +522,7 @@ class PlatformLifecycle:
                     Path(command.editable).expanduser().resolve(),
                     (*stored_values, *values),
                     command.timeout,
+                    dragonfly_socket_path=dragonfly_socket,
                 )
                 context = prepare_source_images(
                     command,

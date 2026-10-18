@@ -244,7 +244,19 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	if err := reconciler.reconcilePreparationSource(ctx, group, pool); err != nil {
 		return false, err
 	}
-	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, reconciler.ModelDistribution, reconciler.ApplicationFiles)
+	// Honor explicit Pod Security restrictions before mounting an optional host socket.
+	distribution := reconciler.ModelDistribution
+	if group.Spec.Artifacts.Cache != nil && distribution.DragonflySocketPath != "" {
+		namespace := new(corev1.Namespace)
+		if err := reconciler.APIReader.Get(ctx, client.ObjectKey{Name: group.Namespace}, namespace); err != nil {
+			return false, fmt.Errorf("read model preparation namespace: %w", err)
+		}
+		switch namespace.Labels["pod-security.kubernetes.io/enforce"] {
+		case "baseline", "restricted":
+			distribution.DragonflySocketPath = ""
+		}
+	}
+	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets, distribution, reconciler.ApplicationFiles)
 	if err != nil {
 		return false, err
 	}

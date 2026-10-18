@@ -68,14 +68,16 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
-# Optional peer distribution for model files and loaded weights.
+# Shared model downloads and optional transfer of loaded weights.
 modelDistribution:
   # Requires a compatible CUDA runtime and allocated RDMA devices.
   modelexpress:
     enabled: false
   dragonfly:
+    # foretoken install prepares model downloads automatically and sets this binding.
+    # Direct Helm use enables it after a compatible download daemon is available.
     enabled: false
-    # Leave empty to let foretoken install manage the Dragonfly release.
+    # Leave empty to let foretoken install discover or manage the Dragonfly release.
     existingRelease:
       name: ""
       namespace: ""

@@ -69,17 +69,11 @@ spec:
 
 ## 在节点间分发模型
 
-Dragonfly 可以在节点间共享公开模型文件的下载。在 `deploy/platform-values.yaml` 中启用：
+`foretoken install` 会自动准备或复用共享模型下载服务。配置了持久存储的模型优先使用已有缓存，缺失的文件才需要下载。Hugging Face、ModelScope 官方服务中可匿名访问的模型可以通过节点间共享下载获取；需要身份认证或使用自定义地址时，直接从模型源下载。
 
-```yaml
-modelDistribution:
-  dragonfly:
-    enabled: true
-```
+### 从运行中的副本加载权重
 
-安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。存在多个 Dragonfly release 时，在 `modelDistribution.dragonfly` 下通过 `existingRelease: {name: dragonfly, namespace: dragonfly-system}` 选择一个，替换为实际的名称和命名空间。
-
-在具备 RDMA 的 NVIDIA 集群上，ModelExpress 可以从运行中的副本加载权重。同时启用两项能力时，将下面的设置放在同一个 `modelDistribution` 下：
+在具备 RDMA 的 NVIDIA 集群上，还可以启用 ModelExpress，从运行中的副本加载权重。在 `deploy/platform-values.yaml` 中配置：
 
 ```yaml
 modelDistribution:
@@ -87,12 +81,26 @@ modelDistribution:
     enabled: true
 ```
 
-自动权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型。显式设置的 `load-format` 保持不变；没有兼容源副本时，加载已准备的文件。
+权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型。显式设置的 `load-format` 保持不变；没有兼容源副本时，加载已准备的文件。将 `modelexpress.enabled` 设为 `false` 可关闭权重传输。
 
-在原安装命令中添加 `--values deploy/platform-values.yaml` 应用配置。源码安装保留 `-e .`、镜像仓库设置和已有的引擎源码绑定。使用发布版平台时：
+### 自定义共享下载
+
+安装命令通过 Dragonfly 管理共享下载。命名空间的 `pod-security.kubernetes.io/enforce` 标签为 `baseline` 或 `restricted` 时，自动停用节点间下载。
+
+需要统一使用直连下载，或集群通过其他策略禁止 `hostPath` 挂载时，配置：
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: false
+```
+
+设为 `enabled: true` 可恢复共享下载。集群中有多个 Dragonfly 安装时，将 `modelDistribution.dragonfly.existingRelease` 设为 `{name: dragonfly, namespace: dragonfly-system}`，填写要复用的 Helm release 名称和命名空间。
+
+在原安装命令中添加 `--values deploy/platform-values.yaml` 应用自定义配置。源码安装保留 `-e .`、镜像仓库设置和已有的引擎源码绑定。使用发布版平台时：
 
 ```bash
 foretoken install --values deploy/platform-values.yaml
 ```
 
-修改这些设置后，重新部署需要更新的服务。将对应的 `enabled` 设为 `false` 可关闭分发。卸载时，没有工作负载使用的托管 Dragonfly 会被移除，复用的安装会保留。
+修改配置后，重新部署需要更新的服务。`foretoken uninstall` 会移除已无工作负载使用的托管 Dragonfly，复用的安装会保留。

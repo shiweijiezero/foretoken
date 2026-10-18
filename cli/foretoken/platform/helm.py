@@ -692,6 +692,18 @@ class Helm(HelmClient):
             self._finish_upgrade(args, timeout)
             self.run(args, input_text=yaml.safe_dump(values))
 
+    @staticmethod
+    def _add_dragonfly_binding(args: list[str], socket_path: str) -> None:
+        """Project the ready download binding into bootstrap and final platform renders."""
+        args.extend(
+            [
+                "--set",
+                f"modelDistribution.dragonfly.enabled={str(bool(socket_path)).lower()}",
+                "--set-string",
+                f"modelDistribution.dragonfly.socketPath={socket_path}",
+            ]
+        )
+
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
         """Return labels shared by resources in the platform release."""
@@ -965,7 +977,8 @@ class Helm(HelmClient):
         self._set_chart_defaults(Path(args[3]), updates)
 
     def prepare_source_origin(
-        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
+        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str,
+        *, dragonfly_socket_path: str,
     ) -> ApplicationFiles:
         """Prepare chart-owned storage and return its ready source-build publisher location."""
         release = self.platform_release()
@@ -987,6 +1000,7 @@ class Helm(HelmClient):
                 "applicationFiles.releaseURL=",
             ]
         )
+        self._add_dragonfly_binding(args, dragonfly_socket_path)
         input_text = yaml.safe_dump(merged)
         with self._prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
@@ -1460,12 +1474,7 @@ class Helm(HelmClient):
                     f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
                 ]
             )
-        args.extend(
-            [
-                "--set-string",
-                f"modelDistribution.dragonfly.socketPath={dragonfly_socket_path}",
-            ]
-        )
+        self._add_dragonfly_binding(args, dragonfly_socket_path)
         if rdma_managed:
             args.extend(
                 [
