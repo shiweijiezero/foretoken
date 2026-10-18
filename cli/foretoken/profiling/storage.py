@@ -27,6 +27,7 @@ from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.profiling.reader import (
     CAPTURE_MOUNT_PATH,
     READER_PORT,
+    READER_NAMESPACE_ENV,
     READER_SECRET_ENV,
     capture_path,
     capture_token,
@@ -235,7 +236,11 @@ class ProfileStorage:
                             {
                                 "name": READER_SECRET_ENV,
                                 "value": reader.secret,
-                            }
+                            },
+                            {
+                                "name": READER_NAMESPACE_ENV,
+                                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                            },
                         ],
                         "securityContext": {
                             "allowPrivilegeEscalation": False,
@@ -345,7 +350,7 @@ class ProfileStorage:
                 "NVIDIA Nsight Viewer is not configured; update the platform or download the report"
             )
         reader = self._reader(namespace, claim_name)
-        report = f"{capture_path(directory)}/{filename}"
+        report = f"{capture_path(directory, namespace)}/{filename}"
         key = namespace, reader.claim_uid, report
         if key in self._nsight_sessions:
             return self._nsight_sessions[key]
@@ -672,7 +677,7 @@ except (URLError, OSError) as error:
     ) -> list[dict[str, Any]]:
         """List nested traces relative to a capture directory, distinguishing missing storage."""
         try:
-            run = capture_path(artifact_path)
+            run = capture_path(artifact_path, namespace)
         except ValueError as exc:
             raise DeploymentError("invalid capture directory") from exc
         reader = self._reader(namespace, claim_name)
@@ -693,7 +698,7 @@ except (URLError, OSError) as error:
             token = capture_token(reader.secret, run)
             raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
         if result.get("error") == "not_found":
-            raise FileNotFoundError("capture directory was not found")
+            return []
         if result.get("error"):
             raise DeploymentError("capture files cannot be read by the storage viewer")
         return result["files"]

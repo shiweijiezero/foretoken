@@ -83,11 +83,8 @@ patches:
       kind: RuntimeCache
     patch: |-
       - op: replace
-        path: /spec
-        value:
-          initialSize: 20Gi
-          accessMode: ReadWriteOnce
-          retentionPolicy: Delete
+        path: /spec/directory
+        value: ../../data
 EOF
 
 foretoken deploy examples/candidate -e . --timeout 20m
@@ -95,7 +92,7 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To avoid downloading the same model for each candidate, [prepare shared model storage](../features/model-storage.md#share-model-files-across-namespaces).
+The candidate keeps the Quick Start's single-GPU configuration. Its relative `data/` selection resolves to the primary checkout's data directory, so worktrees can share model downloads while runtime caches remain namespace-local. The directory must be available to the target nodes; [prepare shared model storage](../features/model-storage.md#share-model-files-across-namespaces) for member namespaces. Use [dynamic storage](../features/model-storage.md#use-dynamic-storage) instead when no shared directory is available.
 
 Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 

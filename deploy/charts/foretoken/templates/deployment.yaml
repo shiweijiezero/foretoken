@@ -118,6 +118,9 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
+            {{- if .Values.namespaceAccess.enabled }}
+            - {{ printf "--cache-directory-bindings=%s" (include "foretoken.cacheDirectoryBindings" .) | quote }}
+            {{- end }}
             {{- if .Values.modelDistribution.modelexpress.enabled }}
             - --model-distribution-modelexpress=true
             {{- end }}

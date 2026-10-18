@@ -17,9 +17,9 @@ from urllib.parse import parse_qs, urlsplit
 
 READER_PORT: Final = 8080
 CAPTURE_MOUNT_PATH: Final = "/captures"
-# Published output only; files in profiles/.staging may still be written.
-CAPTURE_DIRECTORY: Final = "profiles/runs"
+LEGACY_CAPTURE_DIRECTORY: Final = "profiles/runs"
 READER_SECRET_ENV: Final = "FORETOKEN_PROFILE_READER_SECRET"
+READER_NAMESPACE_ENV: Final = "FORETOKEN_PROFILE_READER_NAMESPACE"
 CAPTURE_FORMATS: Final = {
     ".pt.trace.json": "perfetto",
     ".nsys-rep": "nsight",
@@ -47,10 +47,19 @@ def _relative_parts(value: str) -> list[str]:
     return parts
 
 
-def capture_path(value: str) -> str:
-    """Accept the capture directory or a child scope, never another part of the PVC."""
-    root = CAPTURE_DIRECTORY.split("/")
-    if _relative_parts(value)[:len(root)] != root:
+def capture_directory(namespace: str) -> str:
+    """Return the namespace's published capture root relative to its RuntimeCache mount."""
+    return f"namespaces/{namespace}/profiles/runs"
+
+
+def capture_path(value: str, namespace: str) -> str:
+    """Accept this namespace's published captures or one explicitly selected historical run."""
+    parts = _relative_parts(value)
+    root = capture_directory(namespace).split("/")
+    legacy = LEGACY_CAPTURE_DIRECTORY.split("/")
+    if parts[:len(root)] != root and not (
+        parts[:len(legacy)] == legacy and len(parts) > len(legacy)
+    ):
         raise ValueError("invalid capture path")
     return value
 
@@ -87,9 +96,10 @@ def _capture_name(value: str) -> tuple[list[str], str]:
 class CaptureReader(ThreadingHTTPServer):
     """Own the mounted root descriptor and process-local authentication secret."""
 
-    def __init__(self, address: tuple[str, int], root: str, secret: str) -> None:
+    def __init__(self, address: tuple[str, int], root: str, secret: str, namespace: str) -> None:
         self.root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self.secret = secret
+        self.namespace = namespace
         try:
             super().__init__(address, CaptureHandler)
         except BaseException:
@@ -126,7 +136,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         request = urlsplit(self.path)
         query = parse_qs(request.query)
         try:
-            path = capture_path(query.get("root", [""])[0])
+            path = capture_path(query.get("root", [""])[0], self.server.namespace)
         except ValueError:
             self._json(400, {"error": "invalid_capture"})
             return
@@ -211,7 +221,8 @@ class CaptureHandler(BaseHTTPRequestHandler):
 def main() -> None:
     """Run the packaged reader inside the temporary read-only PVC Pod."""
     secret = os.environ[READER_SECRET_ENV]
-    with CaptureReader(("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret) as server:
+    namespace = os.environ[READER_NAMESPACE_ENV]
+    with CaptureReader(("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret, namespace) as server:
         server.serve_forever()
 
 

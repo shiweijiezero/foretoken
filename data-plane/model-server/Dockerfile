@@ -111,9 +111,8 @@ COPY <<EOF /complete.json
 {"component":"model-server"}
 EOF
 
-# vLLM-Omni images already contain their Python runtime and model plugins. This
-# target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
-# skips the standard vLLM patch and dependency stages below.
+# The Omni image supplies Python, model plugins, and provider SDKs.
+# Add shared preparation and the lifecycle adapter without applying standard vLLM patches.
 FROM ${INFERENCE_ENGINE_IMAGE} AS omni-runtime
 
 ARG OMNI_VIDEO_SYNC_TIMEOUT=4000
@@ -125,6 +124,9 @@ ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
+COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
+COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
+COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/foretoken_prepare.py
 ENTRYPOINT ["foretoken-omni-model-server"]
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime

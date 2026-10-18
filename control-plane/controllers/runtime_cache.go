@@ -73,57 +73,86 @@ func placeRuntimeCache(ctx context.Context, reader client.Reader, namespace stri
 	return nil
 }
 
-// RuntimeCacheProfile configures the cache mount path and an optional existing-claim override.
+// RuntimeCacheProfile selects persistent storage from administrator-prepared directory bindings or defaults.
 type RuntimeCacheProfile struct {
-	ClaimName string
-	MountPath string
+	ClaimName         string
+	MountPath         string
+	DirectoryBindings RuntimeCacheDirectoryBindings
 }
 
-// Resolve selects the configured existing claim or the single usable managed cache in a namespace.
+// Resolve selects an explicit directory, an existing-claim default, or a managed cache.
 func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
-	if profile.ClaimName != "" {
-		claim := new(corev1.PersistentVolumeClaim)
-		if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: profile.ClaimName}, claim); err != nil {
-			return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
-		}
-		return profile.binding(claim.Name, claim.Annotations[directoryOwnerAnnotation])
-	}
 	var caches inferencev1alpha1.RuntimeCacheList
 	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
 		return nil, false, fmt.Errorf("list RuntimeCaches: %w", err)
 	}
-	if len(caches.Items) == 0 {
-		return nil, true, nil
+	directoryRequested := false
+	for _, cache := range caches.Items {
+		if cache.Spec.Directory != "" {
+			directoryRequested = true
+			break
+		}
 	}
-	if len(caches.Items) > 1 {
-		return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
+	claimName := profile.ClaimName
+	var cache *inferencev1alpha1.RuntimeCache
+	// An explicit directory selects storage; an existing-claim default must not
+	// silently replace it with a different filesystem.
+	if claimName == "" || directoryRequested {
+		if len(caches.Items) == 0 {
+			return nil, true, nil
+		}
+		if len(caches.Items) > 1 {
+			return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
+		}
+		cache = &caches.Items[0]
+		if !cache.DeletionTimestamp.IsZero() {
+			return nil, true, nil
+		}
+		if cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded {
+			return nil, false, nil
+		}
+		if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
+			return nil, false, nil
+		}
+		claimName = cache.Status.ClaimName
 	}
-	cache := &caches.Items[0]
-	if !cache.DeletionTimestamp.IsZero() {
-		return nil, true, nil
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, claim); err != nil {
+		return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
 	}
-	if cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded {
-		return nil, false, nil
+	directory := ""
+	if cache != nil && cache.Spec.Directory != "" {
+		if profile.DirectoryBindings != nil {
+			if profile.DirectoryBindings[cache.Spec.Directory] != claim.Name {
+				return nil, false, fmt.Errorf("directory %q has no matching administrator-prepared claim", cache.Spec.Directory)
+			}
+		} else if claim.Annotations[runtimeCacheDirectoryAnnotation] != cache.Spec.Directory {
+			return nil, false, fmt.Errorf("runtime cache claim %q does not confirm directory %q", claim.Name, cache.Spec.Directory)
+		}
+		directory = cache.Spec.Directory
+	} else if cache == nil {
+		for authorized, name := range profile.DirectoryBindings {
+			if name == claim.Name {
+				directory = authorized
+				break
+			}
+		}
+		if directory == "" {
+			directory = claim.Annotations[runtimeCacheDirectoryAnnotation]
+		}
 	}
-	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
-		return nil, false, nil
-	}
-	owner := ""
-	if cache.Spec.Directory != "" {
-		owner = cache.Annotations[directoryOwnerAnnotation]
-	}
-	return profile.binding(cache.Status.ClaimName, owner)
+	return profile.binding(claim.Name, directory, claim.Annotations[directoryOwnerAnnotation])
 }
 
-// binding resolves the storage identity shared by preparation, serving and file readers.
-func (profile RuntimeCacheProfile) binding(claimName, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
+// binding pins the confirmed directory and storage identity for execution and lifecycle consumers.
+func (profile RuntimeCacheProfile) binding(claimName, directory, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	identity, err := runtimeconfig.ParseStorageIdentity(owner)
 	if err != nil {
 		return nil, false, fmt.Errorf("runtime cache claim %q: %w", claimName, err)
 	}
 	return &inferencev1alpha1.RuntimeCacheBinding{
 		ClaimName: claimName, MountPath: profile.MountPath,
-		DirectoryOwner: identity,
+		Directory: directory, DirectoryOwner: identity,
 	}, true, nil
 }
 

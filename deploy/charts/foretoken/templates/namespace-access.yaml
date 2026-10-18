@@ -1,6 +1,17 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
+{{- define "foretoken.cacheDirectoryBindings" -}}
+{{- $bindings := dict -}}
+{{- range $claim, $directory := .Values.namespaceAccess.directories -}}
+{{- if hasKey $bindings $directory.directory -}}
+{{- fail (printf "directory %s has more than one claim binding" $directory.directory) -}}
+{{- end -}}
+{{- $_ := set $bindings $directory.directory $claim -}}
+{{- end -}}
+{{- $bindings | toJson -}}
+{{- end -}}
+
 {{- if and (eq .Values.scope "deployment") .Values.namespaceAccess.enabled }}
 {{- $controller := include "foretoken.fullname" . }}
 {{- $operation := include "foretoken.compactName" (printf "%s-operation" $controller) }}
@@ -51,9 +62,9 @@ rules:
     resources: [leases]
     resourceNames: [inference.foretoken.io]
     verbs: [get]
-{{- with .Values.namespaceAccess.sharedCache }}
-{{- $claim := required "namespaceAccess.sharedCache requires workload.cache.claimName" $.Values.workload.cache.claimName }}
-{{- $volume := include "foretoken.compactName" (printf "%s-cache" (include "foretoken.clusterName" $)) }}
+{{- range $claim, $directory := .Values.namespaceAccess.directories }}
+{{- if not $directory.existingClaim }}
+{{- $volume := printf "foretoken.%s.%s" $.Release.Namespace $claim }}
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -63,18 +74,39 @@ metadata:
     {{- include "foretoken.labels" $ | nindent 4 }}
 spec:
   capacity:
-    storage: {{ .capacity | quote }}
+    storage: {{ required "directory requires capacity" $directory.capacity | quote }}
   accessModes: [ReadWriteMany]
   persistentVolumeReclaimPolicy: Retain
   claimRef:
     namespace: {{ $.Release.Namespace }}
     name: {{ $claim }}
+  {{- if $directory.hostPath }}
+  hostPath:
+    path: {{ $directory.hostPath | quote }}
+    type: Directory
+  {{- else }}
   nfs:
-    server: {{ .server | quote }}
-    path: {{ .path | quote }}
-  {{- with .mountOptions }}
+    server: {{ required "directory requires an NFS server" $directory.server | quote }}
+    path: {{ required "directory requires an NFS path" $directory.path | quote }}
+  {{- with $directory.mountOptions }}
   mountOptions:
     {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- with $directory.nodeAffinity }}
+  nodeAffinity:
+    {{- toYaml . | nindent 4 }}
+  {{- else }}
+  {{- with $directory.hostnames }}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                {{- toYaml . | nindent 16 }}
+  {{- end }}
   {{- end }}
 ---
 apiVersion: v1
@@ -84,16 +116,18 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "foretoken.labels" $ | nindent 4 }}
-  {{- with .directoryOwner }}
   annotations:
+    inference.foretoken.io/runtime-cache-directory: {{ $directory.directory | quote }}
+    {{- with $directory.directoryOwner }}
     inference.foretoken.io/directory-owner: {{ . | quote }}
-  {{- end }}
+    {{- end }}
 spec:
   accessModes: [ReadWriteMany]
   storageClassName: ""
   volumeName: {{ $volume }}
   resources:
     requests:
-      storage: {{ .capacity | quote }}
+      storage: {{ $directory.capacity | quote }}
+{{- end }}
 {{- end }}
 {{- end }}

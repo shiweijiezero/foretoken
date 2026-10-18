@@ -63,15 +63,15 @@ controller:
 # Prepared by foretoken install --namespace for namespace-local service operations.
 namespaceAccess:
   enabled: false
-  cacheAccessMode: ""
   gateway: {}
-  # An administrator-selected NFS directory shared through a namespace-local claim.
-  sharedCache: {}
+  # Namespace-local claim names mapped to administrator-authorized directories.
+  # Namespace installation resolves NFS mounts or sourceClaim references and prepares static aliases.
+  directories: {}
 
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # Set claimName to override namespace RuntimeCache discovery with an existing PVC.
+  # Use an existing namespace PVC by default; an explicit authorized directory takes precedence.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken

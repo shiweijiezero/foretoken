@@ -45,7 +45,6 @@ class NamespaceCommand:
     namespace: str
     timeout: str
     values: tuple[str, ...] = ()
-    shared_cache: str | None = None
     editable: str | None = None
 
 
@@ -267,10 +266,6 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "-n", "--namespace", metavar="NAME", type=_namespace_name,
         help="prepare an administrator-managed namespace using the installed platform",
-    )
-    install.add_argument(
-        "--shared-cache", metavar="NAMESPACE/PVC",
-        help="reuse an existing writable NFS model cache (requires --namespace)",
     )
     install.add_argument(
         "-e",
@@ -495,13 +490,11 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
                 parsed_args.frontend_mode, parsed_args.gateway_name,
                 parsed_args.gateway_namespace, parsed_args.gateway_section_name,
             )):
-                parser.error("namespace installation accepts --editable, --values, --shared-cache and --timeout; other install options configure the shared platform")
+                parser.error("namespace installation accepts --editable, --values and --timeout; other install options configure the shared platform")
             return NamespaceCommand(
                 "install", parsed_args.namespace, parsed_args.timeout,
-                tuple(parsed_args.values or ()), parsed_args.shared_cache, parsed_args.editable,
+                tuple(parsed_args.values or ()), parsed_args.editable,
             )
-        if parsed_args.shared_cache is not None:
-            parser.error("--shared-cache requires --namespace")
         reused_gateway_arguments = any(
             (
                 parsed_args.gateway_name,

@@ -70,7 +70,17 @@ workload:
 
 ## 3. 部署与更新代码
 
-快速开始示例在本地 k3d 使用仓库中的 `data/` 目录；在远程集群上，Foretoken 会自动为这个相对目录创建动态 PVC，因此无需修改示例 YAML。多节点集群使用 `ReadWriteMany`，单节点集群会自动使用 `ReadWriteOnce`。集群需要其他存储策略时，在 `cache.yaml` 中设置 `initialSize`、`storageClassName`、`accessMode` 或 `maxSize`。
+快速开始示例选择仓库中的 `data/` 目录。目标节点能访问该目录时可保留配置，跨节点部署应使用共享文件系统。成员使用的目录访问由[管理员提前准备](../features/model-storage_zh.md#跨命名空间复用模型文件)。
+
+如果希望由集群提供存储，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
+
+```yaml
+spec:
+  initialSize: 10Gi
+  accessMode: ReadWriteOnce
+```
+
+这会使用默认 StorageClass 申请单节点卷。驱动支持跨节点访问时，可选择 `ReadWriteMany`；需要其他存储类时添加 `storageClassName`。共享和保留行为见[模型存储](../features/model-storage_zh.md)。
 
 部署并更新代码：
 

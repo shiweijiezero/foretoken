@@ -69,4 +69,4 @@ kubectl get kvservice,kvpool,kvgroup --namespace foretoken-shared-kv
 foretoken delete examples/feature/shared-kv-store
 ```
 
-The Store and its PVCs are deleted. Files in the model data directory remain available for redeployment.
+The Store and its PVCs are deleted. Downloaded model versions are [reclaimed once no service references them](../../../docs/features/model-storage.md#stop-delete-and-reuse).

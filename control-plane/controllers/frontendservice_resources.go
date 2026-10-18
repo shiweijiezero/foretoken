@@ -8,6 +8,7 @@ package controllers
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 	"time"
@@ -92,15 +93,33 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		cacheMountPath = profile.RuntimeCache.MountPath
 	}
 	modelRoot := runtimeconfig.ModelDirectory(cacheMountPath)
+	modelCache := runtimeconfig.ModelCacheDirectory(cacheMountPath)
+	runtimeRoot := runtimeconfig.NamespaceCacheDirectory(cacheMountPath, frontend.Namespace)
+	preparationVersion := runtimeconfig.ModelPreparationVersion(frontend.Status.Application, "")
+	sharedCache := preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion
+	huggingFaceHome := modelRoot
+	if sharedCache {
+		huggingFaceHome = path.Join(runtimeRoot, "huggingface")
+	}
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
 		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
-		{Name: "HF_HOME", Value: modelRoot},
+		{Name: "HF_HOME", Value: huggingFaceHome},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
 		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
+	}
+	if sharedCache {
+		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: "HOME", Value: runtimeRoot},
+			corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: path.Join(runtimeRoot, ".cache")},
+			corev1.EnvVar{Name: "XDG_CONFIG_HOME", Value: path.Join(runtimeRoot, ".config")},
+			corev1.EnvVar{Name: "HF_HUB_CACHE", Value: path.Join(huggingFaceHome, "hub")},
+			corev1.EnvVar{Name: runtimeconfig.ModelCacheRootEnv, Value: modelCache},
+			corev1.EnvVar{Name: runtimeconfig.PreparationRootEnv, Value: path.Join(runtimeRoot, "prepared")},
+		)
 	}
 	annotations := map[string]string{frontendServingConfigAnnotation: fmt.Sprint(frontend.Status.ServingConfigVersion)}
 	if profile.ApplicationURL != "" {
@@ -114,7 +133,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,
-			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: frontend.Namespace + "/" + profile.RuntimeCache.ClaimName},
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: runtimeconfig.RuntimeCacheIdentity(frontend.Namespace, profile.RuntimeCache.ClaimName, preparationVersion)},
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
 			corev1.EnvVar{Name: runtimeconfig.TemporaryModelRootEnv, Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache")},
 		)
@@ -194,7 +213,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		},
 	}
 	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
-	cacheAccess := runtimeconfig.CacheStorageAccess(profile.RuntimeCache)
+	cacheAccess := runtimeconfig.WorkloadCacheAccess(&deployment.Spec.Template, profile.RuntimeCache, preparationVersion)
 	accesses := []runtimeconfig.VolumeAccess{cacheAccess}
 	if frontend.Spec.VideoTasks != nil {
 		if profile.VideoStorageIdentity == nil {

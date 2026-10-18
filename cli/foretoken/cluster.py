@@ -10,6 +10,7 @@ from pathlib import Path
 
 from foretoken.arguments import ClusterCommand
 from foretoken.errors import DeploymentError
+from foretoken.working_directory import repository_data_directory
 
 _DEVICE_PLUGIN = (
     "https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/"
@@ -119,7 +120,7 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
     config = Path(command.config) if command.config else root / "deploy/k3d/config.yaml"
     if not config.is_file():
         raise DeploymentError(f"k3d configuration not found: {config}")
-    data = root / "data"
+    data = repository_data_directory(root)
     data.mkdir(exist_ok=True)
     arguments = [
         "k3d", "cluster", "create", command.name,

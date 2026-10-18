@@ -8,16 +8,15 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from foretoken.deployment.manifest import ForetokenDeployment, parse_deployment
-from foretoken.deployment.storage import REMOTE_RUNTIME_CACHE_SIZE
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
 from foretoken.platform.config import default_platform_config
+from foretoken.working_directory import resolve_runtime_directory
 
 
 def namespace_controller_name() -> str:
@@ -31,7 +30,7 @@ class NamespaceAccess:
 
     namespace: str
     cache_claim: str
-    cache_access_mode: str
+    directory_bindings: dict[str, str]
     gateway: dict[str, Any]
 
     @classmethod
@@ -44,33 +43,32 @@ class NamespaceAccess:
             return None
         values = json.loads(payload)
         return cls(
-            namespace, values["cacheClaim"], values["cacheAccessMode"], values["gateway"],
+            namespace, values["cacheClaim"], values["directoryBindings"], values["gateway"],
         )
 
     def select_resources(self, deployment: ForetokenDeployment, *, deleting: bool = False) -> ForetokenDeployment:
-        """Keep service intent separate from administrator resources while allowing old managed caches to retire."""
+        """Resolve member directory intent against prepared claims without changing its storage selection."""
         objects = []
         for original in deployment.objects:
             if original["kind"] == "Namespace":
                 continue
             document = copy.deepcopy(original)
             if document["kind"] == "RuntimeCache" and document["apiVersion"].startswith("inference.foretoken.io/"):
-                if self.cache_claim and not deleting:
-                    continue
                 spec = document["spec"]
                 directory = spec.get("directory")
+                if self.cache_claim and not directory and not deleting:
+                    continue
+                document["metadata"].get("annotations", {}).pop("inference.foretoken.io/directory-owner", None)
                 if deleting:
-                    # Retire the declared CR, not a static PV managed by the administrator.
+                    # Namespace preparation, not a member deployment, owns directory PVs.
                     spec.pop("directory", None)
                 elif directory:
-                    if Path(directory).is_absolute():
+                    resolved = str(resolve_runtime_directory(directory, deployment.path))
+                    if resolved not in self.directory_bindings:
                         raise DeploymentError(
-                            f"Namespace {self.namespace} requires an administrator-provided PVC for host directories"
+                            f"Namespace {self.namespace} has no prepared claim for directory {resolved}; "
+                            "ask its administrator to authorize that directory"
                         )
-                    spec.pop("directory")
-                    document["metadata"].get("annotations", {}).pop("inference.foretoken.io/directory-owner", None)
-                    spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
-                    if self.cache_access_mode == "ReadWriteOnce" and spec.get("accessMode", "ReadWriteMany") == "ReadWriteMany":
-                        spec["accessMode"] = "ReadWriteOnce"
+                    spec["directory"] = resolved
             objects.append(document)
         return parse_deployment(deployment.path, yaml.safe_dump_all(objects, sort_keys=False))

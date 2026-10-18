@@ -48,6 +48,13 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "maintain-model-cache" {
+		if err := maintainModelCache(os.Args[2:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
@@ -94,6 +101,7 @@ func main() {
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
+	var cacheDirectoryBindings controllers.RuntimeCacheDirectoryBindings
 	var admissionStoreURLSecretName string
 	var admissionStoreURLSecretKey string
 	var modelSourceEndpoint string
@@ -133,6 +141,20 @@ func main() {
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
+	flag.Func("cache-directory-bindings", "JSON mapping of authorized data directories to prepared namespace claims; an empty object authorizes no directories.", func(value string) error {
+		if err := json.Unmarshal([]byte(value), &cacheDirectoryBindings); err != nil {
+			return err
+		}
+		if cacheDirectoryBindings == nil {
+			return errors.New("cache-directory-bindings must be a JSON object")
+		}
+		for directory, claim := range cacheDirectoryBindings {
+			if directory == "" || claim == "" {
+				return errors.New("cache-directory-bindings requires nonempty directories and claim names")
+			}
+		}
+		return nil
+	})
 	flag.StringVar(&admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
@@ -174,7 +196,7 @@ func main() {
 	for index, name := range workloadImagePullSecretNames {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
-	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
+	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath, DirectoryBindings: cacheDirectoryBindings}
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
@@ -364,7 +386,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient(), DirectoryBindings: cacheDirectoryBindings}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
 	}

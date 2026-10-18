@@ -166,7 +166,7 @@ kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-
   --role foretoken-control-plane-operator --user MEMBER_ID
 ```
 
-Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations in their deployment are left to the administrator. A provided cache PVC takes precedence over the deployment's RuntimeCache; see [sharing model files](../docs/features/model-storage.md#share-model-files-across-namespaces).
+Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations remain administrator-managed. Members select a prepared data directory in `cache.yaml`; deployments using the same directory share model downloads while keeping separate runtime state. See [sharing model files](../docs/features/model-storage.md#share-model-files-across-namespaces).
 
 From an existing source installation, the administrator can build this namespace's applications with `foretoken install --namespace foretoken-multi-model-demo -e .`. Ordinary member deployments use those prepared applications. Explicit `deploy -e` updates still require source-development permissions.
 
@@ -259,6 +259,6 @@ foretoken delete examples/quickstart/multi-model
 
 The platform administrator can run `foretoken uninstall` when the shared platform is no longer needed.
 
-In administrator-prepared namespaces, deletion removes only the submitted service resources and leaves the controller, namespace and provided cache intact. For self-managed deployments, it waits for service cleanup before removing an unused controller; a namespace included in the Kustomize configuration is removed last, along with its resources.
+In administrator-prepared namespaces, deletion removes the submitted service resources and leaves the controller, namespace and prepared storage in place. Managed model downloads are collected after their last service reference is released; `stop` retains those references. For self-managed deployments, deletion waits for service cleanup before removing an unused controller; a namespace included in the Kustomize configuration is removed last, along with its resources.
 
 Uninstall preserves CRDs, log storage, and reused cluster components. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

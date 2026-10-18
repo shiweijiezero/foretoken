@@ -21,7 +21,7 @@ def peer_snapshot(source, repository, revision, files, public, validate):
     from filelock import FileLock
 
     directory = (
-        Path(os.environ["FORETOKEN_MODEL_ROOT"])
+        Path(os.environ["FORETOKEN_MODEL_CACHE_ROOT"])
         / "distributed"
         / source
         / repository

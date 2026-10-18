@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 from foretoken.arguments import ProfileViewCommand
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.profiling.reader import CAPTURE_DIRECTORY
+from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
 
 
@@ -88,7 +88,8 @@ class CaptureDirectories:
             raise FileNotFoundError(
                 "Capture storage is no longer listed; refresh the page."
             )
-        return store["namespace"], store["claim"], CAPTURE_DIRECTORY
+        namespace = store["namespace"]
+        return namespace, store["claim"], capture_directory(namespace)
 
     def files(self, store_id: str, storage: ProfileStorage) -> list[dict[str, Any]]:
         """Recursively list saved traces, attaching historical metadata where available."""
@@ -99,9 +100,19 @@ class CaptureDirectories:
             if run["metadata"]["namespace"] == namespace
             and run["status"]["artifact"]["claimName"] == claim
         ]
-        entries = storage.list_files(namespace, claim, root)
+        # Historical runs retain their published scopes; never scan another namespace's root.
+        roots = {root}
+        for run in runs:
+            historical = run["status"]["artifact"]["path"]
+            if historical != root and not historical.startswith(root + "/"):
+                roots.add(historical)
+        entries = []
+        for directory in sorted(roots):
+            for entry in storage.list_files(namespace, claim, directory):
+                entry["name"] = f"{directory}/{entry['name']}"
+                entries.append(entry)
         for entry in entries:
-            path = f"{root}/{entry['name']}"
+            path = entry["name"]
             run = next(
                 (
                     run
@@ -251,7 +262,6 @@ class ProfileHandler(BaseHTTPRequestHandler):
             elif route in {"api/files", "api/trace", "api/nsight"}:
                 query = parse_qs(query_string)
                 store_id = query.get("store", [""])[0]
-                artifact = self.server.history.directory(store_id)
                 files = self.server.history.files(store_id, self.server.storage)
                 if route == "api/files":
                     self._json(200, files)
@@ -260,16 +270,19 @@ class ProfileHandler(BaseHTTPRequestHandler):
                 selected = next((item for item in files if item["name"] == name), None)
                 if selected is None:
                     raise FileNotFoundError("Trace file is no longer available.")
+                namespace, claim, _ = self.server.history.directory(store_id)
+                directory, filename = selected["name"].rsplit("/", 1)
+                artifact = namespace, claim, directory
                 if route == "api/nsight":
                     if selected["format"] != "nsight":
                         self._json(400, {"error": "Select an Nsight Systems report."})
                         return
-                    url = self.server.storage.open_nsight(*artifact, name)
+                    url = self.server.storage.open_nsight(*artifact, filename)
                     self._json(200, {"url": url})
                     return
                 self._headers(200, "application/octet-stream", selected["size"])
                 streaming = True
-                self.server.storage.stream_file(*artifact, name, self.wfile)
+                self.server.storage.stream_file(*artifact, filename, self.wfile)
             else:
                 self.send_error(404)
         except (FileNotFoundError, DeploymentError) as error:

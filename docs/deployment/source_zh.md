@@ -83,11 +83,8 @@ patches:
       kind: RuntimeCache
     patch: |-
       - op: replace
-        path: /spec
-        value:
-          initialSize: 20Gi
-          accessMode: ReadWriteOnce
-          retentionPolicy: Delete
+        path: /spec/directory
+        value: ../../data
 EOF
 
 foretoken deploy examples/candidate -e . --timeout 20m
@@ -95,7 +92,7 @@ foretoken perf examples/candidate --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置，模型文件使用集群提供的 20 GiB 存储，无需挂载宿主机目录。为避免每个候选重复下载模型，可以[准备共享模型存储](../features/model-storage_zh.md#跨命名空间复用模型文件)。
+候选沿用快速开始的单卡配置。相对路径选择的默认 `data/` 会指向主 checkout 的数据目录，各 worktree 复用模型下载，运行时缓存仍按命名空间分别保存。该目录需要能被目标节点访问，成员命名空间由管理员[准备共享模型存储](../features/model-storage_zh.md#跨命名空间复用模型文件)。没有共享目录时，也可以改用[动态存储](../features/model-storage_zh.md#使用动态存储)。
 
 其他候选使用独立的源码目录、命名空间和 iteration 名称，并分别预留 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 

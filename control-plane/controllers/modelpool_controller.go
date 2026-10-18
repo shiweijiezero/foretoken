@@ -95,7 +95,7 @@ func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, obje
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 
 // Reconcile materializes the desired Group revision and aggregates Group readiness.
@@ -119,6 +119,13 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		if pending {
 			return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
 		}
+		pending, err = reconciler.reconcilePreparationSources(ctx, pool, nil, nil)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if pending {
+			return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+		}
 		base := pool.DeepCopy()
 		controllerutil.RemoveFinalizer(pool, modelPoolFinalizer)
 		return ctrl.Result{}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
@@ -132,6 +139,10 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		controllerutil.AddFinalizer(pool, modelPoolFinalizer)
 		return ctrl.Result{Requeue: true}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	}
+	// Retain the source before draining Groups, even if the next engine configuration is invalid.
+	if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, nil); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Capacity retirement uses the immutable Groups already running. It does not
 	// depend on resolving the next template or applying new admission settings.
 	retiring, err := reconciler.retireExcessGroups(ctx, pool, pool.Spec.DesiredGroups)
@@ -144,9 +155,6 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		if stopped {
 			target = conditionState{metav1.ConditionTrue, "ScaledToZero", "All ModelGroups have stopped"}
 		}
-		if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
-			return ctrl.Result{}, err
-		}
 		return ctrl.Result{}, reconciler.updateStatus(ctx, pool, metav1.ConditionUnknown, "NotRequired", "Stopping uses the existing Group execution contracts", groupState{
 			Materialized: stopped, RolloutPending: !stopped, Target: target,
 			Reason: target.Reason, Message: target.Message,
@@ -154,6 +162,10 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	}
 	// Preserve the active limit until this Pool reflects the owning service's current intent.
 	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
+		return ctrl.Result{}, nil
+	}
+	// The service owner must recover the executable selection before a legacy Pool can create a cohort.
+	if pool.Spec.Template.Application == nil || pool.Spec.Template.Application.PreparationVersion == nil {
 		return ctrl.Result{}, nil
 	}
 	if reconciler.TemplateResolver == nil {
@@ -188,6 +200,11 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if err := reconciler.reconcileWeightSources(ctx, pool, template); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Establish the source reference before execution to cover publications racing with stop.
+	targetSpec := template.Spec(pool, 0)
+	if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, &targetSpec); err != nil {
+		return ctrl.Result{}, err
+	}
 	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision, retiring)
 	if err != nil {
 		active, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
@@ -195,8 +212,11 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
 		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
 	}
-	if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
-		return ctrl.Result{}, err
+	// Readiness may follow the first source read; adopt its publication before committing PreparedRevision.
+	if state.PreparedRevision != "" {
+		if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, &targetSpec); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if err := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", state); err != nil {
 		return ctrl.Result{}, err

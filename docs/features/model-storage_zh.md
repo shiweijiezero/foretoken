@@ -5,7 +5,7 @@
 
 [English](model-storage.md)
 
-两个 Quick Start 示例共用项目根目录的 `data/` 存放模型和运行时缓存。各自的 `cache.yaml` 使用：
+在部署的 `cache.yaml` 中选择数据目录。快速开始示例使用仓库的 `data/`：
 
 ```yaml
 spec:
@@ -13,25 +13,70 @@ spec:
   accessMode: ReadWriteMany
 ```
 
-然后直接部署：
+然后正常部署：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-Foretoken 会为该配置创建目录型存储。删除服务时目录会保留，后续部署可以继续复用其中的文件。选择 ModelScope 或 Hugging Face 兼容地址见[模型来源](model-sources_zh.md)。
+挂载同一目录的部署会复用下载的权重、tokenizer 和模型配置文件；编译缓存等运行状态按命名空间分别保存：
 
-## 选择目录位置
+| 目录 | 用途 |
+|---|---|
+| `data/shared/models/` | 各服务共享的托管模型下载缓存 |
+| `data/namespaces/<namespace>/` | 编译缓存、运行配置、账号状态及性能剖析结果 |
+| `data/models/` | 自行准备和维护的模型文件，不参与下载缓存回收 |
 
-本机 k3d 的相对路径以 Kustomize 根目录为基准。两个示例都用 `../../../data` 指向项目根目录的 `data/`，创建集群时将该目录 bind mount 到节点。请参阅 [k3d 指南](../deployment/k3d_zh.md)。
+源码构建缓存由构建流程单独管理。选择 ModelScope 或 Hugging Face 兼容地址，见[模型来源](model-sources_zh.md)。
 
-已有部署可以继续使用原路径。已绑定缓存更换目录时需要使用新的 RuntimeCache 名称；已有文件按需另行移动或复制。
+## 选择目录
 
-远程集群会自动将 `../../../data` 这样的相对目录转换为动态 PVC，因此 Quick Start 的 YAML 无需修改。多节点集群使用 `ReadWriteMany` 共享模型文件和运行时数据；单节点集群会自动使用 `ReadWriteOnce`。需要选择特定 StorageClass、容量、访问模式或最大容量时，在 `cache.yaml` 中设置对应字段；绝对 `directory` 仍表示目标节点或所有目标节点共享文件系统上已经存在的路径。
+相对路径以 Kustomize 目录为基准。在 Git worktree 中，相对路径如果指向仓库默认的 `data/`，会使用主 checkout 的 `data/`，让各候选复用模型下载。显式绝对路径保持原来的目标。
+
+本机 k3d 在 CLI 创建集群时准备仓库数据目录的挂载，操作见 [k3d 指南](../deployment/k3d_zh.md)。远程集群中，运行服务的节点必须能访问所选目录；跨节点共享应使用共享文件系统。指定 `directory` 就表示使用该目录，不会被静默替换为另一张独立动态卷。
+
+已绑定的 RuntimeCache 更换目录时，需要使用新的 RuntimeCache 名称。自备模型需要迁移时，另行移动或复制其文件。
+
+## 跨命名空间复用模型文件
+
+成员使用的共享目录由管理员一次性准备。如果仓库的 `data/` 位于 CLI 主机和集群都能访问的 NFS 上，在仓库根目录执行：
+
+```bash
+foretoken install --namespace candidate-a
+foretoken install --namespace candidate-b
+```
+
+本机 k3d 则复用已有的数据目录绑定挂载。安装会为两个命名空间分别准备指向同一实际目录的存储。管理员分配[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)后，成员继续在 `cache.yaml` 中选择该目录，正常部署即可，无需填写 PVC 名称或取得集群级存储权限。
+
+CLI 主机无法直接读取共享挂载时，管理员也可以用已有的 NFS `ReadWriteMany` 卷提供目录。将下面的配置保存到 `deploy/member-storage.yaml`，目录和源 PVC 换成实际选择：
+
+```yaml
+namespaceAccess:
+  directories:
+    models:
+      directory: /srv/shared/foretoken-data
+      sourceClaim: model-library/models
+```
+
+为两个命名空间应用该配置：
+
+```bash
+foretoken install --namespace candidate-a --values deploy/member-storage.yaml
+foretoken install --namespace candidate-b --values deploy/member-storage.yaml
+```
+
+成员在 `spec.directory` 中填写 `/srv/shared/foretoken-data`。源 PVC 支持原生 NFS 和 `nfs.csi.k8s.io`。仅存在于 CLI 主机本地磁盘的目录无法提供远程共享；此时应选择节点可访问的目录，或使用下文的动态存储。
+
+## 暂停、删除与复用
+
+`foretoken stop` 释放服务运行资源，但保留其模型缓存引用；之后执行 `foretoken deploy` 可以继续复用文件。
+
+`foretoken delete` 在被删除服务的工作负载退出后释放引用。每个托管模型版本在该目录中不再被任何服务引用时，才会被回收。例如 A、B 两个命名空间使用 X，C、D 使用 Y：删除 A、B 后就能回收 X，无需等待 Y 停止。
+数据目录本身、`data/models/` 中的自备模型和命名空间运行状态会保留。管理员准备的卷仍可用于后续部署；动态卷则遵循配置的保留策略及 StorageClass 回收策略。
 
 ## 使用已有模型
 
-将完整模型目录放在数据根目录下：
+将完整模型目录放到数据根目录下：
 
 ```text
 data/models/checkpointA/A3/
@@ -41,7 +86,7 @@ data/models/checkpointA/A3/
 └── model.safetensors
 ```
 
-在 `model.yaml` 中填写对外使用的模型标识：
+在 `model.yaml` 中选择它：
 
 ```yaml
 spec:
@@ -49,11 +94,11 @@ spec:
   source: local
 ```
 
-model-server 和 frontend 会在 `data/models` 下解析该标识。只有 tokenizer 的目录可以放在 `data/models/tokenizers` 下；模型格式由推理引擎校验。
+model-server 和 frontend 会在 `data/models` 下解析该标识。只有 tokenizer 的目录可以放在 `data/models/tokenizers` 下，模型格式由推理引擎校验。这些自行维护的文件不随下载缓存一起回收。自备模型目录应放在 `data/shared/models` 之外；使用托管下载时，通过 `hf` 或 `modelscope` 选择模型。
 
 ## 使用动态存储
 
-集群需要动态创建 PVC 时，去掉 `directory`：
+希望由集群申请存储，而非使用指定文件系统目录时，去掉 `directory`：
 
 ```yaml
 spec:
@@ -61,21 +106,8 @@ spec:
   accessMode: ReadWriteMany
 ```
 
-使用 `storageClassName` 选择 StorageClass。只有存储驱动支持在线扩容时，才增加 `maxSize`。
+StorageClass 只支持单节点卷时，使用 `ReadWriteOnce`。需要指定存储类时添加 `storageClassName`；存储驱动支持在线扩容时，才设置 `maxSize`。分别申请的动态卷不会仅因为 StorageClass 相同就共用文件。
 
-需要挂载其他系统管理的 PVC 时，在平台 values 中设置 `workload.cache.claimName`，并在每个工作负载命名空间创建该 PVC。
+管理员也可以通过 `workload.cache.claimName` 将已有的命名空间 PVC 设为默认存储。成员显式选择已授权的 `directory` 时，以目录选择为准。
 
-诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../../benchmarks/docs/profile/README_zh.md)。
-
-## 跨命名空间复用模型文件
-
-多个实验使用同一模型时，管理员可以共享一张已有的 `ReadWriteMany` PVC，其存储需为原生 NFS 或 NFS CSI。以下使用 `model-library` 命名空间中的 `models`，实际使用时替换为自己的共享缓存：
-
-```bash
-foretoken install --namespace candidate-a --shared-cache model-library/models
-foretoken install --namespace candidate-b --shared-cache model-library/models
-```
-
-各候选复用同一份模型文件，推理编译缓存按命名空间分别保留，重新部署时仍可复用。源卷会设为 `Retain`，删除 PVC 后仍保留模型文件。
-
-为成员分配[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)后，继续使用正常部署命令。部署优先使用已提供的共享缓存，不再为清单中的 RuntimeCache 另建模型卷。删除一个候选不会影响共享模型和其他候选；不再需要的共享数据由存储管理员统一回收。
+性能剖析结果保存在对应命名空间的数据区域，采集和查看方法见[性能剖析指南](../../benchmarks/docs/profile/README_zh.md)。

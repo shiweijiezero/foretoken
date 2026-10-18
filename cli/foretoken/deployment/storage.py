@@ -24,12 +24,12 @@ from foretoken.deployment.manifest import (
     ForetokenDeployment,
     RuntimeCacheManifest,
 )
-
-REMOTE_RUNTIME_CACHE_SIZE = "10Gi"
+from foretoken.deployment.namespace_access import NamespaceAccess
+from foretoken.working_directory import resolve_runtime_directory
 
 
 class DirectoryVolumes:
-    """Own static and automatically provisioned RuntimeCache storage for deployments.
+    """Bind administrator-selected directory volumes for self-managed deployments.
 
     The controller remains the single owner of PVC names, capacity and retention.
     The CLI supplies prepared filesystem locations and preserves their contents.
@@ -50,6 +50,10 @@ class DirectoryVolumes:
     ) -> None:
         """Submit prepared intent, then bind directory PVs to the controller-created claims."""
         submit = submit or self.kubectl.apply
+        access = NamespaceAccess.read(self.kubectl, deployment.namespace)
+        if access is not None:
+            submit(access.select_resources(deployment).rendered)
+            return
         caches = tuple(cache for cache in deployment.runtime_caches if cache.directory)
         if not caches:
             submit(deployment.rendered)
@@ -77,29 +81,6 @@ class DirectoryVolumes:
                 )
             spec = matching[0].setdefault("spec", {})
             annotations = matching[0]["metadata"].setdefault("annotations", {})
-            path = Path(cache.directory)
-            if not context.startswith("k3d-") and (
-                not path.is_absolute() or ".." in path.parts
-            ):
-                annotations.pop(self.directory_owner_annotation, None)
-                spec.pop("directory", None)
-                spec.setdefault("initialSize", REMOTE_RUNTIME_CACHE_SIZE)
-                schedulable_nodes = tuple(
-                    node
-                    for node in nodes
-                    if not (node.get("spec") or {}).get("unschedulable")
-                )
-                if len(schedulable_nodes) == 1 and spec.get("accessMode") == "ReadWriteMany":
-                    spec["accessMode"] = "ReadWriteOnce"
-                    print(
-                        f"RuntimeCache/{cache.name}: using ReadWriteOnce on the single-node cluster",
-                        flush=True,
-                    )
-                print(
-                    f"RuntimeCache/{cache.name}: using a dynamic PVC on the remote cluster",
-                    flush=True,
-                )
-                continue
             consumer_nodes = nodes
             platform = None
             options = {}
@@ -378,6 +359,9 @@ class DirectoryVolumes:
         *, remove: Callable[[tuple[dict[str, Any], ...]], set[str]] | None = None,
     ) -> None:
         """Retire user resources and disposable PVs, optionally filtering deletion by live ownership."""
+        access = NamespaceAccess.read(self.kubectl, deployment.namespace)
+        if access is not None:
+            deployment = access.select_resources(deployment, deleting=True)
         volumes = []
         expected_uids = {
             (obj["metadata"].get("namespace", deployment.namespace), obj["metadata"]["name"]): obj["metadata"].get("uid")
@@ -491,19 +475,14 @@ def _resolve_directory(
     nodes: tuple[dict[str, Any], ...],
 ) -> tuple[str, list[str], tuple[int, int] | None]:
     """Resolve a node path and, for local binds, its non-root filesystem owner."""
-    path = Path(cache.directory)
+    directory = resolve_runtime_directory(cache.directory, root)
     if not context.startswith("k3d-"):
-        if not path.is_absolute() or ".." in path.parts:
-            raise DeploymentError(
-                f"RuntimeCache/{cache.name}: set directory to an absolute node path"
-            )
         if len(nodes) > 1 and cache.access_mode != "ReadWriteMany":
             raise DeploymentError(
                 "a shared directory across nodes requires ReadWriteMany"
             )
-        return str(path), [_hostname(nodes[0])] if len(nodes) == 1 else [], None
+        return str(directory), [_hostname(nodes[0])] if len(nodes) == 1 else [], None
 
-    directory = (path if path.is_absolute() else root / path).resolve()
     if not directory.is_dir():
         raise DeploymentError(
             f"RuntimeCache/{cache.name}: create {directory} before deploying"

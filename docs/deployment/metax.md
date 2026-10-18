@@ -82,7 +82,7 @@ When finished, remove the resources created by the same configuration:
 foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-Use a namespace dedicated to the example. Deletion waits for service cleanup, then removes its controller and namespace, including the PVC objects. Directory-backed model files remain available for reuse; dynamic volumes follow their storage retention policy. The administrator maintains the shared platform.
+Use a namespace dedicated to the example. Deletion releases the service's model-cache references after its workloads exit. Administrator-prepared namespaces and storage remain in place; self-managed deployments also remove their unused controller and declared namespace. See [Model storage](../features/model-storage.md#stop-delete-and-reuse) for cache collection and retained user files. The administrator maintains the shared platform.
 
 ## If the request does not succeed
 

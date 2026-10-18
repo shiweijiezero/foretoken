@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from pathlib import Path
 
 from foretoken.arguments import NamespaceCommand
 from foretoken.build.editable import EditableDeployment
@@ -13,7 +14,7 @@ from foretoken.build.state import release_source_namespace, source_operation
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.endpoint import resolve_gateway_access
 from foretoken.deployment.namespace_access import NamespaceAccess, namespace_controller_name
-from foretoken.deployment.nfs_cache import prepare_shared_cache
+from foretoken.deployment.directory_bindings import prepare_directory_bindings
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 from foretoken.kubernetes.namespace import NamespaceMutation
@@ -39,10 +40,6 @@ class NamespaceLifecycle:
         ):
             operations.enter_context(source_operation(self.kubectl, timeout, shared=True))
             platform_values = self.helm.deployment_values(self.kubectl)
-            shared_cache = (
-                prepare_shared_cache(self.kubectl, command.shared_cache, timeout)
-                if command.shared_cache is not None else None
-            )
             if self.kubectl.get_if_exists("namespace", namespace) is None:
                 try:
                     self.kubectl.run(["create", "namespace", namespace])
@@ -70,13 +67,10 @@ class NamespaceLifecycle:
                 values = source.namespace_values(values)
             access = values.setdefault("namespaceAccess", {})
             access["enabled"] = True
-            nodes = self.kubectl.list_cluster_resources(("nodes",))
-            active_nodes = [node for node in nodes if not node.get("spec", {}).get("unschedulable")]
-            access["cacheAccessMode"] = "ReadWriteOnce" if len(active_nodes) == 1 else "ReadWriteMany"
-            if shared_cache is not None:
-                access["sharedCache"] = shared_cache
-                values["workload"]["cache"]["claimName"] = release.name + "-shared-cache"
-                access["cacheAccessMode"] = "ReadWriteMany"
+            access["directories"] = prepare_directory_bindings(
+                self.kubectl, namespace, access.get("directories", {}),
+                source.root if source is not None else Path.cwd(), release.name + "-data", timeout,
+            )
             access["gateway"] = {}
             if values["frontend"]["mode"] == "gateway":
                 gateway = values["frontend"]["gateway"]
@@ -93,8 +87,10 @@ class NamespaceLifecycle:
                     release, values, timeout, source_root=source.root if source is not None else None,
                 )
             self.helm.wait_control_plane(release, timeout)
-            claim = values["workload"]["cache"]["claimName"]
-            if claim:
+            claims = set(access["directories"])
+            if claim := values["workload"]["cache"]["claimName"]:
+                claims.add(claim)
+            for claim in sorted(claims):
                 self.kubectl.run([
                     "wait", "pvc/" + claim, "--namespace", namespace,
                     "--for=jsonpath={.status.phase}=Bound", f"--timeout={timeout}",

@@ -70,7 +70,17 @@ Install with `--values deploy/platform-values.yaml` when using the authenticated
 
 ## 3. Deploy and update code
 
-The Quick Start uses the repository's `data/` directory on local k3d. On a remote cluster, Foretoken automatically provisions a dynamic PVC for this relative directory, so the example YAML does not need to change. Multi-node clusters use `ReadWriteMany`; a single-node cluster uses `ReadWriteOnce` automatically. Set `initialSize`, `storageClassName`, `accessMode`, or `maxSize` in `cache.yaml` when the cluster needs a different storage policy.
+The Quick Start selects the repository's `data/` directory. Keep that selection when the directory is available on the target nodes, using a shared filesystem for multi-node deployments. Member namespaces use [administrator-prepared directory access](../features/model-storage.md#share-model-files-across-namespaces).
+
+If the cluster should provide storage instead, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
+
+```yaml
+spec:
+  initialSize: 10Gi
+  accessMode: ReadWriteOnce
+```
+
+This uses the default StorageClass for a single-node volume. Choose `ReadWriteMany` when the driver supports multi-node access, or add `storageClassName` to select another class. See [Model storage](../features/model-storage.md) for sharing and retention.
 
 Deploy and update code:
 

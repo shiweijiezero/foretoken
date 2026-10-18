@@ -21,6 +21,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 const (
@@ -31,14 +32,18 @@ const (
 	runtimeCacheRetentionAnnotation      = "inference.foretoken.io/runtime-cache-retention"
 )
 
-// RuntimeCacheReconciler owns the PVC lifecycle for one RuntimeCache.
-type RuntimeCacheReconciler struct{ client.Client }
+// RuntimeCacheReconciler owns dynamic PVCs and selects administrator-prepared directory claims.
+type RuntimeCacheReconciler struct {
+	client.Client
+	DirectoryBindings RuntimeCacheDirectoryBindings
+}
 
 // SetupWithManager registers RuntimeCache reconciliation and its owned PVC.
 func (reconciler *RuntimeCacheReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.RuntimeCache{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.directoryClaimRequests)).
 		Complete(reconciler)
 }
 
@@ -189,6 +194,10 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 
 // reconcilePVC creates the claim or increases its requested capacity without replacing it.
 func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, bool, error) {
+	if cache.Spec.Directory != "" && reconciler.DirectoryBindings != nil {
+		claim, err := reconciler.DirectoryBindings.directoryPVC(ctx, reconciler.Client, cache)
+		return claim, false, err
+	}
 	desired, err := desiredRuntimeCachePVC(cache)
 	if err != nil {
 		return nil, false, err
@@ -325,7 +334,11 @@ func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, c
 	if !controllerutil.ContainsFinalizer(cache, runtimeCacheFinalizer) {
 		return ctrl.Result{}, nil
 	}
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: runtimeCachePVCName(cache), Namespace: cache.Namespace}}
+	claimName := cache.Status.ClaimName
+	if claimName == "" {
+		claimName = runtimeCachePVCName(cache)
+	}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: cache.Namespace}}
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -384,6 +397,7 @@ func (reconciler *RuntimeCacheReconciler) updateStatus(ctx context.Context, cach
 	cache.Status.ClaimName = runtimeCachePVCName(cache)
 	cache.Status.Capacity = ""
 	if pvc != nil {
+		cache.Status.ClaimName = pvc.Name
 		if capacity, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
 			cache.Status.Capacity = inferencev1alpha1.ResourceQuantity(capacity.String())
 		}

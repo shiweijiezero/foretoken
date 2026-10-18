@@ -82,7 +82,7 @@ kubectl get pods --namespace foretoken-demo
 foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-示例需使用独立 namespace。删除时先等待服务完成清理，再移除控制器、namespace 及其中的 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。共享平台仍由管理员维护。
+示例使用独立 namespace。删除命令等待工作负载退出后释放该服务的模型缓存引用。管理员准备的命名空间及存储保留；自行管理的部署还会移除不再使用的控制器和清单中声明的命名空间。缓存回收与自备文件的保留规则见[模型存储](../features/model-storage_zh.md#暂停删除与复用)，共享平台仍由管理员维护。
 
 ## 请求未成功时
 

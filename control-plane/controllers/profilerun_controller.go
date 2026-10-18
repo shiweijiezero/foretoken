@@ -18,6 +18,7 @@ import (
 	"time"
 
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,7 +32,8 @@ import (
 
 const profileFinalizer = "inference.foretoken.io/profile-stop"
 const profilePath = "/v1/internal/profiling"
-const profileArtifactRoot = "profiles/runs"
+const profileRootEnv = "FORETOKEN_PROFILE_ROOT"
+const profileLegacyArtifactRoot = "profiles/runs"
 
 // ProfileRunReconciler owns capture coordination, never serving resources or artifact storage.
 type ProfileRunReconciler struct {
@@ -101,6 +103,10 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 		return ctrl.Result{Requeue: true}, r.writeProfileStatus(ctx, run)
 	}
 	plan := *run.Status.Plan
+	if plan.ArtifactDirectory == "" {
+		// Plans persisted before namespace-scoped capture storage keep their original directory.
+		plan.ArtifactDirectory = path.Join(profileLegacyArtifactRoot, string(run.UID))
+	}
 
 	action := run.Spec.Action
 	if !run.DeletionTimestamp.IsZero() || run.Status.Reason != "" {
@@ -205,7 +211,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 		if record == nil || record.RunUID != string(run.UID) {
 			return ctrl.Result{}, fmt.Errorf("runtime returned an invalid capture identity")
 		}
-		expectedArtifact := profileParticipantArtifactPath(string(run.UID), participant.RuntimeID)
+		expectedArtifact := path.Join(plan.ArtifactDirectory, participant.RuntimeID)
 		if record.ArtifactDir != nil && *record.ArtifactDir == expectedArtifact {
 			hasArtifacts = true
 		}
@@ -271,7 +277,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
 		}
 		if hasArtifacts {
-			run.Status.Artifact = &api.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: profileRunArtifactPath(string(run.UID))}
+			run.Status.Artifact = &api.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: plan.ArtifactDirectory}
 		}
 	}
 	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
@@ -336,6 +342,11 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				return plan, fmt.Errorf("serving runtimes use different RuntimeCache claims")
 			}
 			plan.RuntimeCacheClaim = cache.ClaimName
+			directory := profileRunArtifactPath(run.Namespace, string(run.UID), group.Spec.Runtime.PreparationVersion)
+			if plan.ArtifactDirectory != "" && plan.ArtifactDirectory != directory {
+				return plan, fmt.Errorf("serving runtimes use different profiling directory layouts; redeploy ModelService %s before profiling", service.Name)
+			}
+			plan.ArtifactDirectory = directory
 			pods := new(corev1.PodList)
 			if err := r.APIReader.List(ctx, pods, client.InNamespace(run.Namespace), client.MatchingLabels{modelGroupLabel: group.Name}); err != nil {
 				return plan, err
@@ -531,12 +542,18 @@ func profileTerminal(phase string) bool {
 	return phase == "Succeeded" || phase == "Failed" || phase == "Cancelled"
 }
 
-func profileRunArtifactPath(runUID string) string {
-	return path.Join(profileArtifactRoot, runUID)
+// profileArtifactDirectory gives workload projection and retained status the same namespace root.
+func profileArtifactDirectory(dataRoot, namespace string) string {
+	return path.Join(runtimeconfig.NamespaceCacheDirectory(dataRoot, namespace), "profiles")
 }
 
-func profileParticipantArtifactPath(runUID, runtimeID string) string {
-	return path.Join(profileRunArtifactPath(runUID), runtimeID)
+// profileRunArtifactPath follows the executable's pinned storage layout, not controller defaults.
+func profileRunArtifactPath(namespace, runUID string, preparationVersion int32) string {
+	root := profileLegacyArtifactRoot
+	if preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion {
+		root = path.Join(profileArtifactDirectory("", namespace), "runs")
+	}
+	return path.Join(root, runUID)
 }
 
 // writeProfileStatus publishes only observed progress while preserving user-owned intent.

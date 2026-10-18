@@ -16,6 +16,10 @@ import (
 const (
 	// ModelRootEnv identifies the persistent model root consumed by both data-plane processes.
 	ModelRootEnv = "FORETOKEN_MODEL_ROOT"
+	// ModelCacheRootEnv selects provider-owned downloads shared by cache consumers.
+	ModelCacheRootEnv = "FORETOKEN_MODEL_CACHE_ROOT"
+	// PreparationRootEnv separates namespace acquisition state from shared model files.
+	PreparationRootEnv = "FORETOKEN_MODEL_PREPARATION_ROOT"
 	// TemporaryModelRootEnv is consumed by foretoken-artifacts in the frontend process.
 	TemporaryModelRootEnv = "FORETOKEN_TEMPORARY_MODEL_ROOT"
 	// RuntimeCacheBindingEnv carries namespace/claim identity for prepared tokenizer reuse.
@@ -58,8 +62,26 @@ func EncoderCacheDirectory(ec *api.ModelGroupECRuntimeConfig) string {
 	return path.Join(ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision))
 }
 
-// ModelDirectory returns the stable model area of a workload's persistent data root.
-// Model providers keep their own cache layouts beneath this directory.
+// ModelDirectory locates user-provided model files, outside managed download-cache cleanup.
 func ModelDirectory(dataRoot string) string {
 	return path.Join(dataRoot, "models")
+}
+
+// ModelCacheDirectory locates provider-owned downloads shared across namespace bindings.
+func ModelCacheDirectory(dataRoot string) string {
+	return path.Join(dataRoot, "shared", "models")
+}
+
+// RuntimeCacheIdentity permits direct tokenizer reuse only between consumers of the same claim and layout.
+func RuntimeCacheIdentity(namespace, claim string, preparationVersion int32) string {
+	binding := namespace + "/" + claim
+	if preparationVersion >= SharedModelCachePreparationVersion {
+		binding += "/shared-models"
+	}
+	return binding
+}
+
+// NamespaceCacheDirectory separates mutable workload state while preserving reuse after Pod replacement.
+func NamespaceCacheDirectory(dataRoot, namespace string) string {
+	return path.Join(dataRoot, "namespaces", namespace)
 }

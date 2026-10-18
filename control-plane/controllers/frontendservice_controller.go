@@ -402,6 +402,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 					DeploymentRevision: deploymentRevision,
 				}
 				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
+					if env.Name == runtimeconfig.ModelCacheRootEnv && env.Value != "" {
+						version := runtimeconfig.SharedModelCachePreparationVersion
+						selection.PreparationVersion = &version
+					}
 					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
 						continue
 					}
@@ -429,7 +433,8 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
+		preparationVersion := runtimeconfig.SharedModelCachePreparationVersion
+		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion}
 		if sourceRevision != "" {
 			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
 			if err != nil {

@@ -7,6 +7,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -362,13 +363,22 @@ func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfi
 
 // desiredPreparationJob builds a CPU/network/storage-only source preparation workload.
 func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, distribution runtimeconfig.ModelDistributionProfile, files runtimeconfig.ApplicationFiles) (*batchv1.Job, error) {
-	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
-	if err != nil {
-		return nil, fmt.Errorf("build model preparation launch plan: %w", err)
+	inputEnv := runtimeconfig.ModelArtifactsEnv
+	var input any = runtimeconfig.ProjectModelArtifacts(group.Spec.Artifacts)
+	if group.Spec.Runtime.PreparationVersion == 1 {
+		plan, err := vllmconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("build retained model preparation plan: %w", err)
+		}
+		input, inputEnv = plan, "FORETOKEN_VLLM_LAUNCH_PLAN"
 	}
-	launchJSON, err := launchPlan.JSON()
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		return nil, fmt.Errorf("marshal model preparation launch plan: %w", err)
+		return nil, fmt.Errorf("marshal model preparation input: %w", err)
+	}
+	binary := "foretoken-model-server"
+	if group.Spec.Runtime.Backend == vllmomniconfig.Backend {
+		binary = "foretoken-omni-model-server"
 	}
 	cache := group.Spec.Artifacts.Cache
 	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
@@ -376,7 +386,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	}
 	name := "prepare-" + string(group.UID)
 	env := []corev1.EnvVar{
-		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: inputEnv, Value: string(inputJSON)},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
 		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
@@ -384,7 +394,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		// CUDA base images expose all devices unless CPU-only preparation overrides them.
 		{Name: "NVIDIA_VISIBLE_DEVICES", Value: "void"},
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, "")...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, "", group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	startupSeconds, err := durationSeconds(group.Spec.Timeouts.Startup)
 	if err != nil {
@@ -450,8 +460,8 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	if revision := group.Spec.Runtime.SourceRevision; revision != "" {
 		job.Spec.Template.Annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: revision}
 	}
-	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), "foretoken-model-server")
-	access := runtimeconfig.CacheStorageAccess(cache)
+	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), binary)
+	access := runtimeconfig.WorkloadCacheAccess(&job.Spec.Template, cache, group.Spec.Runtime.PreparationVersion)
 	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, files.Image, access.Identity, access)
 	return job, nil
 }
@@ -466,7 +476,7 @@ func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context,
 		if !metav1.IsControlledBy(current, group) {
 			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
 		}
-		if group.Spec.Runtime.Backend == "vllm" && group.Spec.Runtime.PreparationVersion == 0 {
+		if group.Spec.Runtime.PreparationVersion == 0 {
 			return current, nil
 		}
 	} else if !apierrors.IsNotFound(err) {
@@ -574,7 +584,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory)...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
@@ -636,6 +646,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		if group.Spec.Runtime.Backend == "vllm" {
 			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 			env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
+			if group.Spec.Runtime.PreparationVersion >= runtimeconfig.SharedModelCachePreparationVersion {
+				env = append(env, corev1.EnvVar{Name: profileRootEnv, Value: profileArtifactDirectory(cache.MountPath, group.Namespace)})
+			}
 		} else {
 			env = append(env,
 				corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
@@ -723,7 +736,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if err := configureModelEnvironment(group.Spec, container); err != nil {
 		return nil, err
 	}
-	access := runtimeconfig.CacheStorageAccess(group.Spec.Artifacts.Cache)
+	access := runtimeconfig.WorkloadCacheAccess(&deployment.Spec.Template, group.Spec.Artifacts.Cache, group.Spec.Runtime.PreparationVersion)
 	accesses := []runtimeconfig.VolumeAccess{access}
 	if ec := group.Spec.ECRuntime; ec != nil {
 		identity := runtimeconfig.DefaultStorageIdentity()

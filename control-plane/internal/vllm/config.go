@@ -22,13 +22,9 @@ import (
 
 // EffectiveConfig contains typed vLLM values and approved backend arguments.
 type EffectiveConfig struct {
-	Model             string
-	Source            inferencev1alpha1.ModelSource
-	Revision          string
-	Tokenizer         string
-	TokenizerRevision string
-	Parallelism       inferencev1alpha1.CompiledParallelism
-	EngineArgs        inferencev1alpha1.EngineArguments
+	runtimeconfig.ModelArtifacts
+	Parallelism inferencev1alpha1.CompiledParallelism
+	EngineArgs  inferencev1alpha1.EngineArguments
 }
 
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
@@ -36,7 +32,7 @@ type EffectiveConfig struct {
 type LaunchPlanV1 struct {
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
-	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
+	Artifacts                             runtimeconfig.ModelArtifacts       `json:"artifacts"`
 	Parallelism                           LaunchParallelism                  `json:"parallelism"`
 	KV                                    LaunchKVPlan                       `json:"kv"`
 	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
@@ -44,14 +40,6 @@ type LaunchPlanV1 struct {
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
-}
-
-type LaunchArtifacts struct {
-	Model             string                        `json:"model"`
-	Source            inferencev1alpha1.ModelSource `json:"source"`
-	Revision          string                        `json:"revision"`
-	Tokenizer         string                        `json:"tokenizer"`
-	TokenizerRevision string                        `json:"tokenizerRevision"`
 }
 
 type LaunchParallelism struct {
@@ -109,16 +97,7 @@ const (
 
 // Compile resolves native engine options and topology from the normalized template.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
-	effective := EffectiveConfig{
-		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
-		Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
-	}
-	if effective.Tokenizer == "" {
-		effective.Tokenizer = effective.Model
-	}
-	if effective.TokenizerRevision == "" {
-		effective.TokenizerRevision = effective.Revision
-	}
+	effective := EffectiveConfig{ModelArtifacts: runtimeconfig.ResolveModelArtifacts(template)}
 	args, err := compileEngineArgs(template)
 	if err != nil {
 		return EffectiveConfig{}, err
@@ -191,7 +170,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.

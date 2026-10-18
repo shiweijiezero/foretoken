@@ -166,7 +166,7 @@ kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-
   --role foretoken-control-plane-operator --user MEMBER_ID
 ```
 
-成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。部署清单中的 Namespace 由管理员维护；已提供共享缓存 PVC 时，优先使用该卷，不再创建清单中的 RuntimeCache。共享模型的配置见[跨命名空间复用模型文件](../docs/features/model-storage_zh.md#跨命名空间复用模型文件)。
+成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。Namespace 仍由管理员维护，成员在 `cache.yaml` 中选择已准备的数据目录。同一目录中的模型下载可以共享，运行状态则按命名空间隔离。配置见[跨命名空间复用模型文件](../docs/features/model-storage_zh.md#跨命名空间复用模型文件)。
 
 已有源码安装的管理员可以执行 `foretoken install --namespace foretoken-multi-model-demo -e .`，为该命名空间构建应用。成员的普通部署使用这些已准备的应用；显式执行 `deploy -e` 更新源码仍需源码开发权限。
 
@@ -259,6 +259,6 @@ foretoken delete examples/quickstart/multi-model
 
 共享平台不再使用时，由平台管理员执行 `foretoken uninstall`。
 
-在管理员准备的命名空间中，删除命令只清理提交的服务资源，保留控制器、命名空间和已提供的缓存。自行管理的部署会在服务完成清理后移除不再使用的控制器；Kustomize 配置中包含的命名空间及其资源在最后删除。
+在管理员准备的命名空间中，删除命令清理提交的服务资源，保留控制器、命名空间和已准备的存储。托管模型下载在最后一个服务引用释放后回收，`stop` 则保留引用。自行管理的部署会在服务完成清理后移除不再使用的控制器；Kustomize 配置中包含的命名空间及其资源在最后删除。
 
 卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。
