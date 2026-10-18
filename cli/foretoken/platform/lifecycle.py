@@ -25,7 +25,7 @@ from foretoken.build.storage import (
     managed_build_storage_resources,
     remove_build_storage,
 )
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.kubernetes.namespace import NamespaceMutation
@@ -35,7 +35,7 @@ from foretoken.platform.resources import (
     platform_service_resources,
     unmark_managed_metrics_scraper_namespace,
 )
-from foretoken.observability import PrometheusRef, select_prometheus
+from foretoken.platform.prometheus import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
     grafana_anonymous_access_from_values,

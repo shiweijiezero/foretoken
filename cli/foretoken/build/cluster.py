@@ -33,7 +33,7 @@ from foretoken.build.node_images import (
     images_container_spec,
 )
 from foretoken.build.storage import SOURCE_BUILD_UID
-from foretoken.command_execution import CommandExecution, run_command
+from foretoken.processes.execution import CommandExecution, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 

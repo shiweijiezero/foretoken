@@ -15,7 +15,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from foretoken.command_execution import cleanup_commands
+from foretoken.processes.execution import cleanup_commands
 from foretoken.errors import DeploymentError
 
 if TYPE_CHECKING:

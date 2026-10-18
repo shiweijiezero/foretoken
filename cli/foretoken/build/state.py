@@ -35,7 +35,7 @@ from foretoken.build.node_images import (
     node_containerd_socket,
 )
 from foretoken.build.storage import SOURCE_BUILD_CACHE_LABEL
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.deployment.manifest import ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds

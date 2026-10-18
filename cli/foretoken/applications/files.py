@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
-from foretoken.command_execution import CommandExecution, cleanup_commands
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 

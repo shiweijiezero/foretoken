@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from foretoken.command_execution import CommandExecution, cleanup_commands
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 

@@ -21,7 +21,7 @@ from foretoken.accelerators.discovery import (
 )
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
-from foretoken.network_sources import platform_image_reference
+from foretoken.downloads.sources import platform_image_reference
 
 
 @dataclass(frozen=True)

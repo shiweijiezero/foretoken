@@ -11,7 +11,7 @@ import time
 import yaml
 
 from foretoken.arguments import DeleteCommand, DeployCommand, StopCommand
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.deployment.lifecycle import DeploymentLifecycle
 from foretoken.deployment.manifest import load_deployment
 from foretoken.deployment.status import ResourceProgress, wait_for_resources

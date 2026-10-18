@@ -24,11 +24,11 @@ except ImportError:
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import ApplicationFiles, application_references
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.deployment.submission import _SERVICE_OPERATION_ANNOTATION
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
-from foretoken.network_sources import (
+from foretoken.downloads.sources import (
     select_github_download,
     select_platform_image_sources,
     select_platform_oci_reference,

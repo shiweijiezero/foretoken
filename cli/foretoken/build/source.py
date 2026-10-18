@@ -53,10 +53,10 @@ from foretoken.build.storage import (
     local_build_nodes,
     prepare_build_storage,
 )
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.network_sources import select_build_sources
+from foretoken.downloads.sources import select_build_sources
 
 
 @dataclass(frozen=True)

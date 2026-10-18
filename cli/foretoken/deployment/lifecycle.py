@@ -17,7 +17,7 @@ import yaml
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
 from foretoken.build.state import release_source_deployment, source_operation
-from foretoken.command_execution import CommandExecution
+from foretoken.processes.execution import CommandExecution
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
     parse_deployment,

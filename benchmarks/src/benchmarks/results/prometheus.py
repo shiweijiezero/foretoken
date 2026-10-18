@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
-from foretoken.observability import (
+from foretoken.platform.prometheus import (
     PrometheusRef,
     prometheus_api_path,
     prometheus_query,
