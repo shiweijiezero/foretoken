@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +14,8 @@ from typing import Any
 
 import yaml
 
+from foretoken.application_files import SOURCE_REVISION
+from foretoken.command_execution import CommandExecution
 from foretoken.editable import EditableDeployment
 from foretoken.kubernetes import (
     Kubectl,
@@ -58,7 +59,15 @@ class DeploymentLifecycle:
         editable: str | None = None,
         engine_sources: tuple[str, ...] = (),
     ) -> ForetokenDeployment:
-        """Prepare a namespace controller and converge submitted running or stopped service intent."""
+        """Own command cancellation while preparing and converging one namespace deployment."""
+        with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
+            return self._apply(deployment, timeout, editable=editable, engine_sources=engine_sources)
+
+    def _apply(
+        self, deployment: ForetokenDeployment, timeout: str, *,
+        editable: str | None, engine_sources: tuple[str, ...],
+    ) -> ForetokenDeployment:
+        """Publish applications, select the namespace controller, then observe serving readiness."""
         started = time.monotonic()
         timeout_seconds(timeout)
         namespace = deployment.namespace or self.kubectl.current_namespace()
@@ -87,7 +96,6 @@ class DeploymentLifecycle:
             if identity["kind"] in {"ModelService", "FrontendService"}
             and "deploymentRevision" in definition["properties"]["spec"]["properties"]
         }
-        revision = uuid.uuid4().hex
         services = [
             obj
             for obj in deployment.objects
@@ -96,8 +104,6 @@ class DeploymentLifecycle:
         ]
         for obj in services:
             obj["spec"].setdefault("suspend", False)
-            if obj["kind"] in selection_kinds:
-                obj["spec"]["deploymentRevision"] = revision
         deployment = parse_deployment(
             deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
         )
@@ -113,14 +119,14 @@ class DeploymentLifecycle:
             values = self.helm.deployment_values(self.kubectl)
             if not self.temporary:
                 source = EditableDeployment.discover(
-                    self.kubectl, editable, engine_sources
+                    self.kubectl, timeout, editable, engine_sources
                 )
                 if source is not None:
                     locks.enter_context(source.operation(deployment, timeout))
                     source.prepare(timeout)
                     deployment = source.apply(deployment, timeout)
                     values = source.deployment_values(values)
-            self.prepare_controller(
+            controller_revision = self.prepare_controller(
                 submission,
                 timeout,
                 values=values,
@@ -128,6 +134,19 @@ class DeploymentLifecycle:
                 reuse_existing=self.temporary,
             )
             if runtime_required:
+                # API generations already identify configuration changes. Advance the
+                # application selection only with its controller or source publication.
+                for obj in deployment.objects:
+                    if (
+                        obj.get("kind") in selection_kinds
+                        and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
+                        and service_requires_execution(obj)
+                    ):
+                        source_revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION, "")
+                        obj["spec"]["deploymentRevision"] = f"{controller_revision}:{source_revision}"
+                deployment = parse_deployment(
+                    deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
+                )
                 print(
                     f"Applying {deployment.path} to namespace {namespace}", flush=True
                 )
@@ -135,7 +154,7 @@ class DeploymentLifecycle:
         # Readiness observation releases build locks so another operation can stop the service.
         print(f"Waiting up to {timeout} for Foretoken services", flush=True)
         rollout_started = time.monotonic()
-        with StartupProgress(
+        with self.kubectl.until(rollout_started + timeout_seconds(timeout)) as deadline, StartupProgress(
             self.kubectl, lambda line: print(line, flush=True)
         ) as startup:
 
@@ -159,9 +178,11 @@ class DeploymentLifecycle:
                     ),
                     observe=observe,
                     expected_revisions={
-                        ref: revision
-                        for ref in deployment.service_refs()
-                        if ref.kind in selection_kinds
+                        resource_ref(obj): obj["spec"]["deploymentRevision"]
+                        for obj in deployment.objects
+                        if obj.get("kind") in selection_kinds
+                        and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
+                        and "deploymentRevision" in obj["spec"]
                     },
                 )
             except DeploymentError:
@@ -175,12 +196,12 @@ class DeploymentLifecycle:
             if source is not None and runtime_required:
                 source.verify(
                     deployment,
-                    timeout,
+                    deadline,
                     observe=lambda: observe(
                         deployment.service_refs(), time.monotonic() - rollout_started
                     ),
                 )
-        submission.check()
+            submission.check()
         print(
             f"Foretoken deployment completed in {time.monotonic() - started:.1f}s",
             flush=True,
@@ -195,8 +216,8 @@ class DeploymentLifecycle:
         values: dict[str, Any] | None = None,
         source_root: Path | None = None,
         reuse_existing: bool = False,
-    ) -> None:
-        """Prepare reconciliation for deploy, stop or temporary evaluation without duplicating its lifecycle."""
+    ) -> str:
+        """Prepare reconciliation and return the ready namespace controller's application-selection identity."""
         self.submission = submission
         namespace = submission.namespace
         release = self.helm.deployment_release(namespace)
@@ -222,8 +243,9 @@ class DeploymentLifecycle:
                 finally:
                     if self.temporary and not existed:
                         self._record_controller(namespace)
-        self.helm.wait_control_plane(release, timeout)
+        revision = self.helm.wait_control_plane(release, timeout)
         submission.check()
+        return revision
 
     def _record_controller(self, namespace: str) -> None:
         """Retain native Helm and Deployment identities, including a partially successful installation."""
@@ -394,6 +416,7 @@ class DeploymentLifecycle:
         timeout_seconds(timeout)
         namespace = deployment.namespace or self.kubectl.current_namespace()
         with (
+            CommandExecution.current() or CommandExecution(timeout_seconds(timeout)),
             source_operation(self.kubectl, timeout),
             NamespaceMutation(self.kubectl, namespace, timeout).hold(),
         ):

@@ -21,7 +21,17 @@ Compiler caches persist across builder replacement. An explicitly selected build
 
 Independent source directories can build concurrently. Serialize source preparation and submission within one source directory, and keep platform installation and removal exclusive. Waiting for service readiness must not prevent deletion from releasing occupied devices.
 
-Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining.
+A completed publication includes a compressed archive for one-transfer installation. The downloader checks its members against the manifest before replacing the active application; existing per-file publications remain readable. Publisher Jobs receive their executable inputs only after the CLI obtains their Kubernetes UID. A creation request that completes after cancellation cannot independently publish or collect files.
+
+An unchanged deployment reuses the namespace controller only when the Helm manifest and live declared fields agree. Service application selection changes with controller or application updates, not with each CLI invocation. The first frontend waits for its selected runtime cache instead of starting a temporary instance that needs another rollout.
+
+## Readiness and failure
+
+Deployment succeeds when the selected application and its serving routes are ready. Controllers manage rollout and request draining. Service observation and source-activation verification share one deadline; source compilation remains a separate stage. The CLI wait budget also bounds control commands and lock acquisition, without expiring a lock held by an active operation.
+
+The model startup setting supplies separate preparation and serving-workload budgets. A failed preparation attempt remains visible through native Job retries until preparation succeeds. Frontend configuration rejection also ends the CLI wait, while recoverable workload and API waits remain in progress.
+
+Parallel stages share cancellation and preserve the first failure. Resource owners stop their processes and publishers before workers join. Cleanup has its own bounded wait, so an expired observation deadline does not prevent releasing locks or deleting owned resources.
 
 ## Cleanup
 

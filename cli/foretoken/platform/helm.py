@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,7 +24,8 @@ except ImportError:
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.application_files import ApplicationFiles, application_references
-from foretoken.kubernetes import Kubectl, timeout_seconds
+from foretoken.command_execution import CommandExecution
+from foretoken.kubernetes import Kubectl, resource_ref, timeout_seconds
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.network_sources import (
     select_github_download,
@@ -86,6 +87,8 @@ class Helm(HelmClient):
                     try:
                         self.run(args)
                     except DeploymentError:
+                        if execution := CommandExecution.current():
+                            execution.check()
                         if index == len(candidates) - 1:
                             raise
                         print("Chart mirror unavailable; using the original source", flush=True)
@@ -97,15 +100,15 @@ class Helm(HelmClient):
 
     @contextmanager
     def _deployment_chart(self, source_root: Path | None) -> Iterator[Path]:
-        """Prepare a candidate chart or restore the installed platform's templates and effective values.
+        """Read a candidate chart or restore the installed platform's templates and effective values.
 
         Helm owns release storage and value merging. The installed path reads one
         revision through public commands, retaining unpublished source templates
-        without consulting the current checkout or a chart registry.
+        without consulting the current checkout or a chart registry. Callers copy
+        the chart before modifying it.
         """
         if source_root is not None:
-            with self._prepared_chart(str(source_root / "deploy/charts/foretoken"), None) as chart:
-                yield chart
+            yield source_root / "deploy/charts/foretoken"
             return
         release = self.platform_release()
         metadata = json.loads(self.run([
@@ -354,9 +357,10 @@ class Helm(HelmClient):
                 )
         source_mode = values["development"]["enabled"]
         configuration = self.platform_configuration(kubectl)
-        with self._deployment_chart(source_root) as prepared:
+        with ExitStack() as charts:
+            prepared = charts.enter_context(self._deployment_chart(source_root))
             # The platform owns registry credentials; this release owns the copies
-            # needed by its controller. Keep credential bytes in the private chart.
+            # needed by its controller.
             installed = json.loads(configuration["data"]["deploymentValues"])
             credentials = []
             pull_secrets = []
@@ -369,11 +373,6 @@ class Helm(HelmClient):
                     "type": secret["type"], "data": secret["data"],
                 })
                 pull_secrets.append({"name": name})
-            if credentials:
-                payload = yaml.safe_dump_all(credentials, sort_keys=False)
-                (prepared / "templates" / "controller-pull-secrets.yaml").write_text(
-                    "{{ " + json.dumps(payload) + " }}\n"
-                )
             values = {**values, "imagePullSecrets": pull_secrets}
             labels = (
                 ("foretoken.io/scope", "deployment"),
@@ -385,9 +384,50 @@ class Helm(HelmClient):
             args.remove("--create-namespace")
             args.extend(["--reset-values", "--values", "-", "--set-string", "scope=deployment"])
             input_text = yaml.safe_dump(values)
-            self._set_platform_image_sources(args, values, source_mode, input_text, release=release)
+            # Platform defaults and source publications already resolve all images.
+            desired = (*self._render_chart(args, input_text=input_text), *credentials)
+            if self._deployment_matches(release, desired, kubectl):
+                print(f"Reusing namespace controller: {release.display_name}", flush=True)
+                return
+            if credentials:
+                prepared = charts.enter_context(self._prepared_chart(str(prepared), None))
+                payload = yaml.safe_dump_all(credentials, sort_keys=False)
+                (prepared / "templates" / "controller-pull-secrets.yaml").write_text(
+                    "{{ " + json.dumps(payload) + " }}\n"
+                )
+                args[3] = str(prepared)
             args.append(f"--timeout={timeout}")
             self.run(args, input_text=input_text)
+
+    def _deployment_matches(
+        self, release: ReleaseRef, desired: tuple[dict[str, Any], ...], kubectl: Kubectl,
+    ) -> bool:
+        """Reuse an unchanged deployed release only while its live resources still match."""
+        installed = self._installed_chart_manifest(release)
+        if not installed or {resource_ref(obj): obj for obj in desired} != {
+            resource_ref(obj): obj for obj in installed
+        }:
+            return False
+        status = json.loads(self.run([
+            "status", release.name, "--namespace", release.namespace, "--output", "json",
+        ]).stdout)
+        if status["info"]["status"] != "deployed":
+            return False
+        current = json.loads(kubectl.run(
+            ["get", "--filename=-", "--ignore-not-found", "--output=json"],
+            input_text=yaml.safe_dump_all(desired, sort_keys=False),
+        ).stdout)
+        objects = current["items"] if current["kind"] == "List" else [current]
+        identities = {resource_ref(obj): obj for obj in objects}
+        for document in desired:
+            live = identities.get(resource_ref(document))
+            if (
+                live is None or live["metadata"].get("deletionTimestamp")
+                or not _owned_by_release(live, release)
+                or not _matches_declared_fields(live, document)
+            ):
+                return False
+        return True
 
     def remove_deployment(self, release: ReleaseRef, timeout: str) -> None:
         """Remove a namespace controller after its submission owner has finalized all serving resources."""
@@ -871,15 +911,13 @@ class Helm(HelmClient):
         overrides: dict[str, Any],
         source_mode: bool,
         input_text: str | None,
-        *,
-        release: ReleaseRef | None = None,
     ) -> None:
-        """Resolve image defaults for either chart scope, preserving explicit and installed sources."""
+        """Resolve platform image defaults, preserving explicit and installed sources."""
         images, runtime_backend = self._platform_images(
             self._render_chart(args, input_text=input_text)
         )
         previous, _ = self._platform_images(
-            self._installed_chart_manifest(release or self.platform_release())
+            self._installed_chart_manifest(self.platform_release())
         )
         references = {}
         prior_sources = {}
@@ -1492,8 +1530,8 @@ class Helm(HelmClient):
                 self.run(args, input_text=input_text)
                 self.platform_configuration()
 
-    def wait_control_plane(self, release: ReleaseRef, timeout: str) -> None:
-        """Wait for the deployed controller to renew leadership before submitting new service intent."""
+    def wait_control_plane(self, release: ReleaseRef, timeout: str) -> str:
+        """Wait for leadership and return the namespace controller's UID/generation selection."""
         kubectl = Kubectl()
         deadline = time.monotonic() + timeout_seconds(timeout)
 
@@ -1510,9 +1548,10 @@ class Helm(HelmClient):
         name = deployments[0]["metadata"]["name"]
         run(["rollout", "status", "deployment/" + name, "-n", release.namespace, "--timeout=" + timeout])
         deployment = json.loads(run(["get", "deployment", name, "-n", release.namespace, "-o", "json"]))
+        selection = f"{deployment['metadata']['uid']}:{deployment['metadata']['generation']}"
         manager = next(container for container in deployment["spec"]["template"]["spec"]["containers"] if container["name"] == "manager")
         if not any(argument in {"--leader-elect", "--leader-elect=true"} for argument in manager.get("args", [])):
-            return
+            return selection
         selector = ",".join(f"{key}={value}" for key, value in deployment["spec"]["selector"]["matchLabels"].items())
         observed = None
         while time.monotonic() < deadline:
@@ -1534,7 +1573,7 @@ class Helm(HelmClient):
             current = (holder, active.get(pod_name), renewal)
             if current[1] and renewal:
                 if observed is not None and observed[:2] == current[:2] and observed[2] != renewal:
-                    return
+                    return selection
                 observed = current
             else:
                 observed = None
@@ -1964,6 +2003,21 @@ class Helm(HelmClient):
                 chart, ("image",), release=release, overrides=stored
             )
             self.run(args, input_text=yaml.safe_dump(stored) if reuse_values else None)
+
+
+def _matches_declared_fields(actual: Any, desired: Any) -> bool:
+    """Compare Helm-owned configuration while allowing API defaults and unrelated metadata."""
+    if actual == desired:
+        return True
+    if isinstance(desired, dict):
+        return (actual is None and not desired) or isinstance(actual, dict) and all(
+            _matches_declared_fields(actual.get(key), value) for key, value in desired.items()
+        )
+    if isinstance(desired, list):
+        return (actual is None and not desired) or isinstance(actual, list) and len(actual) == len(desired) and all(
+            _matches_declared_fields(value, expected) for value, expected in zip(actual, desired, strict=True)
+        )
+    return False
 
 
 def _owned_by_release(document: dict[str, Any], release: ReleaseRef) -> bool:

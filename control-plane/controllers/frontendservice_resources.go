@@ -320,7 +320,7 @@ func durationSeconds(input inferencev1alpha1.Duration) (int64, error) {
 }
 
 func frontendDeploymentAvailable(deployment *appsv1.Deployment) bool {
-	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas == 0 {
+	if deployment == nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas == 0 {
 		return false
 	}
 	conditionAvailable := false

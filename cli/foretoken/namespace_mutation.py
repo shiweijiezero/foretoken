@@ -15,6 +15,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from foretoken.command_execution import cleanup_commands
 from foretoken.manifest import DeploymentError
 
 if TYPE_CHECKING:
@@ -121,8 +122,9 @@ class NamespaceMutation:
                     yield
                 finally:
                     self._depth = 0
-                    self.kubectl.delete_object(receipt, f"{self.timeout:g}s")
-                    path.unlink()
+                    with cleanup_commands(timeout=self.timeout):
+                        self.kubectl.delete_object(receipt, f"{self.timeout:g}s")
+                        path.unlink()
             finally:
                 mutation_lock_fds.reset(token)
                 # An unresolved create may still reach the API after this process exits.

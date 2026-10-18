@@ -246,11 +246,18 @@ def publish(
                         if key != "engines" or part == "engine"
                     }
             sources = {"parts": adopted}
+        # Publish one transfer object alongside the file view used for incremental
+        # assembly. Consumers extract only manifest-listed regular files.
+        archive_name = "application.tar.gz"
+        with tarfile.open(staging / archive_name, "w:gz", compresslevel=1, dereference=True) as package:
+            for entry in files:
+                package.add(staging / entry["path"], arcname=entry["path"], recursive=False)
+        (staging / archive_name).chmod(0o444)
         (staging / "manifest.json").write_text(
             json.dumps(
                 {
                     "binding": binding, "releaseOwned": release_owned,
-                    "files": files, "sources": sources,
+                    "files": files, "archive": archive_name, "sources": sources,
                     **({"image": image} if image is not None else {}),
                 }
             )

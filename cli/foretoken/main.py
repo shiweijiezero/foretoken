@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from collections.abc import Sequence
+from contextlib import nullcontext
 from urllib.parse import urlsplit
 
 from foretoken.arguments import (
@@ -28,6 +29,7 @@ from foretoken.arguments import (
     parse_arguments,
 )
 from foretoken.cluster import run as run_cluster
+from foretoken.command_execution import CommandExecution
 from foretoken.deployment import DeploymentLifecycle
 from foretoken.kubernetes import (
     Kubectl,
@@ -44,7 +46,6 @@ from foretoken.profiling import ProfileRun
 from foretoken.profiling.viewer import view
 from foretoken.progress import StartupProgress
 from foretoken.service_execution import stop_deployment
-from foretoken.source_state import source_operation
 
 
 def _deployment_resources(
@@ -164,51 +165,52 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
-        if isinstance(command, ClusterCommand):
-            run_cluster(command)
-        elif isinstance(command, InstallCommand):
-            oci_registry = command.oci_registry or os.environ.get(
-                "FORETOKEN_OCI_REGISTRY"
-            )
-            with source_operation(
-                Kubectl(), command.timeout, installing=command.editable is not None
-            ):
+        with (
+            CommandExecution(timeout_seconds(command.timeout))
+            if isinstance(command, (InstallCommand, UninstallCommand, DeployCommand, DeleteCommand, StopCommand, EndpointCommand))
+            else nullcontext()
+        ):
+            if isinstance(command, ClusterCommand):
+                run_cluster(command)
+            elif isinstance(command, InstallCommand):
+                oci_registry = command.oci_registry or os.environ.get(
+                    "FORETOKEN_OCI_REGISTRY"
+                )
                 PlatformLifecycle(oci_registry).install(command)
-        elif isinstance(command, UninstallCommand):
-            with source_operation(Kubectl(), command.timeout):
+            elif isinstance(command, UninstallCommand):
                 PlatformLifecycle().uninstall(command)
-        elif isinstance(command, DeployCommand):
-            _deploy(
-                command.kustomize_path, command.timeout, command.profile,
-                editable=command.editable, engine_sources=command.engine_sources,
-            )
-        elif isinstance(command, DeleteCommand):
-            _delete(command.kustomize_path, command.timeout)
-        elif isinstance(command, StopCommand):
-            stop_deployment(command)
-        elif isinstance(command, StatusCommand):
-            _status(command.kustomize_path, command.namespace, command.watch)
-        elif isinstance(command, EndpointCommand):
-            _endpoint(
-                command.kustomize_path,
-                command.timeout,
-                command.host,
-            )
-        elif isinstance(command, PerformanceCommand):
-            # Load benchmark frameworks only for benchmark commands.
-            from benchmarks.main import main as benchmark_main
+            elif isinstance(command, DeployCommand):
+                _deploy(
+                    command.kustomize_path, command.timeout, command.profile,
+                    editable=command.editable, engine_sources=command.engine_sources,
+                )
+            elif isinstance(command, DeleteCommand):
+                _delete(command.kustomize_path, command.timeout)
+            elif isinstance(command, StopCommand):
+                stop_deployment(command)
+            elif isinstance(command, StatusCommand):
+                _status(command.kustomize_path, command.namespace, command.watch)
+            elif isinstance(command, EndpointCommand):
+                _endpoint(
+                    command.kustomize_path,
+                    command.timeout,
+                    command.host,
+                )
+            elif isinstance(command, PerformanceCommand):
+                # Load benchmark frameworks only for benchmark commands.
+                from benchmarks.main import main as benchmark_main
 
-            benchmark_main(command.arguments)
-        elif isinstance(command, EvaluationCommand):
-            from benchmarks.evaluation import main as evaluation_main
+                benchmark_main(command.arguments)
+            elif isinstance(command, EvaluationCommand):
+                from benchmarks.evaluation import main as evaluation_main
 
-            evaluation_main(command.arguments)
-        elif isinstance(command, PlotCommand):
-            from benchmarks.plot import main as plot_main
+                evaluation_main(command.arguments)
+            elif isinstance(command, PlotCommand):
+                from benchmarks.plot import main as plot_main
 
-            plot_main(command.arguments)
-        elif isinstance(command, ProfileViewCommand):
-            view(command)
+                plot_main(command.arguments)
+            elif isinstance(command, ProfileViewCommand):
+                view(command)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:

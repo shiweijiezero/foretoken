@@ -10,13 +10,15 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
 import yaml
 
+from foretoken.command_execution import command_deadline, run_command
 from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
@@ -76,8 +78,15 @@ class Kubectl:
         self.deadline = deadline
         self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
 
+    @contextmanager
+    def until(self, deadline: float) -> Iterator[float]:
+        """Share the observation deadline while retaining this client's configured bound."""
+        effective = min(self.deadline, deadline) if self.deadline is not None else deadline
+        with command_deadline(effective) as active_deadline:
+            yield active_deadline
+
     def _timeout(self, timeout: float | None) -> float | None:
-        """Apply one caller-owned monotonic deadline to every command in an operation."""
+        """Apply the client's configured monotonic deadline to a command."""
         if self.deadline is None:
             return timeout
         remaining = self.deadline - time.monotonic()
@@ -101,21 +110,15 @@ class Kubectl:
         """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
         command = self.command(args)
         timeout = self._timeout(timeout)
-        try:
-            completed = subprocess.run(
-                command,
-                input=input_text,
-                text=True,
-                stdout=output if output is not None else subprocess.PIPE,
-                pass_fds=mutation_lock_fds.get(),
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise DeploymentError(
-                f"{' '.join(command)} timed out after {timeout:g}s"
-            ) from exc
+        completed = run_command(
+            command,
+            input=input_text,
+            text=True,
+            stdout=output if output is not None else subprocess.PIPE,
+            pass_fds=mutation_lock_fds.get(),
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
         if completed.returncode:
             detail = (
                 completed.stderr.strip() or (completed.stdout or "").strip()
@@ -162,18 +165,9 @@ class Kubectl:
             ["get", f"--request-timeout={request_timeout}", "--raw", path]
         )
         timeout = self._timeout(timeout_seconds(request_timeout))
-        try:
-            completed = subprocess.run(
-                command,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise DeploymentError(
-                f"{' '.join(command)} timed out after {timeout:g}s"
-            ) from exc
+        completed = run_command(
+            command, text=True, capture_output=True, timeout=timeout,
+        )
         if completed.returncode == 0:
             return completed.stdout
         detail = completed.stderr.strip() or completed.stdout.strip()
@@ -262,7 +256,8 @@ class Kubectl:
                 "--namespace",
                 resource.namespace,
                 f"--timeout={timeout}",
-            ]
+            ],
+            timeout=timeout_seconds(timeout),
         )
 
     def wait_for_crds(self, names: tuple[str, ...], timeout: str) -> None:
@@ -645,22 +640,21 @@ def resource_progress(
         )
 
     condition_status = str(ready_condition.get("status") or "Unknown")
-    if resource.kind == "ModelService":
-        target = next((item for item in conditions if item.get("type") == "TargetReady"), None)
-        if target is not None and int(target.get("observedGeneration") or 0) == generation and target.get("status") == "False":
-            message = str(target["message"])
-            if condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
-                message += "\nThe previous generation remains available."
-            return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
-        if (
-            condition_status == "True"
-            and target is not None
-            and int(target.get("observedGeneration") or 0) == generation
-            and target.get("status") != "True"
-        ):
-            return ResourceProgress(
-                resource, "Progressing", str(target["reason"]), str(target["message"]), False
-            )
+    target = next((item for item in conditions if item.get("type") == "TargetReady"), None)
+    if target is not None and int(target.get("observedGeneration") or 0) == generation and target.get("status") == "False":
+        message = str(target["message"])
+        if resource.kind == "ModelService" and condition_status == "True" and int(status.get("servingGeneration") or 0) != generation:
+            message += "\nThe previous generation remains available."
+        return ResourceProgress(resource, "Failed", str(target["reason"]), message, False)
+    if (
+        condition_status == "True"
+        and target is not None
+        and int(target.get("observedGeneration") or 0) == generation
+        and target.get("status") != "True"
+    ):
+        return ResourceProgress(
+            resource, "Progressing", str(target["reason"]), str(target["message"]), False
+        )
     stopped = (
         condition_status == "False"
         and reason == "ScaledToZero"
@@ -759,40 +753,46 @@ def wait_for_resources(
     expected_revisions: dict[ResourceRef, str] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Wait until every service reaches its requested running or stopped state."""
-    timeout_value = timeout_seconds(timeout)
     started = time.monotonic()
-    deadline = started + timeout_value
     previous: dict[ResourceRef, tuple[str, str, str]] = {}
     latest: tuple[ResourceProgress, ...] = ()
-
-    while True:
-        latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
-        elapsed = time.monotonic() - started
-        if report is not None:
-            for progress in latest:
-                signature = (progress.state, progress.reason, progress.message)
-                if previous.get(progress.resource) != signature:
-                    report(elapsed, progress)
-                    previous[progress.resource] = signature
-        if all(progress.converged for progress in latest):
-            return latest
-        if any(progress.state == "Failed" for progress in latest):
-            failed = next(progress for progress in latest if progress.state == "Failed")
-            raise DeploymentError(
-                f"{failed.resource.display_name} failed: {failed.detail or failed.reason}"
-            )
-        if time.monotonic() >= deadline:
-            pending = "; ".join(
-                f"{item.resource.display_name}: {item.detail or item.state}"
-                for item in latest
-                if not item.converged
-            )
-            raise DeploymentError(
-                f"timed out after {timeout} waiting for Foretoken services: {pending}"
-            )
-        if observe is not None:
-            observe(resources, elapsed, max(0.0, deadline - time.monotonic()))
-        time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+        observation_error = None
+        while time.monotonic() < deadline:
+            try:
+                latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
+            except DeploymentError as error:
+                if time.monotonic() < deadline:
+                    raise
+                observation_error = error
+                break
+            elapsed = time.monotonic() - started
+            if report is not None:
+                for progress in latest:
+                    signature = (progress.state, progress.reason, progress.message)
+                    if previous.get(progress.resource) != signature:
+                        report(elapsed, progress)
+                        previous[progress.resource] = signature
+            if all(progress.converged for progress in latest):
+                return latest
+            if any(progress.state == "Failed" for progress in latest):
+                failed = next(progress for progress in latest if progress.state == "Failed")
+                raise DeploymentError(
+                    f"{failed.resource.display_name} failed: {failed.detail or failed.reason}"
+                )
+            if observe is not None:
+                observe(resources, elapsed, max(0.0, deadline - time.monotonic()))
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+        pending = "; ".join(
+            f"{item.resource.display_name}: {item.detail or item.state}"
+            for item in latest if not item.converged
+        ) or "no service status was observed"
+        if observation_error is not None:
+            pending += f"\nLast observation: {observation_error}"
+        raise DeploymentError(
+            f"serving readiness wait expired after {time.monotonic() - started:.1f}s "
+            f"(budget {timeout}): {pending}"
+        ) from observation_error
 
 
 def _wait_for_object(
@@ -955,16 +955,16 @@ def resolve_frontend_endpoint(
     deployment: ForetokenDeployment, kubectl: Kubectl, timeout: str
 ) -> FrontendEndpoint:
     """Wait for and return the deployment's public frontend network endpoint."""
-    deadline = time.monotonic() + timeout_seconds(timeout)
-    service = _wait_for_object(
-        lambda: kubectl.get_if_exists(
-            "service", deployment.frontend, deployment.namespace
+    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+        service = _wait_for_object(
+            lambda: kubectl.get_if_exists(
+                "service", deployment.frontend, deployment.namespace
+            )
+            or {},
+            bool,
+            deadline,
+            f"service/{deployment.frontend}",
         )
-        or {},
-        bool,
-        deadline,
-        f"service/{deployment.frontend}",
-    )
-    if (service.get("spec") or {}).get("type") == "LoadBalancer":
-        return _load_balancer_endpoint(service, deployment, kubectl, deadline)
-    return _gateway_endpoint(deployment, kubectl, deadline)
+        if (service.get("spec") or {}).get("type") == "LoadBalancer":
+            return _load_balancer_endpoint(service, deployment, kubectl, deadline)
+        return _gateway_endpoint(deployment, kubectl, deadline)

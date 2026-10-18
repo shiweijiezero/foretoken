@@ -10,12 +10,13 @@ import os
 import shutil
 import tarfile
 import tempfile
+import time
 import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from foretoken.application_files import (
     SERVICE_COMPONENTS,
@@ -27,7 +28,8 @@ from foretoken.application_files import (
 from foretoken.arguments import InstallCommand
 from foretoken.build_storage import SOURCE_BUILD_CACHE_LABEL
 from foretoken.cluster_build import remove_build_pods
-from foretoken.kubernetes import Kubectl
+from foretoken.command_execution import CommandExecution
+from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ForetokenDeployment
 from foretoken.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -85,6 +87,28 @@ def has_server_binding(kubectl: Kubectl) -> bool:
     return False
 
 
+def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared: bool = False) -> None:
+    """Bound lock acquisition without expiring a live source operation's ownership."""
+    import fcntl
+
+    deadline = time.monotonic() + timeout_seconds(timeout)
+    reported = False
+    while True:
+        if execution := CommandExecution.current():
+            execution.check()
+        try:
+            fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeploymentError(f"Timed out after {timeout} waiting for {description}") from None
+            if not reported:
+                print(f"Waiting for {description} (up to {timeout})", flush=True)
+                reported = True
+            time.sleep(min(0.2, remaining))
+
+
 @contextmanager
 def source_operation(
     kubectl: Kubectl, timeout: str, *, installing: bool = False, shared: bool = False
@@ -105,7 +129,7 @@ def source_operation(
     locks.mkdir(parents=True, exist_ok=True)
     # NFS shared locks require a readable descriptor; this file serves both lock modes.
     with (locks / directory.name).open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        _acquire_source_lock(lock, timeout, "the platform source operation", shared=shared)
         try:
             if shared:
                 yield
@@ -131,14 +155,12 @@ def source_operation(
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def checkout_state_directory(cluster: Path, root: Path) -> Path:
-    """Allocate one stable publisher identity per checkout under a short registry lock."""
-    import fcntl
-
+def checkout_state_directory(cluster: Path, root: Path, timeout: str) -> Path:
+    """Allocate one stable publisher identity per checkout under a bounded registry lock."""
     checkouts = cluster / "checkouts"
     checkouts.mkdir(parents=True, exist_ok=True)
-    with (checkouts / ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (checkouts / ".lock").open("a+") as lock:
+        _acquire_source_lock(lock, timeout, "source checkout registration")
         for identity in checkouts.glob("*/checkout.json"):
             if (
                 json.loads(identity.read_text())["root"] == str(root)
@@ -156,10 +178,8 @@ def checkout_state_directory(cluster: Path, root: Path) -> Path:
 @contextmanager
 def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Iterator[None]:
     """Own a checkout's build outputs until their service selections have been submitted."""
-    import fcntl
-
-    with (directory / ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (directory / ".lock").open("a+") as lock:
+        _acquire_source_lock(lock, timeout, "this checkout's source operation")
         remove_application_jobs(kubectl, directory.name, timeout)
         remove_build_pods(kubectl, timeout, binding=directory.name, preserve_ready=True)
         yield

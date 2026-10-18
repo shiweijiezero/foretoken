@@ -7,9 +7,32 @@ import json
 import os
 import shutil
 import sys
+import tarfile
+import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 from urllib.request import urlopen
+
+# Init containers have no serving probe. Fail an idle transfer so kubelet can retry it.
+_HTTP_IDLE_TIMEOUT = 30
+
+
+def _relative_path(value: str) -> PurePosixPath:
+    """Keep publication paths inside the application directory and its HTTP origin."""
+    relative = PurePosixPath(value)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise ValueError(f"invalid application path: {value}")
+    return relative
+
+
+def _write_file(source, path: Path, entry: dict) -> None:
+    """Install one manifest-listed regular file with its declared size and executable mode."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as output:
+        shutil.copyfileobj(source, output)
+    if path.stat().st_size != entry["size"]:
+        raise OSError(f"incomplete application file: {entry['path']}")
+    path.chmod(entry["mode"] & 0o777)
 
 
 def install(reference: str, destination: Path) -> None:
@@ -18,30 +41,49 @@ def install(reference: str, destination: Path) -> None:
     receipt = selected / ".reference"
     if receipt.is_file() and receipt.read_text() == reference:
         return
+    started = time.monotonic()
     destination.mkdir(parents=True, exist_ok=True)
     staging = destination / ".incoming"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()
+    origin = reference.rstrip("/")
     try:
-        with urlopen(reference.rstrip("/") + "/manifest.json") as response:
+        with urlopen(origin + "/manifest.json", timeout=_HTTP_IDLE_TIMEOUT) as response:
             manifest = json.load(response)
-        for entry in manifest["files"]:
-            relative = PurePosixPath(entry["path"])
-            if relative.is_absolute() or ".." in relative.parts or not relative.parts:
-                raise ValueError(f"invalid application path: {entry['path']}")
-            path = staging.joinpath(*relative.parts)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            url = reference.rstrip("/") + "/" + quote(relative.as_posix(), safe="/")
-            with urlopen(url) as response, path.open("wb") as output:
-                shutil.copyfileobj(response, output)
-            if path.stat().st_size != entry["size"]:
-                raise OSError(f"incomplete application file: {relative}")
-            path.chmod(entry["mode"] & 0o777)
+        entries = {_relative_path(entry["path"]): entry for entry in manifest["files"]}
+        if "archive" in manifest:
+            archive = _relative_path(manifest["archive"])
+            print("Downloading application archive", flush=True)
+            remaining = set(entries)
+            with (
+                urlopen(origin + "/" + quote(archive.as_posix(), safe="/"), timeout=_HTTP_IDLE_TIMEOUT) as response,
+                tarfile.open(fileobj=response, mode="r|gz") as package,
+            ):
+                for member in package:
+                    relative = _relative_path(member.name)
+                    if not member.isfile() or relative not in remaining:
+                        raise ValueError(f"unexpected application archive entry: {member.name}")
+                    entry = entries[relative]
+                    if member.size != entry["size"]:
+                        raise OSError(f"incorrect application archive size: {relative}")
+                    with package.extractfile(member) as source:
+                        _write_file(source, staging.joinpath(*relative.parts), entry)
+                    remaining.remove(relative)
+            if remaining:
+                raise OSError("application archive omitted files: " + ", ".join(map(str, sorted(remaining))))
+        else:
+            # Installed releases retain their immutable per-file publications.
+            print("Downloading application files", flush=True)
+            for relative, entry in entries.items():
+                url = origin + "/" + quote(relative.as_posix(), safe="/")
+                with urlopen(url, timeout=_HTTP_IDLE_TIMEOUT) as response:
+                    _write_file(response, staging.joinpath(*relative.parts), entry)
         (staging / ".reference").write_text(reference)
         if selected.exists():
             shutil.rmtree(selected)
         os.rename(staging, selected)
+        print(f"Application files ready: {len(entries)} files in {time.monotonic() - started:.1f}s", flush=True)
     finally:
         if staging.exists():
             shutil.rmtree(staging)

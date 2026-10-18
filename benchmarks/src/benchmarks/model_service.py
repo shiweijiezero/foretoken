@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shlex
+import sys
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -16,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from foretoken.command_execution import CommandExecution, cleanup_commands, run_command
 from foretoken.deployment import DeploymentLifecycle
 from foretoken.kubernetes import (
     Kubectl,
@@ -198,40 +201,65 @@ def _model_gpu_count(
 def _wait_for_models(
     api_root: str,
     headers: dict[str, str],
-    timeout: float,
+    deadline: float,
     expected_models: Iterable[str],
     api_key: str,
 ) -> tuple[str, ...]:
+    """Observe the public model list within one deadline, including DNS and response-body transfer."""
     expected = set(expected_models)
-    deadline = time.monotonic() + timeout
-    request_headers = {**headers, "Authorization": f"Bearer {api_key}"}
+    request = json.dumps({
+        "url": f"{api_root}/models",
+        "headers": {**headers, "Authorization": f"Bearer {api_key}"},
+    })
+    # Socket timeouts do not bound DNS or a continuously trickling response.
+    # The command owner can terminate the entire request; credentials use stdin.
+    query = """import json, sys, httpx
+try:
+    response = httpx.get(**json.load(sys.stdin), timeout=5.0, follow_redirects=True)
+    response.raise_for_status()
+    print(response.text)
+except httpx.HTTPError as error:
+    print(str(error) or type(error).__name__, file=sys.stderr)
+    sys.exit(2)
+"""
     last_error = "frontend has not responded"
-    with httpx.Client(
-        headers=request_headers,
-        timeout=5.0,
-        follow_redirects=True,
-    ) as client:
-        while time.monotonic() < deadline:
-            try:
-                response = client.get(f"{api_root}/models")
-                response.raise_for_status()
-                models = tuple(
-                    sorted(
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            result = run_command(
+                [sys.executable, "-I", "-c", query], input=request,
+                text=True, capture_output=True, timeout=remaining,
+            )
+        except DeploymentError:
+            if execution := CommandExecution.current():
+                execution.check()
+            last_error = "frontend model request exceeded its wait budget"
+        else:
+            if result.returncode:
+                if execution := CommandExecution.current():
+                    execution.check()
+                last_error = result.stderr.strip() or f"frontend model request exited with status {result.returncode}"
+                if result.returncode != 2:
+                    raise DeploymentError(f"frontend model query failed: {last_error}")
+            else:
+                try:
+                    models = tuple(sorted(
                         str(item["id"])
-                        for item in response.json().get("data", [])
+                        for item in json.loads(result.stdout).get("data", [])
                         if isinstance(item, dict) and item.get("id")
+                    ))
+                except (ValueError, KeyError) as error:
+                    last_error = str(error)
+                else:
+                    if expected.issubset(models):
+                        return models
+                    last_error = (
+                        f"frontend advertises {models or '<no models>'}; "
+                        f"waiting for {tuple(sorted(expected))}"
                     )
-                )
-                if expected.issubset(models):
-                    return models
-                last_error = (
-                    f"frontend advertises {models or '<no models>'}; "
-                    f"waiting for {tuple(sorted(expected))}"
-                )
-            except (httpx.HTTPError, ValueError, KeyError) as exc:
-                last_error = str(exc)
-            time.sleep(2)
-    raise DeploymentError(f"frontend did not become ready: {last_error}")
+        if execution := CommandExecution.current():
+            execution.check()
+        time.sleep(min(2, max(0.0, deadline - time.monotonic())))
+    raise DeploymentError(f"frontend model discovery deadline exceeded: {last_error}")
 
 
 def _discover_model_service(
@@ -242,32 +270,32 @@ def _discover_model_service(
     allow_multiple_models: bool = False,
 ) -> ModelService:
     """Wait for the rendered service to become ready and return its public model service."""
-    wait_seconds = timeout_seconds(source.wait_timeout)
     model = (
         "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
         else _select_model(deployment.models.values(), source.model)
     )
     model_refs = _model_service_refs(deployment, model)
     resources = (ResourceRef("FrontendService", deployment.frontend, deployment.namespace), *model_refs)
-    progress = wait_for_resources(resources, kubectl, source.wait_timeout)
-    for service in progress:
-        if service.state == "Stopped":
-            raise DeploymentError(
-                f"{service.resource.display_name} is stopped; resume it before benchmarking with:\n"
-                f"foretoken deploy {shlex.quote(str(deployment.path))}"
-            )
-    gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
-    endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
-    chat_completions_url = f"{endpoint.url}/v1/chat/completions"
-    api_root = f"{endpoint.url}/v1"
-    headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
-    models = _wait_for_models(
-        api_root,
-        headers,
-        wait_seconds,
-        (model,) if model else deployment.models.values(),
-        source.api_key,
-    )
+    with kubectl.until(time.monotonic() + timeout_seconds(source.wait_timeout)) as deadline:
+        progress = wait_for_resources(resources, kubectl, source.wait_timeout)
+        for service in progress:
+            if service.state == "Stopped":
+                raise DeploymentError(
+                    f"{service.resource.display_name} is stopped; resume it before benchmarking with:\n"
+                    f"foretoken deploy {shlex.quote(str(deployment.path))}"
+                )
+        gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
+        endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
+        chat_completions_url = f"{endpoint.url}/v1/chat/completions"
+        api_root = f"{endpoint.url}/v1"
+        headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
+        models = _wait_for_models(
+            api_root,
+            headers,
+            deadline,
+            (model,) if model else deployment.models.values(),
+            source.api_key,
+        )
     return ModelService(
         chat_completions_url=chat_completions_url,
         model=model,
@@ -337,9 +365,11 @@ def resolve_model_service(
         )
         return
 
+    execution = CommandExecution.current() or CommandExecution(timeout_seconds(source.wait_timeout))
     kubectl = Kubectl()
-    deployment = load_deployment(source.kustomize_path, kubectl)
-    presence = _service_presence(deployment, kubectl)
+    with execution:
+        deployment = load_deployment(source.kustomize_path, kubectl)
+        presence = _service_presence(deployment, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(
             "The Foretoken deployment is only partially present. "
@@ -350,12 +380,13 @@ def resolve_model_service(
     temporary = not any(presence)
     serving = False
     try:
-        if temporary:
-            logger.info("Deploying Foretoken service from %s", deployment.path)
-            lifecycle.apply(deployment, source.wait_timeout)
-        service = _discover_model_service(
-            deployment, kubectl, source, allow_multiple_models=allow_multiple_models
-        )
+        with execution:
+            if temporary:
+                logger.info("Deploying Foretoken service from %s", deployment.path)
+                lifecycle.apply(deployment, source.wait_timeout)
+            service = _discover_model_service(
+                deployment, kubectl, source, allow_multiple_models=allow_multiple_models
+            )
         serving = True
         yield service
     except CaptureCleanupError:
@@ -369,7 +400,8 @@ def resolve_model_service(
     finally:
         if temporary:
             logger.info("Cleaning up Foretoken service from %s", deployment.path)
-            lifecycle.cleanup_temporary(
-                deployment, source.wait_timeout,
-                retain_storage=retain_runtime_cache and serving,
-            )
+            with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
+                lifecycle.cleanup_temporary(
+                    deployment, source.wait_timeout,
+                    retain_storage=retain_runtime_cache and serving,
+                )

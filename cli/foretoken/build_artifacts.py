@@ -15,7 +15,7 @@ from foretoken.manifest import DeploymentError
 from foretoken.node_images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
 
 if TYPE_CHECKING:
-    from foretoken.cluster_build import BuildCancellation
+    from foretoken.command_execution import CommandExecution
 
 
 def _bind_artifact_claim(
@@ -27,7 +27,7 @@ def _bind_artifact_claim(
     pull_secrets: tuple[str, ...],
     timeout: str,
     deadline: float,
-    cancellation: BuildCancellation,
+    cancellation: CommandExecution,
 ) -> dict[str, Any]:
     """Let the native scheduler bind a claim without mounting it, then remove the owned Pod."""
     metadata = claim["metadata"]
@@ -155,7 +155,7 @@ def prepare_artifact_volume(
     tools_image: str,
     pull_secrets: tuple[str, ...],
     timeout: str,
-    cancellation: BuildCancellation,
+    cancellation: CommandExecution,
 ) -> bool:
     """Prepare an owned artifact PVC and report whether its NFS mount lifecycle is isolated.
 

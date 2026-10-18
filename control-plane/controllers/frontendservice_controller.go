@@ -489,15 +489,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
+	// Start with the selected cache instead of creating a temporary frontend that
+	// must be replaced once model placement completes. Existing replicas stay live.
 	profile.RuntimeCache = runtimeCache
-	applyDeployment := true
-	if !cacheReady {
-		if current != nil {
-			applyDeployment = false
-		} else {
-			profile.RuntimeCache = nil
-		}
-	}
+	applyDeployment := cacheReady
 
 	if storage := frontend.Spec.VideoTasks; storage != nil {
 		identity, err := videoOutputIdentity(ctx, reconciler.APIReader, frontend.Namespace, storage.ClaimName)
@@ -566,8 +561,8 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if routeRequired {
 		routeReady = httpRouteAccepted(route, *reconciler.RuntimeProfile.Gateway, frontend.Namespace)
 	}
-	// An old admission-only Pod may be available while the cache-backed replacement starts.
-	// Deployment submission completes only when the requested frontend template is ready.
+	// Availability can describe retained replicas; completion requires the selected
+	// template and cache, followed by every routing consumer's acknowledgement.
 	available := frontendDeploymentAvailable(currentDeployment)
 	targetReplicas := *deployment.Spec.Replicas
 	executionReady := applyDeployment && cacheReady && available &&
@@ -589,7 +584,8 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	state := frontendState{
 		Configuration:  configuration,
-		Materialized:   applyDeployment,
+		Materialized:   currentDeployment != nil,
+		CachePending:   !cacheReady,
 		Available:      available,
 		ExecutionReady: executionReady,
 		RouteRequired:  routeRequired,
@@ -756,6 +752,7 @@ type frontendState struct {
 	ExecutionReady bool
 	Stopped        bool
 	Materialized   bool
+	CachePending   bool
 	Available      bool
 	RouteRequired  bool
 	RouteReady     bool
@@ -818,6 +815,8 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 		reason, message := frontendReadyFailure(state)
 		setFrontendCondition(frontend, conditionReady, conditionStatus(reason == "Ready"), reason, message)
 	}
+	target := frontendTargetReadiness(state)
+	setFrontendCondition(frontend, conditionTargetReady, target.Status, target.Reason, target.Message)
 	if reflect.DeepEqual(base.Status, frontend.Status) {
 		return nil
 	}
@@ -833,6 +832,8 @@ func setFrontendCondition(frontend *inferencev1alpha1.FrontendService, condition
 
 func frontendReadyFailure(state frontendState) (string, string) {
 	switch {
+	case state.CachePending:
+		return "WaitingForCache", "Waiting for model workloads to prepare the shared runtime cache"
 	case !state.Materialized:
 		return "NotMaterialized", "Frontend resources are not materialized"
 	case !state.Available:
@@ -846,6 +847,29 @@ func frontendReadyFailure(state frontendState) (string, string) {
 	default:
 		return "Ready", "The frontend workload and backend routing are ready"
 	}
+}
+
+// frontendTargetReadiness separates rejected intent from recoverable workload and API waits.
+func frontendTargetReadiness(state frontendState) conditionState {
+	if state.Stopped {
+		return conditionState{Status: metav1.ConditionTrue, Reason: "ScaledToZero", Message: "All frontend replicas have stopped"}
+	}
+	reason, message := frontendReadyFailure(state)
+	if state.FailureReason != "" {
+		reason, message = state.FailureReason, state.FailureMessage
+	}
+	switch state.Configuration.Reason {
+	case "ConfigurationRejected", "BackendDeploymentRequired", "FrontendDeploymentRequired":
+		reason, message = state.Configuration.Reason, state.Configuration.Message
+	}
+	status := metav1.ConditionUnknown
+	switch reason {
+	case "Ready":
+		status = metav1.ConditionTrue
+	case "InvalidIntent", "RuntimeProfileIncomplete", "ConfigurationRejected", "BackendDeploymentRequired", "FrontendDeploymentRequired":
+		status = metav1.ConditionFalse
+	}
+	return conditionState{Status: status, Reason: reason, Message: message}
 }
 
 func frontendBooleanReason(value bool, trueReason, falseReason string) string {

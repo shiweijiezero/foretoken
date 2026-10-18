@@ -25,18 +25,18 @@ from foretoken.build_storage import (
     prepare_build_storage,
 )
 from foretoken.cluster_build import (
-    BuildCancellation,
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
 )
+from foretoken.command_execution import CommandExecution
 from foretoken.engine_environment import (
     engine_build_arguments,
     engine_cache_scope,
     export_engine_source,
     resolve_vllm_base_image,
 )
-from foretoken.kubernetes import Kubectl
+from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import select_build_sources
 from foretoken.node_images import image_tools_image
@@ -128,14 +128,14 @@ def prepare_source_images(
     before_delivery: Callable[[], None] | None = None,
     checkout: Path | None = None,
     components: tuple[str, ...] = ("control-plane", "frontend", "model-server"),
-    cancellation: BuildCancellation | None = None,
+    cancellation: CommandExecution | None = None,
 ) -> Iterator[SourceImages]:
     """Prepare installation artifacts, awaiting dependencies before node image delivery.
 
     The platform supplies before_delivery when preparing dependencies concurrently.
     Captured inputs remain in pending state until the installation or checkout commits them.
     """
-    cancellation = cancellation or BuildCancellation()
+    cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))
     cancellation.check()
     root = source_checkout(command.editable)
     kubectl = Kubectl()

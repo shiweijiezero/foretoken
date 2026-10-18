@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -15,7 +14,8 @@ from typing import Any
 
 import yaml
 
-from foretoken.kubernetes import Kubectl
+from foretoken.command_execution import CommandExecution, cleanup_commands
+from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError
 
 _IMAGE_OWNER_LABEL = "inference.foretoken.io/source-image-owner"
@@ -131,7 +131,8 @@ class NodeImageStore:
 
     def run(self, args: list[str], *, capture: bool = False) -> str:
         """Execute a node image operation, surfacing failures to its lifecycle caller."""
-        result = subprocess.run(
+        execution = CommandExecution.current() or CommandExecution()
+        result = execution.run(
             self.kubectl.command(
                 [
                     "exec",
@@ -145,7 +146,6 @@ class NodeImageStore:
                     *args,
                 ]
             ),
-            check=False,
             text=True,
             capture_output=capture,
         )
@@ -455,15 +455,16 @@ def node_image_store(
         )
         yield NodeImageStore(kubectl, namespace, name, binding)
     finally:
-        kubectl.run(
-            [
-                "delete",
-                "pod",
-                name,
-                "-n",
-                namespace,
-                "--ignore-not-found",
-                "--wait=true",
-                "--timeout=" + timeout,
-            ]
-        )
+        with cleanup_commands(timeout=timeout_seconds(timeout)):
+            kubectl.run(
+                [
+                    "delete",
+                    "pod",
+                    name,
+                    "-n",
+                    namespace,
+                    "--ignore-not-found",
+                    "--wait=true",
+                    "--timeout=" + timeout,
+                ]
+            )

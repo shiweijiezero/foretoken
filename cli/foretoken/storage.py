@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from foretoken.command_execution import cleanup_commands
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import (
     DeploymentError,
@@ -282,25 +283,26 @@ class DirectoryVolumes:
                 uid, gid = map(int, output.split(":"))
                 owners.add((uid, gid))
             finally:
-                current = json.loads(self.kubectl.run(
-                    ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
-                ).stdout or "null")
-                if current is not None and current["metadata"]["uid"] == created["uid"]:
-                    try:
-                        self.kubectl.run(
-                            ["delete", "--raw", f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}", "-f", "-"],
-                            input_text=json.dumps({
-                                "apiVersion": "v1", "kind": "DeleteOptions",
-                                "preconditions": {"uid": created["uid"]}, "propagationPolicy": "Foreground",
-                            }), timeout=seconds,
-                        )
-                    except DeploymentError:
-                        current = json.loads(self.kubectl.run(
-                            ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
-                        ).stdout or "null")
-                        if current is not None and current["metadata"]["uid"] == created["uid"]:
-                            raise
-                    self.kubectl.wait_deleted("jobs", created, timeout)
+                with cleanup_commands(timeout=seconds):
+                    current = json.loads(self.kubectl.run(
+                        ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                    ).stdout or "null")
+                    if current is not None and current["metadata"]["uid"] == created["uid"]:
+                        try:
+                            self.kubectl.run(
+                                ["delete", "--raw", f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}", "-f", "-"],
+                                input_text=json.dumps({
+                                    "apiVersion": "v1", "kind": "DeleteOptions",
+                                    "preconditions": {"uid": created["uid"]}, "propagationPolicy": "Foreground",
+                                }), timeout=seconds,
+                            )
+                        except DeploymentError:
+                            current = json.loads(self.kubectl.run(
+                                ["get", "job", name, "-n", namespace, "--ignore-not-found", "-o", "json"], timeout=seconds,
+                            ).stdout or "null")
+                            if current is not None and current["metadata"]["uid"] == created["uid"]:
+                                raise
+                        self.kubectl.wait_deleted("jobs", created, timeout)
         if len(owners) != 1:
             raise DeploymentError(f"directory {path} has different owners across nodes")
         uid, gid = owners.pop()

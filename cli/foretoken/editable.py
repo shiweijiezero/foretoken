@@ -32,7 +32,7 @@ from foretoken.cluster_build import (
     registry_credentials,
 )
 from foretoken.engine_environment import export_engine_source
-from foretoken.kubernetes import Kubectl, timeout_seconds
+from foretoken.kubernetes import Kubectl
 from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
@@ -82,19 +82,19 @@ class EditableDeployment:
 
     def __init__(
         self, kubectl: Kubectl, cluster: Path, platform: dict[str, Any],
-        root: Path, engine_sources: tuple[str, ...],
+        root: Path, engine_sources: tuple[str, ...], timeout: str,
     ) -> None:
         self.kubectl = kubectl
         self.cluster = cluster
         self.platform = platform
         self.root = root
-        self.directory = checkout_state_directory(cluster, root)
+        self.directory = checkout_state_directory(cluster, root, timeout)
         self.engine_sources = engine_sources
         self.selected: dict[tuple[str, str, str], str] = {}
 
     @classmethod
     def discover(
-        cls, kubectl: Kubectl, editable: str | None = None,
+        cls, kubectl: Kubectl, timeout: str, editable: str | None = None,
         engine_sources: tuple[str, ...] = (),
     ) -> EditableDeployment | None:
         """Enable source updates only for a platform installed explicitly from source."""
@@ -121,7 +121,7 @@ class EditableDeployment:
             raise DeploymentError(
                 "source installation changed; run `foretoken install -e .` from the intended checkout's root"
             )
-        return cls(kubectl, directory, state, source_checkout(editable), engine_sources)
+        return cls(kubectl, directory, state, source_checkout(editable), engine_sources, timeout)
 
     @contextmanager
     def operation(self, deployment: ForetokenDeployment, timeout: str) -> Iterator[None]:
@@ -197,8 +197,10 @@ class EditableDeployment:
             print(f"Source checkout: {self.root}", flush=True)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
+            previous_images = dict(self.state["build"]["images"])
             yield
-            reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
+            if self.state["build"]["images"] != previous_images:
+                reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
     def prepare(self, timeout: str) -> None:
         """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
@@ -847,12 +849,11 @@ class EditableDeployment:
     def verify(
         self,
         deployment: ForetokenDeployment,
-        timeout: str,
+        deadline: float,
         *,
         observe: Callable[[], None] | None = None,
     ) -> None:
-        """Wait for changed runtime code and its frontend routing consumers to become active."""
-        deadline = time.monotonic() + timeout_seconds(timeout)
+        """Observe code and routing activation within DeploymentLifecycle's readiness deadline."""
         routes: dict[str, set[str]] = {}
         consumers = dict(self.selected)
         # Unchanged frontend code still needs to consume a new backend cohort.
@@ -905,7 +906,7 @@ class EditableDeployment:
                     raise DeploymentError(
                         f"timed out waiting for {namespace}/{service} to activate source {revision}"
                     )
-                time.sleep(2)
+                time.sleep(min(2, max(0.0, deadline - time.monotonic())))
             if component == "model-server":
                 routes.setdefault(namespace, set()).update(
                     route for _, _, _, route in writers

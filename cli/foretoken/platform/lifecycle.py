@@ -25,7 +25,7 @@ from foretoken.build_storage import (
     managed_build_storage_resources,
     remove_build_storage,
 )
-from foretoken.cluster_build import BuildCancellation
+from foretoken.command_execution import CommandExecution
 from foretoken.kubernetes import (
     Kubectl,
     control_plane_deployments,
@@ -67,6 +67,7 @@ from foretoken.source_state import (
     record_install,
     remove_build_caches,
     resolve_source_base_image,
+    source_operation,
 )
 
 
@@ -167,12 +168,17 @@ class PlatformLifecycle:
         source_build_arguments: dict[str, str] | None = None,
     ) -> None:
         """Install the platform and commit successful source inputs to its workstation binding."""
-        with ExitStack() as artifacts:
+        with (
+            (CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))) as execution,
+            source_operation(self._kubectl, command.timeout, installing=command.editable is not None),
+            ExitStack() as artifacts,
+        ):
             self._install(
                 command,
                 artifacts,
                 source_base_image=source_base_image,
                 source_build_arguments=source_build_arguments,
+                execution=execution,
             )
 
     def _install(
@@ -182,6 +188,7 @@ class PlatformLifecycle:
         *,
         source_base_image: str | None,
         source_build_arguments: dict[str, str] | None,
+        execution: CommandExecution,
     ) -> None:
         """Reconcile managed dependencies and the platform within the installation's artifact lifetime."""
         helm = self._helm
@@ -503,7 +510,6 @@ class PlatformLifecycle:
         )
 
         installation_workers = ThreadPoolExecutor(max_workers=2)
-        source_cancellation = BuildCancellation()
         source_future = None
         dependencies: Future[None] = Future()
         # Only the worker enters source contexts. Join it before the outer stack
@@ -530,10 +536,10 @@ class PlatformLifecycle:
                     else "nvidia",
                     saved_arguments=source_build_arguments,
                     before_delivery=dependencies.result,
-                    cancellation=source_cancellation,
+                    cancellation=execution,
                 )
                 source_future = installation_workers.submit(
-                    source_cancellation.run_stage, source_artifacts.enter_context, context
+                    execution.run_stage, source_artifacts.enter_context, context
                 )
             elif not kubectl.exists("namespace", platform.namespace):
                 kubectl.run(["create", "namespace", platform.namespace])
@@ -542,7 +548,7 @@ class PlatformLifecycle:
             # custom log-chart monitoring resources. Existing monitoring can update in parallel.
             log_future = (
                 installation_workers.submit(
-                    self._logs.install, log_config, command.timeout
+                    execution.run_stage, self._logs.install, log_config, command.timeout
                 )
                 if managed_prometheus_exists or not install_managed_prometheus
                 else None
@@ -631,9 +637,9 @@ class PlatformLifecycle:
                 dependencies.set_exception(error)
             if source_future is not None:
                 source_future.cancel()
-            source_cancellation.cancel(error)
+            execution.cancel(error)
             if isinstance(error, (DeploymentError, OSError)):
-                source_cancellation.check()
+                execution.check()
             raise
         finally:
             # Resolve dependency success or failure before joining: the source
@@ -766,6 +772,11 @@ class PlatformLifecycle:
             helm.wait_control_plane(release, command.timeout)
 
     def uninstall(self, command: UninstallCommand) -> None:
+        """Own command cancellation and exclusive source cleanup while removing the platform."""
+        with CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)), source_operation(self._kubectl, command.timeout):
+            self._uninstall(command)
+
+    def _uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
         helm = self._helm
         kubectl = self._kubectl

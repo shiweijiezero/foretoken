@@ -11,26 +11,22 @@ import json
 import os
 import re
 import shlex
-import signal
-import subprocess
-import sys
 import tarfile
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
-from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from threading import Event, Lock
+from threading import Lock
 from typing import Any, Self
 
 import yaml
 
 from foretoken.build_artifacts import prepare_artifact_volume
 from foretoken.build_storage import SOURCE_BUILD_UID
+from foretoken.command_execution import CommandExecution, run_command
 from foretoken.kubernetes import Kubectl, _wait_for_object, timeout_seconds
 from foretoken.manifest import DeploymentError
 from foretoken.node_images import (
@@ -46,123 +42,6 @@ _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
 _BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
 _BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
 _BUILD_LAYOUT = "storage-tiers-v1"
-
-
-class BuildCancellation(AbstractContextManager):
-    """Propagate one source operation's cancellation to its live builders and commands."""
-
-    def __init__(self) -> None:
-        self._cancelled = Event()
-        self._error: BaseException | None = None
-        self._lock = Lock()
-        self._callbacks: set[Callable[[], None]] = set()
-
-    def __enter__(self) -> Self:
-        self.check()
-        return self
-
-    def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
-        if exc_value is not None:
-            self.cancel(exc_value)
-            # Cancelling a sibling can also fail its in-flight API call.
-            if self._error is not None and isinstance(exc_value, (CancelledError, DeploymentError, OSError)):
-                raise self._error
-
-    def check(self) -> None:
-        """Prevent subsequent source work once the owning operation has stopped."""
-        if self._cancelled.is_set():
-            if self._error is not None:
-                raise self._error
-            raise CancelledError("source build cancelled")
-
-    def register(self, callback: Callable[[], None]) -> None:
-        """Register live cleanup, also closing a resource created during cancellation."""
-        with self._lock:
-            if not self._cancelled.is_set():
-                self._callbacks.add(callback)
-                return
-        self.cleanup(callback, self._error)
-        self.check()
-
-    def unregister(self, callback: Callable[[], None]) -> None:
-        """Release a resource's cancellation hook after its normal lifetime ends."""
-        with self._lock:
-            self._callbacks.discard(callback)
-
-    def cleanup(
-        self, callback: Callable[[], None], error: BaseException | None = None
-    ) -> None:
-        """Report operational cleanup failures without replacing an existing build failure."""
-        try:
-            callback()
-        except (DeploymentError, OSError) as cleanup_error:
-            print(f"Source cleanup failed: {cleanup_error}", file=sys.stderr, flush=True)
-            if error is None:
-                raise
-
-    def cancel(self, error: BaseException | None = None) -> None:
-        """Stop live resources before joining workers, retaining the first failure as their cause."""
-        with self._lock:
-            if self._cancelled.is_set():
-                return
-            self._error = error
-            self._cancelled.set()
-            callbacks = tuple(self._callbacks)
-        if callbacks:
-            with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
-                futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
-                for future in futures:
-                    future.result()
-
-    def run_stage(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Cancel sibling work when a submitted stage fails, before its Future completes."""
-        with self:
-            return function(*args, **kwargs)
-
-    def run(
-        self,
-        args: list[str],
-        *,
-        input: str | None = None,
-        stdin: Any = None,
-        text: bool = False,
-        capture_output: bool = False,
-        cwd: Path | None = None,
-        env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[Any]:
-        """Run an owned command in its own process group and reap it on cancellation."""
-        self.check()
-        with subprocess.Popen(
-            args,
-            stdin=subprocess.PIPE if input is not None else stdin,
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
-            text=text, cwd=cwd, env=env, start_new_session=True,
-        ) as process:
-            def stop() -> None:
-                if process.poll() is not None:
-                    return
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        # Let clients close cooperatively without waiting on an ignored signal.
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
-                except ProcessLookupError:
-                    process.wait()
-
-            self.register(stop)
-            try:
-                stdout, stderr = process.communicate(input)
-                self.check()
-                return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
-            except BaseException as error:
-                self.cancel(error)
-                raise
-            finally:
-                self.unregister(stop)
 
 
 class ImageNotFoundError(DeploymentError):
@@ -283,12 +162,11 @@ def registry_credentials(images: list[str]) -> dict[str, Any]:
         if not helper and (key in entries or host in entries):
             helper = configuration.get("credsStore")
         if helper:
-            result = subprocess.run(
+            result = run_command(
                 ["docker-credential-" + helper, "get"],
                 input=key,
                 text=True,
                 capture_output=True,
-                check=False,
             )
             if result.returncode:
                 raise DeploymentError(f"could not read login credentials for {host}")
@@ -362,9 +240,9 @@ class ClusterBuilder(AbstractContextManager):
         pull_secrets: tuple[str, ...] = (),
         credentials: dict[str, Any] | None = None,
         registry_mirrors: dict[str, list[str]] | None = None,
-        cancellation: BuildCancellation | None = None,
+        cancellation: CommandExecution | None = None,
     ) -> None:
-        self.cancellation = cancellation or BuildCancellation()
+        self.cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(timeout))
         self.kubectl = kubectl
         self.namespace = namespace
         self.claim = claim
@@ -984,31 +862,37 @@ done
             input=input_text,
         )
         if result.returncode:
+            self.cancellation.check()
             detail = (result.stderr or result.stdout or "").strip()
             if container == "builder" and args[0] == "buildctl":
-                # Frontend startup failures can reach buildctl as only an exit code.
-                # Preserve the daemon's cause before the context retires a failed Pod.
-                logs = subprocess.run(
-                    self.kubectl.command([
-                        "logs", "-n", self.namespace, self.name, "-c", "builder",
-                        "--since-time=" + started, "--timestamps",
-                        "--request-timeout=" + self.timeout,
-                    ]),
-                    text=True, capture_output=True, check=False,
-                )
-                if logs.returncode == 0 and logs.stdout.strip():
-                    print(logs.stdout, flush=True)
-                    if any(
-                        "session key" in line and "disk quota exceeded" in line
-                        for line in logs.stdout.splitlines()
-                    ):
-                        detail = (
-                            "the host kernel keyring quota for the builder's UID is exhausted; "
-                            "inspect /proc/key-users and kernel.keys.maxkeys/maxbytes on the host, "
-                            "then identify retained keyring references or adjust host key capacity"
-                        )
-                elif logs.returncode:
-                    print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
+                # Daemon diagnostics can explain an otherwise bare exit code, but
+                # must not postpone a known build failure or replace its cause.
+                diagnostic_timeout = min(5.0, timeout_seconds(self.timeout))
+                try:
+                    logs = run_command(
+                        self.kubectl.command([
+                            "logs", "-n", self.namespace, self.name, "-c", "builder",
+                            "--since-time=" + started, "--timestamps",
+                            f"--request-timeout={diagnostic_timeout:g}s",
+                        ]),
+                        text=True, capture_output=True, timeout=diagnostic_timeout,
+                    )
+                except (DeploymentError, OSError) as error:
+                    print(f"Builder logs unavailable: {error}", flush=True)
+                else:
+                    if logs.returncode == 0 and logs.stdout.strip():
+                        print(logs.stdout, flush=True)
+                        if any(
+                            "session key" in line and "disk quota exceeded" in line
+                            for line in logs.stdout.splitlines()
+                        ):
+                            detail += ("\n" if detail else "") + (
+                                "BuildKit reported an exhausted host keyring quota for the builder's UID; "
+                                "inspect /proc/key-users and kernel.keys.maxkeys/maxbytes on the host, "
+                                "then identify retained keyring references or adjust host key capacity"
+                            )
+                    elif logs.returncode:
+                        print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
             raise DeploymentError(
                 f"cluster build failed in {self.namespace}/{self.name}"
                 + (f" on node {self.node}" if self.node else "")

@@ -12,6 +12,7 @@ import subprocess
 from collections.abc import Iterable
 from typing import Any, NoReturn
 
+from foretoken.command_execution import run_command
 from foretoken.manifest import DeploymentError
 from foretoken.namespace_mutation import mutation_lock_fds
 from foretoken.platform.config import PlatformConfig
@@ -41,12 +42,11 @@ class HelmClient:
         command: list[str], *, input_text: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Execute one fully assembled Helm command without interpreting failure."""
-        return subprocess.run(
+        return run_command(
             command,
             input=input_text,
             text=True,
             capture_output=True,
-            check=False,
             pass_fds=mutation_lock_fds.get(),
         )
 
