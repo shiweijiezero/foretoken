@@ -16,6 +16,7 @@ Start with the [Quick Start](../README.md#quick-start) to deploy a model and sen
 | Use an existing Kubernetes cluster | [Kubernetes](deployment/kubernetes.md) |
 | Prepare a MetaX cluster and run a model | [Platform setup](deployment/metax-platform.md) · [Model deployment](deployment/metax.md) |
 | Build and deploy local source changes | [Source deployment](deployment/source.md) |
+| Configure Gateway access, registries, or model distribution | [Platform configuration](deployment/platform.md) |
 
 ## Configure and use services
 

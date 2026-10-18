@@ -16,6 +16,7 @@
 | 使用已有 Kubernetes 集群 | [Kubernetes](deployment/kubernetes_zh.md) |
 | 准备沐曦集群并运行模型 | [平台准备](deployment/metax-platform_zh.md) · [模型部署](deployment/metax_zh.md) |
 | 构建并部署本地源码改动 | [源码部署](deployment/source_zh.md) |
+| 配置网关、镜像来源或模型分发 | [平台配置](deployment/platform_zh.md) |
 
 ## 配置与使用服务
 
