@@ -17,7 +17,9 @@ Executable configuration is authoritative for mechanical formatting and generate
 
 ## Design and ownership
 
-Design the complete configuration, execution, observation, decision, and cleanup path before changing one stage. Keep shared identities, state scopes, and lifecycle ownership consistent across producers and consumers. When extending to more replicas, shards, or nodes, update those relationships together rather than accumulating case-specific branches. Then choose the smallest maintainable implementation that preserves the required behavior and failure semantics.
+Start with the user's intended outcome and the interface they can most easily understand and operate. Minimize the concepts they must learn, information they must supply, and manual steps they must perform. Keep genuine choices and external prerequisites explicit; let the owning component derive values and prepare or coordinate resources it already controls.
+
+Design the complete configuration, execution, observation, decision, and cleanup path around that interface before changing one stage. Keep shared identities, state scopes, and lifecycle ownership consistent across producers and consumers. When the existing structure forces repeated special cases, duplicate decisions, or manual coordination, restructure, merge, or replace the path at its owning boundary and migrate affected consumers together. Prefer a coherent system design over the smallest diff; use a local correction when the existing boundary is sound. Keep the work focused on the current outcome, preserve required behavior and failure semantics, and remove superseded paths.
 
 - Every type, helper, configuration field, validation, fallback, and test must have a current responsibility. Remove it when its consumer is removed.
 - Prefer deleting duplicate paths, reusing an existing owner, or calling a mature upstream API before adding another abstraction.
