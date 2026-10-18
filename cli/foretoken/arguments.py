@@ -362,7 +362,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     deploy.add_argument(
         "-e", "--editable", metavar="PATH",
-        help="build this checkout's controller and serving applications (defaults to the current Foretoken checkout on a source-installed platform)",
+        help=(
+            "build this checkout's controller and serving applications "
+            "(defaults to the current checkout for self-managed namespaces on a source-installed platform)"
+        ),
     )
     deploy.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",

@@ -21,8 +21,9 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from foretoken.kubernetes import Kubectl, timeout_seconds
-from foretoken.manifest import DeploymentError
+from foretoken.deployment.storage import DirectoryVolumes
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.profiling.reader import (
     CAPTURE_MOUNT_PATH,
     READER_PORT,
@@ -30,7 +31,6 @@ from foretoken.profiling.reader import (
     capture_path,
     capture_token,
 )
-from foretoken.storage import DirectoryVolumes
 
 logger = logging.getLogger(__name__)
 

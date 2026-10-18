@@ -5,7 +5,7 @@
 
 [English](runtime-cache.md) | 简体中文
 
-部署配置见[模型存储](../model-storage_zh.md)。
+部署配置见[模型存储](../features/model-storage_zh.md)。
 
 ## 存储职责
 
@@ -29,8 +29,8 @@ CLI 默认保留目录 PV。Namespace 重建后，旧 claim 已不存在时，�
 
 平台统一在数据挂载下派生模型根目录，分别投射模型目录、来源缓存和编译缓存的位置。artifacts 库统一负责数据面两端的本地模型和 tokenizer 目录解析。相对引用解析为模型根目录下的目录。推理引擎与 tokenizer loader 负责下载和格式校验。本地文件解析后，公开模型标识保持不变。
 
-运行时缓存挂载保存模型来源缓存以及 vLLM、TorchInductor 等引擎编译缓存。单节点服务的持久缓存写入检查失败时，model-server 会先停止失败的 EngineCore，再在 Pod 的 `/tmp` 下重试一次。多节点成员统一重启。Frontend 缺少 Hub 缓存时可使用临时 tokenizer 缓存。
+运行时缓存挂载共享模型来源文件，vLLM、TorchInductor 等引擎编译缓存分别存放在 `runtime/<命名空间>/` 下。单节点服务的持久缓存写入检查失败时，model-server 会先停止失败的 EngineCore，再在 Pod 的 `/tmp` 下重试一次。多节点成员统一重启。Frontend 缺少 Hub 缓存时可使用临时 tokenizer 缓存。
 
-Triton 的初始缓存使用 PVC 上的 `triton/<节点名>`，隔离不同节点的写入，同节点 Pod 重建后可复用。缓存位置通过 Group 滚动更新切换，旧 Group 在被替换前保持原环境。引擎自身的编译器子目录仍由 vLLM 管理。
+Triton 的初始缓存使用 PVC 上的 `runtime/<命名空间>/triton/<节点名>`，隔离不同节点的写入，同节点 Pod 重建后可复用。缓存位置通过 Group 滚动更新切换，旧 Group 在被替换前保持原环境。引擎自身的编译器子目录仍由 vLLM 管理。
 
-持久数据根目录包含 `models`、`vllm`、`torch`、`triton` 和 `profiles`。自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。
+自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。

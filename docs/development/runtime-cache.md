@@ -5,7 +5,7 @@
 
 English | [简体中文](runtime-cache_zh.md)
 
-For deployment configuration, see [Model storage](../model-storage.md).
+For deployment configuration, see [Model storage](../features/model-storage.md).
 
 ## Storage ownership
 
@@ -29,8 +29,8 @@ With `retentionPolicy: Delete`, the controller deletes the PVC after its workloa
 
 The artifacts library owns local model/tokenizer directory resolution for both data-plane consumers. The platform projects the model root below the data mount, separately from provider and compilation cache locations. Relative references resolve to directories within the model root. The inference engine and tokenizer loaders handle downloads and format validation. Public model identifiers remain unchanged after resolving local files.
 
-The runtime cache mount stores model-provider caches and engine compilation caches such as vLLM and TorchInductor. For single-node services, model-server can stop a failed EngineCore and retry under the Pod's `/tmp` volume when the persistent cache fails its write probe. Multi-node members restart together. A frontend with a missing Hub snapshot can use its temporary tokenizer cache.
+The runtime cache mount shares model-provider files while keeping vLLM and TorchInductor compilation caches below `runtime/<namespace>/`. For single-node services, model-server can stop a failed EngineCore and retry under the Pod's `/tmp` volume when the persistent cache fails its write probe. Multi-node members restart together. A frontend with a missing Hub snapshot can use its temporary tokenizer cache.
 
-Triton's initial cache uses `triton/<node-name>` on the PVC, separating node writes while retaining reuse after Pod replacement. Cache location changes follow the Group rollout; existing Groups keep their original environment until replaced. Engine-managed compiler subdirectories remain under vLLM's control.
+Triton's initial cache uses `runtime/<namespace>/triton/<node-name>` on the PVC, separating node writes while retaining reuse after Pod replacement. Cache location changes follow the Group rollout; existing Groups keep their original environment until replaced. Engine-managed compiler subdirectories remain under vLLM's control.
 
-The persistent data root contains `models`, `vllm`, `torch`, `triton`, and `profiles`. Prepared models resolve under `models`; Hub repositories retain the upstream `models/hub` layout with revision-aware cache lookup. Diagnostic captures publish below `profiles/runs` and are unavailable during a temporary-cache retry.
+Prepared models resolve under `models`; Hub repositories retain the upstream `models/hub` layout with revision-aware cache lookup. Diagnostic captures publish below `profiles/runs` and are unavailable during a temporary-cache retry.

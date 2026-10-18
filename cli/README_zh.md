@@ -102,7 +102,7 @@ foretoken install \
 foretoken install -e .
 ```
 
-部署时添加 `-e .`，即可从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/custom-deployment_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/custom-deployment_zh.md#修改推理引擎)。
+部署时添加 `-e .`，即可从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/deployment/source_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/deployment/source_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
 
@@ -110,7 +110,7 @@ foretoken install -e .
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-如果仓库需要认证，安装前按[源码部署指南](../docs/kubernetes-deployment_zh.md)配置拉取 Secret。
+如果仓库需要认证，安装前按[源码部署指南](../docs/deployment/kubernetes_zh.md)配置拉取 Secret。
 
 ### 模型分发
 
@@ -166,7 +166,7 @@ kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-
   --role foretoken-control-plane-operator --user MEMBER_ID
 ```
 
-成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。部署清单中的 Namespace 由管理员维护；已提供共享缓存 PVC 时，优先使用该卷，不再创建清单中的 RuntimeCache。共享模型的配置见[跨命名空间复用模型文件](../docs/model-storage_zh.md#跨命名空间复用模型文件)。
+成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。部署清单中的 Namespace 由管理员维护；已提供共享缓存 PVC 时，优先使用该卷，不再创建清单中的 RuntimeCache。共享模型的配置见[跨命名空间复用模型文件](../docs/features/model-storage_zh.md#跨命名空间复用模型文件)。
 
 已有源码安装的管理员可以执行 `foretoken install --namespace foretoken-multi-model-demo -e .`，为该命名空间构建应用。成员的普通部署使用这些已准备的应用；显式执行 `deploy -e` 更新源码仍需源码开发权限。
 
@@ -182,17 +182,19 @@ foretoken uninstall --namespace foretoken-multi-model-demo
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
-资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart/qwen3-0.6b`。
+资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/features/model-storage_zh.md)。单模型部署使用 `examples/quickstart/qwen3-0.6b`。
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-命令应用所选服务的配置。管理员已准备好控制器时直接复用，否则安装或更新部署所在命名空间的控制器。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
+命令应用所选服务的配置，复用管理员已准备的控制器，或为自行管理的命名空间安装、更新控制器。部署内容未变时，复用已有控制器和运行实例。同一命名空间中的服务共用控制器；需要独立运行不同代码版本时，使用不同命名空间。
 
-等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
+等待期间显示服务状态和 Pod/容器日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
 
-目标模型配置被拒绝时，部署命令会显示原因并失败退出，即使旧版本仍在提供服务。模型的 `spec.timeouts.startup` 还限定运行工作负载创建后等待启动或恢复就绪的时间，模型准备阶段单独计时。超过时限会结束本次命令，Kubernetes 继续恢复；时限内的容器重启仍按进行中处理。
+`--timeout` 设置 CLI 等待集群操作和服务就绪的时限，默认为十分钟，源码编译单独执行。模型的准备和启动分别受模型配置中的 `spec.timeouts.startup` 约束。
+
+模型准备失败或就绪等待超时时，命令会给出原因并退出，已经部署的服务仍保留在 Kubernetes 中。集群会继续尝试恢复，可用下面的 `status` 命令跟踪进度、查看日志。若是配置错误，修改 Kustomize 文件后重新执行 `deploy`。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -240,6 +242,8 @@ foretoken stop examples/quickstart/multi-model
 ## 导出图表
 
 评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
+
+添加 [`--sync_wandb`](../benchmarks/docs/perf/wandb_zh.md#恢复上传) 可将已有结果上传到 W&B。
 
 ## 性能剖析：执行瓶颈
 

@@ -29,7 +29,7 @@ The summary lists task scores, answer filters, sample counts, and standard error
 
 ### Candidate likelihood and perplexity
 
-PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/custom-deployment.md) or an existing Completions service that returns input-token log probabilities:
+PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/deployment/source.md) or an existing Completions service that returns input-token log probabilities:
 
 ```bash
 foretoken eval examples/quickstart/qwen3-0.6b \

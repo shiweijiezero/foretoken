@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef
 
 from benchmarks.results.environment import OBSERVATION_TIMEOUT_SECONDS, ApplicationSources
 from benchmarks.results.timeseries import ELAPSED_TIME

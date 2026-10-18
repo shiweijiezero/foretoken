@@ -30,10 +30,14 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 ## 恢复上传
 
-测量已完成，但绘图或结果发布失败时，使用终端打印的结果目录恢复：
+评测时选择了 W&B 输出，需要补传已有结果时，将终端打印的结果目录传给：
 
 ```bash
-foretoken perf --resume RESULT_DIR --output local,wandb,plot
+foretoken plot RESULT_DIR --sync_wandb
 ```
 
-命令根据已有测量补齐输出，继续发布到原来的 W&B 运行，不再向模型发送请求。请保留原始结果目录。离线时先重建本地输出，W&B 发布保持待完成；联网后重复该命令即可补发。
+命令会重绘图表并更新原来的 W&B 运行，不重新测量；中断运行也可上传已有记录。单次运行的图表随结果上传，跨运行对比图保留在本地。绘图失败时仍会尝试上传，并报告绘图错误。
+
+离线评测时设置 `WANDB_MODE=offline`，并在 `--output` 中保留 `wandb`；需要上传时执行上述命令。
+
+换一台机器上传时，复制完整结果目录树，包括隐藏文件。续跑实验引用的旧任务目录也需一并复制，保留目录之间的相对位置。在目标机器安装 Foretoken、执行 `wandb login` 后，即可运行上述命令。使用自托管 W&B 时，先通过 `WANDB_BASE_URL` 指定服务器，再登录。

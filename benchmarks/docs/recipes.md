@@ -190,6 +190,8 @@ foretoken plot results/baseline results/candidate
 
 You can also select an experiment directory or a folder containing several runs. The output includes PDF, SVG, PNG and CSV files. One input writes to its `plots/` subdirectory; multiple inputs or `--base` write to `./plots`. Use `--output-dir` to choose another location.
 
+Add `--sync_wandb` to [upload saved results to W&B](perf/wandb.md#resume-an-upload).
+
 For performance results, select a reference approach with `--base` to generate measured values and relative changes:
 
 ```bash

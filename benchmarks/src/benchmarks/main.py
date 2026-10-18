@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
@@ -56,7 +56,7 @@ def _recover_completed(
     """Recover completed HTTP, video or composed results before any service acquisition."""
     if not resume:
         return None
-    from benchmarks.results.recovery import recover_results
+    from benchmarks.results.publication import recover_results
     from benchmarks.results.wandb_sync import publication_lock
 
     source = Path(resume).resolve()

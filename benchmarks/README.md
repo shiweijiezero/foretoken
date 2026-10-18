@@ -93,6 +93,4 @@ foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 \
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
 
-If measurement completed but output publication failed, use `foretoken perf --resume RESULT_DIR` to finish it without repeating requests; see [result recovery](docs/perf/wandb.md#resume-an-upload).
-
-Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection, layout and output locations.
+Use `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results; add `--sync_wandb` to upload them to W&B. See [plotting examples](docs/recipes.md#plot-saved-results) for metric selection and layout, or [W&B output](docs/perf/wandb.md#resume-an-upload) for offline uploads.

@@ -145,6 +145,14 @@ def video_run_record(config: VideoBenchmarkConfig) -> dict[str, Any]:
     }
 
 
+def video_result_record(result: VideoSampleResult, directory: Path) -> dict[str, Any]:
+    """Serialize a video completion with media paths relative to its owning result directory."""
+    record = result.to_dict()
+    if result.output_path:
+        record["output_path"] = Path(result.output_path).relative_to(directory).as_posix()
+    return record
+
+
 def create_video_benchmark_run(
     record: dict[str, Any],
     results: list[VideoSampleResult],
@@ -155,7 +163,7 @@ def create_video_benchmark_run(
     raw_results = write_json(
         str(run_dir),
         "raw_results.json",
-        [item.to_dict() for item in results],
+        [video_result_record(item, run_dir) for item in results],
     )
     return BenchmarkRun(
         record=record,

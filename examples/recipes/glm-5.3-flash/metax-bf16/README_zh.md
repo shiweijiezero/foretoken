@@ -9,11 +9,11 @@
 
 ## 准备
 
-按[沐曦平台指南](../../../../docs/development/metax-platform_zh.md#从源码安装)从源码安装平台。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
+按[沐曦平台指南](../../../../docs/deployment/metax-platform_zh.md#从源码安装)从源码安装平台。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
 
 在部署前完成三个环境选择：
 
-- 将 `cache.yaml` 的 `directory` 改为两节点都可访问的共享数据根目录。将完整 `zai-org/GLM-5.3-Flash-BF16` checkpoint 放到该目录下的 `models/zai-org/GLM-5.3-Flash-BF16/`；BF16 权重约 599 GiB。目录权限和其他来源见[模型存储](../../../../docs/model-storage_zh.md)。
+- 将 `cache.yaml` 的 `directory` 改为两节点都可访问的共享数据根目录。将完整 `zai-org/GLM-5.3-Flash-BF16` checkpoint 放到该目录下的 `models/zai-org/GLM-5.3-Flash-BF16/`；BF16 权重约 599 GiB。目录权限和其他来源见[模型存储](../../../../docs/features/model-storage_zh.md)。
 - 按[共享 KV 存储示例](../../../feature/shared-kv-store/README_zh.md)构建并向节点提供 Mooncake Store 镜像，将 `kvservice.yaml` 的两处 `image` 设为实际镜像地址。
 - 默认使用平台托管的 `rdma/foretoken_rdma`。若平台复用了其他 RDMA 资源，将 `kvservice.yaml` 的 `rdmaResourceName` 改为该资源。
 
@@ -34,7 +34,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"zai-org/GLM-5.3-Flash-BF16","messages":[{"role":"user","content":"你好，请介绍一下你自己。"}],"max_tokens":512,"stream":true}'
 ```
 
-本例使用平台的直接 LoadBalancer 入口；网关模式的域名与 Host 设置见[沐曦部署指南](../../../../docs/metax-deployment_zh.md)。
+本例使用平台的直接 LoadBalancer 入口；网关模式的域名与 Host 设置见[沐曦部署指南](../../../../docs/deployment/metax_zh.md)。
 
 修改配置后重新运行同一条 `foretoken deploy`。查看或删除本例：
 

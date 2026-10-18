@@ -19,8 +19,13 @@ from foretoken.accelerators._exporter import (
     pod_ready,
     service_selects_pods,
 )
-from foretoken.kubernetes import Kubectl, KubernetesServiceUnavailableError, resource_ref
-from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import (
+    Kubectl,
+    KubernetesServiceUnavailableError,
+    ResourceRef,
+    resource_ref,
+)
 from foretoken.observability import (
     PrometheusRef,
     prometheus_query,

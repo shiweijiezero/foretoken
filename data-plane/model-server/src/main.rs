@@ -808,12 +808,14 @@ async fn start_engine_attempt(
         model_name: config.launch.artifacts.model.clone(),
         client_index: 0,
     };
+    // Upstream handshake waits are per phase; this attempt owns the complete connection deadline.
     let client = tokio::select! {
         result = EngineCoreClient::connect_with_protocol(client_config, engine_protocol) => match result {
             Ok(client) => Ok(client),
             Err(error) => Err(classify_engine_startup_failure(cache, mode, format!("could not connect to EngineCore: {error}"))),
         },
         status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
+        _ = tokio::time::sleep_until(startup_deadline.into()) => Err(EngineStartupFailure::Other(io::Error::other("EngineCore connection exceeded the startup deadline"))),
         reason = wait_cache_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
         error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
     };
@@ -864,6 +866,7 @@ async fn detect_engine_protocol(
     environment: &[(String, String)],
 ) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
+        .kill_on_drop(true)
         .envs(environment.iter().cloned())
         .args([
             "-c",

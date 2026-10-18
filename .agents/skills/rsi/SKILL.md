@@ -42,7 +42,7 @@ During execution, the lead maintains the task's required number of working membe
 
 The team edits code on task branches and gives concurrent writers separate checkouts. Independent clones can provide separate execution directories; switching branches in one shared directory does not isolate simultaneous edits. The lead records source versions, responsible members and resource assignments.
 
-The shared CLI and platform are prepared using the [source deployment guide](../../../docs/custom-deployment.md). The lead coordinates changes to CRDs, drivers and shared platform installations, while each candidate uses its own deployment, writable cache and result directory. Read-only model data can be reused where suitable.
+The shared CLI and platform are prepared using the [source deployment guide](../../../docs/deployment/source.md). The lead coordinates changes to CRDs, drivers and shared platform installations, while each candidate uses its own deployment, writable cache and result directory. Read-only model data can be reused where suitable.
 
 The executor runs from the candidate checkout using its Kustomize configuration and namespace. When running from another directory, pass `-e` with the checkout and an absolute deployment path. Candidate engine changes use `--engine-source`; subsequent runs reuse the recorded selection and incremental builds.
 

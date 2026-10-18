@@ -1,6 +1,6 @@
 # Foretoken
 
-English | [简体中文](README_zh.md)
+English | [简体中文](README_zh.md) | [Documentation](docs/README.md)
 
 Foretoken is an RSI-friendly (Recursive Self-Improvement) orchestration framework for generative inference.
 
@@ -25,7 +25,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | [RSI](#optimize-inference-with-rsi) | Agent-driven research, implementation, and evaluation for iterative inference optimization | In development |
 | [Evaluation](benchmarks/README.md) | Measure service performance and model quality | In development |
 | [Profiling](benchmarks/docs/profile/README.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
+| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/deployment/metax.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
@@ -37,9 +37,9 @@ Choose the deployment path before running the common steps:
 
 | Situation | Guide |
 |---|---|
-| Single-host local deployment | [k3d deployment](docs/k3d-deployment.md) · [kind deployment](docs/kind-deployment.md) |
-| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/kubernetes-deployment.md) |
-| MetaX GPU deployment | [MetaX deployment](docs/metax-deployment.md) |
+| Single-host local deployment | [k3d deployment](docs/deployment/k3d.md) · [kind deployment](docs/deployment/kind.md) |
+| Kubernetes deployment with K3s, RKE2, KubeSphere, cloud, or another cluster | [Kubernetes deployment](docs/deployment/kubernetes.md) |
+| MetaX GPU deployment | [MetaX deployment](docs/deployment/metax.md) |
 
 The steps below use k3d as the example.
 
@@ -81,7 +81,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
-To try different code changes side by side, see [parallel candidates](docs/custom-deployment.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/custom-deployment.md#edit-an-inference-engine).
+To try different code changes side by side, see [parallel candidates](docs/deployment/source.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/deployment/source.md#edit-an-inference-engine).
 
 ### 4. Send a test request
 

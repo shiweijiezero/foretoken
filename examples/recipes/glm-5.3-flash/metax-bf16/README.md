@@ -9,11 +9,11 @@ Run one Foretoken model group on two nodes with eight C500 64 GiB GPUs each: att
 
 ## Prepare
 
-Install the platform from source as described in the [MetaX platform guide](../../../../docs/development/metax-platform.md#install-from-source). Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
+Install the platform from source as described in the [MetaX platform guide](../../../../docs/deployment/metax-platform.md#install-from-source). Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
 
 Set the environment-specific inputs before deploying:
 
-- Set `directory` in `cache.yaml` to a shared data root visible from both nodes. Place the complete `zai-org/GLM-5.3-Flash-BF16` checkpoint under `models/zai-org/GLM-5.3-Flash-BF16/` within that root. BF16 weights occupy approximately 599 GiB. See [model storage](../../../../docs/model-storage.md) for permissions and other sources.
+- Set `directory` in `cache.yaml` to a shared data root visible from both nodes. Place the complete `zai-org/GLM-5.3-Flash-BF16` checkpoint under `models/zai-org/GLM-5.3-Flash-BF16/` within that root. BF16 weights occupy approximately 599 GiB. See [model storage](../../../../docs/features/model-storage.md) for permissions and other sources.
 - Build and distribute the Store image as described in the [shared KV example](../../../feature/shared-kv-store/README.md). Set both `image` fields in `kvservice.yaml` to its actual reference.
 - The example uses the platform-managed `rdma/foretoken_rdma` resource. When the platform reuses an external RDMA allocation, set `rdmaResourceName` in `kvservice.yaml` to that resource instead.
 
@@ -34,7 +34,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"zai-org/GLM-5.3-Flash-BF16","messages":[{"role":"user","content":"Hello, please introduce yourself."}],"max_tokens":512,"stream":true}'
 ```
 
-This example uses the platform's direct LoadBalancer endpoint. For Gateway mode, configure the hostname and request Host as described in the [MetaX deployment guide](../../../../docs/metax-deployment.md).
+This example uses the platform's direct LoadBalancer endpoint. For Gateway mode, configure the hostname and request Host as described in the [MetaX deployment guide](../../../../docs/deployment/metax.md).
 
 Reapply the same `foretoken deploy` command after changing configuration. Inspect or remove the deployment with:
 

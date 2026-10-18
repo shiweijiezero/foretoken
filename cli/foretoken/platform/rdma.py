@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from foretoken.kubernetes import Kubectl
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 
 _PLUGIN_IMAGE = "k8s-rdma-shared-dev-plugin"
 _CONFIG_PATH = "/k8s-rdma-shared-dev-plugin"

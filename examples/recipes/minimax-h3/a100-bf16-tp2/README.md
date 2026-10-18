@@ -13,7 +13,7 @@ capacity for the platform.
 
 ## Before deploying
 
-The platform must use the [vLLM-Omni runtime](../../../../docs/custom-deployment.md#vllm-omni-runtime).
+The platform must use the [vLLM-Omni runtime](../../../../docs/deployment/source.md#vllm-omni-runtime).
 Run the recipe commands below from the Foretoken repository root.
 
 ## Deploy
@@ -23,7 +23,7 @@ The default model source is the public Hugging Face repository
 the repository-root `data/` directory with the Quick Start examples. Local k3d
 uses the data mount from its setup guide; for a remote cluster, set `directory`
 in `cache.yaml` to a directory available on the target node, as described in
-[model storage](../../../../docs/model-storage.md).
+[model storage](../../../../docs/features/model-storage.md).
 
 For Gateway access, set `spec.hostname` in this recipe's `frontend.yaml` and
 install the platform in [Gateway mode](../../../../README.md#gateway-mode)
@@ -110,7 +110,7 @@ runtime:
 Keep `runtime.vllmOmni.image` in the same file. This endpoint applies to
 Hugging Face downloads. For offline weights, use `source: local` with the model
 root or selected FL2VA/Ref2VA directory described in
-[model sources](../../../../docs/model-sources.md), and use the same model
+[model sources](../../../../docs/features/model-sources.md), and use the same model
 identifier in the request.
 
 ## Clean up

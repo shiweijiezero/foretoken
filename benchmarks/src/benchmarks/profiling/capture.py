@@ -10,7 +10,7 @@ import time
 from datetime import UTC, datetime
 from typing import Self
 
-from foretoken.manifest import DeploymentError
+from foretoken.errors import DeploymentError
 from foretoken.profiling import ProfileRun
 
 from benchmarks.profiling import CaptureCleanupError

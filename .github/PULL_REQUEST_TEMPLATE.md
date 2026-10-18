@@ -3,12 +3,12 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-<!-- Keep Summary, Purpose and Validation. Remove other sections that do not apply.
+<!-- Keep TLDR, Purpose and Validation. Remove other sections that do not apply.
 Chinese template: PULL_REQUEST_TEMPLATE_zh.md -->
 
-## Summary
+## TLDR
 
-<!-- Describe the problem and change. For a new feature, start with the user goal and expected outcome. -->
+<!-- Summarize the change in one sentence. -->
 
 ## Purpose
 

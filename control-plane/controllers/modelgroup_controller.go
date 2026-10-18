@@ -151,6 +151,10 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, reconciler.updateStatus(ctx, group, modelGroupPlacementState())
 	}
 	if err != nil {
+		var failure *modelPreparationFailure
+		if errors.As(err, &failure) {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(err)))
 	}
 	if !prepared {
@@ -271,20 +275,81 @@ func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context
 	}
 	for _, condition := range current.Status.Conditions {
 		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
-			// A ModelGroup is a continuing service intent. A terminal Job ends one
-			// acquisition attempt; its replacement reuses the published source and SDK partials.
+			// Preserve the failed attempt before retiring its diagnostics. Recovery
+			// continues, but cannot turn an observed failure back into unknown readiness.
+			failure := reconciler.preparationFailure(ctx, current, condition.Reason, condition.Message)
+			if err := reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)); err != nil {
+				return false, errors.Join(failure, err)
+			}
 			if current.DeletionTimestamp.IsZero() {
 				if err := reconciler.Delete(ctx, current, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &current.UID}); client.IgnoreNotFound(err) != nil {
-					return false, fmt.Errorf("retire failed model preparation Job: %w", err)
+					return false, errors.Join(failure, fmt.Errorf("retire failed model preparation Job: %w", err))
 				}
 			}
-			return false, fmt.Errorf("model preparation Job %q failed: %s", current.Name, condition.Message)
+			return false, failure
 		}
 		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
 			return true, nil
 		}
 	}
+	// Native Job backoff continues recovery without hiding an already failed attempt.
+	if current.Status.Failed > 0 && !meta.IsStatusConditionFalse(group.Status.Conditions, conditionTargetReady) {
+		failure := reconciler.preparationFailure(ctx, current, "ContainerFailed", "A preparation container exited unsuccessfully")
+		return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
+	}
 	return false, nil
+}
+
+// modelPreparationFailure distinguishes a completed failed attempt from an API observation error.
+type modelPreparationFailure struct {
+	reason  string
+	message string
+}
+
+// Error retains the preparation cause for status publication and reconciliation logs.
+func (failure *modelPreparationFailure) Error() string { return failure.message }
+
+// preparationFailure captures the latest attempt's container diagnostics before Job retirement.
+func (reconciler *ModelGroupReconciler) preparationFailure(ctx context.Context, job *batchv1.Job, reason, message string) error {
+	failure := &modelPreparationFailure{
+		reason:  "ModelPreparationFailed",
+		message: fmt.Sprintf("Model preparation Job %q failed: %s: %s", job.Name, reason, message),
+	}
+	if reason == "DeadlineExceeded" {
+		failure.reason = "ModelPreparationDeadlineExceeded"
+		if job.Spec.ActiveDeadlineSeconds != nil {
+			failure.message = fmt.Sprintf("Model preparation Job %q exceeded its %s budget from spec.timeouts.startup", job.Name, time.Duration(*job.Spec.ActiveDeadlineSeconds)*time.Second)
+		}
+	}
+	var pods corev1.PodList
+	if err := reconciler.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabels{"batch.kubernetes.io/controller-uid": string(job.UID)}); err != nil {
+		return errors.Join(failure, fmt.Errorf("read preparation diagnostics: %w", err))
+	}
+	var latest *corev1.Pod
+	for index := range pods.Items {
+		pod := &pods.Items[index]
+		if latest != nil {
+			failed, previousFailed := pod.Status.Phase == corev1.PodFailed, latest.Status.Phase == corev1.PodFailed
+			if previousFailed && !failed || failed == previousFailed && !pod.CreationTimestamp.After(latest.CreationTimestamp.Time) {
+				continue
+			}
+		}
+		latest = pod
+	}
+	if latest != nil {
+		if latest.Status.Message != "" {
+			failure.message += fmt.Sprintf("\n%s: %s: %s", latest.Name, latest.Status.Reason, latest.Status.Message)
+		}
+		for _, status := range append(slices.Clone(latest.Status.InitContainerStatuses), latest.Status.ContainerStatuses...) {
+			if ended := status.State.Terminated; ended != nil && ended.ExitCode != 0 {
+				failure.message += fmt.Sprintf("\n%s/%s: %s (exit %d): %s", latest.Name, status.Name, ended.Reason, ended.ExitCode, ended.Message)
+			} else if waiting := status.State.Waiting; waiting != nil {
+				failure.message += fmt.Sprintf("\n%s/%s: %s: %s", latest.Name, status.Name, waiting.Reason, waiting.Message)
+			}
+		}
+	}
+	failure.message += "\nKubernetes recovery continues."
+	return failure
 }
 
 // groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
@@ -975,12 +1040,17 @@ func modelGroupPlacementState() modelGroupStatusState {
 }
 
 func modelGroupPreparationFailureState(err error) modelGroupStatusState {
-	return modelGroupStatusState{
+	state := modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
 		preparation:  modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: err.Error()},
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: "The serving workload was not materialized"},
 		scheduling:   schedulingNotEvaluated(),
 	}
+	var failure *modelPreparationFailure
+	if errors.As(err, &failure) {
+		state.target = conditionState{Status: metav1.ConditionFalse, Reason: failure.reason, Message: err.Error()}
+	}
+	return state
 }
 
 func modelGroupMaterializedState(available bool, scheduling schedulingCapacityState) modelGroupStatusState {
@@ -1043,6 +1113,16 @@ func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
 // updateStatus projects workload availability and scheduler capacity into ModelGroup status.
 func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.ModelGroup, state modelGroupStatusState) error {
 	base := group.DeepCopy()
+	// Keep a terminal preparation result visible through retries. Only a successful
+	// preparation or a replacement Group can supersede that failed attempt.
+	if state.preparation.status == metav1.ConditionFalse && state.target.Status == "" {
+		previous := meta.FindStatusCondition(group.Status.Conditions, conditionTargetReady)
+		if previous != nil && previous.ObservedGeneration == group.Generation && previous.Status == metav1.ConditionFalse &&
+			(previous.Reason == "ModelPreparationFailed" || previous.Reason == "ModelPreparationDeadlineExceeded") {
+			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
+			state.target = conditionState{Status: previous.Status, Reason: previous.Reason, Message: previous.Message}
+		}
+	}
 	group.Status.Phase = state.phase
 	group.Status.TotalMembers = group.Spec.MemberCount
 	if state.available {

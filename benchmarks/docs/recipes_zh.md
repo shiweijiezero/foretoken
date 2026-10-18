@@ -190,6 +190,8 @@ foretoken plot results/baseline results/candidate
 
 也可以选择整个实验目录或包含多次运行的文件夹。输出包括 PDF、SVG、PNG 和 CSV；单个输入保存到该目录的 `plots/`，多个输入或指定 `--base` 时保存到当前目录的 `plots/`。通过 `--output-dir` 修改输出位置。
 
+添加 `--sync_wandb` 可[将已有结果上传到 W&B](perf/wandb_zh.md#恢复上传)。
+
 比较性能结果时，用 `--base` 指定参考方案，直接生成实测值和相对变化：
 
 ```bash

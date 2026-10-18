@@ -46,6 +46,6 @@ Foretoken 当前 queue/token 策略不是该校准估计器，但 recommendation
 - [Dynamo 吞吐实现](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/planner/core/throughput_scaling.py)
 - [llm-d SLO 指南](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/slo-aware/README.md)
 - [llm-d recording rules](https://github.com/llm-d/llm-d/blob/277b34d062ff954435cf8b1b05efbd75090cf788/guides/workload-autoscaling/slo-aware/prometheus-rule.yaml)
-- [Foretoken 扩缩容指南](../../../../docs/autoscaling_zh.md)
+- [自动扩缩容实现](../../../../control-plane/internal/autoscaling/README_zh.md)
 - [Foretoken token-load 决策](../../../../control-plane/internal/autoscaling/algorithm/decision/token_load.go)
 - [测量与仿真](../measurement-simulation/)

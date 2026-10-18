@@ -30,10 +30,14 @@ Warmup is excluded from performance metrics and panels. Its records remain in th
 
 ## Resume an upload
 
-If measurement finished but saving plots or publishing results failed, use the printed result directory:
+To upload saved results, use the result directory printed by a benchmark run with W&B output enabled:
 
 ```bash
-foretoken perf --resume RESULT_DIR --output local,wandb,plot
+foretoken plot RESULT_DIR --sync_wandb
 ```
 
-This rebuilds outputs from the saved measurements and completes the same W&B run without sending new model requests. Keep the original result directory. In offline mode, local outputs are rebuilt and W&B publication remains pending; repeat the command online to upload.
+The command redraws figures and updates the original W&B runs without repeating measurements. Available records from interrupted runs can also be uploaded. Single-run figures are included; cross-run comparison figures remain local. If plotting fails, the command still attempts the upload and reports the plotting error.
+
+For offline measurement, set `WANDB_MODE=offline` and keep `wandb` in `--output`. Run the command above when ready to upload.
+
+To upload from another machine, copy the complete result tree, including hidden files and any earlier task directories referenced by resumed runs. Preserve their relative layout. On the destination machine, install Foretoken, run `wandb login`, and use the command above. For a self-hosted W&B server, set `WANDB_BASE_URL` to that server before logging in.

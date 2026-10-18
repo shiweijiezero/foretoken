@@ -102,7 +102,7 @@ The cluster needs a default StorageClass for application files. Run from the For
 foretoken install -e .
 ```
 
-Add `-e .` to deployment commands to build controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/custom-deployment.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/custom-deployment.md#edit-an-inference-engine).
+Add `-e .` to deployment commands to build controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/deployment/source.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/deployment/source.md#edit-an-inference-engine).
 
 A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
 
@@ -110,7 +110,7 @@ A standard active kind or k3d context loads the built images directly into its n
 foretoken install -e . --registry registry.example.com:5000/foretoken
 ```
 
-If the registry requires authentication, follow the [source deployment guide](../docs/kubernetes-deployment.md) before installation.
+If the registry requires authentication, follow the [source deployment guide](../docs/deployment/kubernetes.md) before installation.
 
 ### Model distribution
 
@@ -166,7 +166,7 @@ kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-
   --role foretoken-control-plane-operator --user MEMBER_ID
 ```
 
-Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations in their deployment are left to the administrator. A provided cache PVC takes precedence over the deployment's RuntimeCache; see [sharing model files](../docs/model-storage.md#share-model-files-across-namespaces).
+Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations in their deployment are left to the administrator. A provided cache PVC takes precedence over the deployment's RuntimeCache; see [sharing model files](../docs/features/model-storage.md#share-model-files-across-namespaces).
 
 From an existing source installation, the administrator can build this namespace's applications with `foretoken install --namespace foretoken-multi-model-demo -e .`. Ordinary member deployments use those prepared applications. Explicit `deploy -e` updates still require source-development permissions.
 
@@ -182,17 +182,19 @@ The namespace and shared model files remain available. This operation does not u
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
+See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/features/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 ```
 
-The command applies the selected services. It reuses an administrator-prepared controller; otherwise it installs or updates the controller for the deployment namespace. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
+The command applies the selected services, reusing an administrator-prepared controller or installing and updating one for a self-managed namespace. An unchanged deployment reuses its controller and running applications. Services in the same namespace share the controller; use separate namespaces for independent code versions.
 
-While waiting, it shows service status and streams Pod and container logs with source prefixes. The command completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. Without `--timeout`, it waits up to ten minutes. See [service observability](../examples/feature/observability/README.md) for alert configuration.
+While waiting, the command shows service status and Pod/container logs. It completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
-Rejected model configuration ends the deployment command with the reported error, even if the previous version is still serving. Each model's `spec.timeouts.startup` also bounds how long a created serving workload may remain unready during startup or recovery; model preparation has its own budget. Exceeding this limit ends the command while Kubernetes continues recovery. Container restarts within the limit remain in progress.
+`--timeout` limits the CLI's waits for cluster operations and service readiness; the default is ten minutes. Source compilation runs separately. Each model's `spec.timeouts.startup` sets its own preparation and startup limits.
+
+If preparation fails or readiness times out, the command reports the cause and leaves the deployed services in Kubernetes. Recovery continues in the cluster; use `status` below to follow progress and inspect logs. For configuration errors, update the Kustomize files and rerun `deploy`.
 
 Inspect the same deployment without applying it:
 
@@ -240,6 +242,8 @@ Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalSc
 ## Export figures
 
 Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
+
+Add [`--sync_wandb`](../benchmarks/docs/perf/wandb.md#resume-an-upload) to upload saved results to W&B.
 
 ## Find execution bottlenecks
 

@@ -14,7 +14,7 @@
 
 ## 部署
 
-从源码[安装平台](../../../docs/custom-deployment_zh.md)并准备[模型存储](../../../docs/model-storage_zh.md)，再从仓库根目录运行：
+从源码[安装平台](../../../docs/deployment/source_zh.md)并准备[模型存储](../../../docs/features/model-storage_zh.md)，再从仓库根目录运行：
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
@@ -23,7 +23,7 @@ export FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
 
 ## 观察队列自动扩缩容
 
-Qwen 服务每 5 秒评估一次队列负载，从 1 个副本开始，每次评估最多调整 1 个副本，缩容前等待 5 分钟。配置和状态说明见[自动扩缩容指南](../../../docs/autoscaling_zh.md)。
+Qwen 服务每 5 秒评估一次队列负载，从 1 个副本开始，每次评估最多调整 1 个副本，缩容前等待 5 分钟。本示例使用的设置见 [Qwen 模型配置](model-qwen3-0.6b.yaml)。
 
 另开一个终端观察 Qwen 容量资源：
 
