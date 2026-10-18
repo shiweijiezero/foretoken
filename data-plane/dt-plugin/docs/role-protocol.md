@@ -235,13 +235,13 @@ tokens. The implementation does not promise optimal Draft KV reuse.
 
 ## Transport and extension boundary
 
-Both roles advertise `token_ids_log_probs` with ZMQ or RDMA, or
+Both roles advertise `token_ids_log_probs` with tensor transport, or
 `greedy_token_ids` without tensor transport. `/status.tensor_transports` lists
-initialized paths (`gpu_ipc`, `rdma`, `zmq`), or is empty for token-only. Router requires an
+initialized paths (`gpu_ipc`, `rdma`, `zmq`), or is empty for token-only. Router requires a
 compatible intersection; GPU IPC requires a same-host, symmetric peer relation
-from `/status.gpu_ipc: {host_id, device_id, peer_devices}`. Target selects and logs the request binding. Default auto offers ZMQ TCP, allocated RDMA and supported MACA peers.
-NVIDIA GPU IPC is not enabled. Missing granted peer access excludes that path;
-forced `--tensor-transport gpu-ipc` fails startup instead. Explicit IPC requires shared same-host paths. Failures
+from `/status.gpu_ipc: {host_id, device_id, peer_devices}`. Target selects and logs the request binding. Default auto offers ZMQ TCP, allocated RDMA and supported CUDA/MACA peers.
+Missing granted peer access or IPC registration support excludes that path;
+forced `--tensor-transport gpu-ipc` fails startup instead. Explicit ZMQ IPC requires shared same-host paths. Failures
 never switch an existing artifact to another backend or replay a read.
 Random sampling requires tensor transport. Tensor data moves directly between workers. Target coordinates candidate IDs and artifact handles; Frontend receives confirmed output. Each model retains its own KV cache.
 

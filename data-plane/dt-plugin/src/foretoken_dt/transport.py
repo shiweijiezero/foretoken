@@ -313,7 +313,7 @@ class TransportUnavailable(RuntimeError):
 
 
 class MooncakeTransport(TensorTransport):
-    """Process-local Mooncake engine with explicit registration and drain ownership."""
+    """Retain registrations and drain while Mooncake owns native routing and copies."""
 
     kind = "rdma"
     protocol = "rdma"
@@ -329,21 +329,20 @@ class MooncakeTransport(TensorTransport):
         self._open_segment.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self._open_segment.restype = ctypes.c_int32
         self.engine = engine.TransferEngine()
-        # The pinned native engine auto-discovers its backend even when Python
-        # requests RDMA. Prevent a TCP/MACA/NVLink fallback from being labelled RDMA.
-        overrides = {}
-        if self.protocol == "rdma":
-            overrides = {
-                "MC_FORCE_HCA": "1",
-                "MC_MACA_HOST_TRANSPORT": "1",
-                "MC_FORCE_TCP": None,
-                "MC_FORCE_MNNVL": None,
-                "MC_INTRANODE_NVLINK": None,
-                "MC_USE_TENT": None,
-                "MC_USE_TEV1": None,
-                "USE_BAREX": None,
-                "MC_USE_RDMA_TWOSIDED": None,
-            }
+        # The pinned Python protocol argument alone does not select the native
+        # backend. Pin the advertised adapter without replacing Mooncake's
+        # device/NIC routing or allowing a different backend to be mislabelled.
+        overrides = {
+            "MC_FORCE_HCA": "1" if self.protocol == "rdma" else None,
+            "MC_MACA_HOST_TRANSPORT": "1" if self.protocol == "rdma" else None,
+            "MC_FORCE_TCP": None,
+            "MC_FORCE_MNNVL": None,
+            "MC_INTRANODE_NVLINK": "1" if self.protocol == "nvlink_intra" else None,
+            "MC_USE_TENT": None,
+            "MC_USE_TEV1": None,
+            "USE_BAREX": None,
+            "MC_USE_RDMA_TWOSIDED": None,
+        }
         saved = {name: os.environ.get(name) for name in overrides}
         try:
             for name, value in overrides.items():
@@ -438,7 +437,7 @@ class MooncakeTransport(TensorTransport):
 
     async def _submit_read(self, tensor: torch.Tensor, source: PayloadRef) -> int:
         """Refresh registrations and submit per peer; completion polling stays concurrent."""
-        # Both RDMA and MACA cache remote registration descriptors. A binding
+        # Native engines cache remote registration descriptors. A binding
         # probe can precede model allocations; serialize refresh with submission
         # so concurrent refreshes cannot replace the descriptor before admission.
         async with self._submissions[source.segment]:
@@ -465,38 +464,51 @@ class MooncakeTransport(TensorTransport):
         self.engine = None
 
 
-class MacaIpcTransport(MooncakeTransport):
-    """Reuse Mooncake's MACA IPC registration/copy with same-host peer capability."""
+class GpuIpcTransport(MooncakeTransport):
+    """Use Mooncake CUDA/MACA IPC copies with the common buffer lifecycle.
+
+    IPC imports peer storage; the runtime owns the physical GPU interconnect.
+    """
 
     kind = "gpu_ipc"
-    protocol = "maca"
 
     def __init__(self, hostname: str, device: torch.device):
-        """Initialize only granted MACA peers; source allocations remain owned by TensorBuffer."""
-        from .maca import peer_access
+        """Initialize only granted peers; TensorBuffer retains source allocation ownership."""
+        if device.type != "cuda":
+            raise TransportUnavailable("GPU IPC requires a CUDA or MACA GPU")
+        if getattr(torch.version, "maca", None):
+            from .maca import allocation_range, peer_access
 
-        if not getattr(torch.version, "maca", None) or device.type != "cuda":
-            raise TransportUnavailable(
-                "GPU IPC requires the supported MACA GPU runtime"
-            )
+            self.protocol = "maca"
+        elif torch.version.cuda:
+            from .cuda import allocation_range, peer_access
+
+            self.protocol = "nvlink_intra"
+        else:
+            raise TransportUnavailable("GPU IPC requires a CUDA or MACA runtime")
+        self._allocation_range = allocation_range
         self.capability = peer_access(device)
         if self.capability is None:
-            raise TransportUnavailable("no granted MACA peer supports GPU P2P")
+            raise TransportUnavailable("no granted GPU peer supports P2P")
         self._allocations: dict[int, int] = {}
-        # The pinned engine selects MACA during initialization. Keep the image's
-        # host-transport setting for other engines and restore it before execution.
-        host_transport = os.environ.pop("MC_MACA_HOST_TRANSPORT", None)
+        super().__init__(hostname)
+        # Prove this allocator exports IPC storage before advertising the backend.
+        # No publication or peer read exists yet, so initialization can fail closed.
         try:
-            super().__init__(hostname)
-        finally:
-            if host_transport is not None:
-                os.environ["MC_MACA_HOST_TRANSPORT"] = host_transport
+            probe = torch.empty(65536, dtype=torch.uint8, device=device)
+            self.register_memory(probe)
+            self.unregister(probe)
+        except RuntimeError as error:
+            self.engine = None
+            self.closed = True
+            _live_transports.remove(self)
+            raise TransportUnavailable(
+                f"GPU IPC registration unavailable: {error}"
+            ) from error
 
     def register_memory(self, tensor: torch.Tensor) -> None:
-        """Register each MACA allocation once, retaining every Torch suballocation user."""
-        from .maca import allocation_range
-
-        base, size = allocation_range(tensor.data_ptr())
+        """Register each GPU allocation once, retaining every Torch suballocation user."""
+        base, size = self._allocation_range(tensor.data_ptr())
         count = self._allocations.get(base, 0)
         if count == 0:
             result = self.engine.register_memory(base, size)
@@ -506,9 +518,7 @@ class MacaIpcTransport(MooncakeTransport):
 
     def unregister(self, tensor: torch.Tensor) -> None:
         """Unregister an IPC allocation only after its last TensorBuffer is fenced and closed."""
-        from .maca import allocation_range
-
-        base, _ = allocation_range(tensor.data_ptr())
+        base, _ = self._allocation_range(tensor.data_ptr())
         count = self._allocations[base]
         if count == 1:
             result = self.engine.unregister_memory(base)

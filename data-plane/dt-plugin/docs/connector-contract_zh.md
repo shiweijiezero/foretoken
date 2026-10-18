@@ -8,9 +8,20 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 [English](connector-contract.md) | 简体中文
 
 Connector 连接独立的 Draft、Target Worker。HTTP 传递请求控制、候选 token 和不可变
-张量描述符；Mooncake 通过 RDMA 读取设备 tensor，ZMQ TCP/IPC 则经过主机内存中转；MACA GPU IPC 复用 Mooncake，在同机且双向
+张量描述符；Mooncake 通过 RDMA 读取设备 tensor，ZMQ TCP/IPC 则经过主机内存中转；CUDA/MACA GPU IPC 复用 Mooncake，在同机且双向
 授予 peer 访问的 GPU 间复制。
 [角色协议](role-protocol.md)说明控制接口，[引擎契约](mrv2-integration.md)说明 MRV2 接入。
+
+## 传输选择的职责
+
+Router 为请求选择 Draft 和 Target。Target 的 `RoleCommunication` 在绑定时匹配
+两端已初始化的传输实现：先选满足条件的同机 `gpu_ipc`，其次 `rdma`，最后 `zmq`。
+GPU 路径还要求双方获授设备的双向 peer 访问。请求的 artifact 保留这一选择。
+
+Mooncake adapter 通过既有 buffer 生命周期管理注册与完成；实际传输提交、基于拓扑的
+网卡选择和内部路径处理复用 Mooncake。CUDA/MACA 决定物理 GPU peer 路径。
+`gpu_ipc` 表示通过 IPC 导入显存并复制，不代表某条 NVLink、MetaXLink 或 PCIe 链路。
+ZMQ 是独立的主机中转实现，HTTP 控制沿用原有归属。
 
 ## 跨角色传递什么
 
@@ -107,7 +118,7 @@ Router 要求有兼容的能力交集；GPU IPC 还要求 host identity 一致�
 `gpu_ipc.peer_devices` 相互可达。Target 优先选择合格的 GPU IPC，然后是 RDMA、ZMQ，并将
 选择传给 Draft session 和 Target 特征导出。每个 artifact 从发布到读取、释放都保留
 原 transport。auto 提供 ZMQ TCP、明确分配的 RDMA connector，以及设备权限和原生 peer 矩阵
-允许的 MACA GPU IPC；IPC 保留为共享
+允许的 CUDA/MACA GPU IPC；ZMQ IPC 保留为共享
 同机目录的显式选项。auto 在 Mooncake 缺失或 RDMA 初始化返回失败时记录原因，
 在模型 tensor 传输之前从能力中移除 RDMA；本地 GPU 注册失败也会移除该路径。
 强制 RDMA 模式会启动失败。编程错误和在途失败
@@ -136,31 +147,29 @@ tree attention、已选路径清理；串联验证需要阶段依赖及中间验
 
 ## 同机 GPU IPC
 
-MACA runtime 会缓存设备可见性，包括 vLLM-MetaX 传递的 `MACA_VISIBLE_DEVICES`，
-因此 adapter 在短暂的独立元数据进程中
-查询 peer 能力。render-device 权限检查将查询限制在容器获授的设备；计算 Worker
-保留原绑定。能力包含 host boot identity `host_id`、不透明的 `device_id` 和
-`peer_devices`；发现和实时绑定检查同一双向关系。它不会修改 Kubernetes 的 GPU
-分配或设备权限，因此当前每 Pod 一卡的隔离方式通常仍选择 RDMA/ZMQ。
+`GpuIpcTransport` 在 NVIDIA 上使用 Mooncake 的 `nvlink_intra` 后端，在沐曦上
+使用 `maca` 后端。runtime 会缓存设备可见性，因此 adapter 在短暂的独立元数据
+进程中查询 peer；设备权限检查将范围限制在容器获授的 GPU，计算 Worker 保留原绑定。
+能力包含 host boot identity `host_id`、不透明的 `device_id` 和 `peer_devices`；
+发现与绑定要求同机、双向访问。它不修改 Kubernetes GPU 分配或设备权限，普通
+每 Pod 一卡的隔离方式通常仍选择 RDMA/ZMQ。
 
-`MacaIpcTransport` 复用 Mooncake 的 IPC handles、allocation-base 地址重定位和
-拷贝完成反馈。同一底层 allocation 只注册一次，最后一个保留的 Torch 子分配关闭
-后才注销。该引擎初始化后恢复镜像的 host-transport 设置。producer event、
-claim/read/ACK、按 backend 区分的缓冲池和 consumer fence 沿用现有 owner。
-已发布的 descriptor 不会切换 backend。round 的 `tensor_transport` 记录绑定选择，
-transfer 的 `transport` 记录实际完成读取的 backend；它们不代表物理链路计数或 GPU
-kernel 时间。
+公布能力前，启动过程检查实际 allocator 的 IPC 导出。CUDA 使用原生 IPC 兼容的
+allocation；无法导出的 allocator 不提供这条路径。同一底层 allocation 只注册一次，
+最后一个保留的 Torch 子分配关闭后才注销。backend 选择设置仅作用于 engine 初始化，
+随后恢复。producer event、claim/read/ACK、按 backend 区分的缓冲池及 consumer
+fence 沿用现有 owner；已发布的 descriptor 不会切换 backend。
 
-Mooncake adapter (RDMA and MACA) 在提交前，使用 Python engine 的 native pointer 调用 Mooncake 公共
-C API `openSegmentNoCache`，刷新该 peer 的注册信息，覆盖首次打开 segment 后
-新发布的 allocation；不会重试或切换已提交的传输。model-server 的 CUDA 构建和
-MetaX runtime 构建都会在链接固定版本的 Mooncake engine 时保留该 C API。
-同一 peer 的刷新和提交串行交接，避免并发刷新在 read 提交前覆盖注册描述。
-拷贝完成轮询仍然并发，其他 peer 使用独立提交锁。
+所有 Mooncake adapter 在提交前，使用 Python engine 的 native pointer 调用公共
+C API `openSegmentNoCache`，刷新 peer 注册，覆盖首次打开后新增的 allocation。
+同一 peer 的刷新与提交串行交接，完成轮询和其他 peer 仍可并发。正常 CUDA 与
+MetaX 构建都保留该 C API。CUDA 构建还开启 `USE_INTRA_NVLINK`，配套选择补丁
+保留普通 RDMA/TCP 路径。
 
-当前接入 MACA，尚未启用 NVIDIA CUDA IPC/NVLink。选择仅用于概率和 features；
-手工 KV checkpoint 仍要求严格的 NVIDIA RDMA 启动模式和既有限制。必须在实际
-容器配置下验证 peer 能力及内存导入、拷贝；仅共享 IPC namespace 不代表设备权限可用。
+这条路径仅用于概率和 features；手工 KV checkpoint 保留严格的 NVIDIA RDMA
+启动模式及既有限制。内存导入、复制与清理须在实际容器配置下验证，共享 IPC
+namespace 本身不能证明设备权限可用。`gpu_ipc` 观测标识 adapter，不证明实际
+使用 NVLink/MetaXLink；物理链路计数和性能需要单独测量。
 
 ## RDMA 绑定验证
 

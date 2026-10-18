@@ -115,7 +115,7 @@ The DT adapter also rejects `prefixCacheIsolation` configuration and explicit
 ## Automatic tensor transport
 
 The default `--tensor-transport auto` offers ZMQ TCP, allocated Mooncake RDMA,
-and MACA GPU IPC when the worker has granted P2P peers. Managed deployments supply the Pod IP and RDMA
+and CUDA/MACA GPU IPC when the worker has granted P2P peers. Managed deployments supply the Pod IP and RDMA
 allocation; clients do not configure tensor addresses or ports. Standalone roles
 use their RDMA address or `--host` address, or vLLM's `VLLM_HOST_IP`/interface selection when
 listening on all interfaces. Both peers must be able to reach the advertised
@@ -137,8 +137,12 @@ at the same absolute location to both workers. IPC is an explicit deployment
 choice; auto does not assume that co-located containers share a filesystem.
 The ZMQ paths do not provide GPU P2P.
 
-MACA GPU IPC reuses Mooncake's `maca` backend, moving device tensors without the
-plugin's host staging. It requires both containers to have device access to the
+GPU IPC reuses Mooncake's `nvlink_intra` backend on NVIDIA and `maca` on MetaX,
+importing peer memory and copying device tensors without the plugin's host staging.
+IPC is the cross-process memory mechanism; CUDA/MACA uses the available
+NVLink/MetaXLink or PCIe peer path. Mooncake handles native transfers and internal
+routing; Foretoken matches the two roles' supported adapters at request binding.
+It requires both containers to have device access to the
 intended GPU pair; `CUDA_VISIBLE_DEVICES` still selects each role's compute GPU.
 GPU permission does not imply ownership: operators must grant only the peers
 allocated to that serving group. Foretoken does not expand device access or change
@@ -148,11 +152,12 @@ namespace alone is insufficient and is not enabled by this integration.
 
 Workers advertise `gpu_ipc: {host_id, device_id, peer_devices}` only with this path.
 Routing and live binding require the same host and mutual peer access. Discovery
-queries the MACA runtime in a short-lived metadata process without changing the
+queries the device runtime in a short-lived metadata process without changing the
 compute Worker's visibility. Use `--tensor-transport gpu-ipc` to require this path;
-missing peer access fails startup. This adapter currently supports MACA only;
-NVIDIA CUDA IPC/NVLink is not enabled. Actual link utilization and performance
-must be measured; the capability does not claim an NVLink hardware path.
+missing peer access fails startup. Startup also checks IPC registration on the
+Worker's actual allocator; CUDA storage must be compatible with native IPC export.
+Actual link utilization and performance must be measured; the capability does not
+claim an NVLink or MetaXLink hardware path.
 
 For standalone RDMA, install a compatible Mooncake wheel, grant GPU/RDMA access,
 RDMA userspace libraries and sufficient locked memory, then add
@@ -185,7 +190,7 @@ and model pair through native speculative configuration. For example, set `TARGE
 SPEC_CONFIG='{"method":"dflash","model":"z-lab/Qwen3-8B-DFlash-b16","num_speculative_tokens":15}'
 ```
 
-For a same-host pair using automatic ZMQ TCP, start Draft on GPU 0:
+For a same-host pair using automatic transport selection, start Draft on GPU 0:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role draft \
@@ -293,7 +298,7 @@ is available for host-memory diagnostics; it does not validate GPU direct access
 Control messages assume trusted peers on the deployment network.
 
 The diagnostic requests RDMA by default. Add `--tensor-transport gpu-ipc` on both
-commands to check granted same-host MACA peers, or `--tensor-transport zmq` to
+commands to check granted same-host CUDA/MACA peers, or `--tensor-transport zmq` to
 measure ZMQ TCP with the same tensor sizes and reuse. Use Mooncake logs and device/network counters to
 check GPUDirect RDMA; `requested_transport` alone does not establish the actual
 path. Transfer timing includes connection and polling overhead. A stuck transfer

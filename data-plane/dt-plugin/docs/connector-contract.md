@@ -9,10 +9,23 @@ English | [简体中文](connector-contract_zh.md)
 
 The Connector connects independent Draft and Target workers. HTTP carries
 request control, candidate IDs and immutable tensor descriptors. Mooncake reads
-device tensors through RDMA; ZMQ TCP/IPC stages them through host memory. MACA GPU IPC reuses Mooncake
+device tensors through RDMA; ZMQ TCP/IPC stages them through host memory. CUDA/MACA GPU IPC reuses Mooncake
 for same-host device copies between mutually granted peers. The
 [role protocol](role-protocol.md) defines the control endpoints; the
 [engine contract](mrv2-integration.md) defines MRV2 integration.
+
+## Transport selection ownership
+
+Router selects the request's Draft and Target. Target's `RoleCommunication`
+matches their initialized adapters at binding: eligible same-host `gpu_ipc`,
+then `rdma`, then `zmq`. The GPU path also requires mutual granted peer access.
+This choice fixes the adapter used by that request's artifacts.
+
+The Mooncake adapter owns registration and completion through the existing buffer
+lifecycle. Mooncake owns native transfer submission, topology-aware NIC selection
+and internal path handling. CUDA/MACA owns the physical GPU peer path. `gpu_ipc`
+means IPC-based device copies; it does not identify NVLink, MetaXLink or PCIe.
+ZMQ is a separate host-staged adapter. HTTP control keeps its existing owner.
 
 ## What crosses the boundary
 
@@ -125,8 +138,8 @@ Router requires a compatible capability intersection. GPU IPC additionally
 requires matching host identity and mutual `gpu_ipc.peer_devices` access. Target
 selects eligible GPU IPC first, then RDMA, then ZMQ, and passes the path to the Draft session and Target feature exports. Each
 artifact retains its original backend through publication, read and release.
-Auto offers ZMQ TCP, any explicitly allocated RDMA connector and MACA GPU IPC
-when granted device access and the native peer matrix allow it; IPC remains an
+Auto offers ZMQ TCP, any explicitly allocated RDMA connector and CUDA/MACA GPU IPC
+when granted device access and the native peer matrix allow it; ZMQ IPC remains an
 explicit shared-directory override. Auto logs missing Mooncake or RDMA initialization
 failure and omits RDMA before model transfers. RDMA startup requires an HCA and
 successful registration on the actual Worker GPU; native TCP/MACA/NVLink overrides
@@ -162,39 +175,36 @@ lifecycle acceptance are separate from the standalone tensor diagnostic.
 
 ## Same-host GPU IPC
 
-The MACA adapter queries peer access in a separate metadata process because the
-runtime caches device visibility, including the `MACA_VISIBLE_DEVICES` value
-propagated by vLLM-MetaX. Render-device permission checks restrict
-the query to the devices granted to this container; the compute Worker keeps its
-original binding. The capability reports `host_id` (host boot identity), opaque
-`device_id` and `peer_devices`. Both discovery and live binding check the same
-symmetric relation. This does not modify Kubernetes GPU allocations or device
-permissions. Current single-GPU Pod isolation therefore normally retains RDMA/ZMQ.
+`GpuIpcTransport` uses Mooncake's `nvlink_intra` backend on NVIDIA and `maca`
+on MetaX. It queries peer access in a separate metadata process because the
+runtimes cache device visibility. Device permission checks restrict discovery to
+the GPUs granted to the container; the compute Worker keeps its binding.
+Capabilities report host boot identity `host_id`, opaque `device_id` and
+`peer_devices`. Discovery and binding require the same host and mutual access.
+This does not modify Kubernetes GPU allocations or device permissions; ordinary
+single-GPU Pod isolation normally retains RDMA/ZMQ.
 
-`MacaIpcTransport` reuses Mooncake's IPC handles, allocation-base relocation and
-copy completion. It registers each underlying allocation once and unregisters
-only after its last retained Torch suballocation closes. The image's
-host-transport setting is restored after this
-engine initializes. Producer events, claim/read/ACK, backend-specific pools and
-consumer fences retain their existing owner. A descriptor never changes backend
-while published. Round records include the selected `tensor_transport`; transfer
-records include the backend that actually completed the read. These identify the
-adapter, not physical link counters or GPU kernel time.
+Startup checks the actual allocator's IPC export before advertising this path.
+CUDA uses native IPC-compatible allocations; an allocator that cannot export them
+is unavailable. Each underlying allocation is registered once and unregistered
+only after its last retained Torch suballocation closes. Backend-selection
+settings are scoped to engine initialization and restored afterward. Producer
+events, claim/read/ACK, backend-specific pools and consumer fences retain their
+existing owner. Published descriptors never switch backend.
 
-Before submission, the Mooncake adapter (RDMA and MACA) uses Mooncake's public `openSegmentNoCache`
-C API with the Python engine's native pointer to refresh that peer's registrations.
-This includes allocations published after the segment was first opened; it does
-not retry or switch an already submitted transfer. The model-server CUDA build
-and MetaX runtime build both retain this C API when linking the pinned engine.
-Refresh and submission are serialized per peer so concurrent refreshes cannot
-replace the descriptor before its read submits. Copy completion polling remains
-concurrent, and other peers have independent submission locks.
+Before submission, all Mooncake adapters use the public `openSegmentNoCache` C API
+with the Python engine's native pointer to refresh the peer's registrations,
+including allocations published after the first open. Refresh and submission
+serialize per peer; completion polling and other peers remain concurrent.
+Both normal CUDA and MetaX builds retain this C API. The CUDA build also enables
+`USE_INTRA_NVLINK`; its selection backport preserves ordinary RDMA/TCP operation.
 
-The enabled backend is MACA; NVIDIA CUDA IPC/NVLink remains outside this adapter.
 Only probabilities/features use this selection. Manual KV checkpoints retain
-strict NVIDIA RDMA startup and their existing restrictions. Peer access and a
-successful import/copy must be validated under the actual container configuration;
-sharing an IPC namespace alone does not establish GPU device permission.
+strict NVIDIA RDMA startup and their existing restrictions. Peer import/copy and
+cleanup need validation under the actual container configuration. Shared IPC
+namespace alone does not establish device access. The `gpu_ipc` observation
+identifies the adapter, not proof of NVLink/MetaXLink utilization; physical link
+counters and performance require separate measurement.
 
 ## RDMA binding proof
 

@@ -52,7 +52,7 @@ def main() -> None:
         "--tensor-transport",
         choices=("auto", "gpu-ipc", "rdma", "zmq", "none"),
         default="auto",
-        help="auto offers granted MACA GPU peers, ZMQ and allocated RDMA; none selects token-only",
+        help="auto offers granted GPU peers, ZMQ and allocated RDMA; none selects token-only",
     )
     parser.add_argument(
         "--rdma-host", help="local routable address for allocated Mooncake RDMA"
@@ -69,8 +69,6 @@ def main() -> None:
     )
     args = parser.parse_args()
     gpu_ipc_host = None
-    if args.tensor_transport == "gpu-ipc" and not is_metax:
-        parser.error("GPU IPC currently requires the supported MACA runtime")
     if args.tensor_transport == "none":
         if args.rdma_host or args.rdma_nic or args.zmq_endpoint:
             parser.error("token-only mode does not use tensor transport endpoints")
@@ -84,7 +82,7 @@ def main() -> None:
             args.rdma_host or args.rdma_nic or args.zmq_endpoint
         ):
             parser.error("GPU IPC-only mode does not use RDMA or ZMQ options")
-        if args.zmq_endpoint is None or args.tensor_transport == "auto" and is_metax:
+        if args.zmq_endpoint is None or args.tensor_transport == "auto":
             from vllm.utils.network_utils import get_ip
 
             # Managed roles inherit their Pod IP. Standalone roles reuse vLLM's
@@ -99,11 +97,7 @@ def main() -> None:
             host = f"[{address}]" if ":" in address else address
             if args.tensor_transport != "gpu-ipc" and args.zmq_endpoint is None:
                 args.zmq_endpoint = f"tcp://{host}:*"
-            if (
-                args.tensor_transport == "gpu-ipc"
-                or args.tensor_transport == "auto"
-                and is_metax
-            ):
+            if args.tensor_transport in ("gpu-ipc", "auto"):
                 gpu_ipc_host = address
     tensor_enabled = bool(args.rdma_host or args.zmq_endpoint or gpu_ipc_host)
     if args.role == "draft" and (

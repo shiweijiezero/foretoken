@@ -98,7 +98,7 @@ DT adapter 暂不支持按调用方隔离前缀缓存，因此拒绝 `prefixCach
 ## 自动选择 tensor 传输
 
 默认的 `--tensor-transport auto` 提供 ZMQ TCP、已分配的 Mooncake RDMA，
-以及设备权限和 P2P 能力允许时的 MACA GPU IPC。托管部署自动注入 Pod IP 和 RDMA 分配，客户不必填写 tensor 地址
+以及设备权限和 P2P 能力允许时的 CUDA/MACA GPU IPC。托管部署自动注入 Pod IP 和 RDMA 分配，客户不必填写 tensor 地址
 或端口。独立启动时使用 RDMA 地址或 `--host` 地址；监听所有网卡时沿用 vLLM 的 `VLLM_HOST_IP`
 或网卡地址选择。两端需要能访问公布的地址和动态分配的 TCP 端口。
 
@@ -114,8 +114,11 @@ ZMQ 经主机内存传输概率和特征，包含 D2H/H2D 拷贝。TCP 可用于
 通过相同绝对路径访问。IPC 是明确的部署选项；auto 不会假设同节点容器共享目录。
 两种 ZMQ socket 都不提供 GPU P2P。
 
-MACA GPU IPC 复用 Mooncake 的 `maca` 后端，传输设备 tensor 时不经过插件的
-主机中转。两个容器都需有权访问本次服务分配的 GPU 对，`CUDA_VISIBLE_DEVICES`
+GPU IPC 在 NVIDIA 上复用 Mooncake 的 `nvlink_intra` 后端，在沐曦上复用 `maca`
+后端，导入对端显存并复制 tensor，不经过插件的主机中转。IPC 是跨进程访问显存的
+机制，CUDA/MACA 使用可用的 NVLink/MetaXLink 或 PCIe peer 路径。实际传输和内部
+选路交给 Mooncake，Foretoken 只在请求绑定时匹配两端支持的传输实现。
+两个容器都需有权访问本次服务分配的 GPU 对，`CUDA_VISIBLE_DEVICES`
 仍选择各自的计算 GPU。设备访问权限不等于使用授权；运维只能授予已分配给该服务的
 peer。Foretoken 不扩大设备访问权限，也不更改 GPU 资源分配。当前每 Pod 一卡的
 隔离方式下，若部署没有额外授予必要的 peer 访问，auto 会保留 RDMA/ZMQ。
@@ -124,8 +127,9 @@ peer。Foretoken 不扩大设备访问权限，也不更改 GPU 资源分配。�
 Worker 通过 `gpu_ipc: {host_id, device_id, peer_devices}` 公布能力，路由和绑定检查
 同机及双向 peer 访问。能力查询使用短暂的独立元数据进程，不改变计算 Worker 的
 设备可见性。`--tensor-transport gpu-ipc` 可强制该路径，缺少 peer 权限时启动失败。
-当前只接入 MACA，未启用 NVIDIA CUDA IPC/NVLink；实际互联利用率和性能需测量，
-能力字段不代表已经使用 NVLink 硬件链路。
+启动时还会检查实际 Worker allocator 的 IPC 注册能力；CUDA 存储须支持原生 IPC
+导出。实际互联利用率和性能需测量，能力字段不代表已经使用 NVLink 或 MetaXLink
+硬件链路。
 
 独立运行 RDMA 时，两端安装兼容 Mooncake wheel，提供 GPU/RDMA 设备、用户态库
 及足够锁定内存，分别添加 `--rdma-host "$DRAFT_IP"`、`--rdma-host "$TARGET_IP"`。
@@ -155,7 +159,7 @@ token-only 时为空；升级时同时更新 Frontend 和两端角色。RDMA、�
 SPEC_CONFIG='{"method":"dflash","model":"z-lab/Qwen3-8B-DFlash-b16","num_speculative_tokens":15}'
 ```
 
-同机使用自动 ZMQ TCP 时，在 GPU 0 启动 Draft：
+同机使用自动传输选择时，在 GPU 0 启动 Draft：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 VLLM_USE_V2_MODEL_RUNNER=1 foretoken-dt-role --role draft \

@@ -16,7 +16,7 @@ from typing import Any
 import torch
 
 from foretoken_dt.transport import (
-    MacaIpcTransport,
+    GpuIpcTransport,
     MooncakeTransport,
     PayloadRef,
     TensorBuffer,
@@ -79,7 +79,7 @@ class _WorkerIO:
         self.gpu_ipc = None
         if gpu_ipc_host is not None:
             try:
-                transport = MacaIpcTransport(gpu_ipc_host, device)
+                transport = GpuIpcTransport(gpu_ipc_host, device)
                 self.transports["gpu_ipc"] = transport
                 self.gpu_ipc = transport.capability
             except (TransportUnavailable, ModuleNotFoundError) as error:

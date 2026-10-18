@@ -30,8 +30,11 @@ boundaries are version-sensitive, so role startup rejects other vLLM versions.
 The normal [engine environment](../../../deploy/inference-engines/vllm/source-environment.json)
 uses the official vLLM image. Its CUDA runtime and Foretoken's Mooncake dependency
 preparation supply the NVIDIA transport environment. The CUDA image builds the
-pinned Mooncake engine with its public registration-refresh C API; the upstream
-wheel does not export it. Mooncake sources and added build dependencies stay in
+pinned Mooncake engine with CUDA IPC and its public registration-refresh C API;
+the upstream wheel does not export that C API. The
+[selection backport](../../patches/mooncake/intra-nvlink-selection.patch) preserves
+RDMA/TCP startup when only the intra-node NVLink backend is compiled.
+Mooncake sources and added build dependencies stay in
 the build stage. MetaX retains its own runtime build. The
 [model-server image](../../model-server/Dockerfile) installs the DT
 distribution and its `vllm.general_plugins` entry point in the engine's Python
@@ -177,7 +180,7 @@ ZMQ TCP/IPC stages features and proposal distributions through host memory; RDMA
 Mooncake. Roles advertise initialized `tensor_transports`; Router requires a
 compatible path, and Target selects eligible same-host GPU IPC first, then RDMA
 and ZMQ, once per request. GPU IPC requires mutual granted peer access metadata.
-The default launcher offers TCP, allocated RDMA and supported MACA peers; explicit IPC requires shared
+The default launcher offers TCP, allocated RDMA and supported CUDA/MACA peers; explicit ZMQ IPC requires shared
 same-host paths. RDMA startup also checks actual GPU registration. Before prefill, the selected
 pair shares a connection-owned proof of both GPU read directions across requests;
 uncertain transfers retain the usual drain/process-exit boundary.
@@ -312,7 +315,7 @@ until subsequent engine output or abort. See the
 [Connector contract](connector-contract.md) for scaling and temperature semantics.
 
 `TensorTransport` owns reusable buffers; `MooncakeTransport` adds device registrations,
-`MacaIpcTransport` reuses Mooncake MACA handles/copies, and `ZmqTransport` owns
+`GpuIpcTransport` reuses Mooncake CUDA/MACA handles/copies, and `ZmqTransport` owns
 sockets and immutable host snapshots. `TensorBuffer` fences producer writes
 and the final local consumer with CUDA events. RDMA completion is independent of
 CUDA producer readiness. A completed-read ACK permits source release, not reuse

@@ -15,7 +15,7 @@ fi
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential ca-certificates cmake git ninja-build pkg-config python3-dev \
+    build-essential ca-certificates cmake git ninja-build patch pkg-config python3-dev \
     libasio-dev libboost-dev libcurl4-openssl-dev libgflags-dev \
     libgoogle-glog-dev libibverbs-dev libjsoncpp-dev libmsgpack-dev libnuma-dev \
     libssl-dev liburing-dev libxxhash-dev libyaml-cpp-dev libzstd-dev
@@ -25,6 +25,8 @@ origin=${FORETOKEN_GITHUB_MIRROR:-https://github.com}
 git -c "url.${origin%/}/.insteadOf=https://github.com/" clone \
     --depth=1 --branch "v${version}" --recurse-submodules --shallow-submodules \
     https://github.com/kvcache-ai/Mooncake.git /src/mooncake
+patch --fuzz=0 --strip=1 --batch --forward --directory=/src/mooncake \
+    --input="$(dirname "$0")/../mooncake/intra-nvlink-selection.patch"
 
 cmake -S /src/mooncake/extern/yalantinglibs -B /build/ylt \
     -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF
@@ -34,7 +36,7 @@ export LIBRARY_PATH="${CUDA_HOME:-/usr/local/cuda}/lib64/stubs${LIBRARY_PATH:+:$
 cmake -S /src/mooncake -B /build/mooncake -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DENABLE_DEBUG_SYMBOLS=OFF \
     -DCMAKE_MODULE_LINKER_FLAGS=-Wl,--undefined=openSegmentNoCache \
-    -DUSE_CUDA=ON -DUSE_TCP=ON -DUSE_ETCD=OFF -DUSE_HTTP=ON \
+    -DUSE_CUDA=ON -DUSE_INTRA_NVLINK=ON -DUSE_TCP=ON -DUSE_ETCD=OFF -DUSE_HTTP=ON \
     -DWITH_TE=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DWITH_EP=OFF \
     -DBUILD_UNIT_TESTS=OFF -DBUILD_BENCHMARK=OFF -DBUILD_EXAMPLES=OFF \
     -DPython3_EXECUTABLE="$python" -DPYTHON_EXECUTABLE="$python"

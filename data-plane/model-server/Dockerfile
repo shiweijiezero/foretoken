@@ -129,12 +129,13 @@ COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
 ENTRYPOINT ["foretoken-omni-model-server"]
 
 # The upstream CUDA wheel omits the C API archive object used to refresh dynamic
-# registrations. Build that same pinned engine without retaining compiler tools.
+# registrations. Build that pinned engine with CUDA IPC and its public C API.
 FROM ${INFERENCE_ENGINE_IMAGE} AS mooncake-build
 ARG FORETOKEN_VLLM_PYTHON
 ARG FORETOKEN_GITHUB_MIRROR
 ARG BUILD_JOBS
 RUN --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    --mount=type=bind,source=data-plane/patches/mooncake,target=/tmp/mooncake \
     bash /tmp/vllm-patches/build-mooncake-engine
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime

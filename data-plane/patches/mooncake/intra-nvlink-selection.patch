@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Preserve RDMA/TCP selection when only the intra-node CUDA backend is built.
+--- a/mooncake-transfer-engine/src/transfer_engine_impl.cpp
++++ b/mooncake-transfer-engine/src/transfer_engine_impl.cpp
+@@ -328,7 +328,9 @@
+ 
+ #elif defined(USE_MNNVL) || defined(USE_INTRA_NVLINK)
+ 
++#ifdef USE_MNNVL
+         const char* force_mnnvl = getenv("MC_FORCE_MNNVL");
++#endif
+         const char* intra_env = getenv("MC_INTRANODE_NVLINK");
+         // Explicit env var overrides take priority over HCA auto-detection
+         if (intra_env) {
+@@ -340,6 +342,7 @@
+             }
+             LOG(INFO) << "Using Intra-Node NVLink transport "
+                          "(MC_INTRANODE_NVLINK set)";
++#ifdef USE_MNNVL
+         } else if (force_mnnvl || local_topology_->getHcaList().empty()) {
+             Transport* t =
+                 multi_transports_->installTransport("nvlink", nullptr);
+@@ -349,7 +352,10 @@
+             }
+             LOG(INFO) << "Using cross-node NVLink transport "
+                       << "(MC_FORCE_MNNVL or no HCA detected)";
+-        } else {
++#endif
++        } else if ((local_topology_->getHcaList().size() > 0 &&
++                    !getenv("MC_FORCE_TCP")) ||
++                   getenv("MC_FORCE_HCA")) {
+             Transport* t =
+                 multi_transports_->installTransport("rdma", local_topology_);
+             if (!t) {
+@@ -357,6 +363,18 @@
+                 return -1;
+             }
+             LOG(INFO) << "Using RDMA transport (RoCE/iWARP)";
++        } else {
++#ifdef USE_TCP
++            Transport* t = multi_transports_->installTransport("tcp", nullptr);
++            if (!t) {
++                LOG(ERROR) << "Failed to install TCP transport";
++                return -1;
++            }
++            LOG(INFO) << "Using TCP transport (no HCA detected)";
++#else
++            LOG(ERROR) << "No available transport";
++            return -1;
++#endif
+         }
+ 
+ #elif !defined(USE_SUNRISE)

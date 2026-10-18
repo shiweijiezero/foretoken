@@ -199,7 +199,11 @@ class RoleCommunication:
     def select_transport(
         self, peer_transports, peer_gpu_ipc: dict | None
     ) -> str | None:
-        """Select a common initialized path at binding; active transfers never switch paths."""
+        """Bind a shared adapter for this request; active transfers keep that adapter.
+
+        This matches role capabilities and granted peers. Mooncake owns routing
+        inside its GPU/RDMA adapters; ZMQ is the separate host-staged option.
+        """
         for transport in ("gpu_ipc", "rdma", "zmq"):
             if (
                 transport in self.service.tensor_transports

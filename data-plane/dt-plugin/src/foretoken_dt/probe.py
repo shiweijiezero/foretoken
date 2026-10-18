@@ -41,10 +41,10 @@ async def _transport(args):
     """Start the selected diagnostic backend; the producer/consumer owns its final drain."""
     import torch
 
-    from .transport import MacaIpcTransport, MooncakeTransport
+    from .transport import GpuIpcTransport, MooncakeTransport
 
     if args.tensor_transport == "gpu-ipc":
-        return MacaIpcTransport(args.host, torch.device(args.device))
+        return GpuIpcTransport(args.host, torch.device(args.device))
     if args.tensor_transport == "zmq":
         from .zmq import ZmqTransport
 
@@ -192,7 +192,7 @@ def main() -> None:
             "--tensor-transport",
             choices=("rdma", "gpu-ipc", "zmq"),
             default="rdma",
-            help="Concrete backend to measure; GPU IPC currently requires MACA peers",
+            help="Concrete backend to measure; GPU IPC requires granted CUDA/MACA peers",
         )
         command.add_argument(
             "--host", required=True, help="Routable local host/IP, no port"
