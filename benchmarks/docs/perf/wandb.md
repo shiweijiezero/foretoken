@@ -30,16 +30,14 @@ Warmup is excluded from performance metrics and panels. Its records remain in th
 
 ## Resume an upload
 
-Set `WANDB_MODE=offline` when running a benchmark to record locally without attempting uploads. To upload later, or retry a failed background upload, pass the result directory printed by the command:
+To upload saved results, use the result directory printed by a benchmark run with W&B output enabled:
 
 ```bash
 foretoken plot RESULT_DIR --sync_wandb
 ```
 
-This redraws local figures and synchronizes saved metrics, tables, media and logs to the original W&B runs without sending model requests. Interrupted runs can upload their available records and diagnostics. Figure export errors are reported, but do not prevent result synchronization; the command exits unsuccessfully if either stage fails.
+The command redraws figures and updates the original W&B runs without repeating measurements. Available records from interrupted runs can also be uploaded. Single-run figures are included; cross-run comparison figures remain local. If plotting fails, the command still attempts the upload and reports the plotting error.
 
-Individual-run figures are uploaded with that run, including when using `--output-dir`. Cross-run comparison figures remain local. Repeating the command refreshes per-run figures without replaying published measurement history.
+For offline measurement, set `WANDB_MODE=offline` and keep `wandb` in `--output`. Run the command above when ready to upload.
 
-To upload from another machine, install Foretoken, run `wandb login`, and copy the complete result tree, including hidden files. Its absolute location may change. If a resumed experiment references earlier task results, copy those directories too, preserving their relative layout. For a self-hosted W&B server, set `WANDB_BASE_URL` to the original server.
-
-Without `--sync_wandb`, `foretoken plot` only exports local files. Use `perf --resume` to continue unfinished measurements. Older recordings with missing external W&B files still require those files to be restored.
+To upload from another machine, copy the complete result tree, including hidden files and any earlier task directories referenced by resumed runs. Preserve their relative layout. On the destination machine, install Foretoken, run `wandb login`, and use the command above. For a self-hosted W&B server, set `WANDB_BASE_URL` to that server before logging in.

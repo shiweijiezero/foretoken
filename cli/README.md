@@ -215,11 +215,11 @@ Use `foretoken perf` to measure response latency and request or token throughput
 
 Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
 
-## Publish saved results and export figures
+## Export figures
 
 Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
 
-Add `--sync_wandb` to synchronize saved results and per-run figures to their original W&B runs without repeating measurements. See [W&B output](../benchmarks/docs/perf/wandb.md#resume-an-upload) for offline uploads and moving results between machines.
+Add [`--sync_wandb`](../benchmarks/docs/perf/wandb.md#resume-an-upload) to upload saved results to W&B.
 
 ## Find execution bottlenecks
 
