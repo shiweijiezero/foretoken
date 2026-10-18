@@ -55,7 +55,7 @@ tickets return false; an empty candidate list requests a Target-only step.
 
 | Owner | Responsibility |
 | --- | --- |
-| Scheduler | Wait per request, admit ready candidates, account for verification work, invalidate tickets on preemption |
+| Scheduler | Wait per request, admit each ticket once, recover KV at the same frontier, account for verification work |
 | EngineCore | Receive submissions through the existing utility queue; sleep when only external waiters remain |
 | MRV2 | Resolve current request slots, fill GPU draft-token state before input preparation, consume staged GPU proposal distributions through native rejection sampling |
 | Plugin AsyncLLM | Attach the next ticket after native output stop handling; never issue one on terminal output |
@@ -101,8 +101,21 @@ alongside proposal, verification and acceptance counts.
 Tickets pair vLLM's unique internal request ID with its cumulative confirmed output
 token count. The client retains the internal ID from the native output collector;
 no cross-process output schema is changed. Waiting requests remain in the native
-running queue and remain eligible for KV preemption. Preemption removes their
-waiting state; replay advances the output frontier before a new ticket is issued.
+running queue and remain eligible for KV preemption. Preemption retains the ticket,
+its unconsumed/accepted state and any accepted candidate chain. KV recovery is a
+physical replay of the confirmed prefix: it emits no token, keeps the same frontier
+and leaves the confirmed anchor to be recomputed with the candidates. Scheduler
+and MRV2 apply matching CPU/GPU computed-token rollback at the final replay step.
+Replay can overlap remote preparation; ready candidates are admitted once before,
+during or after replay and execute only after recovery. If candidates are still
+outstanding, the recovered request sleeps until their submission.
+
+The ticket needs no KV-residency epoch: synchronous EngineCore execution serializes
+admission and preemption, while the waiting flag consumes a ticket exactly once.
+The accepted chain survives native clearing of `spec_token_ids` and is populated
+again only for verification. A new confirmed output consumes the round and issues
+the next frontier; abort/completion removes the request, and a recreated session
+has a new native request identity. Late or duplicate submissions cannot reuse it.
 
 This mode supports text, one worker, eager execution, synchronous local scheduling
 and output interval one. `draft_sample_method="probabilistic"` consumes external
@@ -177,7 +190,14 @@ With a neural Draft profile, Target retains a position-indexed history of final 
 auxiliary hidden states through a non-model speculator. Export runs on the
 EngineCore scheduler thread and selects only the confirmed computed prefix,
 excluding the last correction/bonus token. Rejected suffixes are discarded;
-request completion, abort and native request removal release the retained history.
+request completion and abort release the retained history. Native slot removal
+for preemption retains that history and the Target's staged proposal binding.
+Replay does not overwrite the logical features. An export made before or during
+recovery therefore describes the same prefix; its independently owned buffer stays
+valid while Draft computes or transfers candidates. Proposal distributions remain
+with the session until verification consumes them or cancellation joins cleanup.
+KV eviction never revokes a publication or proves a transfer complete; the normal
+claim/read/ACK and GPU-consumption fences still govern buffer reuse.
 Target APC is disabled so a cache hit cannot leave gaps in that history.
 
 TargetCoordinator supplies the current Target session address during Draft preparation.
@@ -215,6 +235,16 @@ The NVIDIA scheduler uses vLLM 0.31's ordinary waiting and KV-holding waiting
 queues. The pinned MetaX core uses its waiting and skipped-waiting queues. Workload
 observations and schedulable-work checks read the corresponding native queues;
 remote waits continue to use running requests with decode eligibility deferred.
+
+## KV recovery and CPU offload
+
+The DT adapter currently uses native KV recomputation after eviction. Its optional
+KV connector is the explicit checkpoint/resume adapter; CPU KV offload and LMCache
+are not integrated. `cpu_offload_gb` offloads model weights, not request KV.
+
+Native FCFS/priority scheduling still owns admission and victim selection;
+preserving candidates does not itself provide a starvation guarantee
+under an unbounded workload or a KV configuration unable to run one request.
 
 ## Frontend and role ownership
 

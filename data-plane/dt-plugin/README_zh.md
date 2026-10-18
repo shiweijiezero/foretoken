@@ -61,7 +61,8 @@ curl http://127.0.0.1:19100/status
 使用两端 HTTP 地址启动前端；角色服务仅提供内部 API，没有公共 OpenAI 接口或鉴权。
 
 每个角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
-对应请求，其他请求仍可执行。
+对应请求，其他请求仍可执行。Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
+恢复 KV 后继续验证原候选，不会额外确认一个 token。
 命令接受 vLLM 原有的模型、显存及 batch 参数。
 Target 的 `--draft-tokens` 设置每轮默认候选数，默认 3；
 `--max-candidate-tokens` 设置引擎启动时的候选容量，省略时从默认候选数推导。

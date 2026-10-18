@@ -495,10 +495,8 @@ class DraftPeerSession:
 
     async def propose(
         self, version: int, budget: int, source: dict, work: dict
-    ) -> dict | None:
-        """Request one chain; None reports revoked native context without replaying the request."""
-        from .service import CONTEXT_REVOKED
-
+    ) -> dict:
+        """Request one chain from the confirmed prefix; closed/revoked contexts fail the call."""
         response = await self.owner.client.post(
             f"{self.endpoint}/sessions/{self.session_id}/propose",
             json={
@@ -509,11 +507,6 @@ class DraftPeerSession:
             },
             timeout=None,
         )
-        if (
-            response.status_code == 409
-            and response.json().get("detail") == CONTEXT_REVOKED
-        ):
-            return None
         response.raise_for_status()
         return response.json()
 

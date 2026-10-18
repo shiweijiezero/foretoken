@@ -68,6 +68,8 @@ are internal APIs and do not expose public OpenAI endpoints or authentication.
 
 Each role uses one GPU worker, eager execution and synchronous local
 scheduling. Requests waiting for remote proposals do not block other requests.
+Target KV preemption preserves the confirmed prefix and in-flight Draft round;
+recovery rebuilds KV before verifying those candidates without confirming an extra token.
 The role accepts native vLLM model, memory and batching options.
 Target `--draft-tokens` selects the default candidates per round (3). Target
 `--max-candidate-tokens` sets its startup engine capacity; when omitted it uses

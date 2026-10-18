@@ -131,13 +131,21 @@ class GPUModelRunner(model_runner.GPUModelRunner):
                 )
 
     def _remove_request(self, req_id):
-        """Drop Connector bindings with the native request lifecycle."""
-        if self.external_speculation_io is not None:
+        """Remove native slots; Target round resources outlive KV preemption."""
+        if self.external_speculation_io is not None and not self.external_speculation:
             self.external_speculation_io.remove_request(req_id)
         self.context_requests.pop(req_id, None)
-        if self.context_role == "target":
-            self.speculator.requests.pop(req_id, None)
         return super()._remove_request(req_id)
+
+    def finish_requests(self, scheduler_output):
+        """Release Target round bindings only on completion/abort, not slot eviction."""
+        if self.external_speculation:
+            for req_id in scheduler_output.finished_req_ids:
+                if self.external_speculation_io is not None:
+                    self.external_speculation_io.remove_request(req_id)
+                if self.context_role == "target":
+                    self.speculator.requests.pop(req_id, None)
+        return super().finish_requests(scheduler_output)
 
     def prepare_inputs(self, scheduler_output, *args, **kwargs):
         """Fill candidate slots before native input assembly and retain tickets."""
@@ -151,6 +159,9 @@ class GPUModelRunner(model_runner.GPUModelRunner):
         if self.external_speculation:
             batch.external_draft_generations = (
                 {} if self.warming_up else scheduler_output.external_draft_generations
+            )
+            batch.external_draft_recovery = (
+                {} if self.warming_up else scheduler_output.external_draft_recovery
             )
         if self.context_role == "draft":
             self.context_batch = batch
@@ -238,6 +249,16 @@ class GPUModelRunner(model_runner.GPUModelRunner):
                 self.speculator = speculator
         else:
             output = super().sample(hidden_states, input_batch, grammar_output)
+        if self.external_speculation and not self.warming_up:
+            for index, req_id in enumerate(input_batch.req_ids):
+                recovery = input_batch.external_draft_recovery
+                if req_id not in recovery:
+                    continue
+                # Replay reconstructs the same prefix, never a new confirmed token.
+                # Native postprocessing uses num_rejected to roll the GPU KV cursor
+                # back to the anchor; Scheduler applies the matching CPU rollback.
+                output[1][index] = 0
+                output[2][index] = int(recovery[req_id])
         if io is not None:
             io.on_sample(input_batch, output[0])
         return output

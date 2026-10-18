@@ -7,6 +7,7 @@ import time
 from importlib.metadata import version
 from uuid import uuid4
 
+from vllm.v1.core.sched.interface import PauseState
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.engine import EngineCoreOutputs
@@ -151,12 +152,8 @@ class ObservedScheduler(Scheduler):
         """Count native preemption while native code retains KV release ownership."""
         record = self.dt_observations[request.request_id]
         record["totals"]["preemptions"] += 1
-        if record["remote_since"] is not None:
-            record["totals"]["remote_wait_seconds"] += (
-                time.monotonic() - record["remote_since"]
-            )
-            record["remote_since"] = None
-        record["ready_at"] = time.monotonic()
+        if record["remote_since"] is None:
+            record["ready_at"] = time.monotonic()
         return super()._preempt_request(request, timestamp, drop_stale_output)
 
     def dt_request_kv(self, request_id):
@@ -195,13 +192,12 @@ class ObservedScheduler(Scheduler):
         """Read one native scheduler/KV snapshot for online placement, without Prometheus."""
         waiting = [request for queue in self.dt_waiting_queues for request in queue]
         remote = [
-            r for r in self.running if getattr(r, "waiting_for_external_draft", False)
-        ]
-        ready = [
             r
             for r in self.running
-            if not getattr(r, "waiting_for_external_draft", False)
+            if getattr(r, "waiting_for_external_draft", False)
+            and not getattr(r, "external_draft_recovering", False)
         ]
+        ready = [r for r in self.running if r not in remote]
         manager = self.kv_cache_manager
         pool = manager.block_pool
         # vLLM reserves one null block; free cached blocks are reclaimable capacity.
@@ -263,16 +259,31 @@ class ExternalScheduler(ObservedScheduler):
     def add_request(self, request: Request) -> None:
         """Initialize admission state on the request whose lifetime vLLM owns."""
         request.waiting_for_external_draft = False
+        request.external_draft_recovering = False
+        # None means no admitted chain; [] is an admitted Target-only step.
+        request.external_draft_tokens = None
         super().add_request(request)
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         """Reuse native batching, KV allocation and preemption for ready requests."""
         for request in self.running:
-            if request.waiting_for_external_draft:
+            if request.external_draft_recovering:
+                request.next_decode_eligible_step = 0
+            elif request.waiting_for_external_draft:
                 # Native schedule increments current_step before checking decode
                 # eligibility. Keep waiters in running so they remain KV victims.
                 request.next_decode_eligible_step = self.current_step + 2
+            elif request.external_draft_tokens is not None:
+                request.spec_token_ids = list(request.external_draft_tokens)
         output = super().schedule(throttle_prefills)
+        # Replay has no logical output. The final replay step leaves the known
+        # anchor uncomputed so the original chain can verify from that position.
+        output.external_draft_recovery = {
+            request_id: self.requests[request_id].num_computed_tokens
+            >= self.requests[request_id].num_tokens
+            for request_id in output.num_scheduled_tokens
+            if self.requests[request_id].external_draft_recovering
+        }
         output.external_draft_generations = {
             request_id: self.requests[request_id].num_output_tokens
             for request_id in output.scheduled_spec_decode_tokens
@@ -286,6 +297,13 @@ class ExternalScheduler(ObservedScheduler):
     ) -> dict[int, EngineCoreOutputs]:
         """Pause surviving token-producing requests after native stop processing."""
         outputs = super().update_from_output(scheduler_output, model_runner_output)
+        for request_id, complete in scheduler_output.external_draft_recovery.items():
+            request = self.requests.get(request_id)
+            if request is not None and complete:
+                request.num_computed_tokens -= 1
+                request.external_draft_recovering = False
+                if request.waiting_for_external_draft:
+                    self.dt_observations[request_id]["ready_at"] = None
         for client_output in outputs.values():
             for output in client_output.outputs:
                 request = self.requests.get(output.request_id)
@@ -295,6 +313,7 @@ class ExternalScheduler(ObservedScheduler):
                     and output.new_token_ids
                 ):
                     request.waiting_for_external_draft = True
+                    request.external_draft_tokens = None
                     record = self.dt_observations[output.request_id]
                     record["ready_at"] = None
                     record["remote_since"] = time.monotonic()
@@ -303,11 +322,8 @@ class ExternalScheduler(ObservedScheduler):
     def _preempt_request(
         self, request: Request, timestamp: float, drop_stale_output: bool = False
     ) -> None:
-        """Invalidate remote admission before native KV release and prompt replay."""
-        # Replay is native recovery at the current confirmed frontier, not a
-        # second execution of the last completed verification work.
-        self.dt_observations[request.request_id]["work"] = None
-        request.waiting_for_external_draft = False
+        """Recover physical KV without consuming the outstanding logical round."""
+        request.external_draft_recovering = request.num_output_tokens > 0
         request.next_decode_eligible_step = 0
         super()._preempt_request(request, timestamp, drop_stale_output)
 
@@ -340,22 +356,33 @@ class ExternalScheduler(ObservedScheduler):
         record["remote_since"] = None
         record["ready_at"] = now
         record["work"] = work
-        request.spec_token_ids = list(token_ids)
+        # Keep the accepted chain across native preemption, which clears spec IDs.
+        # Only populate native IDs once replay has restored the confirmed KV.
+        request.external_draft_tokens = list(token_ids)
+        if not request.external_draft_recovering:
+            request.spec_token_ids = list(token_ids)
         request.waiting_for_external_draft = False
         request.next_decode_eligible_step = 0
         return True
 
     def has_schedulable_requests(self) -> bool:
         """Let EngineCore sleep until remote input or native admission can progress."""
+        if self.pause_state == PauseState.PAUSED_ALL:
+            return self.has_finished_requests()
         # Match native waiting-to-running admission, including slots retained by
         # streaming input. A full set of remote waiters cannot admit queued work;
         # candidate submission and abort wake EngineCore through its input queue.
         can_admit = (
-            len(self.running) + self.num_waiting_for_streaming_input
+            self.pause_state == PauseState.UNPAUSED
+            and len(self.running) + self.num_waiting_for_streaming_input
             < self.max_num_active_reqs
         )
         return bool(
             (can_admit and any(self.dt_waiting_queues))
             or self.has_finished_requests()
-            or any(not request.waiting_for_external_draft for request in self.running)
+            or any(
+                request.external_draft_recovering
+                or not request.waiting_for_external_draft
+                for request in self.running
+            )
         )

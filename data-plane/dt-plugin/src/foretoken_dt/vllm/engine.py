@@ -19,7 +19,7 @@ from .scheduler import ExternalScheduler
 
 @dataclass(frozen=True)
 class ExternalDraftRequest:
-    """Identify a unique engine request and its confirmed output-token frontier."""
+    """Identify one logical frontier; KV eviction does not consume or replace this ticket."""
 
     request_id: str
     generation: int

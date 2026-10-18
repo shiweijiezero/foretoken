@@ -38,8 +38,14 @@ prepares its data and submits the current ticket once.
 `TargetCoordinator.select_candidate_count()` selects K without owning execution;
 its default also respects the bound method limit and Target capacity. The role consumes ticket
 ownership before the native utility call; uncertain admission is never retried.
-A stale ticket returns false and the coordinator consumes native replay output.
-Unused proposal artifacts are revoked. Native preemption owns KV recovery.
+A stale or consumed ticket returns false; a live coordinator treats unexpected
+rejection as a failed round rather than waiting for output that cannot arrive.
+Unused proposal artifacts are revoked. Native preemption recovers KV without
+advancing the confirmed frontier. It preserves the outstanding ticket and any
+accepted chain, including candidates still being generated or transferred.
+Replay emits no committed event. The same ticket can be admitted once during
+recovery; verification waits for KV readiness. Cancel/completion and a newly
+confirmed frontier invalidate old work through the existing session/ticket owners.
 
 The NDJSON stream starts with `opened` and its session ID, before RDMA binding
 preparation. Requests borrow the connection-owned proof; cancellation closes their sessions
@@ -167,10 +173,11 @@ profile, prefix and dimensions, then uses the existing claim/read/ACK endpoints.
 The proposal owns the received features until native execution finishes or is aborted.
 Context transfer completes outside the Target compute loop, allowing other requests
 to execute while this request waits for Draft.
-If Target revokes that context before Draft admission, Draft returns HTTP 409 with
-`detail: "Target context was revoked"`. The managed coordinator preserves the
-confirmed frontier and consumes Target's native replay output next. Other proposal
-conflicts and transport failures remain errors; no submitted transfer is replayed.
+If the context is closed or consumed before Draft admission, Draft returns HTTP 409
+with `detail: "Target context was revoked"`; the round fails and joins normal
+session cleanup. KV preemption alone retains the context and does not produce this
+error. Proposal conflicts and transport failures remain errors; no submitted
+transfer is replayed.
 
 ## Target KV checkpoint and resume
 
@@ -329,7 +336,7 @@ cancelled requests can end without a final round record.
 | `target_seconds` | Initial prefill or verification preparation through confirmed output and Draft prefix synchronization; includes native queueing. |
 | Engine `queue_seconds` | Ready engine work waiting to be scheduled, summed across steps. Excludes remote-candidate waits. |
 | Engine `scheduled_seconds` | Sum of native schedule-to-result wall time. Each member observes its shared batch duration; this is not CUDA-event GPU time. |
-| Engine `remote_wait_seconds` | Previous Target output to admission of the next candidates (or preemption). Includes caller waiting, drafting and transfer. |
+| Engine `remote_wait_seconds` | Previous Target output to admission of the next candidates, including across KV preemption. Includes caller waiting, drafting and transfer; may overlap recovery. |
 | Engine `steps`, `scheduled_tokens`, `preemptions` | Actual native work in this output interval. `batch_requests` and `batch_tokens` describe its final native step, not the caller's batch. |
 | `requested_tokens` | Target-selected K before Draft execution; null for prefill. |
 | `proposed_tokens` / engine `verified_tokens` / engine `accepted_tokens` / `committed_tokens` | Draft output, candidates actually checked, sampler acceptance before stop truncation, and final Target output respectively. Acceptance excludes correction/bonus tokens. |
@@ -359,6 +366,7 @@ refreshes; use `collected_at_unix_ms` when judging its freshness.
 
 - `running_requests` includes resident requests waiting for remote candidates.
   `ready_requests` excludes those waiters; `remote_waiting_requests` counts them.
+  KV recovery counts as ready native work even while candidates are outstanding.
 - `waiting_requests` counts the native waiting queues (including KV-holding waiters on NVIDIA
   and skipped waiters on the pinned MetaX core).
   `waiting_tokens` and `ready_tokens` count known uncomputed tokens, including

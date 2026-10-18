@@ -51,10 +51,14 @@ class TargetContext(BaseSpeculator):
         if not dummy_run:
             features = [last_hidden_states, *(aux_hidden_states or [])]
             for index, req_id in enumerate(input_batch.req_ids):
+                if req_id in input_batch.external_draft_recovery:
+                    # Logical features survive KV eviction. In-flight exports and
+                    # Draft computation keep the original confirmed-prefix snapshot.
+                    continue
                 start = int(input_batch.num_computed_tokens_np[index])
                 left, right = input_batch.query_start_loc_np[index : index + 2]
                 chunks = self.requests.setdefault(req_id, [])
-                # A rejection or preemption replaces the speculative suffix. Do not
+                # A rejection replaces the speculative suffix. Do not
                 # accumulate stale verification frames across the request lifetime.
                 while chunks and chunks[-1][0] >= start:
                     chunks.pop()

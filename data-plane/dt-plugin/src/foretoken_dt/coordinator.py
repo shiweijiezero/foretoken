@@ -35,7 +35,6 @@ class TargetCoordinator:
         self.draft_seconds: float | None = None
         self.proposal: dict | None = None
         self.admitted: bool | None = None
-        self.context_revoked = False
         self.requested_tokens: int | None = None
 
     def identity(self, phase: str) -> dict:
@@ -81,9 +80,7 @@ class TargetCoordinator:
             "outcome": "completed"
             if event["finished"]
             else "preempted"
-            if self.context_revoked
-            or self.admitted is False
-            or event["observation"]["preemptions"] > 0
+            if event["observation"]["preemptions"] > 0
             else "progress",
             "draft_endpoint": self.peer.endpoint,
             "target_endpoint": self.request.target_endpoint,
@@ -134,7 +131,6 @@ class TargetCoordinator:
         self.started = time.monotonic()
         self.proposal = None
         self.admitted = None
-        self.context_revoked = False
         budget = self.select_candidate_count()
         self.requested_tokens = budget
         self.proposal = await self.peer.propose(
@@ -143,12 +139,6 @@ class TargetCoordinator:
             {"endpoint": self.request.target_endpoint, "session_id": self.session_id},
             self.identity("draft"),
         )
-        if self.proposal is None:
-            # Native preemption can revoke features before Draft admission.
-            # Consume its replay output next, retaining the confirmed frontier.
-            self.context_revoked = True
-            self.draft_seconds = time.monotonic() - self.started
-            return
         self.draft_seconds = time.monotonic() - self.started
         if self.proposal["version"] != ticket.generation:
             raise ValueError("proposal belongs to a different confirmed frontier")
@@ -168,5 +158,7 @@ class TargetCoordinator:
         if not self.admitted and self.proposal["artifact"] is not None:
             artifact_id = self.proposal["artifact"]["artifact_id"]
             await self.peer.revoke(artifact_id)
-        # Native preemption invalidates the ticket and produces replay output.
-        # Consume that output next; never replay an uncertain submission.
+        if not self.admitted and self.session_id in self.service.targets:
+            # KV eviction preserves the ticket. A live rejection has no replay
+            # output to wait for; surface the broken round instead of hanging.
+            raise RuntimeError("Target rejected the outstanding round ticket")
