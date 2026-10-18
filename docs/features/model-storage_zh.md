@@ -66,3 +66,33 @@ spec:
 需要挂载其他系统管理的 PVC 时，在平台 values 中设置 `workload.cache.claimName`，并在每个工作负载命名空间创建该 PVC。
 
 诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../../benchmarks/docs/profile/README_zh.md)。
+
+## 在节点间分发模型
+
+Dragonfly 可以在节点间共享公开模型文件的下载。在 `deploy/platform-values.yaml` 中启用：
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: true
+```
+
+安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。存在多个 Dragonfly release 时，在 `modelDistribution.dragonfly` 下通过 `existingRelease: {name: dragonfly, namespace: dragonfly-system}` 选择一个，替换为实际的名称和命名空间。
+
+在具备 RDMA 的 NVIDIA 集群上，ModelExpress 可以从运行中的副本加载权重。同时启用两项能力时，将下面的设置放在同一个 `modelDistribution` 下：
+
+```yaml
+modelDistribution:
+  modelexpress:
+    enabled: true
+```
+
+自动权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型。显式设置的 `load-format` 保持不变；没有兼容源副本时，加载已准备的文件。
+
+在原安装命令中添加 `--values deploy/platform-values.yaml` 应用配置。源码安装保留 `-e .`、镜像仓库设置和已有的引擎源码绑定。使用发布版平台时：
+
+```bash
+foretoken install --values deploy/platform-values.yaml
+```
+
+修改这些设置后，重新部署需要更新的服务。将对应的 `enabled` 设为 `false` 可关闭分发。卸载时，没有工作负载使用的托管 Dragonfly 会被移除，复用的安装会保留。

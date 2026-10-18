@@ -68,6 +68,22 @@ workload:
 
 使用认证仓库时，通过 `--values deploy/platform-values.yaml` 安装。
 
+### 分配外部访问地址
+
+集群已经提供 LoadBalancer 地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+沿用原安装设置并应用配置：
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
+```
+
 ## 3. 部署与更新代码
 
 快速开始示例在本地 k3d 使用仓库中的 `data/` 目录；在远程集群上，Foretoken 会自动为这个相对目录创建动态 PVC，因此无需修改示例 YAML。多节点集群使用 `ReadWriteMany`，单节点集群会自动使用 `ReadWriteOnce`。集群需要其他存储策略时，在 `cache.yaml` 中设置 `initialSize`、`storageClassName`、`accessMode` 或 `maxSize`。

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-通过 `foretoken` 部署模型服务、查看运行状态、执行评测和采集性能数据。首次部署见[快速开始](../README_zh.md#快速开始)。
+通过 `foretoken` 部署模型服务、查看运行状态、执行评测和采集性能数据。首次部署见[快速开始](../README_zh.md#快速开始)；使用 Agent 持续优化推理系统，见 [RSI 任务](../rsi-playbooks/README_zh.md#开始优化任务)。
 
 | 用途 | 命令 |
 | --- | --- |
@@ -82,7 +82,11 @@ foretoken install -e .
 
 集群需提供默认 StorageClass，GPU 节点需具备厂商驱动和设备插件。新安装默认通过 `LoadBalancer` 直接访问；更新后的平台默认配置在服务重新部署后生效。
 
-网关、镜像来源、硬件和模型分发见[平台配置](../docs/deployment/platform_zh.md)。源码构建时，标准 kind、k3d context 可直接载入镜像，其他集群需指定 `--registry`；仓库设置与代码更新见[源码部署](../docs/deployment/source_zh.md)。
+用 `--frontend-mode gateway` 启用[网关访问](../README_zh.md#网关模式)。复用已有 Gateway 时，同时指定 `--gateway-name` 和 `--gateway-namespace`；需要选择监听器时，再添加 `--gateway-section-name`。
+
+`--values` 应用 [Helm 配置](../deploy/charts/foretoken/values.yaml)，`--oci-registry` 指定默认镜像和 Chart 的仓库前缀。监控设置见[可观测性](../observability/README_zh.md#平台设置)，节点间模型分发见[模型存储](../docs/features/model-storage_zh.md#在节点间分发模型)。
+
+源码构建时，标准 kind、k3d context 可直接载入镜像，其他集群需指定 `--registry`；仓库设置与代码更新见[源码部署](../docs/deployment/source_zh.md)。
 
 ### uninstall
 

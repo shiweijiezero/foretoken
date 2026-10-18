@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Use `foretoken` to manage inference deployments, check services, run benchmarks, and capture execution profiles. For a first deployment, follow the [Quick Start](../README.md#quick-start).
+Use `foretoken` to manage inference deployments, check services, run benchmarks, and capture execution profiles. For a first deployment, follow the [Quick Start](../README.md#quick-start); for agent-driven inference optimization, [start an RSI task](../rsi-playbooks/README.md#start-an-optimization-task).
 
 | Task | Commands |
 | --- | --- |
@@ -82,7 +82,11 @@ foretoken install -e .
 
 The cluster needs a default StorageClass, and GPU nodes need their vendor driver and device plugin. New installations use direct `LoadBalancer` access. Updated platform defaults take effect when services are redeployed.
 
-See [platform configuration](../docs/deployment/platform.md) for Gateway access, image sources, hardware, and model distribution. For source builds, standard kind and k3d contexts load images directly; other clusters require `--registry`. See [source deployment](../docs/deployment/source.md) for registry setup and deploying code changes.
+Use `--frontend-mode gateway` for [Gateway access](../README.md#gateway-mode). To reuse a Gateway, also provide `--gateway-name` and `--gateway-namespace`; select a listener with `--gateway-section-name` when needed.
+
+`--values` applies [Helm settings](../deploy/charts/foretoken/values.yaml), and `--oci-registry` selects the registry prefix for default images and Charts. See [Observability](../observability/README.md#platform-settings) for monitoring settings and [model storage](../docs/features/model-storage.md#distribute-models-across-nodes) for shared model distribution.
+
+For source builds, standard kind and k3d contexts load images directly; other clusters require `--registry`. See [source deployment](../docs/deployment/source.md) for registry setup and deploying code changes.
 
 ### uninstall
 
