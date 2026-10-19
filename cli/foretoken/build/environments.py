@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from foretoken.build.cluster import ClusterBuilder, ImageNotFoundError
+from foretoken.build.records import BUILD_TRANSPORT_ARGUMENTS
 
 
 class BuildEnvironments:
@@ -61,7 +62,7 @@ class BuildEnvironments:
             "inputs": inputs,
             "arguments": {
                 key: value for key, value in arguments.items()
-                if not key.endswith("_IMAGE") and key != "CACHE_ID"
+                if not key.endswith("_IMAGE") and key not in BUILD_TRANSPORT_ARGUMENTS | {"CACHE_ID"}
             },
             "nodes": {},
         }

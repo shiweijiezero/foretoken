@@ -2,11 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Build from the repository root so Cargo uses the data-plane workspace and
-# its engine adapters. The inference engine image must provide the Python
-# entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
-# an image-specific executable; model-server otherwise uses `python3`. The
-# current vLLM adapter uses vllm.entrypoints.cli.main.
+# Build from the repository root using the declared data-plane dependencies.
+# The inference image supplies its Python entrypoint and accelerator libraries.
 
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
@@ -23,80 +20,35 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends patch \
     && rm -rf /var/lib/apt/lists/*
 
-FROM ${RUST_BUILDER_IMAGE} AS builder
+FROM ${RUST_BUILDER_IMAGE} AS compiler
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/foretoken-python
+ARG FORETOKEN_GITHUB_MIRROR
+RUN mirror="${FORETOKEN_GITHUB_MIRROR:-https://github.com}"; \
+    UV_PYTHON_INSTALL_MIRROR="${mirror%/}/astral-sh/python-build-standalone/releases/download" \
+      uv venv /opt/foretoken-compiler --python 3.12
+ENV PATH=/opt/foretoken-compiler/bin:${PATH}
+WORKDIR /workspace
 
+FROM compiler AS builder
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
 ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
-ARG VLLM_REVISION
-
-WORKDIR /workspace
-
-# Python adapters belong to the file export, not the Rust compilation input.
+ARG BUILD_JOBS
 COPY --exclude=model-server/python data-plane/ ./data-plane/
-
-# Lock only upstream preparation so other components can compile independently.
-# Preserve captured Rust sources when completing the upstream tree for patch preparation.
-RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
-      printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
-        "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
-    fi \
-    && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ] && [ "${FORETOKEN_CARGO_REGISTRY}" != "sparse+https://index.crates.io/" ]; then \
-      mkdir -p /workspace/.cargo; \
-      printf '[source.crates-io]\nreplace-with = "foretoken-mirror"\n\n[source.foretoken-mirror]\nregistry = "%s"\n' \
-        "${FORETOKEN_CARGO_REGISTRY}" > /workspace/.cargo/config.toml; \
-    fi \
-    && if [ ! -f data-plane/third_party/vllm/vllm/v1/engine/core.py ]; then \
-      if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
-        git -C /var/cache/vllm init -q \
-        && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
-        && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
-      fi \
-      && mkdir -p data-plane/third_party/vllm \
-      && if [ -d data-plane/third_party/vllm/rust ]; then \
-        git -C /var/cache/vllm archive HEAD | tar --anchored --exclude=rust -x -C data-plane/third_party/vllm; \
-      else \
-        git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
-      fi; \
-    fi
-
-# Share Cargo's own cache locks with its registry and Git data. Bullseye cannot
-# load procedural macros linked against the frontend builder's newer glibc.
-ENV CARGO_HOME=/var/cache/foretoken-cargo
-# Retain prepared inputs with their outputs; refresh changed trees so Cargo sees patch removals.
-RUN --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken-cargo \
+COPY deploy/build-source ./deploy/build-source
+COPY LICENSE ./LICENSE
+ENV CARGO_HOME=/var/cache/foretoken/cargo-home
+# Keep this target separate from the frontend's newer glibc toolchain.
+RUN --mount=type=cache,id=foretoken-vllm-source,target=/var/cache/foretoken/vllm \
+    --mount=type=cache,id=foretoken-cargo-home,target=/var/cache/foretoken/cargo-home \
     --mount=type=cache,id=foretoken-cargo-target-model-server-prepared-source,target=/workspace/data-plane/target,sharing=locked \
-    if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
-      export CARGO_NET_GIT_FETCH_WITH_CLI; \
-    fi \
-    && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
-    && mkdir -p data-plane/target/vllm-rust \
-    && if git diff --no-index --quiet data-plane/target/vllm-rust data-plane/third_party/vllm/rust; then \
-      :; \
-    else \
-      result=$?; \
-      test "$result" -eq 1 \
-      && rm -rf data-plane/target/vllm-rust \
-      && cp -R data-plane/third_party/vllm/rust data-plane/target/vllm-rust; \
-    fi \
-    && rm -rf data-plane/third_party/vllm/rust \
-    && cp -a data-plane/target/vllm-rust data-plane/third_party/vllm/rust \
-    && cargo build --locked --release \
-      --manifest-path data-plane/Cargo.toml \
-      --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
-    && install -Dm755 \
-      "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
-      /out/model-server
+    python3 -I deploy/build-source model-server /out --cache /var/cache/foretoken --parts rust
 
 FROM scratch AS source-export
-COPY --from=builder /out/model-server /bin/foretoken-model-server
+COPY --from=builder /out/ /
 COPY data-plane/model-server/python/ /python/
-COPY LICENSE /LICENSE
-COPY <<EOF /complete.json
-{"component":"model-server"}
-EOF
 
 # The Omni image supplies Python, model plugins, and provider SDKs.
 # Add shared preparation and the lifecycle adapter without applying standard vLLM patches.
@@ -110,7 +62,7 @@ ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
+COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-omni-model-server
 COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/foretoken_prepare.py
 ENTRYPOINT ["foretoken-omni-model-server"]
 
@@ -155,7 +107,7 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 
 FROM environment AS runtime
-COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
+COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its

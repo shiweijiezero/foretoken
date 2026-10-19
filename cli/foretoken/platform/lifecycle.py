@@ -24,12 +24,11 @@ from foretoken.arguments import InstallCommand, UninstallCommand
 from foretoken.build.source import prepare_source_images
 from foretoken.build.state import (
     forget_install,
-    has_source_state,
     reconcile_source_resources,
     record_install,
-    remove_build_caches,
     resolve_source_base_image,
     source_operation,
+    source_uninstall,
 )
 from foretoken.build.storage import (
     managed_build_storage_resources,
@@ -125,7 +124,10 @@ class PlatformLifecycle:
 
     def uninstall(self, command: UninstallCommand) -> None:
         """Own command cancellation and exclusive source cleanup while removing the platform."""
-        with CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)), source_operation(self._kubectl, command.timeout):
+        with (
+            CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)),
+            source_operation(self._kubectl, command.timeout, prepare=False),
+        ):
             self._uninstall(command)
 
     def _install(
@@ -694,12 +696,12 @@ class PlatformLifecycle:
             configuration = helm.set_platform_retiring(kubectl, configuration, retiring=True)
         platform_uid = configuration["metadata"]["uid"] if configuration is not None else ""
         source_storage = managed_build_storage_resources(kubectl, platform.namespace)
-        source_builds = (
-            platform_exists and helm.release_install_source(platform) == "source"
-        ) or has_source_state(kubectl) or bool(source_storage)
-        unadopted_origin = (
-            () if platform_exists else helm.application_origin_resources()
+        application_origin = helm.application_origin_resources()
+        origin_claims = tuple(
+            document["metadata"] for document in application_origin
+            if document["kind"] == "PersistentVolumeClaim"
         )
+        unadopted_origin = () if platform_exists else application_origin
         admission_claims = {
             claim["uid"]: claim for claim in helm.admission_store_claims(kubectl)
         }
@@ -809,15 +811,17 @@ class PlatformLifecycle:
             )
         self._remove_directory_bindings(platform_uid, command.timeout)
         helm.stop_platform_tasks(kubectl, command.timeout)
-        if source_builds:
-            reconcile_source_resources(kubectl, command.timeout, uninstall=True)
-        self._logs.uninstall(managed_logs, command.timeout)
-        if platform_exists:
-            helm.uninstall(platform, command.timeout)
-            _print_plan("Foretoken platform", "Removed", platform.display_name)
-        elif unadopted_origin:
-            helm.remove_application_origin(unadopted_origin, command.timeout)
-            _print_plan("Application file storage", "Removed", platform.display_name)
+        with source_uninstall(
+            kubectl, command.timeout, namespace=platform.namespace,
+            origins=origin_claims, storage=source_storage,
+        ):
+            self._logs.uninstall(managed_logs, command.timeout)
+            if platform_exists:
+                helm.uninstall(platform, command.timeout)
+                _print_plan("Foretoken platform", "Removed", platform.display_name)
+            elif unadopted_origin:
+                helm.remove_application_origin(unadopted_origin, command.timeout)
+                _print_plan("Application file storage", "Removed", platform.display_name)
         for claim in admission_claims.values():
             kubectl.wait_deleted("persistentvolumeclaim", claim, command.timeout)
         if admission_claims:
@@ -851,8 +855,6 @@ class PlatformLifecycle:
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)
-        if source_builds:
-            remove_build_caches(kubectl, command.timeout)
         if source_storage:
             _print_plan(
                 "Source build storage",

@@ -4,6 +4,10 @@
 **
 !engine/
 !engine/**
+!cli/
+!cli/foretoken/
+!cli/foretoken/build/
+!cli/foretoken/build/engine_sources.py
 !deploy/
 !deploy/inference-engines/
 !deploy/inference-engines/vllm/

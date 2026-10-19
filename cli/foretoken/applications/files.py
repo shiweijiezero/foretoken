@@ -19,16 +19,21 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
+from foretoken.build.records import (
+    SOURCE_BUILD_KEY,
+    WORKSPACE_LABEL,
+    WORKSPACE_SELECTION_KEY,
+)
 from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 
 if TYPE_CHECKING:
-    from foretoken.build.cluster import ClusterBuilder
+    from foretoken.build.compiler import CompilerWorkspace
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
-_BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
+APPLICATION_PUBLISHER_BINDING_LABEL = "inference.foretoken.io/application-publisher-binding"
 _SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
 _SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
@@ -104,7 +109,7 @@ class ApplicationFiles:
 
     def publish(
         self,
-        builder: ClusterBuilder,
+        builder: CompilerWorkspace,
         source: str,
         component: str,
         revision: str,
@@ -147,21 +152,31 @@ class ApplicationFiles:
             )
             return json.loads(result.stdout)["revision"]
 
-    def retire_source(self, binding: str, references: set[str], *, timeout: str) -> bool:
-        """Collect a stopped binding's runtime files on the prepared origin; return whether none remain.
-
-        Published source archives and manifests remain available independently of runtime files.
-        """
+    def publish_build(
+        self, builder: CompilerWorkspace, revision: str, record: dict[str, Any], *, timeout: str,
+    ) -> dict[str, Any]:
+        """Publish exact inputs and completed build choices independently of application deduplication."""
+        descriptor = builder.root + "/completed-build.json"
+        builder.run(
+            ["sh", "-ec", 'cat > "$1"', "record", descriptor],
+            container=builder.artifact_container, input_text=json.dumps(record),
+        )
+        relative = "sources/builds/" + revision
+        archive_url = self.endpoint + "/" + relative + "/inputs.tar.gz"
         arguments = [
-            "--retire-source", self.mount, binding,
-            json.dumps(self._retained_versions(references)),
+            "--publish-build", _SOURCE_ARCHIVE, descriptor,
+            self.mount + "/" + relative, builder.binding, archive_url,
         ]
-        with self._publisher(arguments, binding, timeout) as (job, deadline), self.kubectl.until(deadline):
+        with self._publisher(arguments, builder.binding, timeout, builder=builder) as (job, deadline), self.kubectl.until(deadline):
             self._wait(job, deadline)
-            result = self.kubectl.run(
-                ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
-            )
-            return not json.loads(result.stdout)["retained"]
+        return {
+            "url": self.endpoint + "/" + relative + "/build.json",
+            "applications": {
+                component: self.reference(component, application["revision"])
+                for component, application in record["build"]["applications"].items()
+            },
+            "images": record["build"]["images"],
+        }
 
     @contextmanager
     def import_release(
@@ -382,7 +397,7 @@ class ApplicationFiles:
         binding: str,
         timeout: str,
         *,
-        builder: ClusterBuilder | None = None,
+        builder: CompilerWorkspace | None = None,
         source_revision: str = "",
         name: str = "",
         inputs: Callable[[], dict[str, str]] | None = None,
@@ -396,7 +411,7 @@ class ApplicationFiles:
         execution = builder.cancellation if builder is not None else CommandExecution.current()
         labels = {
             "foretoken.io/application-files": "publisher",
-            _BINDING_LABEL: binding,
+            APPLICATION_PUBLISHER_BINDING_LABEL: binding,
         }
         mounts = [{"name": "applications", "mountPath": self.mount}]
         volumes = [
@@ -564,7 +579,7 @@ class ApplicationFiles:
                 if not uncertain_create:
                     return
                 current = self.kubectl.get_if_exists("job", name, self.namespace)
-                if current is None or current["metadata"].get("labels", {}).get(_BINDING_LABEL) != binding:
+                if current is None or current["metadata"].get("labels", {}).get(APPLICATION_PUBLISHER_BINDING_LABEL) != binding:
                     return
                 if not any(
                     owner["kind"] == "PersistentVolumeClaim" and owner["uid"] == self.claim_uid
@@ -729,6 +744,8 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
         spec = obj.get("spec", {})
         if obj.get("kind") == "InferenceDeployment" and spec.get("controllerSourceRevision"):
             references.add(spec["controllerSourceRevision"])
+        if obj.get("kind") == "ConfigMap" and WORKSPACE_SELECTION_KEY in obj.get("data", {}):
+            references.update(json.loads(obj["data"][WORKSPACE_SELECTION_KEY])["applications"])
         if obj.get("kind") == "ConfigMap" and "controller-selection.json" in obj.get("data", {}):
             selection = json.loads(obj["data"]["controller-selection.json"])
             references.update(application_references([selection["template"]["controller"]]))
@@ -737,6 +754,8 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
         template_metadata = template.get("metadata", {})
         if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
             values = json.loads(obj["data"]["deploymentValues"])
+            if source_build := obj["data"].get(SOURCE_BUILD_KEY):
+                references.update(json.loads(source_build).get("completedBuild", {}).get("applications", {}).values())
             references.update(filter(None, (
                 values["controller"]["applicationURL"],
                 values["frontend"]["applicationURL"],
@@ -811,6 +830,7 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
             ) for selector in (
                 "foretoken.io/platform=configuration",
                 "app.kubernetes.io/component=deployment-controller",
+                WORKSPACE_LABEL,
             ))
             pending.extend(
                 queries.submit(
@@ -841,7 +861,7 @@ def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> Non
             "jobs",
             "--all-namespaces",
             "--selector",
-            f"foretoken.io/application-files=publisher,{_BINDING_LABEL}={binding}",
+            f"foretoken.io/application-files=publisher,{APPLICATION_PUBLISHER_BINDING_LABEL}={binding}",
             "--ignore-not-found",
             "--cascade=foreground",
             "--wait=true",

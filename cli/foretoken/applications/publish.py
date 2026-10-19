@@ -270,6 +270,27 @@ def import_release(
             )
 
 
+def publish_build(archive: Path, descriptor: Path, destination: Path, binding: str, archive_url: str) -> None:
+    """Publish one completed build and its exact input archive as an immutable development record."""
+    if (destination / "build.json").is_file():
+        return
+    record = json.loads(descriptor.read_text())
+    origin = destination.parents[2]
+    for component, application in record["build"]["applications"].items():
+        if not (origin / component / application["revision"] / "manifest.json").is_file():
+            raise FileNotFoundError(f"completed {component} application is unavailable")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _clear_source_staging(destination.parent, binding)
+    with tempfile.TemporaryDirectory(prefix=f".{binding}.staging-", dir=destination.parent) as temporary:
+        staging = Path(temporary) / "build"
+        staging.mkdir()
+        shutil.copyfile(archive, staging / "inputs.tar.gz")
+        (staging / "inputs.tar.gz").chmod(0o444)
+        (staging / "build.json").write_text(json.dumps({**record, "archive": archive_url}) + "\n")
+        (staging / "build.json").chmod(0o444)
+        staging.rename(destination)
+
+
 def archive_inputs(workspace: Path, destination: Path) -> None:
     """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
     inputs = json.loads((workspace.parent / "inputs.json").read_text())
@@ -310,18 +331,10 @@ if __name__ == "__main__":
             selection["previous"],
             set(retained) if retained is not None else None,
         )
+    elif sys.argv[1] == "--publish-build":
+        publish_build(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5], sys.argv[6])
     elif sys.argv[1] == "--archive-inputs":
         archive_inputs(Path(sys.argv[2]), Path(sys.argv[3]))
-    elif sys.argv[1] == "--retire-source":
-        root, binding = Path(sys.argv[2]), sys.argv[3]
-        keep = set(json.loads(sys.argv[4]))
-        retained = set()
-        for component in ("control-plane", "frontend", "model-server"):
-            directory = root / component
-            _clear_source_staging(directory, binding)
-            if directory.is_dir():
-                retained.update(retire(directory, binding, keep))
-        print(json.dumps({"retained": sorted(retained)}))
     else:
         destination = Path(sys.argv[2])
         binding = sys.argv[3]

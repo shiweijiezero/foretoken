@@ -17,15 +17,11 @@ from typing import Any
 
 from foretoken.applications.files import ApplicationFiles
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import (
-    ClusterBuilder,
-    find_build_cache,
-    registry_credentials,
-)
+from foretoken.build.cluster import ClusterBuilder, registry_credentials
+from foretoken.build.compiler import CompilerWorkspace
 from foretoken.build.engine import (
     engine_build_arguments,
     engine_cache_scope,
-    export_engine_source,
     resolve_vllm_base_image,
 )
 from foretoken.build.environments import BuildEnvironments
@@ -34,12 +30,11 @@ from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
-    mooncake_inputs,
-    pinned_rust_revision,
     snapshot_versions,
     source_checkout,
 )
 from foretoken.build.node_images import image_tools_image
+from foretoken.build.records import completed_build
 from foretoken.build.state import (
     capture_build_inputs,
     cluster_state_directory,
@@ -54,7 +49,6 @@ from foretoken.build.storage import (
     prepare_build_storage,
 )
 from foretoken.command_execution import CommandExecution
-from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.network_sources import select_build_sources
 
@@ -135,21 +129,12 @@ def prepare_source_images(
     else:
         environment.update(saved_arguments)
         arguments = dict(saved_arguments)
-    old = state_directory / previous["inputs"] if previous.get("inputs") else None
+    saved_inputs = (
+        pending if pending.get("root") == str(root) and pending.get("inputs") and pending.get("build", {}).get("versions")
+        else previous
+    )
+    old = state_directory / saved_inputs["inputs"] if saved_inputs.get("root") == str(root) and saved_inputs.get("inputs") else None
     mooncake_version = arguments.get("MOONCAKE_VERSION", "") if build_metax_runtime else None
-    if mooncake_version is not None:
-        _, dependency = mooncake_inputs(root, old, mooncake_version)
-        if not dependency["prepared"]:
-            prepared = cancellation.run(
-                [str(root / "deploy/mooncake/prepare-source")],
-                cwd=root,
-                env=environment,
-            )
-            if prepared.returncode:
-                raise DeploymentError(
-                    "could not prepare the MetaX runtime's Mooncake source"
-                )
-    arguments["VLLM_REVISION"] = pinned_rust_revision(root)
     configuration = build_configuration(
         root,
         values,
@@ -158,6 +143,12 @@ def prepare_source_images(
         ),
     )
     registry = (command.registry or "").rstrip("/")
+    cached_build = (
+        pending["build"]
+        if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding
+        and pending["build"].get("registry") == registry and pending["build"].get("environments")
+        else build
+    )
     prefix = registry if registry else "docker.io/library/foretoken-dev"
     suffix = uuid.uuid4().hex
     references = {
@@ -166,7 +157,10 @@ def prepare_source_images(
         else f"{prefix}-{component}:{suffix}"
         for component in components
     }
-    environment_references = dict(references)
+    environment_references = {
+        **references,
+        **{"compiler-" + component: reference + "-compiler" for component, reference in references.items()},
+    }
     if build_metax_runtime:
         for name in ("metax-sdk", "vllm-metax"):
             environment_references[name] = (
@@ -174,6 +168,7 @@ def prepare_source_images(
             )
     if engines:
         environment_references["engine-source"] = references["model-server"] + "-engine"
+        environment_references["compiler-engine"] = references["model-server"] + "-engine-compiler"
     secret_names = tuple(
         secret["name"]
         for value in values
@@ -182,17 +177,11 @@ def prepare_source_images(
     nodes = local_build_nodes(
         kubectl, command.registry, build.get("containerd_socket", "")
     )
+    if registry:
+        node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+        nodes = [(origin.node, "", "foretoken-application-compiler-" + node_uid)]
     if checkout is not None:
         nodes = [(node, socket, f"{claim}-{binding[:12]}") for node, socket, claim in nodes]
-    if registry:
-        claim = find_build_cache(
-            kubectl, namespace, binding, origin.node, "/var/cache/foretoken"
-        )
-        node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-        default_claim = "foretoken-application-compiler-" + node_uid
-        if checkout is not None:
-            default_claim += "-" + binding[:12]
-        nodes = [(origin.node, "", claim or default_claim)]
     # Keep a failed first installation's compiler cache addressable for retry and
     # uninstall, without replacing an existing successful installation binding.
     # Null inputs precede the first sync; absent inputs in legacy pending state are unknown.
@@ -206,6 +195,10 @@ def prepare_source_images(
             "base_image": inference_engine_image,
             "build": {
                 "binding": binding,
+                "configuration": configuration,
+                "registry": registry,
+                "runtime_backend": runtime_backend,
+                "build_metax_runtime": build_metax_runtime,
                 **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
                 "caches": [
                     *build.get("caches", []),
@@ -252,12 +245,15 @@ def prepare_source_images(
     with capture_build_inputs(
         root, engines, old, mooncake_version=mooncake_version,
     ) as snapshot, ExitStack() as build_contexts:
-        # Pending inputs survive a failed build: compiler storage is never their only copy.
+        # Compare before replacing pending state: its prior input tree is still needed
+        # to preserve file versions and incremental mtimes after an interrupted build.
+        versions = snapshot_versions(snapshot, old, saved_inputs.get("build", {}).get("versions", {}))
         with local_candidates(state_directory):
             destination = state_directory / snapshot.name
             snapshot.rename(destination)
             snapshot = destination
             pending_state["inputs"] = snapshot.name
+            pending_state["build"]["versions"] = versions
             write_source_state(pending_path, pending_state)
         # Resolve automatic defaults from the same inputs used by the build, without
         # recording them as an explicit base selection in the installation binding.
@@ -290,7 +286,6 @@ def prepare_source_images(
                 ),
             ]
         )
-        versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
             str(path.relative_to(snapshot)): path
             for path in snapshot.rglob("*")
@@ -326,7 +321,7 @@ def prepare_source_images(
 
         environments = BuildEnvironments(
             builders, versions,
-            build.get("environments", {}) if build.get("registry") == registry else {},
+            cached_build.get("environments", {}) if cached_build.get("registry") == registry else {},
             environment_references, push=bool(registry), refresh=checkout is None,
         )
         publisher = next(builder for builder in builders if builder.node == origin.node)
@@ -342,15 +337,25 @@ def prepare_source_images(
             for component in components
         }
         application_parts: dict[str, list[str] | None] = {}
+        compiler_images: dict[str, str] = {}
 
         def build_component(component: str, dockerfile: str) -> dict[str, Any]:
-            """Prepare each environment once per node, then export its application at the origin."""
+            """Prepare reusable runtime and compiler images without mutable application outputs."""
+            compiler = environments.build(
+                "compiler-" + component, dockerfile, target="compiler",
+                arguments={key: value for key, value in arguments.items() if key in {
+                    "BASE_IMAGE_REGISTRY", "GO_IMAGE_REGISTRY", "UV_IMAGE_REGISTRY", "UV_IMAGE",
+                    "GO_BUILDER_IMAGE", "RUST_BUILDER_IMAGE", "BUILDKIT_SYNTAX_IMAGE", "FORETOKEN_GITHUB_MIRROR",
+                }},
+                input_prefixes=(),
+            )
+            compiler_images[component] = compiler["image"]
             engine_image = base_image
             if component == "model-server" and build_metax_runtime:
                 runtime_arguments = {
                     key: value for key, value in arguments.items()
                     if key in {
-                        "METAX_SDK_IMAGE", "UV_IMAGE_REGISTRY", "UV_IMAGE", "MACA_PATH", "UV_PYTHON",
+                        "METAX_SDK_IMAGE", "UV_IMAGE_REGISTRY", "UV_IMAGE", "MACA_PATH", "UV_PYTHON", "MOONCAKE_VERSION",
                         "FORETOKEN_GITHUB_MIRROR", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
                         "BUILDKIT_SYNTAX_IMAGE",
                     }
@@ -421,7 +426,7 @@ def prepare_source_images(
             ):
                 selected_parts = {"rust"} if component == "frontend" else {"rust", "python", "engine"}
                 if not any(
-                    path in {".dockerignore", "LICENSE"}
+                    path in {".dockerignore", "LICENSE", "deploy/build-source"}
                     or (path.startswith("data-plane/") and not path.startswith("data-plane/model-server/python/"))
                     for path in changed
                 ):
@@ -430,55 +435,52 @@ def prepare_source_images(
                     selected_parts.discard("python")
                 parts = sorted(selected_parts)
             application_parts[component] = parts
-            # Join the file export before publication or releasing its workspace.
-            with ThreadPoolExecutor(max_workers=1) as application_build, cancellation:
-                payload = publisher.root + "/applications/" + component
-                application = application_build.submit(
-                    cancellation.run_stage, publisher.export_application, component, payload, arguments, parts,
-                )
-                if component == "model-server" and engines:
-                    cache_prefix = cache_scope["prefix"]
-                    engine_arguments = {
-                        key: value for key, value in engine_build_arguments(arguments).items()
-                        if key != "TARGET_CUDA_ARCH_LIST"
+            if component == "model-server" and engines:
+                cache_prefix = cache_scope["prefix"]
+                engine_arguments = {
+                    key: value for key, value in engine_build_arguments(arguments).items()
+                    if key != "TARGET_CUDA_ARCH_LIST"
+                }
+                engine_arguments["RUNTIME_IMAGE"] = selected["image"]
+                node_arguments = {}
+                # The engine base and interpreter own ABI; CMake tracks source and
+                # compiler inputs within each workspace's private native cache.
+                python_executable = arguments.get("FORETOKEN_VLLM_PYTHON") or "python3"
+                for builder in builders:
+                    base_digest = builder.resolve_image(engine_image)
+                    node_arguments[builder.node] = {
+                        "RUNTIME_USER": builder.image_user(selected["image"]),
+                        "CACHE_ID": f"{cache_prefix}-metadata-{base_digest}-{python_executable}",
                     }
-                    engine_arguments["RUNTIME_IMAGE"] = selected["image"]
-                    node_arguments = {}
-                    # Dependency exports can acquire new OCI digests on every retry.
-                    # The engine base and selected interpreter own Python/accelerator ABI;
-                    # CMake and ccache track native source/tool inputs within that environment.
-                    python_executable = arguments.get("FORETOKEN_VLLM_PYTHON") or "python3"
-                    for builder in builders:
-                        base_digest = builder.resolve_image(engine_image)
-                        node_arguments[builder.node] = {
-                            "RUNTIME_USER": builder.image_user(selected["image"]),
-                            "CACHE_ID": f"{cache_prefix}-metadata-{base_digest}-{python_executable}",
-                        }
-                        key = "" if registry else builder.node
-                        engine_caches[key] = f"{cache_prefix}-native-{base_digest}-{python_executable}"
-                    pending_state["build"]["engine_caches"] = dict(engine_caches)
-                    write_source_state(pending_path, pending_state)
-                    selected = environments.build(
-                        "engine-source", "deploy/inference-engines/vllm/source-build.Dockerfile",
-                        target="environment", arguments=engine_arguments,
-                        node_arguments=node_arguments,
-                        input_prefixes=(
-                            "engine/", "deploy/inference-engines/vllm/source-build.py",
-                            "deploy/inference-engines/vllm-metax/source-environment.json",
-                            "deploy/inference-engines/vllm-metax/sdk_audio.py",
-                            "deploy/inference-engines/vllm-metax/patches/",
-                            "data-plane/patches/vllm/",
-                        ),
+                prefixes = (
+                    "cli/foretoken/build/engine_sources.py",
+                    "deploy/inference-engines/vllm/source-build.py",
+                    "deploy/inference-engines/vllm-metax/source-environment.json",
+                    "deploy/inference-engines/vllm-metax/sdk_audio.py",
+                    "deploy/inference-engines/vllm-metax/patches/", "data-plane/patches/vllm/",
+                )
+                selected = environments.build(
+                    "engine-source", "deploy/inference-engines/vllm/source-build.Dockerfile",
+                    target="environment", arguments=engine_arguments,
+                    node_arguments=node_arguments, input_prefixes=("engine/", *prefixes),
+                )
+                compiler = environments.build(
+                    "compiler-engine", "deploy/inference-engines/vllm/source-build.Dockerfile",
+                    target="toolchain", arguments={**engine_arguments, "RUNTIME_IMAGE": selected["image"]},
+                    input_prefixes=prefixes,
+                )
+                compiler_images["engine"] = compiler["image"]
+                for builder in builders:
+                    key = "" if registry else builder.node
+                    previous_cache = cached_build.get("engine_caches", {}).get(key)
+                    engine_caches[key] = (
+                        previous_cache
+                        if previous_cache and cached_build.get("compilers", {}).get("engine") == compiler["image"]
+                        else binding + "-" + uuid.uuid4().hex
                     )
-                application.result()
-                if component == "model-server" and engines:
-                    export_engine_source(
-                        publisher, payload, arguments,
-                        runtime_image=selected["image"],
-                        cache_id=engine_caches["" if registry else origin.node],
-                        build_native=engine_native,
-                    )
-                return selected
+                pending_state["build"]["engine_caches"] = dict(engine_caches)
+                write_source_state(pending_path, pending_state)
+            return selected
 
         with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
             pending_builds = {
@@ -497,6 +499,51 @@ def prepare_source_images(
             references[component] = record["image"]
             for node, digest in record["digests"].items():
                 digests[node][component] = digest
+        # Native compiler containers consume completed images through kubelet's shared
+        # layer store. Only image preparation uses the binding's isolated BuildKit daemon.
+        if before_delivery is not None:
+            before_delivery()
+        for builder in builders:
+            environments.deliver(builder)
+        for name, record in environments.records.items():
+            for node, digest in record["digests"].items():
+                digests[node]["environment-" + name] = digest
+        environment_images = {
+            "environment-" + name: record["image"] for name, record in environments.records.items()
+        }
+        # Completed dependencies remain reusable even if native compilation fails.
+        # Application planning still compares with the last completed applications.
+        pending_state["build"].update(
+            digests=digests, images={**references, **environment_images},
+            environments=environments.records, compilers=compiler_images,
+            engine_caches=engine_caches, engine_native=engine_native,
+        )
+        write_source_state(pending_path, pending_state)
+        publisher = build_contexts.enter_context(CompilerWorkspace(
+            kubectl, namespace, publisher.claim, binding, origin.node,
+            compiler_images, configuration, command.timeout,
+            tools_image=image_tools_image(arguments, registry_mirrors),
+            execution_claim=publisher.execution_claim,
+            owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+            pull_secrets=secret_names, credentials=credentials, cancellation=cancellation,
+        ))
+        publisher.sync(files, versions)
+
+        def compile_application(component: str) -> None:
+            """Keep native outputs in the cluster until the existing publisher commits them."""
+            payload = publisher.root + "/applications/" + component
+            publisher.export_application(component, payload, arguments, application_parts[component])
+            if component == "model-server" and engines:
+                publisher.export_engine(
+                    payload, arguments, cache_id=engine_caches["" if registry else origin.node],
+                    build_native=engine_native,
+                )
+
+        with ThreadPoolExecutor(max_workers=len(references)) as builds, cancellation:
+            pending_builds = [builds.submit(cancellation.run_stage, compile_application, component) for component in references]
+            for future in pending_builds:
+                future.result()
+        BuildInputs.select(root, engines, mooncake_version=mooncake_version).validate(snapshot)
         # The publisher compares actual exports, independently of download-source choices.
         # Prefer the latest deployment bundle over the initial installation's application.
         retained_applications = None
@@ -547,54 +594,25 @@ def prepare_source_images(
             component: origin.reference(component, revision)
             for component, revision in application_revisions.items()
         }
-        # Keep builders alive until platform dependencies finish. A failed
-        # prerequisite exits through cleanup without delivering candidate images.
-        if before_delivery is not None:
-            before_delivery()
-        for name, record in environments.records.items():
-            for node, digest in record["digests"].items():
-                digests[node]["environment-" + name] = digest
-        environment_images = {
-            "environment-" + name: record["image"]
-            for name, record in environments.records.items()
-        }
         for builder in builders:
-            environments.deliver(builder)
             builder.discard_unselected_images(
                 set(references.values()) | set(environment_images.values())
             )
+        BuildInputs.select(root, engines, mooncake_version=mooncake_version).validate(snapshot)
+        build_state = pending_state["build"]
+        build_state["applications"] = {
+            component: {"revision": revision} for component, revision in application_revisions.items()
+        }
+        if checkout is None:
+            build_state["completed"] = origin.publish_build(
+                publisher, snapshot.name, completed_build(build_state), timeout=command.timeout,
+            )
+        write_source_state(pending_path, pending_state)
         build_contexts.close()
-        BuildInputs.select(root, engines, snapshot, mooncake_version=mooncake_version).validate(snapshot)
         yield SourceImages(
-            root,
-            "registry" if registry else "import",
-            references.get("control-plane", ""),
-            references["frontend"],
-            references["model-server"],
-            snapshot,
-            {
-                "binding": binding,
-                "caches": caches,
-                "configuration": configuration,
-                "versions": versions,
-                "digests": digests,
-                "images": {**references, **environment_images},
-                "environments": environments.records,
-                "arguments": arguments,
-                "registry_mirrors": registry_mirrors,
-                "registry": registry,
-                "containerd_socket": nodes[0][1],
-                "engine_caches": engine_caches,
-                **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
-                "engine_native": engine_native,
-                "runtime_backend": runtime_backend,
-                "build_metax_runtime": build_metax_runtime,
-                "applications": {
-                    component: {"revision": revision}
-                    for component, revision in application_revisions.items()
-                },
-            },
-            applications,
+            root, "registry" if registry else "import",
+            references.get("control-plane", ""), references["frontend"], references["model-server"],
+            snapshot, build_state, applications,
         )
 
 

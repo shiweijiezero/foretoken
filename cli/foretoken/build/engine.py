@@ -10,10 +10,7 @@ import json
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from foretoken.build.cluster import ClusterBuilder
+from typing import Any
 
 
 def _main() -> None:
@@ -75,28 +72,6 @@ def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
         )
         if name in arguments
     }
-
-
-def export_engine_source(
-    builder: ClusterBuilder, payload: str, arguments: dict[str, str], *,
-    runtime_image: str, cache_id: str, build_native: bool,
-) -> None:
-    """Build and merge engine sources into a completed model-server export before publication."""
-    output = payload + "-engine"
-    builder.build(
-        "deploy/inference-engines/vllm/source-build.Dockerfile",
-        target="source-export", destination=output,
-        arguments={
-            **engine_build_arguments(arguments),
-            "RUNTIME_IMAGE": runtime_image,
-            "CACHE_ID": cache_id,
-            "BUILD_NATIVE": str(build_native).lower(),
-        },
-    )
-    builder.run(
-        ["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", output, payload],
-        container=builder.artifact_container,
-    )
 
 
 if __name__ == "__main__":

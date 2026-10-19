@@ -109,7 +109,7 @@ Daily commands use that namespace automatically. Members do not create Namespace
 
 ### uninstall
 
-The platform administrator removes the shared platform after its deployment instances are gone. The Kubernetes cluster, Foretoken CRDs, stored logs and reused cluster components are retained.
+The platform administrator removes the shared platform and its managed development storage after deployment instances are gone. The Kubernetes cluster, Foretoken CRDs, stored logs and reused cluster components are retained.
 
 ```bash
 foretoken uninstall
@@ -153,7 +153,7 @@ Delete only the selected instance. The command waits for its services and worklo
 foretoken delete qwen
 ```
 
-Managed model downloads are collected after their last service reference is released; `stop` retains those references. Dynamic volumes follow their retention and StorageClass reclaim policies. See [model storage](../docs/features/model-storage.md#stop-delete-and-reuse).
+Development environments and incremental build state are retained for later source deployments. Managed model downloads are collected after their last service reference is released; `stop` retains those references. Dynamic volumes follow their retention and StorageClass reclaim policies. See [model storage](../docs/features/model-storage.md#stop-delete-and-reuse).
 
 ### endpoint
 

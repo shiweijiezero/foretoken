@@ -6,11 +6,14 @@
 **
 !LICENSE
 !deploy/
+!deploy/build-source
 !deploy/inference-engines/
 !deploy/inference-engines/vllm-metax/
 !deploy/inference-engines/vllm-metax/**
 !deploy/mooncake/
 !deploy/mooncake/NOTICE
+!deploy/mooncake/prepare-source
+!deploy/mooncake/source-environment.json
 !deploy/mooncake/patches/
 !deploy/mooncake/patches/**
 !third_party/
