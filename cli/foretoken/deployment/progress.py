@@ -66,6 +66,98 @@ class StartupProgress:
         self._stop(self._logs.values())
         self._logs.clear()
 
+    def poll(
+        self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0,
+        *, follow_logs: bool = True, force: bool = False,
+    ) -> None:
+        """Discover container attempts and report Pod changes without deciding service readiness."""
+        now = time.monotonic()
+        if (not force and now < self._next_poll) or budget <= 0:
+            return
+        self._next_poll = now + 5.0
+        deadline = now + min(budget, 5.0)
+        selected = {(r.namespace, r.kind, r.name) for r in resources}
+        owners = self._owners
+        self._seen_owners.clear()
+        alive: set[tuple[str, str, int]] = set()
+        live_readers: set[tuple[str, str, str]] = set()
+        events: dict[str, dict[str, Any]] = {}
+        try:
+            for namespace in sorted({ns for ns, _, _ in selected}):
+                args = ["get", "pods"]
+                if namespace:
+                    args += ["-n", namespace]
+                for pod in self._get(args, deadline).get("items", []):
+                    meta = pod["metadata"]
+                    if not any(key in meta.get("labels", {}) for key in _WORKLOAD_LABELS):
+                        continue
+                    service = self._service(pod, namespace, selected, owners, deadline)
+                    if service is None:
+                        continue
+                    status = pod.get("status", {})
+                    containers = status.get("initContainerStatuses", []) + status.get("containerStatuses", [])
+                    if not containers:
+                        scheduled = next((c for c in status.get("conditions", [])
+                                          if c.get("type") == "PodScheduled"), {})
+                        self._report(pod, {"name": "pod"}, service, elapsed,
+                                     scheduled.get("reason", status.get("phase", "Pending")),
+                                     scheduled.get("message", "Waiting for container status"), alive)
+                    for container in containers:
+                        state = container.get("state", {})
+                        last = container.get("lastState", {}).get("terminated", {})
+                        if last:
+                            self._report(pod, container, service, elapsed, "PreviousTerminated",
+                                         _termination_detail(last), alive)
+                        if not follow_logs and not last and not ("waiting" in state or "terminated" in state):
+                            continue
+                        if meta.get("deletionTimestamp"):
+                            self._report(pod, container, service, elapsed, "Terminating", "", alive)
+                        elif "waiting" in state:
+                            waiting = state["waiting"]
+                            self._report(pod, container, service, elapsed,
+                                         waiting.get("reason", "Waiting"), waiting.get("message", ""), alive)
+                            if not follow_logs:
+                                continue
+                            if namespace not in events:
+                                event_args = ["get", "events"]
+                                if namespace:
+                                    event_args += ["-n", namespace]
+                                events[namespace] = self._get(event_args, deadline)
+                            related = [e for e in events[namespace].get("items", [])
+                                       if e.get("involvedObject", {}).get("uid") == meta["uid"]]
+                            if related:
+                                event = max(related, key=lambda e: str(e.get("lastTimestamp") or
+                                            e.get("eventTime") or e.get("metadata", {}).get("creationTimestamp", "")))
+                                self._report(pod, container, service, elapsed, "Event",
+                                             f"{event.get('reason', '')}: {event.get('message', '')}", alive)
+                        elif "terminated" in state:
+                            end = state["terminated"]
+                            self._report(pod, container, service, elapsed,
+                                         "Terminated", _termination_detail(end), alive)
+                        elif container.get("ready"):
+                            self._report(pod, container, service, elapsed, "ContainerReady", "", alive)
+                        else:
+                            self._report(pod, container, service, elapsed, "Running", "", alive)
+                        if follow_logs and ("running" in state or "terminated" in state or last):
+                            failure = self._follow(pod, container, live_readers)
+                            if failure:
+                                self._report(pod, container, service, elapsed,
+                                             "LogsUnavailable", failure, alive)
+            # Prune readers only after a complete discovery pass. A transient API
+            # failure must not cancel log streams from still-running containers.
+            self._stop([self._logs.pop(key) for key in self._logs.keys() - live_readers])
+            self._previous = {key: value for key, value in self._previous.items() if key in alive}
+            self._owners = {uid: value for uid, value in owners.items() if uid in self._seen_owners}
+            if self._unavailable:
+                self.emit(f"[{elapsed:6.1f}s] Startup observations resumed")
+                self._unavailable = ""
+        except DeploymentError as exc:
+            # Observability permissions or a disappearing Pod must not redefine service readiness.
+            message = _message(str(exc))
+            if message != self._unavailable:
+                self.emit(f"[{elapsed:6.1f}s] Startup observations unavailable — {message}")
+                self._unavailable = message
+
     @staticmethod
     def _stop(processes: Iterable[subprocess.Popen]) -> None:
         """Close read-only log connections without leaving local child processes."""
@@ -161,98 +253,6 @@ class StartupProgress:
                     return None
                 cache[uid] = value
             obj = cache[uid]
-
-    def poll(
-        self, resources: Iterable[ResourceRef], elapsed: float, budget: float = 5.0,
-        *, follow_logs: bool = True, force: bool = False,
-    ) -> None:
-        """Discover container attempts and report Pod changes without deciding service readiness."""
-        now = time.monotonic()
-        if (not force and now < self._next_poll) or budget <= 0:
-            return
-        self._next_poll = now + 5.0
-        deadline = now + min(budget, 5.0)
-        selected = {(r.namespace, r.kind, r.name) for r in resources}
-        owners = self._owners
-        self._seen_owners.clear()
-        alive: set[tuple[str, str, int]] = set()
-        live_readers: set[tuple[str, str, str]] = set()
-        events: dict[str, dict[str, Any]] = {}
-        try:
-            for namespace in sorted({ns for ns, _, _ in selected}):
-                args = ["get", "pods"]
-                if namespace:
-                    args += ["-n", namespace]
-                for pod in self._get(args, deadline).get("items", []):
-                    meta = pod["metadata"]
-                    if not any(key in meta.get("labels", {}) for key in _WORKLOAD_LABELS):
-                        continue
-                    service = self._service(pod, namespace, selected, owners, deadline)
-                    if service is None:
-                        continue
-                    status = pod.get("status", {})
-                    containers = status.get("initContainerStatuses", []) + status.get("containerStatuses", [])
-                    if not containers:
-                        scheduled = next((c for c in status.get("conditions", [])
-                                          if c.get("type") == "PodScheduled"), {})
-                        self._report(pod, {"name": "pod"}, service, elapsed,
-                                     scheduled.get("reason", status.get("phase", "Pending")),
-                                     scheduled.get("message", "Waiting for container status"), alive)
-                    for container in containers:
-                        state = container.get("state", {})
-                        last = container.get("lastState", {}).get("terminated", {})
-                        if last:
-                            self._report(pod, container, service, elapsed, "PreviousTerminated",
-                                         _termination_detail(last), alive)
-                        if not follow_logs and not last and not ("waiting" in state or "terminated" in state):
-                            continue
-                        if meta.get("deletionTimestamp"):
-                            self._report(pod, container, service, elapsed, "Terminating", "", alive)
-                        elif "waiting" in state:
-                            waiting = state["waiting"]
-                            self._report(pod, container, service, elapsed,
-                                         waiting.get("reason", "Waiting"), waiting.get("message", ""), alive)
-                            if not follow_logs:
-                                continue
-                            if namespace not in events:
-                                event_args = ["get", "events"]
-                                if namespace:
-                                    event_args += ["-n", namespace]
-                                events[namespace] = self._get(event_args, deadline)
-                            related = [e for e in events[namespace].get("items", [])
-                                       if e.get("involvedObject", {}).get("uid") == meta["uid"]]
-                            if related:
-                                event = max(related, key=lambda e: str(e.get("lastTimestamp") or
-                                            e.get("eventTime") or e.get("metadata", {}).get("creationTimestamp", "")))
-                                self._report(pod, container, service, elapsed, "Event",
-                                             f"{event.get('reason', '')}: {event.get('message', '')}", alive)
-                        elif "terminated" in state:
-                            end = state["terminated"]
-                            self._report(pod, container, service, elapsed,
-                                         "Terminated", _termination_detail(end), alive)
-                        elif container.get("ready"):
-                            self._report(pod, container, service, elapsed, "ContainerReady", "", alive)
-                        else:
-                            self._report(pod, container, service, elapsed, "Running", "", alive)
-                        if follow_logs and ("running" in state or "terminated" in state or last):
-                            failure = self._follow(pod, container, live_readers)
-                            if failure:
-                                self._report(pod, container, service, elapsed,
-                                             "LogsUnavailable", failure, alive)
-            # Prune readers only after a complete discovery pass. A transient API
-            # failure must not cancel log streams from still-running containers.
-            self._stop([self._logs.pop(key) for key in self._logs.keys() - live_readers])
-            self._previous = {key: value for key, value in self._previous.items() if key in alive}
-            self._owners = {uid: value for uid, value in owners.items() if uid in self._seen_owners}
-            if self._unavailable:
-                self.emit(f"[{elapsed:6.1f}s] Startup observations resumed")
-                self._unavailable = ""
-        except DeploymentError as exc:
-            # Observability permissions or a disappearing Pod must not redefine service readiness.
-            message = _message(str(exc))
-            if message != self._unavailable:
-                self.emit(f"[{elapsed:6.1f}s] Startup observations unavailable — {message}")
-                self._unavailable = message
 
     def _report(
         self, pod: dict[str, Any], container: dict[str, Any], service: ResourceRef,

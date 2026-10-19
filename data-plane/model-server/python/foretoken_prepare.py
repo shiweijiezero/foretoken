@@ -16,119 +16,41 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-def distributed_directory(source, repository, revision):
-    """Locate a peer snapshot in the shared cache independently of its transport endpoint."""
-    return (
-        Path(os.environ["FORETOKEN_MODEL_CACHE_ROOT"])
-        / "distributed"
-        / source
-        / repository
-        / revision
+def main() -> None:
+    """Emit one structured resolution or acquisition result; SDK output stays on stderr."""
+    source = os.environ["FORETOKEN_PREPARE_SOURCE"]
+    model = (
+        os.environ["FORETOKEN_PREPARE_MODEL"],
+        os.environ["FORETOKEN_PREPARE_MODEL_REVISION"],
     )
-
-
-def cached_peer_snapshot(source, repository, revision, files):
-    """Return a published peer view when the provider's complete file list is present."""
-    directory = distributed_directory(source, repository, revision)
-    if directory.is_dir() and all((directory / name).is_file() for name in files):
-        return str(directory)
-    return None
-
-
-def download_peer_file(proxy, url, revision, target):
-    """Acquire one file for provider verification; return an optional transport failure."""
-    from huggingface_hub.constants import HF_HUB_DOWNLOAD_TIMEOUT
-
-    endpoint = urlsplit(proxy)
-    # Absolute-form HTTPS retains native back-to-source HTTPS without a CONNECT tunnel.
-    with contextlib.closing(
-        http.client.HTTPConnection(
-            endpoint.hostname, endpoint.port, timeout=HF_HUB_DOWNLOAD_TIMEOUT
-        )
-    ) as connection:
-        try:
-            connection.request(
-                "GET",
-                url,
-                headers={"X-Dragonfly-Use-P2P": "true", "X-Dragonfly-Tag": revision},
-            )
-            response = connection.getresponse()
-        except (OSError, http.client.HTTPException) as error:
-            return str(error)
-        with response:
-            if response.status != 200:
-                return f"HTTP {response.status} {response.reason}"
-            try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with target.open("wb") as output:
-                    while True:
-                        try:
-                            data = response.read(shutil.COPY_BUFSIZE)
-                        except (OSError, http.client.HTTPException) as error:
-                            return str(error)
-                        if not data:
-                            break
-                        output.write(data)
-            except OSError as error:
-                # Releasing peer staging lets the SDK finish a partially cached download.
-                if error.errno not in {errno.ENOSPC, errno.EDQUOT}:
-                    raise
-                return str(error)
-    return None
-
-
-def hf_peer_snapshot(repository, revision, files, sources, validate):
-    """Publish verified HF peer files alongside links to existing native cache entries."""
-    from filelock import FileLock
-
-    directory = distributed_directory("hf", repository, revision)
-    proxy = os.environ.get("FORETOKEN_MODEL_DOWNLOAD_PROXY")
-    if not directory.is_dir() and (not proxy or sources is None):
-        return None
-    directory.parent.mkdir(parents=True, exist_ok=True)
-    # Published views are immutable. Their validity does not depend on a live peer service.
-    with FileLock(str(directory.with_name(f".{revision}.lock"))):
-        if directory.is_dir():
-            return cached_peer_snapshot("hf", repository, revision, files)
-        if not proxy or sources is None:
-            return None
-        temporary = directory.with_name(f".{revision}.partial")
-        # An interrupted view may link native blobs; never reopen those inodes for writing.
-        if temporary.exists():
-            shutil.rmtree(temporary)
-
-        def transfer(name):
-            target = temporary / name
-            source = sources[name]
-            if isinstance(source, Path):
-                # Partial cache hits must not require another copy of existing model files.
-                try:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.unlink(missing_ok=True)
-                    target.hardlink_to(source.resolve())
-                except OSError as error:
-                    return f"{name}: {error}"
-                return None
-            error = download_peer_file(proxy, source, revision, target)
-            return f"{name}: {error}" if error is not None else None
-
-        with ThreadPoolExecutor() as executor:
-            errors = [error for error in executor.map(transfer, files) if error]
-        if errors or not validate(temporary):
-            if temporary.exists():
-                shutil.rmtree(temporary)
-            reason = (
-                errors[0]
-                if errors
-                else "downloaded files did not match provider metadata"
-            )
-            print(
-                f"Peer acquisition unavailable ({reason}); using the provider SDK",
-                file=sys.stderr,
-            )
-            return None
-        temporary.rename(directory)
-    return str(directory)
+    tokenizer = (
+        os.environ["FORETOKEN_PREPARE_TOKENIZER"],
+        os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"],
+    )
+    artifacts = [model] if tokenizer == model else [model, tokenizer]
+    with contextlib.redirect_stdout(sys.stderr):
+        if os.environ["FORETOKEN_PREPARE_ACTION"] == "resolve":
+            with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
+                revisions = list(
+                    executor.map(lambda artifact: resolve(source, *artifact), artifacts)
+                )
+            result = {
+                "model_revision": revisions[0],
+                "tokenizer_revision": revisions[-1],
+            }
+        else:
+            download = hf_snapshot if source == "hf" else modelscope_snapshot
+            with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
+                snapshots = list(
+                    executor.map(lambda artifact: download(*artifact), artifacts)
+                )
+            result = {
+                "model": snapshots[0][0],
+                "tokenizer": snapshots[-1][0],
+                "model_files": snapshots[0][1],
+                "tokenizer_files": snapshots[-1][1],
+            }
+    print(json.dumps(result))
 
 
 def resolve(source, repository, revision):
@@ -367,41 +289,119 @@ def modelscope_snapshot(repository, revision):
         return cache.get_root_location(), files
 
 
-def main() -> None:
-    """Emit one structured resolution or acquisition result; SDK output stays on stderr."""
-    source = os.environ["FORETOKEN_PREPARE_SOURCE"]
-    model = (
-        os.environ["FORETOKEN_PREPARE_MODEL"],
-        os.environ["FORETOKEN_PREPARE_MODEL_REVISION"],
+def hf_peer_snapshot(repository, revision, files, sources, validate):
+    """Publish verified HF peer files alongside links to existing native cache entries."""
+    from filelock import FileLock
+
+    directory = distributed_directory("hf", repository, revision)
+    proxy = os.environ.get("FORETOKEN_MODEL_DOWNLOAD_PROXY")
+    if not directory.is_dir() and (not proxy or sources is None):
+        return None
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    # Published views are immutable. Their validity does not depend on a live peer service.
+    with FileLock(str(directory.with_name(f".{revision}.lock"))):
+        if directory.is_dir():
+            return cached_peer_snapshot("hf", repository, revision, files)
+        if not proxy or sources is None:
+            return None
+        temporary = directory.with_name(f".{revision}.partial")
+        # An interrupted view may link native blobs; never reopen those inodes for writing.
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+        def transfer(name):
+            target = temporary / name
+            source = sources[name]
+            if isinstance(source, Path):
+                # Partial cache hits must not require another copy of existing model files.
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.unlink(missing_ok=True)
+                    target.hardlink_to(source.resolve())
+                except OSError as error:
+                    return f"{name}: {error}"
+                return None
+            error = download_peer_file(proxy, source, revision, target)
+            return f"{name}: {error}" if error is not None else None
+
+        with ThreadPoolExecutor() as executor:
+            errors = [error for error in executor.map(transfer, files) if error]
+        if errors or not validate(temporary):
+            if temporary.exists():
+                shutil.rmtree(temporary)
+            reason = (
+                errors[0]
+                if errors
+                else "downloaded files did not match provider metadata"
+            )
+            print(
+                f"Peer acquisition unavailable ({reason}); using the provider SDK",
+                file=sys.stderr,
+            )
+            return None
+        temporary.rename(directory)
+    return str(directory)
+
+
+def cached_peer_snapshot(source, repository, revision, files):
+    """Return a published peer view when the provider's complete file list is present."""
+    directory = distributed_directory(source, repository, revision)
+    if directory.is_dir() and all((directory / name).is_file() for name in files):
+        return str(directory)
+    return None
+
+
+def distributed_directory(source, repository, revision):
+    """Locate a peer snapshot in the shared cache independently of its transport endpoint."""
+    return (
+        Path(os.environ["FORETOKEN_MODEL_CACHE_ROOT"])
+        / "distributed"
+        / source
+        / repository
+        / revision
     )
-    tokenizer = (
-        os.environ["FORETOKEN_PREPARE_TOKENIZER"],
-        os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"],
-    )
-    artifacts = [model] if tokenizer == model else [model, tokenizer]
-    with contextlib.redirect_stdout(sys.stderr):
-        if os.environ["FORETOKEN_PREPARE_ACTION"] == "resolve":
-            with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
-                revisions = list(
-                    executor.map(lambda artifact: resolve(source, *artifact), artifacts)
-                )
-            result = {
-                "model_revision": revisions[0],
-                "tokenizer_revision": revisions[-1],
-            }
-        else:
-            download = hf_snapshot if source == "hf" else modelscope_snapshot
-            with ThreadPoolExecutor(max_workers=len(artifacts)) as executor:
-                snapshots = list(
-                    executor.map(lambda artifact: download(*artifact), artifacts)
-                )
-            result = {
-                "model": snapshots[0][0],
-                "tokenizer": snapshots[-1][0],
-                "model_files": snapshots[0][1],
-                "tokenizer_files": snapshots[-1][1],
-            }
-    print(json.dumps(result))
+
+
+def download_peer_file(proxy, url, revision, target):
+    """Acquire one file for provider verification; return an optional transport failure."""
+    from huggingface_hub.constants import HF_HUB_DOWNLOAD_TIMEOUT
+
+    endpoint = urlsplit(proxy)
+    # Absolute-form HTTPS retains native back-to-source HTTPS without a CONNECT tunnel.
+    with contextlib.closing(
+        http.client.HTTPConnection(
+            endpoint.hostname, endpoint.port, timeout=HF_HUB_DOWNLOAD_TIMEOUT
+        )
+    ) as connection:
+        try:
+            connection.request(
+                "GET",
+                url,
+                headers={"X-Dragonfly-Use-P2P": "true", "X-Dragonfly-Tag": revision},
+            )
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException) as error:
+            return str(error)
+        with response:
+            if response.status != 200:
+                return f"HTTP {response.status} {response.reason}"
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output:
+                    while True:
+                        try:
+                            data = response.read(shutil.COPY_BUFSIZE)
+                        except (OSError, http.client.HTTPException) as error:
+                            return str(error)
+                        if not data:
+                            break
+                        output.write(data)
+            except OSError as error:
+                # Releasing peer staging lets the SDK finish a partially cached download.
+                if error.errno not in {errno.ENOSPC, errno.EDQUOT}:
+                    raise
+                return str(error)
+    return None
 
 
 if __name__ == "__main__":

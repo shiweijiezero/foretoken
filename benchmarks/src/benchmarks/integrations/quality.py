@@ -12,14 +12,6 @@ from pathlib import Path
 PROGRESS_FILENAME = "evaluation_progress.json"
 
 
-def write_progress(directory: Path, snapshot: dict) -> None:
-    """Replace the child snapshot atomically so the parent never reads a partial record."""
-    path = directory / PROGRESS_FILENAME
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(snapshot), encoding="utf-8")
-    temporary.replace(path)
-
-
 class EvaluationProgress:
     """Publish measured counters from the isolated evaluator for its parent process."""
 
@@ -35,22 +27,6 @@ class EvaluationProgress:
     def flush(self) -> None:
         """Atomically expose the latest counters, including work completed before exit."""
         write_progress(self.path.parent, self.counts)
-
-
-def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
-    """Validate the previous evaluation before delegating its framework-specific restoration."""
-    previous_directory = Path(source).expanduser().resolve()
-    previous = json.loads((previous_directory / "config.json").read_text(encoding="utf-8"))
-    if previous.get("mode") != "evaluation" or previous.get("evaluator") != evaluator:
-        raise ValueError("--resume requires a quality evaluation using the same evaluator")
-    if previous.get("model") != model:
-        raise ValueError("--resume requires the same served model as the previous evaluation")
-    if evaluator == "lm-eval":
-        from benchmarks.integrations.lm_eval.responses import restore_progress
-    else:
-        from benchmarks.integrations.evalscope.evaluation import restore_progress
-
-    restore_progress(previous_directory, native)
 
 
 def main() -> None:
@@ -79,6 +55,30 @@ def main() -> None:
     finally:
         if invocation["evaluator"] == "lm-eval":
             progress.flush()
+
+
+def write_progress(directory: Path, snapshot: dict) -> None:
+    """Replace the child snapshot atomically so the parent never reads a partial record."""
+    path = directory / PROGRESS_FILENAME
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(snapshot), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
+    """Validate the previous evaluation before delegating its framework-specific restoration."""
+    previous_directory = Path(source).expanduser().resolve()
+    previous = json.loads((previous_directory / "config.json").read_text(encoding="utf-8"))
+    if previous.get("mode") != "evaluation" or previous.get("evaluator") != evaluator:
+        raise ValueError("--resume requires a quality evaluation using the same evaluator")
+    if previous.get("model") != model:
+        raise ValueError("--resume requires the same served model as the previous evaluation")
+    if evaluator == "lm-eval":
+        from benchmarks.integrations.lm_eval.responses import restore_progress
+    else:
+        from benchmarks.integrations.evalscope.evaluation import restore_progress
+
+    restore_progress(previous_directory, native)
 
 
 if __name__ == "__main__":

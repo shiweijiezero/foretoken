@@ -6,7 +6,8 @@
 !engine/**
 !deploy/
 !deploy/inference-engines/
-!deploy/inference-engines/source-build.py
+!deploy/inference-engines/vllm/
+!deploy/inference-engines/vllm/source-build.py
 !deploy/inference-engines/vllm-metax/
 !deploy/inference-engines/vllm-metax/source-environment.json
 !deploy/inference-engines/vllm-metax/sdk_audio.py

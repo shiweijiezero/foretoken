@@ -18,6 +18,90 @@ if TYPE_CHECKING:
     from foretoken.command_execution import CommandExecution
 
 
+def prepare_artifact_volume(
+    kubectl: Kubectl,
+    namespace: str,
+    claim: str,
+    binding: str,
+    node: str,
+    tools_image: str,
+    pull_secrets: tuple[str, ...],
+    timeout: str,
+    cancellation: CommandExecution,
+) -> bool:
+    """Prepare an owned artifact PVC and report whether its NFS mount lifecycle is isolated.
+
+    Bind through the native scheduler if needed, without mounting the filesystem.
+    Only explicit NFS sources receive nosharecache; other storage is unchanged.
+    Existing isolated volumes are reusable, including while consumers are running.
+    """
+    cancellation.check()
+    deadline = time.monotonic() + timeout_seconds(timeout)
+    pvc = kubectl.get("pvc", claim, namespace, timeout=max(1.0, deadline - time.monotonic()))
+    metadata = pvc["metadata"]
+    labels = metadata.get("labels", {})
+    if labels.get("inference.foretoken.io/source-build-cache") != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
+        raise DeploymentError(f"artifact PVC {namespace}/{claim} is not owned by source binding {binding}")
+    if metadata.get("deletionTimestamp"):
+        raise DeploymentError(f"artifact PVC {namespace}/{claim} is being deleted")
+    if pvc.get("status", {}).get("phase") != "Bound":
+        pvc = _bind_artifact_claim(
+            kubectl, namespace, pvc, node, tools_image, pull_secrets,
+            timeout, deadline, cancellation,
+        )
+    cancellation.check()
+    volume = kubectl.get("pv", pvc["spec"]["volumeName"], timeout=max(1.0, deadline - time.monotonic()))
+    spec = volume["spec"]
+    reference = spec.get("claimRef", {})
+    if any(reference.get(key) != value for key, value in {
+        "name": claim, "namespace": namespace, "uid": metadata["uid"],
+    }.items()):
+        raise DeploymentError(f"PV {volume['metadata']['name']} is not bound to artifact PVC {namespace}/{claim} UID {metadata['uid']}")
+    if "nfs" not in spec and spec.get("csi", {}).get("driver") != "nfs.csi.k8s.io":
+        return False
+    options = spec.get("mountOptions", [])
+    if "nosharecache" in options and "sharecache" not in options:
+        return True
+    if not volume["metadata"].get("annotations", {}).get("pv.kubernetes.io/provisioned-by"):
+        raise DeploymentError(
+            f"cannot isolate artifact PVC {namespace}/{claim}: PV {volume['metadata']['name']} "
+            "is not dynamically provisioned; its owner must set nosharecache and remove sharecache before reuse"
+        )
+
+    # Never change mount behavior beneath a real consumer, even if it is terminating.
+    pods = json.loads(kubectl.run(
+        ["get", "pods", "-n", namespace, "-o", "json"],
+        timeout=max(1.0, deadline - time.monotonic()),
+    ).stdout)["items"]
+    for pod in pods:
+        pod_spec = pod["spec"]
+        volumes = {
+            item["name"] for item in pod_spec.get("volumes", [])
+            if item.get("persistentVolumeClaim", {}).get("claimName") == claim
+        }
+        for field in ("containers", "initContainers", "ephemeralContainers"):
+            for container in pod_spec.get(field, []):
+                if any(mount["name"] in volumes for mount in container.get("volumeMounts", [])):
+                    raise DeploymentError(
+                        f"cannot isolate artifact PVC {namespace}/{claim}: "
+                        f"Pod {namespace}/{pod['metadata']['name']} container {container['name']} mounts it; "
+                        "finish that consumer before preparing artifact storage"
+                    )
+    cancellation.check()
+    kubectl.run(
+        ["patch", "pv", volume["metadata"]["name"], "--type=json", "-p", json.dumps([
+            {"op": "test", "path": "/metadata/uid", "value": volume["metadata"]["uid"]},
+            {"op": "test", "path": "/metadata/resourceVersion", "value": volume["metadata"]["resourceVersion"]},
+            {"op": "test", "path": "/spec/claimRef/uid", "value": metadata["uid"]},
+            {"op": "add", "path": "/spec/mountOptions", "value": [
+                option for option in options if option not in {"sharecache", "nosharecache"}
+            ] + ["nosharecache"]},
+        ])],
+        timeout=max(1.0, deadline - time.monotonic()),
+    )
+    return True
+
+
 def _bind_artifact_claim(
     kubectl: Kubectl,
     namespace: str,
@@ -144,87 +228,3 @@ def _bind_artifact_claim(
             cancellation.cleanup(remove_binder, error)
         finally:
             cancellation.unregister(remove_binder)
-
-
-def prepare_artifact_volume(
-    kubectl: Kubectl,
-    namespace: str,
-    claim: str,
-    binding: str,
-    node: str,
-    tools_image: str,
-    pull_secrets: tuple[str, ...],
-    timeout: str,
-    cancellation: CommandExecution,
-) -> bool:
-    """Prepare an owned artifact PVC and report whether its NFS mount lifecycle is isolated.
-
-    Bind through the native scheduler if needed, without mounting the filesystem.
-    Only explicit NFS sources receive nosharecache; other storage is unchanged.
-    Existing isolated volumes are reusable, including while consumers are running.
-    """
-    cancellation.check()
-    deadline = time.monotonic() + timeout_seconds(timeout)
-    pvc = kubectl.get("pvc", claim, namespace, timeout=max(1.0, deadline - time.monotonic()))
-    metadata = pvc["metadata"]
-    labels = metadata.get("labels", {})
-    if labels.get("inference.foretoken.io/source-build-cache") != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) != binding:
-        raise DeploymentError(f"artifact PVC {namespace}/{claim} is not owned by source binding {binding}")
-    if metadata.get("deletionTimestamp"):
-        raise DeploymentError(f"artifact PVC {namespace}/{claim} is being deleted")
-    if pvc.get("status", {}).get("phase") != "Bound":
-        pvc = _bind_artifact_claim(
-            kubectl, namespace, pvc, node, tools_image, pull_secrets,
-            timeout, deadline, cancellation,
-        )
-    cancellation.check()
-    volume = kubectl.get("pv", pvc["spec"]["volumeName"], timeout=max(1.0, deadline - time.monotonic()))
-    spec = volume["spec"]
-    reference = spec.get("claimRef", {})
-    if any(reference.get(key) != value for key, value in {
-        "name": claim, "namespace": namespace, "uid": metadata["uid"],
-    }.items()):
-        raise DeploymentError(f"PV {volume['metadata']['name']} is not bound to artifact PVC {namespace}/{claim} UID {metadata['uid']}")
-    if "nfs" not in spec and spec.get("csi", {}).get("driver") != "nfs.csi.k8s.io":
-        return False
-    options = spec.get("mountOptions", [])
-    if "nosharecache" in options and "sharecache" not in options:
-        return True
-    if not volume["metadata"].get("annotations", {}).get("pv.kubernetes.io/provisioned-by"):
-        raise DeploymentError(
-            f"cannot isolate artifact PVC {namespace}/{claim}: PV {volume['metadata']['name']} "
-            "is not dynamically provisioned; its owner must set nosharecache and remove sharecache before reuse"
-        )
-
-    # Never change mount behavior beneath a real consumer, even if it is terminating.
-    pods = json.loads(kubectl.run(
-        ["get", "pods", "-n", namespace, "-o", "json"],
-        timeout=max(1.0, deadline - time.monotonic()),
-    ).stdout)["items"]
-    for pod in pods:
-        pod_spec = pod["spec"]
-        volumes = {
-            item["name"] for item in pod_spec.get("volumes", [])
-            if item.get("persistentVolumeClaim", {}).get("claimName") == claim
-        }
-        for field in ("containers", "initContainers", "ephemeralContainers"):
-            for container in pod_spec.get(field, []):
-                if any(mount["name"] in volumes for mount in container.get("volumeMounts", [])):
-                    raise DeploymentError(
-                        f"cannot isolate artifact PVC {namespace}/{claim}: "
-                        f"Pod {namespace}/{pod['metadata']['name']} container {container['name']} mounts it; "
-                        "finish that consumer before preparing artifact storage"
-                    )
-    cancellation.check()
-    kubectl.run(
-        ["patch", "pv", volume["metadata"]["name"], "--type=json", "-p", json.dumps([
-            {"op": "test", "path": "/metadata/uid", "value": volume["metadata"]["uid"]},
-            {"op": "test", "path": "/metadata/resourceVersion", "value": volume["metadata"]["resourceVersion"]},
-            {"op": "test", "path": "/spec/claimRef/uid", "value": metadata["uid"]},
-            {"op": "add", "path": "/spec/mountOptions", "value": [
-                option for option in options if option not in {"sharecache", "nosharecache"}
-            ] + ["nosharecache"]},
-        ])],
-        timeout=max(1.0, deadline - time.monotonic()),
-    )
-    return True

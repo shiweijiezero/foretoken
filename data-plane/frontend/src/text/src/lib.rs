@@ -31,6 +31,39 @@ pub struct SnapshotRuntime {
     pub supports_multimodal: bool,
 }
 
+/// Failures preparing tokenizer artifacts at the frontend boundary.
+#[derive(Debug, Error)]
+pub enum TextBackendLoadError {
+    #[error("prepared tokenizer does not match the serving snapshot")]
+    PreparedIdentity,
+    #[error("prepared tokenizer directory is outside the shared model root")]
+    PreparedPath,
+    #[error("tokenizer model and revision must not be empty")]
+    MissingModelOrRevision,
+    #[error("could not load tokenizer files from the local model directory")]
+    LocalModel,
+    #[error("local model or tokenizer directory was not found")]
+    LocalModelNotFound,
+    #[error("invalid local model path: {0}")]
+    LocalModelPath(#[source] std::io::Error),
+    #[error(transparent)]
+    ModelScope(#[from] modelscope::ModelScopeError),
+    #[error("could not initialize the Hugging Face client")]
+    HubClient,
+    #[error("Hugging Face snapshot is not available in the offline cache")]
+    OfflineCacheMiss,
+    #[error("could not retrieve Hugging Face repository metadata")]
+    RepositoryInfo,
+    #[error("could not download required tokenizer artifact {file}")]
+    Download { file: String },
+    #[error("Hugging Face repository has no supported tokenizer artifact")]
+    NoTokenizerArtifact,
+    #[error("Hugging Face cache path is not UTF-8")]
+    NonUtf8CachePath,
+    #[error("could not load tokenizer files from the Hugging Face cache")]
+    CachedModel,
+}
+
 /// Loads a local tokenizer directory or resolves it through the selected remote provider.
 pub async fn load_text_backend(
     source: ModelSource,
@@ -285,37 +318,4 @@ fn cache_snapshot_dir(path: &Path) -> Option<std::path::PathBuf> {
                 .is_some_and(|parent| parent.ends_with("snapshots"))
         })
         .map(Path::to_path_buf)
-}
-
-/// Failures preparing tokenizer artifacts at the frontend boundary.
-#[derive(Debug, Error)]
-pub enum TextBackendLoadError {
-    #[error("prepared tokenizer does not match the serving snapshot")]
-    PreparedIdentity,
-    #[error("prepared tokenizer directory is outside the shared model root")]
-    PreparedPath,
-    #[error("tokenizer model and revision must not be empty")]
-    MissingModelOrRevision,
-    #[error("could not load tokenizer files from the local model directory")]
-    LocalModel,
-    #[error("local model or tokenizer directory was not found")]
-    LocalModelNotFound,
-    #[error("invalid local model path: {0}")]
-    LocalModelPath(#[source] std::io::Error),
-    #[error(transparent)]
-    ModelScope(#[from] modelscope::ModelScopeError),
-    #[error("could not initialize the Hugging Face client")]
-    HubClient,
-    #[error("Hugging Face snapshot is not available in the offline cache")]
-    OfflineCacheMiss,
-    #[error("could not retrieve Hugging Face repository metadata")]
-    RepositoryInfo,
-    #[error("could not download required tokenizer artifact {file}")]
-    Download { file: String },
-    #[error("Hugging Face repository has no supported tokenizer artifact")]
-    NoTokenizerArtifact,
-    #[error("Hugging Face cache path is not UTF-8")]
-    NonUtf8CachePath,
-    #[error("could not load tokenizer files from the Hugging Face cache")]
-    CachedModel,
 }

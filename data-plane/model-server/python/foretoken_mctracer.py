@@ -14,6 +14,31 @@ from pathlib import Path
 from vllm.v1.worker.gpu_worker import Worker as GPUWorker
 
 
+class Worker(GPUWorker):
+    """Prepare selected MetaX workers and expose captures to the runtime supervisor."""
+
+    def init_device(self) -> None:
+        """Prepare mcTracer before model loading can install Triton's signal handler."""
+        super().init_device()
+        # The managed-engine startup deadline owns failure teardown. Keep bootstrap
+        # artifacts separate from the supervisor's publishable capture directory.
+        with tempfile.TemporaryDirectory(
+            prefix="mctracer-", dir=os.environ["FORETOKEN_PROFILE_ROOT"]
+        ) as directory:
+            capture = Capture(directory)
+            capture.start()
+            capture.stop()
+
+    def foretoken_mctracer(self, start: bool, directory: str) -> None:
+        """Start or export one capture; model-server owns deadlines and failure teardown."""
+        if start:
+            self._foretoken_mctracer_capture = Capture(directory)
+            self._foretoken_mctracer_capture.start()
+        else:
+            self._foretoken_mctracer_capture.stop()
+            del self._foretoken_mctracer_capture
+
+
 class Capture:
     """Own one worker's collector and terminal until its native report is exported."""
 
@@ -48,29 +73,6 @@ class Capture:
             output += data
         self._set_collection_enabled(True)
 
-    def _set_collection_enabled(self, enabled: bool) -> None:
-        """Gate this worker's recording without changing mcTracer's activity setup."""
-        # Disabling individual activity kinds during Graph construction can omit
-        # Graph-node kernels from later captures. Preserve the collector's setup.
-        operation = ctypes.CDLL("libmcpti.so").mcptiToggleActivityAndCallback
-        operation.argtypes = [ctypes.c_bool]
-        operation.restype = ctypes.c_int
-        result = operation(enabled)
-        if result != 0:
-            raise RuntimeError(f"mcptiToggleActivityAndCallback failed: {result}")
-
-    def read(self) -> bytes:
-        """Drain native output to the retained log; PTY EIO marks the collector's exit."""
-        try:
-            data = os.read(self.master, 65536)
-        except OSError as error:
-            if error.errno != errno.EIO:
-                raise
-            return b""
-        self.log.write(data)
-        self.log.flush()
-        return data
-
     def stop(self) -> None:
         """Flush this worker's GPU events, stop its collector, and retain the native JSON."""
         import torch
@@ -100,27 +102,25 @@ class Capture:
             self.root / f"{self.worker}.mctracer.json"
         )
 
+    def read(self) -> bytes:
+        """Drain native output to the retained log; PTY EIO marks the collector's exit."""
+        try:
+            data = os.read(self.master, 65536)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            return b""
+        self.log.write(data)
+        self.log.flush()
+        return data
 
-class Worker(GPUWorker):
-    """Prepare selected MetaX workers and expose captures to the runtime supervisor."""
-
-    def init_device(self) -> None:
-        """Prepare mcTracer before model loading can install Triton's signal handler."""
-        super().init_device()
-        # The managed-engine startup deadline owns failure teardown. Keep bootstrap
-        # artifacts separate from the supervisor's publishable capture directory.
-        with tempfile.TemporaryDirectory(
-            prefix="mctracer-", dir=os.environ["FORETOKEN_PROFILE_ROOT"]
-        ) as directory:
-            capture = Capture(directory)
-            capture.start()
-            capture.stop()
-
-    def foretoken_mctracer(self, start: bool, directory: str) -> None:
-        """Start or export one capture; model-server owns deadlines and failure teardown."""
-        if start:
-            self._foretoken_mctracer_capture = Capture(directory)
-            self._foretoken_mctracer_capture.start()
-        else:
-            self._foretoken_mctracer_capture.stop()
-            del self._foretoken_mctracer_capture
+    def _set_collection_enabled(self, enabled: bool) -> None:
+        """Gate this worker's recording without changing mcTracer's activity setup."""
+        # Disabling individual activity kinds during Graph construction can omit
+        # Graph-node kernels from later captures. Preserve the collector's setup.
+        operation = ctypes.CDLL("libmcpti.so").mcptiToggleActivityAndCallback
+        operation.argtypes = [ctypes.c_bool]
+        operation.restype = ctypes.c_int
+        result = operation(enabled)
+        if result != 0:
+            raise RuntimeError(f"mcptiToggleActivityAndCallback failed: {result}")

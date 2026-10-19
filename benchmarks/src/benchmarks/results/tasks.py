@@ -18,6 +18,40 @@ from benchmarks.results.output import BenchmarkRun, write_json
 logger = logging.getLogger(__name__)
 
 
+def run_task(
+    directory: Path,
+    execute: Callable[[], BenchmarkRun],
+) -> BenchmarkRun:
+    """Reuse a completed task's result, including failures, or execute it from the start.
+
+    Interrupted measurements restart in the new result directory;
+    original request records are kept for diagnosis.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    previous = _completed_measurement(directory)
+    if previous is not None:
+        logger.info("Reusing completed measurement: %s", task_source(directory))
+        return BenchmarkRun(previous["record"], previous["metrics"], None, {}, exit_code=previous["exit_code"])
+
+    task: dict[str, Any] = {"status": "running", "exit_code": None, "source": "."}
+    write_json(str(directory), "task.json", task)
+    try:
+        run = execute()
+    except BaseException as error:
+        task.update(
+            status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+            exit_code=130 if isinstance(error, KeyboardInterrupt) else 1,
+            error_type=type(error).__name__,
+        )
+        write_json(str(directory), "task.json", task)
+        raise
+    write_json(str(directory), "task.json", {
+        **task, "status": "completed", "exit_code": run.exit_code,
+        "record": run.record, "metrics": run.metrics,
+    })
+    return run
+
+
 def task_source(directory: Path) -> Path:
     """Resolve a reused task's original artifacts for result readers and later resumptions."""
     path = directory / "task.json"
@@ -90,37 +124,3 @@ def prepare_task_resume(
         write_json(str(target), "task.json", {
             **task, "source": os.path.relpath(origin, target),
         })
-
-
-def run_task(
-    directory: Path,
-    execute: Callable[[], BenchmarkRun],
-) -> BenchmarkRun:
-    """Reuse a completed task's result, including failures, or execute it from the start.
-
-    Interrupted measurements restart in the new result directory;
-    original request records are kept for diagnosis.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    previous = _completed_measurement(directory)
-    if previous is not None:
-        logger.info("Reusing completed measurement: %s", task_source(directory))
-        return BenchmarkRun(previous["record"], previous["metrics"], None, {}, exit_code=previous["exit_code"])
-
-    task: dict[str, Any] = {"status": "running", "exit_code": None, "source": "."}
-    write_json(str(directory), "task.json", task)
-    try:
-        run = execute()
-    except BaseException as error:
-        task.update(
-            status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
-            exit_code=130 if isinstance(error, KeyboardInterrupt) else 1,
-            error_type=type(error).__name__,
-        )
-        write_json(str(directory), "task.json", task)
-        raise
-    write_json(str(directory), "task.json", {
-        **task, "status": "completed", "exit_code": run.exit_code,
-        "record": run.record, "metrics": run.metrics,
-    })
-    return run

@@ -29,6 +29,91 @@ PATCH_ROOT = Path("/opt/foretoken-engine-build/patches")
 METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
 
 
+def main() -> None:
+    """Prepare dependency inputs or complete source overlays for the selected build stage."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--build-native", action="store_true")
+    parser.add_argument("--dependencies-only", action="store_true")
+    arguments = parser.parse_args()
+    cache = arguments.cache.resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    sources = json.loads((arguments.source_root / "manifest.json").read_text())
+    deleted = json.loads((arguments.source_root / "deleted.json").read_text())
+    core = cache / "vllm"
+    deleted_core = synchronize_source(
+        arguments.source_root / "vllm", core, sources["vllm"]["files"], deleted["vllm"]
+    )
+    metax = bool(getattr(torch.version, "maca", None))
+    plugin_input = arguments.source_root / "vllm-metax"
+    plugin = cache / "vllm-metax" if "vllm-metax" in sources else None
+    deleted_plugin = (
+        synchronize_source(
+            plugin_input, plugin, sources["vllm-metax"]["files"], deleted["vllm-metax"]
+        )
+        if plugin is not None
+        else set()
+    )
+    if plugin is not None and not metax:
+        raise RuntimeError("a vllm-metax checkout requires a MetaX runtime")
+    native = cache / "native-install"
+    version = importlib.metadata.version("vllm")
+    patched_files = prepare_patches(core, plugin, version, metax)
+    output = arguments.output.resolve()
+    engine = output / "engine"
+    if engine.exists():
+        shutil.rmtree(engine)
+    engine.mkdir(parents=True)
+    prepare_metadata(core, plugin, output, metax)
+    if arguments.dependencies_only:
+        return
+    if arguments.build_native:
+        if metax and plugin is None:
+            raise RuntimeError(
+                "MetaX native updates require a vllm-metax plugin checkout; "
+                "core CUDA sources are not MACA kernels"
+            )
+        if not metax and (torch.version.cuda is None or torch.version.hip is not None):
+            raise RuntimeError(
+                "native source builds support NVIDIA CUDA and the MetaX plugin"
+            )
+        compile_native(
+            plugin if metax else core,
+            cache,
+            importlib.metadata.version("vllm-metax") if metax else version,
+        )
+    export_overlay(
+        core, engine, deleted_core, "vllm", cache, patched_files.get(core, set())
+    )
+    if plugin is not None:
+        export_overlay(
+            plugin,
+            engine,
+            deleted_plugin,
+            "vllm_metax",
+            cache,
+            patched_files.get(plugin, set()),
+        )
+    environment = {}
+    if metax:
+        # An image may already activate its own compiled plugin. Source updates
+        # retain that selection even when this binding has no new native build.
+        value = os.environ.get("USE_PRECOMPILED_KERNEL")
+        directory = os.environ.get("FORETOKEN_ENGINE_DIRECTORY")
+        if directory:
+            installed = json.loads(
+                (Path(directory) / "engine-environment.json").read_text()
+            )
+            value = installed.get("USE_PRECOMPILED_KERNEL", value)
+        if native.exists():
+            value = "0"
+        if value is not None:
+            environment["USE_PRECOMPILED_KERNEL"] = value
+    (output / "engine-environment.json").write_text(json.dumps(environment) + "\n")
+
+
 def synchronize_source(
     source: Path, workspace: Path, files: list[str], deleted: list[str]
 ) -> set[str]:
@@ -432,91 +517,6 @@ def prepare_metadata(
     (dependencies / "requirements.txt").write_text(
         "".join(f"{requirement}\n" for requirement in sorted(requirements))
     )
-
-
-def main() -> None:
-    """Prepare dependency inputs or complete source overlays for the selected build stage."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, required=True)
-    parser.add_argument("--cache", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--build-native", action="store_true")
-    parser.add_argument("--dependencies-only", action="store_true")
-    arguments = parser.parse_args()
-    cache = arguments.cache.resolve()
-    cache.mkdir(parents=True, exist_ok=True)
-    sources = json.loads((arguments.source_root / "manifest.json").read_text())
-    deleted = json.loads((arguments.source_root / "deleted.json").read_text())
-    core = cache / "vllm"
-    deleted_core = synchronize_source(
-        arguments.source_root / "vllm", core, sources["vllm"]["files"], deleted["vllm"]
-    )
-    metax = bool(getattr(torch.version, "maca", None))
-    plugin_input = arguments.source_root / "vllm-metax"
-    plugin = cache / "vllm-metax" if "vllm-metax" in sources else None
-    deleted_plugin = (
-        synchronize_source(
-            plugin_input, plugin, sources["vllm-metax"]["files"], deleted["vllm-metax"]
-        )
-        if plugin is not None
-        else set()
-    )
-    if plugin is not None and not metax:
-        raise RuntimeError("a vllm-metax checkout requires a MetaX runtime")
-    native = cache / "native-install"
-    version = importlib.metadata.version("vllm")
-    patched_files = prepare_patches(core, plugin, version, metax)
-    output = arguments.output.resolve()
-    engine = output / "engine"
-    if engine.exists():
-        shutil.rmtree(engine)
-    engine.mkdir(parents=True)
-    prepare_metadata(core, plugin, output, metax)
-    if arguments.dependencies_only:
-        return
-    if arguments.build_native:
-        if metax and plugin is None:
-            raise RuntimeError(
-                "MetaX native updates require a vllm-metax plugin checkout; "
-                "core CUDA sources are not MACA kernels"
-            )
-        if not metax and (torch.version.cuda is None or torch.version.hip is not None):
-            raise RuntimeError(
-                "native source builds support NVIDIA CUDA and the MetaX plugin"
-            )
-        compile_native(
-            plugin if metax else core,
-            cache,
-            importlib.metadata.version("vllm-metax") if metax else version,
-        )
-    export_overlay(
-        core, engine, deleted_core, "vllm", cache, patched_files.get(core, set())
-    )
-    if plugin is not None:
-        export_overlay(
-            plugin,
-            engine,
-            deleted_plugin,
-            "vllm_metax",
-            cache,
-            patched_files.get(plugin, set()),
-        )
-    environment = {}
-    if metax:
-        # An image may already activate its own compiled plugin. Source updates
-        # retain that selection even when this binding has no new native build.
-        value = os.environ.get("USE_PRECOMPILED_KERNEL")
-        directory = os.environ.get("FORETOKEN_ENGINE_DIRECTORY")
-        if directory:
-            installed = json.loads(
-                (Path(directory) / "engine-environment.json").read_text()
-            )
-            value = installed.get("USE_PRECOMPILED_KERNEL", value)
-        if native.exists():
-            value = "0"
-        if value is not None:
-            environment["USE_PRECOMPILED_KERNEL"] = value
-    (output / "engine-environment.json").write_text(json.dumps(environment) + "\n")
 
 
 if __name__ == "__main__":

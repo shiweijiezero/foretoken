@@ -37,20 +37,6 @@ from foretoken.profiling.reader import (
 logger = logging.getLogger(__name__)
 
 
-def _capture_storage_identity(claim: dict[str, Any]) -> tuple[int, int]:
-    """Read the existing directory identity without changing capture storage ownership."""
-    value = claim["metadata"].get("annotations", {}).get("inference.foretoken.io/directory-owner")
-    if value is None:
-        return 1000, 1000
-    try:
-        uid, gid = map(int, value.split(":"))
-        if not 0 < uid < 2**32 - 1 or not 0 <= gid < 2**32 - 1:
-            raise ValueError
-    except ValueError as error:
-        raise DeploymentError(f"invalid capture storage directory owner: {value}") from error
-    return uid, gid
-
-
 @dataclass(frozen=True)
 class _Reader:
     name: str
@@ -102,6 +88,100 @@ class ProfileStorage:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def list_files(
+        self, namespace: str, claim_name: str, artifact_path: str,
+        *, deployment_uid: str,
+    ) -> list[dict[str, Any]]:
+        """List nested traces relative to a capture directory, distinguishing missing storage."""
+        try:
+            run = capture_path(artifact_path, namespace, deployment_uid)
+        except ValueError as exc:
+            raise DeploymentError("invalid capture directory") from exc
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        path = self._path(reader, namespace, "list", run)
+        try:
+            result = json.loads(
+                self.kubectl.run(
+                    [
+                        "get",
+                        "--raw",
+                        path,
+                        f"--request-timeout={self.timeout}",
+                    ],
+                    timeout=self.seconds,
+                ).stdout
+            )
+        except DeploymentError as exc:
+            token = capture_token(reader.secret, run)
+            raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
+        if result.get("error") == "not_found":
+            return []
+        if result.get("error"):
+            raise DeploymentError("capture files cannot be read by the storage viewer")
+        return result["files"]
+
+    def stream_file(
+        self,
+        namespace: str,
+        claim_name: str,
+        artifact_path: str,
+        name: str,
+        output: BinaryIO,
+        *, deployment_uid: str,
+    ) -> None:
+        """Stream a listed trace through kubectl without materializing it in CLI memory."""
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        path = self._path(reader, namespace, "file", artifact_path, name)
+        timed_out = threading.Event()
+        with tempfile.TemporaryFile() as errors:
+            process = subprocess.Popen(
+                self.kubectl.command(
+                    [
+                        "get",
+                        "--raw",
+                        path,
+                        f"--request-timeout={self.timeout}",
+                    ]
+                ),
+                stdout=subprocess.PIPE,
+                stderr=errors,
+            )
+
+            def expire() -> None:
+                timed_out.set()
+                process.kill()
+
+            timer = threading.Timer(self.seconds, expire)
+            timer.daemon = True
+            timer.start()
+            try:
+                assert process.stdout is not None
+                with process.stdout:
+                    while chunk := process.stdout.read(1024 * 1024):
+                        output.write(chunk)
+                status = process.wait()
+                if timed_out.is_set():
+                    raise DeploymentError("timed out reading capture file")
+                if status:
+                    errors.seek(0)
+                    detail = errors.read().decode(errors="replace").strip()
+                    token = capture_token(reader.secret, artifact_path)
+                    raise DeploymentError(
+                        "cannot read capture file: "
+                        + detail.replace(token, "[redacted]")
+                    )
+            finally:
+                timer.cancel()
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+
+    def close(self) -> None:
+        """Release this viewer's temporary readers without deleting traces, claims or namespaces."""
+        self._cleanup()
+        self._readers.clear()
+        self._nsight_sessions.clear()
 
     def _object(self, kind: str, name: str, namespace: str) -> dict[str, Any] | None:
         """Read one identity without confusing Kubernetes access failure with absence."""
@@ -693,94 +773,6 @@ except (URLError, OSError) as error:
         )
         return f"/api/v1/namespaces/{quote(namespace, safe='')}/services/{reader.name}:http/proxy/{action}?{query}"
 
-    def list_files(
-        self, namespace: str, claim_name: str, artifact_path: str,
-        *, deployment_uid: str,
-    ) -> list[dict[str, Any]]:
-        """List nested traces relative to a capture directory, distinguishing missing storage."""
-        try:
-            run = capture_path(artifact_path, namespace, deployment_uid)
-        except ValueError as exc:
-            raise DeploymentError("invalid capture directory") from exc
-        reader = self._reader(namespace, claim_name, deployment_uid)
-        path = self._path(reader, namespace, "list", run)
-        try:
-            result = json.loads(
-                self.kubectl.run(
-                    [
-                        "get",
-                        "--raw",
-                        path,
-                        f"--request-timeout={self.timeout}",
-                    ],
-                    timeout=self.seconds,
-                ).stdout
-            )
-        except DeploymentError as exc:
-            token = capture_token(reader.secret, run)
-            raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
-        if result.get("error") == "not_found":
-            return []
-        if result.get("error"):
-            raise DeploymentError("capture files cannot be read by the storage viewer")
-        return result["files"]
-
-    def stream_file(
-        self,
-        namespace: str,
-        claim_name: str,
-        artifact_path: str,
-        name: str,
-        output: BinaryIO,
-        *, deployment_uid: str,
-    ) -> None:
-        """Stream a listed trace through kubectl without materializing it in CLI memory."""
-        reader = self._reader(namespace, claim_name, deployment_uid)
-        path = self._path(reader, namespace, "file", artifact_path, name)
-        timed_out = threading.Event()
-        with tempfile.TemporaryFile() as errors:
-            process = subprocess.Popen(
-                self.kubectl.command(
-                    [
-                        "get",
-                        "--raw",
-                        path,
-                        f"--request-timeout={self.timeout}",
-                    ]
-                ),
-                stdout=subprocess.PIPE,
-                stderr=errors,
-            )
-
-            def expire() -> None:
-                timed_out.set()
-                process.kill()
-
-            timer = threading.Timer(self.seconds, expire)
-            timer.daemon = True
-            timer.start()
-            try:
-                assert process.stdout is not None
-                with process.stdout:
-                    while chunk := process.stdout.read(1024 * 1024):
-                        output.write(chunk)
-                status = process.wait()
-                if timed_out.is_set():
-                    raise DeploymentError("timed out reading capture file")
-                if status:
-                    errors.seek(0)
-                    detail = errors.read().decode(errors="replace").strip()
-                    token = capture_token(reader.secret, artifact_path)
-                    raise DeploymentError(
-                        "cannot read capture file: "
-                        + detail.replace(token, "[redacted]")
-                    )
-            finally:
-                timer.cancel()
-                if process.poll() is None:
-                    process.kill()
-                process.wait()
-
     def _cleanup(self, start: int = 0) -> None:
         """Delete only exact UIDs created here; API preconditions protect replacement objects."""
         for resource, namespace, name, uid in reversed(self._created[start:]):
@@ -828,8 +820,16 @@ except (URLError, OSError) as error:
                 )
         del self._created[start:]
 
-    def close(self) -> None:
-        """Release this viewer's temporary readers without deleting traces, claims or namespaces."""
-        self._cleanup()
-        self._readers.clear()
-        self._nsight_sessions.clear()
+
+def _capture_storage_identity(claim: dict[str, Any]) -> tuple[int, int]:
+    """Read the existing directory identity without changing capture storage ownership."""
+    value = claim["metadata"].get("annotations", {}).get("inference.foretoken.io/directory-owner")
+    if value is None:
+        return 1000, 1000
+    try:
+        uid, gid = map(int, value.split(":"))
+        if not 0 < uid < 2**32 - 1 or not 0 <= gid < 2**32 - 1:
+            raise ValueError
+    except ValueError as error:
+        raise DeploymentError(f"invalid capture storage directory owner: {value}") from error
+    return uid, gid

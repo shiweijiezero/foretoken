@@ -43,14 +43,6 @@ pub(crate) struct ResponseDelivery {
 
 /// Cancels foreground work when its HTTP consumer leaves; background work has no such guard.
 pub(crate) struct Disconnect(Option<CancellationToken>);
-impl Drop for Disconnect {
-    fn drop(&mut self) {
-        if let Some(token) = &self.0 {
-            token.cancel();
-        }
-    }
-}
-
 /// Frontend-owned response tasks, retained through HTTP disconnects and bounded shutdown drain.
 pub struct ResponseTasks {
     tracker: TaskTracker,
@@ -58,6 +50,38 @@ pub struct ResponseTasks {
     active: Mutex<HashMap<String, CancellationToken>>,
     store: Option<Arc<ApiStore>>,
     ledger: Option<Arc<RequestLedger>>,
+}
+
+struct ActiveResponse {
+    tasks: Arc<ResponseTasks>,
+    id: String,
+}
+
+struct ResponseExecution {
+    items: OutputItemStreamer,
+    id: String,
+    snapshot: RequestSnapshot,
+    request: ResponsesRequest,
+    timing: RequestTiming,
+    identity: CallerIdentity,
+    cancel: CancellationToken,
+    store: Option<Arc<ApiStore>>,
+    reservation: Option<ExecutionReservation>,
+    recorded: bool,
+    registration_attempted: bool,
+    generation_started: bool,
+    ready: Option<oneshot::Sender<Result<ResponseReady, ApiError>>>,
+    delivery: mpsc::Sender<Vec<Value>>,
+    sequence: u64,
+    created_at: u64,
+}
+
+impl Drop for Disconnect {
+    fn drop(&mut self) {
+        if let Some(token) = &self.0 {
+            token.cancel();
+        }
+    }
 }
 
 impl ResponseTasks {
@@ -281,10 +305,6 @@ impl ResponseTasks {
     }
 }
 
-struct ActiveResponse {
-    tasks: Arc<ResponseTasks>,
-    id: String,
-}
 impl Drop for ActiveResponse {
     fn drop(&mut self) {
         self.tasks
@@ -293,25 +313,6 @@ impl Drop for ActiveResponse {
             .expect("response task lock poisoned")
             .remove(&self.id);
     }
-}
-
-struct ResponseExecution {
-    items: OutputItemStreamer,
-    id: String,
-    snapshot: RequestSnapshot,
-    request: ResponsesRequest,
-    timing: RequestTiming,
-    identity: CallerIdentity,
-    cancel: CancellationToken,
-    store: Option<Arc<ApiStore>>,
-    reservation: Option<ExecutionReservation>,
-    recorded: bool,
-    registration_attempted: bool,
-    generation_started: bool,
-    ready: Option<oneshot::Sender<Result<ResponseReady, ApiError>>>,
-    delivery: mpsc::Sender<Vec<Value>>,
-    sequence: u64,
-    created_at: u64,
 }
 
 impl ResponseExecution {

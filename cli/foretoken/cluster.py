@@ -18,6 +18,19 @@ _DEVICE_PLUGIN = (
 )
 
 
+def run(command: ClusterCommand, root: Path | None = None) -> None:
+    """Create or remove a local cluster selected by the parsed CLI command."""
+    root = root or Path.cwd()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", command.name):
+        raise DeploymentError(f"invalid cluster name: {command.name}")
+    if command.action == "delete":
+        _delete(command)
+    elif command.kind == "kind":
+        _create_kind(command, root)
+    else:
+        _create_k3d(command, root)
+
+
 def _run(arguments: Sequence[str]) -> None:
     """Run one host cluster command and surface its failure to the CLI caller."""
     try:
@@ -152,16 +165,3 @@ def _delete(command: ClusterCommand) -> None:
         else [tool, "cluster", "delete", command.name]
     )
     _run(arguments)
-
-
-def run(command: ClusterCommand, root: Path | None = None) -> None:
-    """Create or remove a local cluster selected by the parsed CLI command."""
-    root = root or Path.cwd()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", command.name):
-        raise DeploymentError(f"invalid cluster name: {command.name}")
-    if command.action == "delete":
-        _delete(command)
-    elif command.kind == "kind":
-        _create_kind(command, root)
-    else:
-        _create_k3d(command, root)

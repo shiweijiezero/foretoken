@@ -27,6 +27,42 @@ class FrontendEndpoint:
     routing_host: str = ""
 
 
+def print_endpoint(command: EndpointCommand) -> None:
+    """Print the CLI-selected frontend URL or routing host after a bounded endpoint wait."""
+    with CommandExecution(timeout_seconds(command.timeout)):
+        kubectl = Kubectl()
+        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
+        print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
+        endpoint = resolve_frontend_endpoint(deployment, kubectl, command.timeout)
+        if command.host:
+            print(endpoint.routing_host or urlsplit(endpoint.url).netloc)
+        else:
+            print(endpoint.url)
+
+
+def resolve_frontend_endpoint(
+    deployment: ForetokenDeployment, kubectl: Kubectl, timeout: str
+) -> FrontendEndpoint:
+    """Wait for and return the deployment's public frontend network endpoint."""
+    if not deployment.frontend:
+        raise DeploymentError(f"Deployment instance {deployment.name!r} retains storage but has no frontend")
+    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+        service = wait_for_object(
+            lambda: kubectl.get_if_exists(
+                "service", deployment.frontend, deployment.namespace
+            )
+            or {},
+            bool,
+            deadline,
+            f"service/{deployment.frontend}",
+        )
+        if deployment.uid and service["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
+            raise DeploymentError(f"service/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
+        if (service.get("spec") or {}).get("type") == "LoadBalancer":
+            return _load_balancer_endpoint(service, deployment, kubectl, deadline)
+        return _gateway_endpoint(deployment, kubectl, deadline)
+
+
 def _endpoint_url(scheme: str, host: str, port: int) -> str:
     """Format a network endpoint while preserving IPv6 address syntax."""
     default_port = 443 if scheme == "https" else 80
@@ -147,39 +183,3 @@ def _gateway_endpoint(
     return FrontendEndpoint(
         _endpoint_url(scheme, address, port), deployment.hostname
     )
-
-
-def resolve_frontend_endpoint(
-    deployment: ForetokenDeployment, kubectl: Kubectl, timeout: str
-) -> FrontendEndpoint:
-    """Wait for and return the deployment's public frontend network endpoint."""
-    if not deployment.frontend:
-        raise DeploymentError(f"Deployment instance {deployment.name!r} retains storage but has no frontend")
-    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
-        service = wait_for_object(
-            lambda: kubectl.get_if_exists(
-                "service", deployment.frontend, deployment.namespace
-            )
-            or {},
-            bool,
-            deadline,
-            f"service/{deployment.frontend}",
-        )
-        if deployment.uid and service["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
-            raise DeploymentError(f"service/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
-        if (service.get("spec") or {}).get("type") == "LoadBalancer":
-            return _load_balancer_endpoint(service, deployment, kubectl, deadline)
-        return _gateway_endpoint(deployment, kubectl, deadline)
-
-
-def print_endpoint(command: EndpointCommand) -> None:
-    """Print the CLI-selected frontend URL or routing host after a bounded endpoint wait."""
-    with CommandExecution(timeout_seconds(command.timeout)):
-        kubectl = Kubectl()
-        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
-        print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
-        endpoint = resolve_frontend_endpoint(deployment, kubectl, command.timeout)
-        if command.host:
-            print(endpoint.routing_host or urlsplit(endpoint.url).netloc)
-        else:
-            print(endpoint.url)

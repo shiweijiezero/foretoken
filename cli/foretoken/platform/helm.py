@@ -51,203 +51,174 @@ if TYPE_CHECKING:
 class Helm(HelmClient):
     """Build and execute Helm operations for platform-owned charts."""
 
-    def _chart_source(self, source: str, version: str | None) -> str:
-        """Resolve a managed chart source without overriding explicit registry choices."""
-        if self._config.image_registry is not None:
-            return source
-        if not source.startswith("oci://"):
-            return select_github_download(
-                source, os.environ.get("FORETOKEN_GITHUB_MIRROR")
-            )
-        reference = f"{source}:{version}" if version is not None else source
-        selected = select_platform_oci_reference(reference)
-        return selected.removesuffix(f":{version}") if version is not None else selected
-
-    @contextmanager
-    def _prepared_chart(self, source: str, version: str | None) -> Iterator[Path]:
-        """Keep one private chart copy alive through selection, rendering and installation."""
-        with tempfile.TemporaryDirectory(prefix="foretoken-chart-") as directory:
-            if Path(source).is_dir():
-                chart = Path(directory) / "chart"
-                shutil.copytree(source, chart)
-            else:
-                preferred = self._chart_source(source, version)
-                explicit_github = not source.startswith("oci://") and os.environ.get(
-                    "FORETOKEN_GITHUB_MIRROR"
-                )
-                candidates = (preferred,) if explicit_github else tuple(
-                    dict.fromkeys((preferred, source))
-                )
-                for index, candidate in enumerate(candidates):
-                    destination = Path(directory) / str(index)
-                    destination.mkdir()
-                    args = ["pull", candidate, "--untar", "--untardir", str(destination)]
-                    if version is not None:
-                        args.extend(["--version", version])
-                    try:
-                        self.run(args)
-                    except DeploymentError:
-                        if execution := CommandExecution.current():
-                            execution.check()
-                        if index == len(candidates) - 1:
-                            raise
-                        print("Chart mirror unavailable; using the original source", flush=True)
-                        continue
-                    (metadata,) = destination.glob("*/Chart.yaml")
-                    chart = metadata.parent
-                    break
-            yield chart
-
-    def _chart_image_defaults(
-        self, chart: Path, subcharts: tuple[str, ...]
-    ) -> tuple[dict[str, Any], dict[str, str]]:
-        """Read native image defaults and app versions without interpreting templates."""
-        values = yaml.safe_load((chart / "values.yaml").read_text())
-        metadata = yaml.safe_load((chart / "Chart.yaml").read_text())
-        versions = {"": str(metadata["appVersion"])}
-        for name in subcharts:
-            dependency = chart / "charts" / name
-            if not dependency.is_dir():
-                (dependency,) = (chart / "charts").glob(f"{name}-*.tgz")
-            child = yaml.safe_load(self.run(["show", "values", str(dependency)]).stdout)
-            child_metadata = yaml.safe_load(
-                self.run(["show", "chart", str(dependency)]).stdout
-            )
-            values[name] = _merge_values(child, values.get(name, {}))
-            versions[name] = str(child_metadata["appVersion"])
-        return values, versions
-
-    @staticmethod
-    def _set_chart_defaults(chart: Path, updates: dict[str, Any]) -> None:
-        """Keep automatic settings in chart defaults rather than stored user values."""
-        if not updates:
-            return
-        path = chart / "values.yaml"
-        values = yaml.safe_load(path.read_text())
-        for name, value in updates.items():
-            target = values
-            *parents, key = name.split(".")
-            for parent in parents:
-                target = target.setdefault(parent, {})
-            target[key] = value
-        path.write_text(yaml.safe_dump(values))
-
-    def _set_chart_image_sources(
+    def install_platform(
         self,
-        chart: Path,
-        paths: tuple[str, ...],
         *,
         release: ReleaseRef,
-        overrides: dict[str, Any] | None = None,
-        subcharts: tuple[str, ...] = (),
-        version_prefixes: tuple[str, ...] = (),
+        source_images: SourceImages | None,
+        values: tuple[str, ...],
+        frontend_mode: str | None,
+        gateway_name: str,
+        gateway_namespace: str,
+        gateway_section_name: str,
+        gateway_controller_name: str,
+        observability_labels: tuple[tuple[str, str], ...],
+        observability_prometheus: str,
+        grafana_anonymous_access: bool | None,
+        log_endpoint: str,
+        log_storage_statefulset: str,
+        gpu_resource_name: str | None,
+        rdma_resource_name: str | None,
+        rdma_managed: bool,
+        rdma_node_names: tuple[str, ...],
+        download_proxy_url: str,
+        stored_values: dict[str, Any] | None,
+        timeout: str,
     ) -> None:
-        """Resolve native image defaults, retaining installed sources and explicit overrides."""
-        values, versions = self._chart_image_defaults(chart, subcharts)
-        overrides = overrides or {}
-        images = {}
-        for path in paths:
-            owner = path.split(".", 1)[0]
-            if overrides.get("global", {}).get("imageRegistry"):
-                continue
-            try:
-                explicit = _value_at(overrides, path)
-            except KeyError:
-                explicit = {}
-            if explicit is None or any(
-                key in explicit for key in ("registry", "repository")
-            ):
-                continue
-            image = _merge_values(_value_at(values, path), explicit)
-            repository = image["repository"]
-            version = versions.get(owner, versions[""])
-            tag = image.get("tag") or (
-                f"v{version}" if path in version_prefixes else version
-            )
-            if path == "prometheus-node-exporter.image" and image.get("distroless"):
-                tag += "-distroless"
-            digest = image.get("digest") or image.get("sha")
-            if digest and ":" not in digest:
-                digest = f"sha256:{digest}"
-            reference = f"{repository}@{digest}" if digest else f"{repository}:{tag}"
-            registry = image.get("registry")
-            if registry:
-                reference = f"{registry}/{reference}"
-            images[path] = (reference, image)
-        sources = select_platform_image_sources(
-            {path: reference for path, (reference, _) in images.items()},
-            self._config.image_registry,
-            installed_images=self._installed_chart_images(release) if images else (),
+        """Install or update the CLI-owned Foretoken platform release."""
+        source_mode = source_images is not None
+        chart = (
+            str(source_images.source_root / "deploy" / "charts" / "foretoken")
+            if source_images is not None
+            else self._config.platform.source
         )
-        updates = {}
-        for path, (reference, image) in images.items():
-            selected = sources[path]
-            if selected != reference:
-                repository = (
-                    selected.rsplit("@", 1)[0]
-                    if image.get("digest") or image.get("sha")
-                    else _image_repository_tag(selected)[0]
-                )
-                if image.get("registry"):
-                    registry, repository = repository.split("/", 1)
-                    updates[f"{path}.registry"] = registry
-                updates[f"{path}.repository"] = repository
-        self._set_chart_defaults(chart, updates)
-
-    def _render_chart(
-        self, args: list[str], *, input_text: str | None = None
-    ) -> tuple[dict[str, Any], ...]:
-        """Resolve image defaults through native templates with the install values."""
-        command = ["template", args[2], args[3], "--dry-run=server"]
-        for index, value in enumerate(args):
-            if value in {
-                "--namespace",
-                "--values",
-                "--set",
+        chart_version = None if source_mode else self._config.platform.version
+        args = self._upgrade_install_args(
+            release,
+            chart,
+            (
+                (
+                    self._config.install_source_label,
+                    "source" if source_mode else "release",
+                ),
+            ),
+        )
+        if stored_values is not None:
+            # Restored user values have already been migrated. Reusing Helm's
+            # original values would resurrect keys removed from the chart schema.
+            args.extend(["--reset-values", "--values", "-"])
+        self._add_platform_values(
+            args,
+            values,
+            frontend_mode,
+            gateway_name,
+            gateway_namespace,
+            gateway_section_name,
+            gateway_controller_name,
+            observability_labels,
+        )
+        args.extend(["--set", f"development.enabled={str(source_mode).lower()}"])
+        args.extend(
+            ["--set-string", f"observability.prometheus={observability_prometheus}"]
+        )
+        args.extend(
+            ["--set-string", f"observability.logs.datasourceURL={log_endpoint}"]
+        )
+        args.extend(
+            [
                 "--set-string",
-                "--set-json",
-            }:
-                command.extend([value, args[index + 1]])
-        rendered = self.run(command, input_text=input_text).stdout
-        return tuple(
-            document
-            for document in yaml.load_all(rendered, Loader=_SafeLoader)
-            if document is not None
+                f"observability.logs.managedStatefulSet={log_storage_statefulset}",
+            ]
         )
-
-    def _installed_chart_manifest(
-        self, release: ReleaseRef
-    ) -> tuple[dict[str, Any], ...]:
-        """Read an installed release's rendered choices without freezing its chart defaults."""
-        if not self.release_exists(release):
-            return ()
-        manifest = self.run(
-            ["get", "manifest", release.name, "--namespace", release.namespace]
-        ).stdout
-        return tuple(
-            document
-            for document in yaml.load_all(manifest, Loader=_SafeLoader)
-            if document is not None
+        if grafana_anonymous_access is not None:
+            args.extend(
+                [
+                    "--set-json",
+                    "observability.grafana.anonymousAccess="
+                    + json.dumps(grafana_anonymous_access),
+                ]
+            )
+        if gpu_resource_name is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
+                ]
+            )
+        self._add_download_proxy(args, download_proxy_url)
+        if rdma_managed:
+            args.extend(
+                [
+                    "--set",
+                    "rdma.managed=true",
+                    "--set-json",
+                    "rdma.nodeNames=" + json.dumps(rdma_node_names),
+                ]
+            )
+        if rdma_resource_name is not None:
+            args.extend(["--set-string", f"rdma.resourceName={rdma_resource_name}"])
+        # Individual values retain their own source registry and explicit overrides.
+        # A blanket registry override would also rewrite user and source images.
+        args.extend(["--set-string", "global.imageRegistry="])
+        if source_images is not None:
+            control_plane_image = source_images.control_plane
+            frontend_image = source_images.frontend
+            model_server_image = source_images.model_server
+            repository, tag = _image_repository_tag(control_plane_image)
+            args.extend(
+                [
+                    "--set-string",
+                    "controller.applicationURL="
+                    + source_images.applications["control-plane"],
+                    "--set-string",
+                    "frontend.applicationURL=" + source_images.applications["frontend"],
+                    "--set-string",
+                    "runtime.vllm.applicationURL="
+                    + source_images.applications["model-server"],
+                    "--set-string",
+                    "applicationFiles.releaseURL=",
+                    "--set-string",
+                    f"image.repository={repository}",
+                    "--set-string",
+                    f"image.tag={tag}",
+                    "--set-string",
+                    "image.digest=",
+                    "--set",
+                    "image.pullPolicy="
+                    + (
+                        "Never"
+                        if source_images.image_mode == "import"
+                        else "IfNotPresent"
+                    ),
+                    "--set-string",
+                    f"frontend.image={frontend_image}",
+                    "--set-string",
+                    f"runtime.vllm.image={model_server_image}",
+                ]
+            )
+        input_text = (
+            yaml.safe_dump(stored_values) if stored_values is not None else None
         )
-
-    def _installed_chart_images(self, release: ReleaseRef) -> set[str]:
-        """Read prior images from native workloads and Prometheus Operator resources."""
-        from foretoken.build.state import application_images
-
-        documents = self._installed_chart_manifest(release)
-        images = application_images(documents)
-        # The operator creates these workloads from image references on its CRs.
-        images.update(
-            document["spec"]["image"]
-            for document in documents
-            if document["kind"] in {"Prometheus", "Alertmanager", "ThanosRuler"}
-            and document["spec"].get("image")
-        )
-        return images
-
-    def _stored_chart_values(self, release: ReleaseRef) -> dict[str, Any]:
-        """Restore optional managed-chart customizations without freezing chart defaults."""
-        return self.release_user_values(release) if self.release_exists(release) else {}
+        overrides = stored_values or {}
+        for value in load_platform_values(values):
+            overrides = _merge_values(overrides, value)
+        with self._prepared_chart(chart, chart_version) as prepared:
+            args[3] = str(prepared)
+            self._set_platform_image_sources(args, overrides, source_mode, input_text)
+            configuration = next(
+                document
+                for document in self._render_chart(args, input_text=input_text)
+                if document["kind"] == "ConfigMap"
+                and document["metadata"].get("labels", {}).get("foretoken.io/platform") == "configuration"
+            )
+            if "deployment-template.json" not in configuration["data"]:
+                raise DeploymentError("The selected platform chart does not support deployment instances")
+            template = json.loads(configuration["data"]["deployment-template.json"])
+            directories = prepare_directory_bindings(
+                Kubectl(), template["directories"],
+                source_images.source_root if source_images is not None else Path.cwd(),
+                release.name + "-data", timeout,
+            )
+            args.extend([
+                "--set-json", "workload.cache.directories=" + json.dumps(directories),
+            ])
+            with self._prepare_application_origin(args, input_text, timeout):
+                self._finish_upgrade(args, timeout)
+                self.run(args, input_text=input_text)
+                self.set_platform_retiring(
+                    Kubectl(), self.platform_configuration(), retiring=False,
+                    clear_source_build=not source_mode,
+                )
 
     def platform_release(self) -> ReleaseRef:
         """Return the single Foretoken platform release managed by the CLI."""
@@ -1255,174 +1226,6 @@ class Helm(HelmClient):
                 claims_to_wait.append(info)
         return tuple(claims_to_wait)
 
-    def install_platform(
-        self,
-        *,
-        release: ReleaseRef,
-        source_images: SourceImages | None,
-        values: tuple[str, ...],
-        frontend_mode: str | None,
-        gateway_name: str,
-        gateway_namespace: str,
-        gateway_section_name: str,
-        gateway_controller_name: str,
-        observability_labels: tuple[tuple[str, str], ...],
-        observability_prometheus: str,
-        grafana_anonymous_access: bool | None,
-        log_endpoint: str,
-        log_storage_statefulset: str,
-        gpu_resource_name: str | None,
-        rdma_resource_name: str | None,
-        rdma_managed: bool,
-        rdma_node_names: tuple[str, ...],
-        download_proxy_url: str,
-        stored_values: dict[str, Any] | None,
-        timeout: str,
-    ) -> None:
-        """Install or update the CLI-owned Foretoken platform release."""
-        source_mode = source_images is not None
-        chart = (
-            str(source_images.source_root / "deploy" / "charts" / "foretoken")
-            if source_images is not None
-            else self._config.platform.source
-        )
-        chart_version = None if source_mode else self._config.platform.version
-        args = self._upgrade_install_args(
-            release,
-            chart,
-            (
-                (
-                    self._config.install_source_label,
-                    "source" if source_mode else "release",
-                ),
-            ),
-        )
-        if stored_values is not None:
-            # Restored user values have already been migrated. Reusing Helm's
-            # original values would resurrect keys removed from the chart schema.
-            args.extend(["--reset-values", "--values", "-"])
-        self._add_platform_values(
-            args,
-            values,
-            frontend_mode,
-            gateway_name,
-            gateway_namespace,
-            gateway_section_name,
-            gateway_controller_name,
-            observability_labels,
-        )
-        args.extend(["--set", f"development.enabled={str(source_mode).lower()}"])
-        args.extend(
-            ["--set-string", f"observability.prometheus={observability_prometheus}"]
-        )
-        args.extend(
-            ["--set-string", f"observability.logs.datasourceURL={log_endpoint}"]
-        )
-        args.extend(
-            [
-                "--set-string",
-                f"observability.logs.managedStatefulSet={log_storage_statefulset}",
-            ]
-        )
-        if grafana_anonymous_access is not None:
-            args.extend(
-                [
-                    "--set-json",
-                    "observability.grafana.anonymousAccess="
-                    + json.dumps(grafana_anonymous_access),
-                ]
-            )
-        if gpu_resource_name is not None:
-            args.extend(
-                [
-                    "--set-string",
-                    f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
-                ]
-            )
-        self._add_download_proxy(args, download_proxy_url)
-        if rdma_managed:
-            args.extend(
-                [
-                    "--set",
-                    "rdma.managed=true",
-                    "--set-json",
-                    "rdma.nodeNames=" + json.dumps(rdma_node_names),
-                ]
-            )
-        if rdma_resource_name is not None:
-            args.extend(["--set-string", f"rdma.resourceName={rdma_resource_name}"])
-        # Individual values retain their own source registry and explicit overrides.
-        # A blanket registry override would also rewrite user and source images.
-        args.extend(["--set-string", "global.imageRegistry="])
-        if source_images is not None:
-            control_plane_image = source_images.control_plane
-            frontend_image = source_images.frontend
-            model_server_image = source_images.model_server
-            repository, tag = _image_repository_tag(control_plane_image)
-            args.extend(
-                [
-                    "--set-string",
-                    "controller.applicationURL="
-                    + source_images.applications["control-plane"],
-                    "--set-string",
-                    "frontend.applicationURL=" + source_images.applications["frontend"],
-                    "--set-string",
-                    "runtime.vllm.applicationURL="
-                    + source_images.applications["model-server"],
-                    "--set-string",
-                    "applicationFiles.releaseURL=",
-                    "--set-string",
-                    f"image.repository={repository}",
-                    "--set-string",
-                    f"image.tag={tag}",
-                    "--set-string",
-                    "image.digest=",
-                    "--set",
-                    "image.pullPolicy="
-                    + (
-                        "Never"
-                        if source_images.image_mode == "import"
-                        else "IfNotPresent"
-                    ),
-                    "--set-string",
-                    f"frontend.image={frontend_image}",
-                    "--set-string",
-                    f"runtime.vllm.image={model_server_image}",
-                ]
-            )
-        input_text = (
-            yaml.safe_dump(stored_values) if stored_values is not None else None
-        )
-        overrides = stored_values or {}
-        for value in load_platform_values(values):
-            overrides = _merge_values(overrides, value)
-        with self._prepared_chart(chart, chart_version) as prepared:
-            args[3] = str(prepared)
-            self._set_platform_image_sources(args, overrides, source_mode, input_text)
-            configuration = next(
-                document
-                for document in self._render_chart(args, input_text=input_text)
-                if document["kind"] == "ConfigMap"
-                and document["metadata"].get("labels", {}).get("foretoken.io/platform") == "configuration"
-            )
-            if "deployment-template.json" not in configuration["data"]:
-                raise DeploymentError("The selected platform chart does not support deployment instances")
-            template = json.loads(configuration["data"]["deployment-template.json"])
-            directories = prepare_directory_bindings(
-                Kubectl(), template["directories"],
-                source_images.source_root if source_images is not None else Path.cwd(),
-                release.name + "-data", timeout,
-            )
-            args.extend([
-                "--set-json", "workload.cache.directories=" + json.dumps(directories),
-            ])
-            with self._prepare_application_origin(args, input_text, timeout):
-                self._finish_upgrade(args, timeout)
-                self.run(args, input_text=input_text)
-                self.set_platform_retiring(
-                    Kubectl(), self.platform_configuration(), retiring=False,
-                    clear_source_build=not source_mode,
-                )
 
     def application_history(self) -> set[str] | None:
         """Return application references retained by the platform's Helm history."""
@@ -1836,6 +1639,204 @@ class Helm(HelmClient):
                 chart, ("image",), release=release, overrides=stored
             )
             self.run(args, input_text=yaml.safe_dump(stored) if reuse_values else None)
+
+    def _chart_source(self, source: str, version: str | None) -> str:
+        """Resolve a managed chart source without overriding explicit registry choices."""
+        if self._config.image_registry is not None:
+            return source
+        if not source.startswith("oci://"):
+            return select_github_download(
+                source, os.environ.get("FORETOKEN_GITHUB_MIRROR")
+            )
+        reference = f"{source}:{version}" if version is not None else source
+        selected = select_platform_oci_reference(reference)
+        return selected.removesuffix(f":{version}") if version is not None else selected
+
+    @contextmanager
+    def _prepared_chart(self, source: str, version: str | None) -> Iterator[Path]:
+        """Keep one private chart copy alive through selection, rendering and installation."""
+        with tempfile.TemporaryDirectory(prefix="foretoken-chart-") as directory:
+            if Path(source).is_dir():
+                chart = Path(directory) / "chart"
+                shutil.copytree(source, chart)
+            else:
+                preferred = self._chart_source(source, version)
+                explicit_github = not source.startswith("oci://") and os.environ.get(
+                    "FORETOKEN_GITHUB_MIRROR"
+                )
+                candidates = (preferred,) if explicit_github else tuple(
+                    dict.fromkeys((preferred, source))
+                )
+                for index, candidate in enumerate(candidates):
+                    destination = Path(directory) / str(index)
+                    destination.mkdir()
+                    args = ["pull", candidate, "--untar", "--untardir", str(destination)]
+                    if version is not None:
+                        args.extend(["--version", version])
+                    try:
+                        self.run(args)
+                    except DeploymentError:
+                        if execution := CommandExecution.current():
+                            execution.check()
+                        if index == len(candidates) - 1:
+                            raise
+                        print("Chart mirror unavailable; using the original source", flush=True)
+                        continue
+                    (metadata,) = destination.glob("*/Chart.yaml")
+                    chart = metadata.parent
+                    break
+            yield chart
+
+    def _chart_image_defaults(
+        self, chart: Path, subcharts: tuple[str, ...]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Read native image defaults and app versions without interpreting templates."""
+        values = yaml.safe_load((chart / "values.yaml").read_text())
+        metadata = yaml.safe_load((chart / "Chart.yaml").read_text())
+        versions = {"": str(metadata["appVersion"])}
+        for name in subcharts:
+            dependency = chart / "charts" / name
+            if not dependency.is_dir():
+                (dependency,) = (chart / "charts").glob(f"{name}-*.tgz")
+            child = yaml.safe_load(self.run(["show", "values", str(dependency)]).stdout)
+            child_metadata = yaml.safe_load(
+                self.run(["show", "chart", str(dependency)]).stdout
+            )
+            values[name] = _merge_values(child, values.get(name, {}))
+            versions[name] = str(child_metadata["appVersion"])
+        return values, versions
+
+    @staticmethod
+    def _set_chart_defaults(chart: Path, updates: dict[str, Any]) -> None:
+        """Keep automatic settings in chart defaults rather than stored user values."""
+        if not updates:
+            return
+        path = chart / "values.yaml"
+        values = yaml.safe_load(path.read_text())
+        for name, value in updates.items():
+            target = values
+            *parents, key = name.split(".")
+            for parent in parents:
+                target = target.setdefault(parent, {})
+            target[key] = value
+        path.write_text(yaml.safe_dump(values))
+
+    def _set_chart_image_sources(
+        self,
+        chart: Path,
+        paths: tuple[str, ...],
+        *,
+        release: ReleaseRef,
+        overrides: dict[str, Any] | None = None,
+        subcharts: tuple[str, ...] = (),
+        version_prefixes: tuple[str, ...] = (),
+    ) -> None:
+        """Resolve native image defaults, retaining installed sources and explicit overrides."""
+        values, versions = self._chart_image_defaults(chart, subcharts)
+        overrides = overrides or {}
+        images = {}
+        for path in paths:
+            owner = path.split(".", 1)[0]
+            if overrides.get("global", {}).get("imageRegistry"):
+                continue
+            try:
+                explicit = _value_at(overrides, path)
+            except KeyError:
+                explicit = {}
+            if explicit is None or any(
+                key in explicit for key in ("registry", "repository")
+            ):
+                continue
+            image = _merge_values(_value_at(values, path), explicit)
+            repository = image["repository"]
+            version = versions.get(owner, versions[""])
+            tag = image.get("tag") or (
+                f"v{version}" if path in version_prefixes else version
+            )
+            if path == "prometheus-node-exporter.image" and image.get("distroless"):
+                tag += "-distroless"
+            digest = image.get("digest") or image.get("sha")
+            if digest and ":" not in digest:
+                digest = f"sha256:{digest}"
+            reference = f"{repository}@{digest}" if digest else f"{repository}:{tag}"
+            registry = image.get("registry")
+            if registry:
+                reference = f"{registry}/{reference}"
+            images[path] = (reference, image)
+        sources = select_platform_image_sources(
+            {path: reference for path, (reference, _) in images.items()},
+            self._config.image_registry,
+            installed_images=self._installed_chart_images(release) if images else (),
+        )
+        updates = {}
+        for path, (reference, image) in images.items():
+            selected = sources[path]
+            if selected != reference:
+                repository = (
+                    selected.rsplit("@", 1)[0]
+                    if image.get("digest") or image.get("sha")
+                    else _image_repository_tag(selected)[0]
+                )
+                if image.get("registry"):
+                    registry, repository = repository.split("/", 1)
+                    updates[f"{path}.registry"] = registry
+                updates[f"{path}.repository"] = repository
+        self._set_chart_defaults(chart, updates)
+
+    def _render_chart(
+        self, args: list[str], *, input_text: str | None = None
+    ) -> tuple[dict[str, Any], ...]:
+        """Resolve image defaults through native templates with the install values."""
+        command = ["template", args[2], args[3], "--dry-run=server"]
+        for index, value in enumerate(args):
+            if value in {
+                "--namespace",
+                "--values",
+                "--set",
+                "--set-string",
+                "--set-json",
+            }:
+                command.extend([value, args[index + 1]])
+        rendered = self.run(command, input_text=input_text).stdout
+        return tuple(
+            document
+            for document in yaml.load_all(rendered, Loader=_SafeLoader)
+            if document is not None
+        )
+
+    def _installed_chart_manifest(
+        self, release: ReleaseRef
+    ) -> tuple[dict[str, Any], ...]:
+        """Read an installed release's rendered choices without freezing its chart defaults."""
+        if not self.release_exists(release):
+            return ()
+        manifest = self.run(
+            ["get", "manifest", release.name, "--namespace", release.namespace]
+        ).stdout
+        return tuple(
+            document
+            for document in yaml.load_all(manifest, Loader=_SafeLoader)
+            if document is not None
+        )
+
+    def _installed_chart_images(self, release: ReleaseRef) -> set[str]:
+        """Read prior images from native workloads and Prometheus Operator resources."""
+        from foretoken.build.state import application_images
+
+        documents = self._installed_chart_manifest(release)
+        images = application_images(documents)
+        # The operator creates these workloads from image references on its CRs.
+        images.update(
+            document["spec"]["image"]
+            for document in documents
+            if document["kind"] in {"Prometheus", "Alertmanager", "ThanosRuler"}
+            and document["spec"].get("image")
+        )
+        return images
+
+    def _stored_chart_values(self, release: ReleaseRef) -> dict[str, Any]:
+        """Restore optional managed-chart customizations without freezing chart defaults."""
+        return self.release_user_values(release) if self.release_exists(release) else {}
 
 
 def _owned_by_release(document: dict[str, Any], release: ReleaseRef) -> bool:

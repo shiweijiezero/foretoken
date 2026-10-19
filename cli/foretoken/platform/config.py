@@ -60,30 +60,6 @@ class PlatformConfig:
         )
 
 
-def _oci_registry(value: str | None) -> str | None:
-    """Normalize an explicit OCI mirror prefix without accepting embedded credentials."""
-    registry = (value or "").strip().rstrip("/")
-    if not registry:
-        return None
-    if "://" in registry or "@" in registry or registry.startswith("/"):
-        raise DeploymentError(
-            "OCI registry must be HOST[/PATH] without a URL scheme or credentials"
-        )
-    return registry
-
-
-def _chart_source(
-    registry: str | None,
-    source: str,
-    mirror_path: str | None = None,
-) -> str:
-    """Return the public chart source or its deterministic path in a user mirror."""
-    if registry is None:
-        return source
-    path = mirror_path or source.removeprefix("oci://")
-    return f"oci://{registry}/{path}"
-
-
 def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
     """Return version-aligned release identities and optional OCI mirror paths."""
     registry = _oci_registry(oci_registry)
@@ -360,3 +336,27 @@ def resolve_load_balancer_config(
         if decoded is not None:
             config = decoded
     return config
+
+
+def _oci_registry(value: str | None) -> str | None:
+    """Normalize an explicit OCI mirror prefix without accepting embedded credentials."""
+    registry = (value or "").strip().rstrip("/")
+    if not registry:
+        return None
+    if "://" in registry or "@" in registry or registry.startswith("/"):
+        raise DeploymentError(
+            "OCI registry must be HOST[/PATH] without a URL scheme or credentials"
+        )
+    return registry
+
+
+def _chart_source(
+    registry: str | None,
+    source: str,
+    mirror_path: str | None = None,
+) -> str:
+    """Return the public chart source or its deterministic path in a user mirror."""
+    if registry is None:
+        return source
+    path = mirror_path or source.removeprefix("oci://")
+    return f"oci://{registry}/{path}"

@@ -29,6 +29,82 @@ logger = logging.getLogger(__name__)
 _Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)
 
 
+@contextmanager
+def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -> Iterator[_Config]:
+    """Wrap one CLI invocation, retaining failures and delegating all measurements to existing runners."""
+    outputs = config.outputs
+    if not outputs.includes("experiment"):
+        yield config
+        return
+    root = Path(outputs.output_dir).resolve()
+    iterations = root / "iterations"
+    if outputs.iteration:
+        iteration = iterations / outputs.iteration
+        iteration.mkdir(parents=True, exist_ok=True)
+    else:
+        iteration = _numbered_directory(iterations)
+    run = _numbered_directory(iteration / "runs", f"{command}-")
+    _create_note(
+        root / "notes" / "experiment.md",
+        "# Experiment Notes\n\n## Goal\n\n## Scope\n\n## Comparison\n\n## Findings\n\n## Next questions\n",
+    )
+    _create_note(
+        iteration / "notes" / "iteration.md",
+        "# Iteration Notes\n\n## Question and analysis\n\n## Hypothesis and design\n\n"
+        "## Implementation and deployment\n\n## Measurements and interpretation\n\n"
+        "## Time spent\n\n## Decision and completion\n\n## Optional behavior and attribution review\n",
+    )
+    generated = run / "generated"
+    generated.mkdir()
+    started = time.monotonic()
+    public_selectors = set()
+    if isinstance(config, BenchmarkConfig):
+        public_selectors = {"--model", "--dataset"}
+    elif isinstance(config, VideoBenchmarkConfig):
+        public_selectors = {"--dataset"}
+    elif isinstance(config, EvaluationConfig):
+        public_selectors = {"--model", "--reference"}
+        if config.evaluator is None:
+            public_selectors.add("--dataset")
+    context: dict[str, Any] = {
+        "command": ["foretoken", command, *_command_arguments(arguments, public_selectors)],
+        "started_at": datetime.now(UTC).isoformat(),
+        "status": "running",
+    }
+
+    def write_context() -> None:
+        (generated / "context.json").write_text(json.dumps(context, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+    write_context()
+    logger.info("Experiment run: %s", run)
+    # Remove only this output decorator. All nested sweeps, SLO probes and
+    # comparisons keep their existing result paths below this invocation.
+    run_outputs = replace(
+        outputs,
+        destinations=tuple(dict.fromkeys("local" if item == "experiment" else item for item in outputs.destinations)),
+        output_dir=str(run / "artifacts"),
+        iteration="",
+    )
+    try:
+        with capture_run_logs(str(generated), quiet=outputs.includes("quiet")):
+            capture_started = time.monotonic()
+            context["checkout"] = capture_changes(generated / "changes", root)
+            context["capture_seconds"] = time.monotonic() - capture_started
+            write_context()
+            yield replace(config, outputs=run_outputs)
+    except BaseException as error:
+        context["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+        context["exit_code"] = (error.code if isinstance(error, SystemExit) and isinstance(error.code, int) else 130 if isinstance(error, KeyboardInterrupt) else 1)
+        context["error_type"] = type(error).__name__
+        raise
+    else:
+        context.update(status="completed", exit_code=0)
+    finally:
+        context["finished_at"] = datetime.now(UTC).isoformat()
+        context["duration_seconds"] = time.monotonic() - started
+        write_context()
+
+
 def _numbered_directory(parent: Path, prefix: str = "") -> Path:
     """Reserve the next directory without sharing it with concurrent commands."""
     parent.mkdir(parents=True, exist_ok=True)
@@ -180,79 +256,3 @@ def _command_arguments(arguments: Sequence[str], public_selectors: set[str]) -> 
                 argument = f"{name}={value}" if separator and name.startswith("--") else value
             result.append(argument)
     return result
-
-
-@contextmanager
-def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -> Iterator[_Config]:
-    """Wrap one CLI invocation, retaining failures and delegating all measurements to existing runners."""
-    outputs = config.outputs
-    if not outputs.includes("experiment"):
-        yield config
-        return
-    root = Path(outputs.output_dir).resolve()
-    iterations = root / "iterations"
-    if outputs.iteration:
-        iteration = iterations / outputs.iteration
-        iteration.mkdir(parents=True, exist_ok=True)
-    else:
-        iteration = _numbered_directory(iterations)
-    run = _numbered_directory(iteration / "runs", f"{command}-")
-    _create_note(
-        root / "notes" / "experiment.md",
-        "# Experiment Notes\n\n## Goal\n\n## Scope\n\n## Comparison\n\n## Findings\n\n## Next questions\n",
-    )
-    _create_note(
-        iteration / "notes" / "iteration.md",
-        "# Iteration Notes\n\n## Question and analysis\n\n## Hypothesis and design\n\n"
-        "## Implementation and deployment\n\n## Measurements and interpretation\n\n"
-        "## Time spent\n\n## Decision and completion\n\n## Optional behavior and attribution review\n",
-    )
-    generated = run / "generated"
-    generated.mkdir()
-    started = time.monotonic()
-    public_selectors = set()
-    if isinstance(config, BenchmarkConfig):
-        public_selectors = {"--model", "--dataset"}
-    elif isinstance(config, VideoBenchmarkConfig):
-        public_selectors = {"--dataset"}
-    elif isinstance(config, EvaluationConfig):
-        public_selectors = {"--model", "--reference"}
-        if config.evaluator is None:
-            public_selectors.add("--dataset")
-    context: dict[str, Any] = {
-        "command": ["foretoken", command, *_command_arguments(arguments, public_selectors)],
-        "started_at": datetime.now(UTC).isoformat(),
-        "status": "running",
-    }
-
-    def write_context() -> None:
-        (generated / "context.json").write_text(json.dumps(context, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-
-    write_context()
-    logger.info("Experiment run: %s", run)
-    # Remove only this output decorator. All nested sweeps, SLO probes and
-    # comparisons keep their existing result paths below this invocation.
-    run_outputs = replace(
-        outputs,
-        destinations=tuple(dict.fromkeys("local" if item == "experiment" else item for item in outputs.destinations)),
-        output_dir=str(run / "artifacts"),
-        iteration="",
-    )
-    try:
-        with capture_run_logs(str(generated), quiet=outputs.includes("quiet")):
-            capture_started = time.monotonic()
-            context["checkout"] = capture_changes(generated / "changes", root)
-            context["capture_seconds"] = time.monotonic() - capture_started
-            write_context()
-            yield replace(config, outputs=run_outputs)
-    except BaseException as error:
-        context["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
-        context["exit_code"] = (error.code if isinstance(error, SystemExit) and isinstance(error.code, int) else 130 if isinstance(error, KeyboardInterrupt) else 1)
-        context["error_type"] = type(error).__name__
-        raise
-    else:
-        context.update(status="completed", exit_code=0)
-    finally:
-        context["finished_at"] = datetime.now(UTC).isoformat()
-        context["duration_seconds"] = time.monotonic() - started
-        write_context()

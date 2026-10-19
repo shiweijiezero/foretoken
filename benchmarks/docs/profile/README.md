@@ -68,9 +68,9 @@ Nsight Systems records CUDA and NVTX timelines. Select it before model startup w
 Build the Linux x86_64 diagnostic image from a matching NVIDIA model-server image. Set `MODEL_SERVER_IMAGE` to that base image and `NSIGHT_IMAGE` to an image reference you can push and your cluster can pull:
 
 ```bash
-docker build -f deploy/inference-engines/nsight/Dockerfile \
+docker build -f deploy/profiling/nsight/Dockerfile \
   --build-arg MODEL_SERVER_IMAGE="$MODEL_SERVER_IMAGE" \
-  -t "$NSIGHT_IMAGE" deploy/inference-engines/nsight
+  -t "$NSIGHT_IMAGE" deploy/profiling/nsight
 docker push "$NSIGHT_IMAGE"
 ```
 

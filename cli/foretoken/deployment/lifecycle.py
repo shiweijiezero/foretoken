@@ -54,6 +54,20 @@ class DeploymentLifecycle:
         with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
             return self._apply(deployment, timeout, editable=editable, engine_sources=engine_sources)
 
+    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
+        """Request instance retirement; its platform owner drains services before removing the controller."""
+        with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
+            if deployment.uid:
+                instance = DeploymentInstance(self.kubectl, deployment.namespace, deployment.name)
+                instance.uid = deployment.uid
+                mutation = DeploymentMutation(self.kubectl, deployment.namespace, deployment.name, timeout, uid=deployment.uid)
+                self._delete_instance(instance, mutation, timeout)
+            try:
+                with CommandExecution(timeout_seconds(timeout)):
+                    release_source_deployment(self.kubectl, deployment, timeout)
+            except KubernetesPermissionError:
+                print("Source build resources retained; repeat deletion with source-development access to reclaim them", flush=True)
+
     def _apply(
         self, deployment: ForetokenDeployment, timeout: str, *,
         editable: str | None, engine_sources: tuple[str, ...],
@@ -238,20 +252,6 @@ class DeploymentLifecycle:
                             continue
                 self.kubectl.wait_deleted(ref.kind, current["metadata"], timeout)
                 break
-
-    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Request instance retirement; its platform owner drains services before removing the controller."""
-        with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
-            if deployment.uid:
-                instance = DeploymentInstance(self.kubectl, deployment.namespace, deployment.name)
-                instance.uid = deployment.uid
-                mutation = DeploymentMutation(self.kubectl, deployment.namespace, deployment.name, timeout, uid=deployment.uid)
-                self._delete_instance(instance, mutation, timeout)
-            try:
-                with CommandExecution(timeout_seconds(timeout)):
-                    release_source_deployment(self.kubectl, deployment, timeout)
-            except KubernetesPermissionError:
-                print("Source build resources retained; repeat deletion with source-development access to reclaim them", flush=True)
 
     def _delete_instance(
         self, instance: DeploymentInstance, mutation: DeploymentMutation, timeout: str, *,

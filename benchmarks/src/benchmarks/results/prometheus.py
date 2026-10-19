@@ -77,6 +77,79 @@ class PrometheusObserver:
         )
         self._thread.start()
 
+    def finish(
+        self, time_origin: float | None, duration_seconds: float | None = None, *, deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Align samples and estimate window counters within the result owner's remaining budget."""
+        ended_at = (
+            time.time() - (time.perf_counter() - time_origin - duration_seconds)
+            if time_origin is not None and duration_seconds is not None else None
+        )
+        if deadline is None:
+            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
+        self.close(deadline=deadline)
+        kubectl = Kubectl(context=self._context, deadline=deadline)
+        prometheus = self._prometheus
+        summary = None
+        resources = None
+        if ended_at is not None and duration_seconds is not None:
+            try:
+                summary = self._measure_spec_window(duration_seconds, ended_at, kubectl)
+            except (DeploymentError, KeyError, TypeError, ValueError) as exc:
+                self._errors += 1
+                self._last_error = str(exc)
+        if ended_at is not None and duration_seconds is not None:
+            try:
+                resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
+            except DeploymentError as exc:
+                self._errors += 1
+                self._last_error = str(exc)
+        rows = []
+        samples = self._samples
+        if time_origin is not None:
+            before = [item for item in samples if item[0] <= time_origin]
+            within = [
+                item for item in samples
+                if item[0] > time_origin
+                and (duration_seconds is None or item[0] <= time_origin + duration_seconds)
+            ]
+            samples = before[-1:] + within
+        for sampled_at, sample in samples:
+            row = dict(sample)
+            if time_origin is not None:
+                row["elapsed_time_s"] = max(0.0, sampled_at - time_origin)
+            rows.append(row)
+        return {
+            "source": (
+                {
+                    "namespace": prometheus.namespace,
+                    "name": prometheus.name,
+                }
+                if prometheus is not None
+                else None
+            ),
+            "sample_interval_s": _SAMPLE_INTERVAL_SECONDS,
+            "errors": self._errors,
+            "last_error": self._last_error,
+            "samples": rows,
+            "speculative_decoding": summary,
+            "resources": resources,
+        }
+
+    def stop(self, deadline: float) -> None:
+        """Stop scheduling queries before the result owner joins its observation threads."""
+        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
+        self._stop.set()
+
+    def close(self, *, deadline: float | None = None) -> None:
+        """Join the bounded in-flight query; repeated calls are harmless."""
+        thread = self._thread
+        if thread is None:
+            return
+        self._thread = None
+        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
+        thread.join()
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -340,76 +413,3 @@ class PrometheusObserver:
                 if paired_stage_seconds and draft_steps and target_steps else None
             ),
         }
-
-    def finish(
-        self, time_origin: float | None, duration_seconds: float | None = None, *, deadline: float | None = None,
-    ) -> dict[str, Any]:
-        """Align samples and estimate window counters within the result owner's remaining budget."""
-        ended_at = (
-            time.time() - (time.perf_counter() - time_origin - duration_seconds)
-            if time_origin is not None and duration_seconds is not None else None
-        )
-        if deadline is None:
-            deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
-        self.close(deadline=deadline)
-        kubectl = Kubectl(context=self._context, deadline=deadline)
-        prometheus = self._prometheus
-        summary = None
-        resources = None
-        if ended_at is not None and duration_seconds is not None:
-            try:
-                summary = self._measure_spec_window(duration_seconds, ended_at, kubectl)
-            except (DeploymentError, KeyError, TypeError, ValueError) as exc:
-                self._errors += 1
-                self._last_error = str(exc)
-        if ended_at is not None and duration_seconds is not None:
-            try:
-                resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
-            except DeploymentError as exc:
-                self._errors += 1
-                self._last_error = str(exc)
-        rows = []
-        samples = self._samples
-        if time_origin is not None:
-            before = [item for item in samples if item[0] <= time_origin]
-            within = [
-                item for item in samples
-                if item[0] > time_origin
-                and (duration_seconds is None or item[0] <= time_origin + duration_seconds)
-            ]
-            samples = before[-1:] + within
-        for sampled_at, sample in samples:
-            row = dict(sample)
-            if time_origin is not None:
-                row["elapsed_time_s"] = max(0.0, sampled_at - time_origin)
-            rows.append(row)
-        return {
-            "source": (
-                {
-                    "namespace": prometheus.namespace,
-                    "name": prometheus.name,
-                }
-                if prometheus is not None
-                else None
-            ),
-            "sample_interval_s": _SAMPLE_INTERVAL_SECONDS,
-            "errors": self._errors,
-            "last_error": self._last_error,
-            "samples": rows,
-            "speculative_decoding": summary,
-            "resources": resources,
-        }
-
-    def stop(self, deadline: float) -> None:
-        """Stop scheduling queries before the result owner joins its observation threads."""
-        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
-        self._stop.set()
-
-    def close(self, *, deadline: float | None = None) -> None:
-        """Join the bounded in-flight query; repeated calls are harmless."""
-        thread = self._thread
-        if thread is None:
-            return
-        self._thread = None
-        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
-        thread.join()

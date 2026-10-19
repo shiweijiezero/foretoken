@@ -46,6 +46,43 @@ _STYLES = ("-", "--", "-.", ":")
 _FORMATS = ("pdf", "svg", "png")
 
 
+@dataclass(frozen=True)
+class FigureExport:
+    """Files and optional single-run owner captured together by the figure exporter."""
+
+    files: dict[str, Path]
+    source: Path | None
+
+
+def render_results(
+    source: Path,
+    *others: Path,
+    output_dir: Path | None = None,
+    columns: int = 1,
+    metrics: tuple[str, ...] = (),
+    methods: tuple[str, ...] = (),
+    base: Path | None = None,
+) -> FigureExport:
+    """Export figures under an output-directory lock shared with W&B artifact staging."""
+    from benchmarks.results.wandb_sync import publication_lock
+
+    for selected in (source, *others, *((base,) if base is not None else ())):
+        if not Path(selected).is_dir():
+            raise NotADirectoryError(f"Result directory does not exist: {selected}")
+    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
+    out.mkdir(parents=True, exist_ok=True)
+    with publication_lock(out, scope="plots"):
+        # A failed redraw must not leave partially replaced files attributed to the previous export.
+        manifest = out / ".foretoken-plots.json"
+        if manifest.is_file():
+            previous = json.loads(manifest.read_text(encoding="utf-8"))
+            if isinstance(previous, dict):
+                previous["source"] = None
+                manifest.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
+        return _render_results(source, *others, output_dir=out, columns=columns,
+                               metrics=metrics, methods=methods, base=base)
+
+
 def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
     """Export complete scalar and structured table records as CSV."""
     columns = list(dict.fromkeys(key for row in rows for key in row))
@@ -429,14 +466,6 @@ def default_output_directory(source: Path, *others: Path, base: Path | None = No
     return Path("plots") if others or base is not None else Path(source) / "plots"
 
 
-@dataclass(frozen=True)
-class FigureExport:
-    """Files and optional single-run owner captured together by the figure exporter."""
-
-    files: dict[str, Path]
-    source: Path | None
-
-
 def figure_source(directory: Path) -> Path | None:
     """Return the recorded owner of a complete figure export; comparisons have no single run owner."""
     manifest = directory / ".foretoken-plots.json"
@@ -445,35 +474,6 @@ def figure_source(directory: Path) -> Path | None:
     record = json.loads(manifest.read_text(encoding="utf-8"))
     source = record.get("source") if isinstance(record, dict) else None
     return (directory / source).resolve() if source is not None else None
-
-
-def render_results(
-    source: Path,
-    *others: Path,
-    output_dir: Path | None = None,
-    columns: int = 1,
-    metrics: tuple[str, ...] = (),
-    methods: tuple[str, ...] = (),
-    base: Path | None = None,
-) -> FigureExport:
-    """Export figures under an output-directory lock shared with W&B artifact staging."""
-    from benchmarks.results.wandb_sync import publication_lock
-
-    for selected in (source, *others, *((base,) if base is not None else ())):
-        if not Path(selected).is_dir():
-            raise NotADirectoryError(f"Result directory does not exist: {selected}")
-    out = Path(output_dir) if output_dir is not None else default_output_directory(source, *others, base=base)
-    out.mkdir(parents=True, exist_ok=True)
-    with publication_lock(out, scope="plots"):
-        # A failed redraw must not leave partially replaced files attributed to the previous export.
-        manifest = out / ".foretoken-plots.json"
-        if manifest.is_file():
-            previous = json.loads(manifest.read_text(encoding="utf-8"))
-            if isinstance(previous, dict):
-                previous["source"] = None
-                manifest.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
-        return _render_results(source, *others, output_dir=out, columns=columns,
-                               metrics=metrics, methods=methods, base=base)
 
 
 def _render_results(

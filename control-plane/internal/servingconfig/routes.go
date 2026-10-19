@@ -18,94 +18,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ServingRevision returns the Pool cohort selected by its owning model service for routing and observation.
-func ServingRevision(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool) string {
-	if service == nil || pool == nil {
-		return ""
-	}
-	for _, selected := range service.Status.ServingPoolRevisions {
-		if selected.PoolName == pool.Spec.PoolName && selected.PoolUID == string(pool.UID) {
-			return selected.Revision
-		}
-	}
-	return ""
-}
+type RoutingIdentityConflictError struct{ Reason string }
 
-// SortedServingPoolRevisions makes cohort provenance independent of status list order.
-func SortedServingPoolRevisions(revisions []inferencev1alpha1.ServingPoolRevision) []inferencev1alpha1.ServingPoolRevision {
-	selected := slices.Clone(revisions)
-	slices.SortFunc(selected, func(left, right inferencev1alpha1.ServingPoolRevision) int {
-		if compared := cmp.Compare(left.PoolName, right.PoolName); compared != 0 {
-			return compared
-		}
-		if compared := cmp.Compare(left.PoolUID, right.PoolUID); compared != 0 {
-			return compared
-		}
-		return cmp.Compare(left.Revision, right.Revision)
-	})
-	return selected
-}
-
-// OwnedRoutingPools selects live Pools whose references and controller ownership match the model service.
-func OwnedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool) []*inferencev1alpha1.ModelPool {
-	owned := make([]*inferencev1alpha1.ModelPool, 0)
-	for index := range pools {
-		if RoutingPoolOwnedBy(&pools[index], service) {
-			owned = append(owned, &pools[index])
-		}
-	}
-	return owned
-}
-
-// routingPool returns the owner of a Group selected from these Pools.
-func routingPool(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) *inferencev1alpha1.ModelPool {
-	for _, pool := range pools {
-		if string(pool.UID) == group.Spec.ModelPoolRef.UID {
-			return pool
-		}
-	}
-	panic("selected routing Group has no owning Pool")
-}
-
-// ServiceDeclaresEPD identifies service intent that requires an encoder stage.
-func ServiceDeclaresEPD(service *inferencev1alpha1.ModelService) bool {
-	return slices.ContainsFunc(service.Spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool {
-		return pool.Role == inferencev1alpha1.ModelRoleEncoder
-	})
-}
-
-// ServiceDeclaresPD identifies service intent with prefill or decode stages.
-func ServiceDeclaresPD(service *inferencev1alpha1.ModelService) bool {
-	return slices.ContainsFunc(service.Spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool {
-		return pool.Role == inferencev1alpha1.ModelRolePrefill || pool.Role == inferencev1alpha1.ModelRoleDecode
-	})
-}
-
-// PoolsHaveEPD identifies selected Pools that require encoder-prefill-decode routing.
-func PoolsHaveEPD(pools []*inferencev1alpha1.ModelPool) bool {
-	return slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-		return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleEncoder
-	})
-}
-
-// PoolsContainCompleteEPD checks that selected Pools contain every required encoder, prefill, and decode role.
-func PoolsContainCompleteEPD(pools []*inferencev1alpha1.ModelPool) bool {
-	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
-		if !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-			return pool.Spec.Template.Role == role
-		}) {
-			return false
-		}
-	}
-	return true
-}
-
-// PoolsHavePD identifies selected Pools that require prefill-decode routing.
-func PoolsHavePD(pools []*inferencev1alpha1.ModelPool) bool {
-	return slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-		return pool.Spec.Template.Role == inferencev1alpha1.ModelRolePrefill || pool.Spec.Template.Role == inferencev1alpha1.ModelRoleDecode
-	})
-}
+type SplitRoutingProjectionError struct{ Service, Reason string }
 
 // ProjectServicePDComponents publishes compatible ready prefill and decode components for one service.
 func ProjectServicePDComponents(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) ([]PDComponent, PDPipelineScope, error) {
@@ -285,130 +200,6 @@ func ProjectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 	return components, pipelineScopes, nil
 }
 
-func compatibleEncoderPrefill(encoder, prefill *inferencev1alpha1.ModelGroup) bool {
-	return MatchingRoutingIdentity(routingGroup(encoder), routingGroup(prefill)) &&
-		vllmconfig.CompleteECRuntime(encoder.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) && vllmconfig.CompleteECRuntime(prefill.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) &&
-		matchingECRuntime(encoder.Spec.ECRuntime, prefill.Spec.ECRuntime)
-}
-
-func matchingECRuntime(left, right *inferencev1alpha1.ModelGroupECRuntimeConfig) bool {
-	return left.ServiceUID == right.ServiceUID && left.Generation == right.Generation && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
-}
-
-func routingParallelism(group *inferencev1alpha1.ModelGroup) Parallelism {
-	return Parallelism{
-		TP:  group.Spec.Parallelism.TP,
-		PP:  group.Spec.Parallelism.PP,
-		DP:  group.Spec.Parallelism.DP,
-		PCP: group.Spec.Parallelism.PCP,
-		DCP: group.Spec.Parallelism.DCP,
-		EP:  group.Spec.Parallelism.EP != nil,
-	}
-}
-
-func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) EPDComponent {
-	features := group.Spec.Features
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
-		features.Multimodal = nil
-	}
-	component := EPDComponent{
-		RouteTargetID:        string(group.UID),
-		ServiceUID:           string(service.UID),
-		PoolUID:              group.Spec.ModelPoolRef.UID,
-		PoolName:             pool.Spec.PoolName,
-		Role:                 string(group.Spec.Role),
-		Model:                group.Spec.Artifacts.Model,
-		Source:               group.Spec.Artifacts.Source,
-		Revision:             group.Spec.Artifacts.ModelRevision,
-		Tokenizer:            group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
-		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
-		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
-		Capabilities:         RoutingCapabilities(features),
-		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:            KVScopeID(group),
-		KVLookupScope:        sharedKVLookupScope(group),
-		DataParallelSize:     group.Spec.Parallelism.DP,
-		Parallelism:          routingParallelism(group),
-	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, group.Spec.PDRuntime.BootstrapPort)
-	}
-	return component
-}
-
-// HasServingCohort reports whether a live model service has selected an execution cohort; Group readiness is checked separately.
-func HasServingCohort(service *inferencev1alpha1.ModelService) bool {
-	return service != nil && service.DeletionTimestamp.IsZero() && len(service.Status.ServingPoolRevisions) > 0
-}
-
-// RoutingPoolOwnedBy checks Pool ownership and excludes Pools already entering deletion.
-func RoutingPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
-	return ModelPoolOwnedBy(pool, service) && pool.DeletionTimestamp.IsZero()
-}
-
-// ModelPoolOwnedBy verifies identity ownership independently of routing eligibility.
-func ModelPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
-	return pool != nil && service != nil &&
-		pool.Spec.ModelServiceRef.Name == service.Name && pool.Spec.ModelServiceRef.UID == string(service.UID) &&
-		workload.ControllerOwnerMatches(pool, inferencev1alpha1.GroupVersion.String(), "ModelService", service.Name, service.UID)
-}
-
-// RoutingGroupOwnedBy checks Group ownership and excludes Groups already entering deletion.
-func RoutingGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
-	return ModelGroupOwnedBy(group, pool) && group.DeletionTimestamp.IsZero()
-}
-
-// ModelGroupOwnedBy verifies immutable artifact ownership even during deletion drain.
-func ModelGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
-	return group != nil && pool != nil &&
-		group.Spec.ModelPoolRef.Name == pool.Name && group.Spec.ModelPoolRef.UID == string(pool.UID) &&
-		workload.ControllerOwnerMatches(group, inferencev1alpha1.GroupVersion.String(), "ModelPool", pool.Name, pool.UID)
-}
-
-// RoutingGroupReady reports whether all required members of the current Group configuration are ready for routing.
-func RoutingGroupReady(group *inferencev1alpha1.ModelGroup) bool {
-	if !group.DeletionTimestamp.IsZero() {
-		return false
-	}
-	ready := meta.FindStatusCondition(group.Status.Conditions, workload.ConditionReady)
-	return ready != nil && ready.Status == metav1.ConditionTrue && ready.ObservedGeneration == group.Generation && group.Status.ReadyMembers == group.Spec.MemberCount
-}
-
-type RoutingIdentityConflictError struct{ Reason string }
-
-// Error describes a snapshot-wide public-model identity conflict.
-func (err *RoutingIdentityConflictError) Error() string {
-	return "routing projection: " + err.Reason
-}
-
-type SplitRoutingProjectionError struct{ Service, Reason string }
-
-// Error describes a service-local P/D or E/P/D routing projection failure.
-func (err *SplitRoutingProjectionError) Error() string {
-	if err.Service == "" {
-		return "split routing projection: " + err.Reason
-	}
-	return fmt.Sprintf("split routing projection for ModelService %q: %s", err.Service, err.Reason)
-}
-
-func routingGroup(group *inferencev1alpha1.ModelGroup) Group {
-	return Group{
-		RouteTargetID:        string(group.UID),
-		Model:                group.Spec.Artifacts.Model,
-		Source:               group.Spec.Artifacts.Source,
-		Revision:             group.Spec.Artifacts.ModelRevision,
-		Tokenizer:            group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
-		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
-		Capabilities:         RoutingCapabilities(group.Spec.Features),
-		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:            KVScopeID(group),
-		KVLookupScope:        sharedKVLookupScope(group),
-		DataParallelSize:     group.Spec.Parallelism.DP,
-	}
-}
-
 // RoutingGroupForService projects the Group endpoint, model identity, and Pool limits for a service route.
 func RoutingGroupForService(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) Group {
 	route := routingGroup(group)
@@ -418,86 +209,6 @@ func RoutingGroupForService(service *inferencev1alpha1.ModelService, pool *infer
 	}
 	route.ServiceUID, route.PoolUID, route.PoolName = string(service.UID), group.Spec.ModelPoolRef.UID, pool.Spec.PoolName
 	return route
-}
-
-// RoutingCapabilities returns the declared model capabilities published to frontend consumers.
-func RoutingCapabilities(features inferencev1alpha1.ModelFeatures) []string {
-	capabilities := []string{"chat", "text"}
-	optional := make(map[string]struct{})
-	if features.Tools {
-		optional["tool_calling"] = struct{}{}
-	}
-	if features.Reasoning {
-		optional["reasoning"] = struct{}{}
-	}
-	for _, format := range features.StructuredOutputs {
-		switch format {
-		case inferencev1alpha1.StructuredOutputFormatJSONObject:
-			optional["structured_output.json_object"] = struct{}{}
-		case inferencev1alpha1.StructuredOutputFormatJSONSchema:
-			optional["structured_output.json_schema"] = struct{}{}
-		case inferencev1alpha1.StructuredOutputFormatStructuralTag:
-			optional["structured_output.structural_tag"] = struct{}{}
-		}
-	}
-	for _, modality := range features.Multimodal {
-		if modality == inferencev1alpha1.MultimodalModalityImage {
-			optional["multimodal.image"] = struct{}{}
-		}
-	}
-	if len(features.Multimodal) > 0 {
-		optional["multimodal"] = struct{}{}
-	}
-	for capability := range optional {
-		capabilities = append(capabilities, capability)
-	}
-	slices.Sort(capabilities[2:])
-	return capabilities
-}
-
-func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {
-	return MatchingRoutingIdentity(routingGroup(prefill), routingGroup(decode)) && vllmconfig.CompatibleKVTransfer(prefill.Spec, decode.Spec) && matchingPDRuntime(prefill.Spec.PDRuntime, decode.Spec.PDRuntime)
-}
-
-func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
-	return vllmconfig.CompletePDRuntime(left) && vllmconfig.CompletePDRuntime(right) && left.ServiceUID == right.ServiceUID && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort && left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName
-}
-
-func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, pipelineScopeID string) PDComponent {
-	pd := group.Spec.PDRuntime
-	features := group.Spec.Features
-	// No P/D runtime profile currently verifies multimodal support. Never publish
-	// it from P/D routes, including objects created before API validation existed.
-	features.Multimodal = nil
-	component := PDComponent{
-		RouteTargetID:        string(group.UID),
-		ServiceUID:           string(service.UID),
-		PoolUID:              group.Spec.ModelPoolRef.UID,
-		PoolName:             pool.Spec.PoolName,
-		Role:                 string(group.Spec.Role),
-		PipelineScopeID:      pipelineScopeID,
-		Model:                group.Spec.Artifacts.Model,
-		Source:               group.Spec.Artifacts.Source,
-		Revision:             group.Spec.Artifacts.ModelRevision,
-		Tokenizer:            group.Spec.Artifacts.Tokenizer,
-		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
-		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
-		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
-		ProfileName:          pd.ProfileName,
-		ProfileRevision:      pd.ProfileRevision,
-		Connector:            pd.Connector,
-		Protocol:             pd.Protocol,
-		Capabilities:         RoutingCapabilities(features),
-		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
-		KVScopeID:            KVScopeID(group),
-		KVLookupScope:        sharedKVLookupScope(group),
-		DataParallelSize:     group.Spec.Parallelism.DP,
-		Parallelism:          routingParallelism(group),
-	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, pd.BootstrapPort)
-	}
-	return component
 }
 
 // ValidateRoutingIdentities rejects topology overlap and conflicting public-model identities before snapshot publication.
@@ -550,9 +261,305 @@ func ValidateRoutingIdentities(models []Model, groups []Group, components []PDCo
 	return nil
 }
 
+// ServingRevision returns the Pool cohort selected by its owning model service for routing and observation.
+func ServingRevision(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool) string {
+	if service == nil || pool == nil {
+		return ""
+	}
+	for _, selected := range service.Status.ServingPoolRevisions {
+		if selected.PoolName == pool.Spec.PoolName && selected.PoolUID == string(pool.UID) {
+			return selected.Revision
+		}
+	}
+	return ""
+}
+
+// SortedServingPoolRevisions makes cohort provenance independent of status list order.
+func SortedServingPoolRevisions(revisions []inferencev1alpha1.ServingPoolRevision) []inferencev1alpha1.ServingPoolRevision {
+	selected := slices.Clone(revisions)
+	slices.SortFunc(selected, func(left, right inferencev1alpha1.ServingPoolRevision) int {
+		if compared := cmp.Compare(left.PoolName, right.PoolName); compared != 0 {
+			return compared
+		}
+		if compared := cmp.Compare(left.PoolUID, right.PoolUID); compared != 0 {
+			return compared
+		}
+		return cmp.Compare(left.Revision, right.Revision)
+	})
+	return selected
+}
+
+// OwnedRoutingPools selects live Pools whose references and controller ownership match the model service.
+func OwnedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool) []*inferencev1alpha1.ModelPool {
+	owned := make([]*inferencev1alpha1.ModelPool, 0)
+	for index := range pools {
+		if RoutingPoolOwnedBy(&pools[index], service) {
+			owned = append(owned, &pools[index])
+		}
+	}
+	return owned
+}
+
+// ServiceDeclaresEPD identifies service intent that requires an encoder stage.
+func ServiceDeclaresEPD(service *inferencev1alpha1.ModelService) bool {
+	return slices.ContainsFunc(service.Spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool {
+		return pool.Role == inferencev1alpha1.ModelRoleEncoder
+	})
+}
+
+// ServiceDeclaresPD identifies service intent with prefill or decode stages.
+func ServiceDeclaresPD(service *inferencev1alpha1.ModelService) bool {
+	return slices.ContainsFunc(service.Spec.ModelPools, func(pool inferencev1alpha1.ModelPoolTemplate) bool {
+		return pool.Role == inferencev1alpha1.ModelRolePrefill || pool.Role == inferencev1alpha1.ModelRoleDecode
+	})
+}
+
+// PoolsHaveEPD identifies selected Pools that require encoder-prefill-decode routing.
+func PoolsHaveEPD(pools []*inferencev1alpha1.ModelPool) bool {
+	return slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+		return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleEncoder
+	})
+}
+
+// PoolsContainCompleteEPD checks that selected Pools contain every required encoder, prefill, and decode role.
+func PoolsContainCompleteEPD(pools []*inferencev1alpha1.ModelPool) bool {
+	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
+		if !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+			return pool.Spec.Template.Role == role
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// PoolsHavePD identifies selected Pools that require prefill-decode routing.
+func PoolsHavePD(pools []*inferencev1alpha1.ModelPool) bool {
+	return slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
+		return pool.Spec.Template.Role == inferencev1alpha1.ModelRolePrefill || pool.Spec.Template.Role == inferencev1alpha1.ModelRoleDecode
+	})
+}
+
+// HasServingCohort reports whether a live model service has selected an execution cohort; Group readiness is checked separately.
+func HasServingCohort(service *inferencev1alpha1.ModelService) bool {
+	return service != nil && service.DeletionTimestamp.IsZero() && len(service.Status.ServingPoolRevisions) > 0
+}
+
+// RoutingPoolOwnedBy checks Pool ownership and excludes Pools already entering deletion.
+func RoutingPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
+	return ModelPoolOwnedBy(pool, service) && pool.DeletionTimestamp.IsZero()
+}
+
+// ModelPoolOwnedBy verifies identity ownership independently of routing eligibility.
+func ModelPoolOwnedBy(pool *inferencev1alpha1.ModelPool, service *inferencev1alpha1.ModelService) bool {
+	return pool != nil && service != nil &&
+		pool.Spec.ModelServiceRef.Name == service.Name && pool.Spec.ModelServiceRef.UID == string(service.UID) &&
+		workload.ControllerOwnerMatches(pool, inferencev1alpha1.GroupVersion.String(), "ModelService", service.Name, service.UID)
+}
+
+// RoutingGroupOwnedBy checks Group ownership and excludes Groups already entering deletion.
+func RoutingGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
+	return ModelGroupOwnedBy(group, pool) && group.DeletionTimestamp.IsZero()
+}
+
+// ModelGroupOwnedBy verifies immutable artifact ownership even during deletion drain.
+func ModelGroupOwnedBy(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
+	return group != nil && pool != nil &&
+		group.Spec.ModelPoolRef.Name == pool.Name && group.Spec.ModelPoolRef.UID == string(pool.UID) &&
+		workload.ControllerOwnerMatches(group, inferencev1alpha1.GroupVersion.String(), "ModelPool", pool.Name, pool.UID)
+}
+
+// RoutingGroupReady reports whether all required members of the current Group configuration are ready for routing.
+func RoutingGroupReady(group *inferencev1alpha1.ModelGroup) bool {
+	if !group.DeletionTimestamp.IsZero() {
+		return false
+	}
+	ready := meta.FindStatusCondition(group.Status.Conditions, workload.ConditionReady)
+	return ready != nil && ready.Status == metav1.ConditionTrue && ready.ObservedGeneration == group.Generation && group.Status.ReadyMembers == group.Spec.MemberCount
+}
+
+// RoutingCapabilities returns the declared model capabilities published to frontend consumers.
+func RoutingCapabilities(features inferencev1alpha1.ModelFeatures) []string {
+	capabilities := []string{"chat", "text"}
+	optional := make(map[string]struct{})
+	if features.Tools {
+		optional["tool_calling"] = struct{}{}
+	}
+	if features.Reasoning {
+		optional["reasoning"] = struct{}{}
+	}
+	for _, format := range features.StructuredOutputs {
+		switch format {
+		case inferencev1alpha1.StructuredOutputFormatJSONObject:
+			optional["structured_output.json_object"] = struct{}{}
+		case inferencev1alpha1.StructuredOutputFormatJSONSchema:
+			optional["structured_output.json_schema"] = struct{}{}
+		case inferencev1alpha1.StructuredOutputFormatStructuralTag:
+			optional["structured_output.structural_tag"] = struct{}{}
+		}
+	}
+	for _, modality := range features.Multimodal {
+		if modality == inferencev1alpha1.MultimodalModalityImage {
+			optional["multimodal.image"] = struct{}{}
+		}
+	}
+	if len(features.Multimodal) > 0 {
+		optional["multimodal"] = struct{}{}
+	}
+	for capability := range optional {
+		capabilities = append(capabilities, capability)
+	}
+	slices.Sort(capabilities[2:])
+	return capabilities
+}
+
 // MatchingRoutingIdentity compares the model, tokenizer, and cache isolation identity shared by compatible routes.
 func MatchingRoutingIdentity(left, right Group) bool {
-	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation)
+	return left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision &&
+		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
+		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation)
+}
+
+// Error describes a snapshot-wide public-model identity conflict.
+func (err *RoutingIdentityConflictError) Error() string {
+	return "routing projection: " + err.Reason
+}
+
+// Error describes a service-local P/D or E/P/D routing projection failure.
+func (err *SplitRoutingProjectionError) Error() string {
+	if err.Service == "" {
+		return "split routing projection: " + err.Reason
+	}
+	return fmt.Sprintf("split routing projection for ModelService %q: %s", err.Service, err.Reason)
+}
+
+// routingPool returns the owner of a Group selected from these Pools.
+func routingPool(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) *inferencev1alpha1.ModelPool {
+	for _, pool := range pools {
+		if string(pool.UID) == group.Spec.ModelPoolRef.UID {
+			return pool
+		}
+	}
+	panic("selected routing Group has no owning Pool")
+}
+
+func compatibleEncoderPrefill(encoder, prefill *inferencev1alpha1.ModelGroup) bool {
+	return MatchingRoutingIdentity(routingGroup(encoder), routingGroup(prefill)) &&
+		vllmconfig.CompleteECRuntime(encoder.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) && vllmconfig.CompleteECRuntime(prefill.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) &&
+		matchingECRuntime(encoder.Spec.ECRuntime, prefill.Spec.ECRuntime)
+}
+
+func matchingECRuntime(left, right *inferencev1alpha1.ModelGroupECRuntimeConfig) bool {
+	return left.ServiceUID == right.ServiceUID && left.Generation == right.Generation &&
+		left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
+		left.Connector == right.Connector && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
+}
+
+func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {
+	return MatchingRoutingIdentity(routingGroup(prefill), routingGroup(decode)) && vllmconfig.CompatibleKVTransfer(prefill.Spec, decode.Spec) && matchingPDRuntime(prefill.Spec.PDRuntime, decode.Spec.PDRuntime)
+}
+
+func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
+	return vllmconfig.CompletePDRuntime(left) && vllmconfig.CompletePDRuntime(right) &&
+		left.ServiceUID == right.ServiceUID && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
+		left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort &&
+		left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName
+}
+
+func routingParallelism(group *inferencev1alpha1.ModelGroup) Parallelism {
+	return Parallelism{
+		TP:  group.Spec.Parallelism.TP,
+		PP:  group.Spec.Parallelism.PP,
+		DP:  group.Spec.Parallelism.DP,
+		PCP: group.Spec.Parallelism.PCP,
+		DCP: group.Spec.Parallelism.DCP,
+		EP:  group.Spec.Parallelism.EP != nil,
+	}
+}
+
+func routingGroup(group *inferencev1alpha1.ModelGroup) Group {
+	return Group{
+		RouteTargetID:        string(group.UID),
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		Capabilities:         RoutingCapabilities(group.Spec.Features),
+		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            KVScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
+	}
+}
+
+func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, pipelineScopeID string) PDComponent {
+	pd := group.Spec.PDRuntime
+	features := group.Spec.Features
+	// No P/D runtime profile currently verifies multimodal support. Never publish
+	// it from P/D routes, including objects created before API validation existed.
+	features.Multimodal = nil
+	component := PDComponent{
+		RouteTargetID:        string(group.UID),
+		ServiceUID:           string(service.UID),
+		PoolUID:              group.Spec.ModelPoolRef.UID,
+		PoolName:             pool.Spec.PoolName,
+		Role:                 string(group.Spec.Role),
+		PipelineScopeID:      pipelineScopeID,
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
+		ProfileName:          pd.ProfileName,
+		ProfileRevision:      pd.ProfileRevision,
+		Connector:            pd.Connector,
+		Protocol:             pd.Protocol,
+		Capabilities:         RoutingCapabilities(features),
+		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            KVScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
+		Parallelism:          routingParallelism(group),
+	}
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, pd.BootstrapPort)
+	}
+	return component
+}
+
+func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) EPDComponent {
+	features := group.Spec.Features
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
+		features.Multimodal = nil
+	}
+	component := EPDComponent{
+		RouteTargetID:        string(group.UID),
+		ServiceUID:           string(service.UID),
+		PoolUID:              group.Spec.ModelPoolRef.UID,
+		PoolName:             pool.Spec.PoolName,
+		Role:                 string(group.Spec.Role),
+		Model:                group.Spec.Artifacts.Model,
+		Source:               group.Spec.Artifacts.Source,
+		Revision:             group.Spec.Artifacts.ModelRevision,
+		Tokenizer:            group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
+		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
+		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
+		Capabilities:         RoutingCapabilities(features),
+		Endpoint:             workload.ModelGroupEndpoint(group, group.Spec.Runtime.Port),
+		KVScopeID:            KVScopeID(group),
+		KVLookupScope:        sharedKVLookupScope(group),
+		DataParallelSize:     group.Spec.Parallelism.DP,
+		Parallelism:          routingParallelism(group),
+	}
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, group.Spec.PDRuntime.BootstrapPort)
+	}
+	return component
 }
 
 func copyOptionalInt32(value *int32) *int32 {

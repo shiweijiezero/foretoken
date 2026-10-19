@@ -14,21 +14,7 @@ type Periodic struct{ interval time.Duration }
 
 const periodicName = "periodic"
 
-// Name identifies the periodic trigger algorithm for registry consumers.
-func (Periodic) Name() string { return periodicName }
-
 var periodicDescriptor = core.TriggerDescriptor{Name: periodicName, Factory: NewPeriodic}
-
-// Decide evaluates every complete fresh metrics snapshot supplied by the controller polling loop.
-func (Periodic) Decide(snapshot core.ScalingSnapshot) core.TriggerDecision {
-	if decision, available := core.MetricsTriggerDecision(snapshot); !available {
-		return decision
-	}
-	return core.TriggerDecision{Disposition: core.TriggerFire, Reason: core.TriggerReasonPeriodic, Message: "periodic evaluation"}
-}
-
-// PollingInterval tells the controller when to schedule the next periodic evaluation.
-func (periodic Periodic) PollingInterval() time.Duration { return periodic.interval }
 
 // NewPeriodic decodes the polling interval for the registry; the controller owns scheduling.
 func NewPeriodic(parameters json.RawMessage) (core.TriggerAlgorithm, error) {
@@ -42,3 +28,17 @@ func NewPeriodic(parameters json.RawMessage) (core.TriggerAlgorithm, error) {
 	}
 	return Periodic{interval: parsed}, nil
 }
+
+// Decide evaluates every complete fresh metrics snapshot supplied by the controller polling loop.
+func (Periodic) Decide(snapshot core.ScalingSnapshot) core.TriggerDecision {
+	if decision, available := core.MetricsTriggerDecision(snapshot); !available {
+		return decision
+	}
+	return core.TriggerDecision{Disposition: core.TriggerFire, Reason: core.TriggerReasonPeriodic, Message: "periodic evaluation"}
+}
+
+// Name identifies the periodic trigger algorithm for registry consumers.
+func (Periodic) Name() string { return periodicName }
+
+// PollingInterval tells the controller when to schedule the next periodic evaluation.
+func (periodic Periodic) PollingInterval() time.Duration { return periodic.interval }

@@ -84,6 +84,23 @@ pub(crate) struct RouterMetrics {
     references: Mutex<LabelReferences>,
 }
 
+/// Retains the fixed metric label space derived from one immutable routing generation.
+pub(crate) struct RouterMetricsScope {
+    stage_labels: Vec<StageLabels>,
+    outcome_labels: Vec<OutcomeLabels>,
+    candidate_labels: Vec<CandidateLabels>,
+    target_labels: Vec<TargetLabels>,
+}
+
+pub(crate) static METRICS: LazyLock<RouterMetrics> = LazyLock::new(RouterMetrics::new);
+
+/// Renders Router observations for the Frontend scrape handler, including the OpenMetrics EOF marker.
+pub fn render_metrics() -> Result<String, fmt::Error> {
+    let mut output = String::new();
+    encode(&mut output, &METRICS.registry)?;
+    Ok(output)
+}
+
 fn latency_histogram() -> Histogram {
     Histogram::new(exponential_buckets(0.00001, 4.0, 10))
 }
@@ -138,14 +155,6 @@ impl RouterMetrics {
             references: Mutex::new(LabelReferences::default()),
         }
     }
-}
-
-/// Retains the fixed metric label space derived from one immutable routing generation.
-pub(crate) struct RouterMetricsScope {
-    stage_labels: Vec<StageLabels>,
-    outcome_labels: Vec<OutcomeLabels>,
-    candidate_labels: Vec<CandidateLabels>,
-    target_labels: Vec<TargetLabels>,
 }
 
 impl RouterMetricsScope {
@@ -411,13 +420,4 @@ fn role_name(role: ModelServerRole) -> &'static str {
         ModelServerRole::Prefill => "prefill",
         ModelServerRole::Decode => "decode",
     }
-}
-
-pub(crate) static METRICS: LazyLock<RouterMetrics> = LazyLock::new(RouterMetrics::new);
-
-/// Renders Router observations for the Frontend scrape handler, including the OpenMetrics EOF marker.
-pub fn render_metrics() -> Result<String, fmt::Error> {
-    let mut output = String::new();
-    encode(&mut output, &METRICS.registry)?;
-    Ok(output)
 }

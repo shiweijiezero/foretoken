@@ -12,15 +12,7 @@ type Direct struct{}
 
 const directName = "direct"
 
-// Name identifies the direct adjustment algorithm for registry consumers.
-func (Direct) Name() string { return directName }
-
 var directDescriptor = core.AdjustmentDescriptor{Name: directName, Factory: NewDirect}
-
-// Adjust clamps the replica recommendation to the configured bounds.
-func (Direct) Adjust(input core.AdjustmentInput) (core.ReplicaAdjustment, error) {
-	return core.ReplicaAdjustment{Replicas: clip(input.RecommendedReplicas, input.Limits.MinReplicas, input.Limits.MaxReplicas), Reason: core.AdjustmentReasonDirect, Message: "replica recommendation is applied directly"}, nil
-}
 
 // NewDirect constructs immediate bounded adjustment for the registry and rejects unused parameters.
 func NewDirect(parameters json.RawMessage, _ *core.RecommendationHistory) (core.AdjustmentAlgorithm, error) {
@@ -29,3 +21,11 @@ func NewDirect(parameters json.RawMessage, _ *core.RecommendationHistory) (core.
 	}
 	return Direct{}, nil
 }
+
+// Adjust clamps the replica recommendation to the configured bounds.
+func (Direct) Adjust(input core.AdjustmentInput) (core.ReplicaAdjustment, error) {
+	return core.ReplicaAdjustment{Replicas: clip(input.RecommendedReplicas, input.Limits.MinReplicas, input.Limits.MaxReplicas), Reason: core.AdjustmentReasonDirect, Message: "replica recommendation is applied directly"}, nil
+}
+
+// Name identifies the direct adjustment algorithm for registry consumers.
+func (Direct) Name() string { return directName }

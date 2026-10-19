@@ -52,16 +52,6 @@ class GPUAllocationSample:
     gpu_counts: dict[str, int]
 
 
-def _controlled_by(value: dict[str, Any], kind: str, name: str, uid: str) -> bool:
-    return any(
-        owner.get("kind") == kind
-        and owner.get("name") == name
-        and owner.get("uid") == uid
-        and owner.get("controller") is True
-        for owner in value["metadata"].get("ownerReferences", [])
-    )
-
-
 class KubernetesReplicaObserver:
     """Own replica and allocated-GPU sampling for one workload point.
 
@@ -123,6 +113,69 @@ class KubernetesReplicaObserver:
             name="foretoken-benchmark-resources",
         )
         self._thread.start()
+
+    def finish(
+        self, time_origin: float, duration: float | None = None, *, deadline: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Stop and align replica rows, bracketing GPU allocation within the remaining budget."""
+        self.close(deadline=deadline)
+        self._sample(deadline=deadline)
+        if self._errors:
+            logger.warning(
+                "Replica observation skipped %d Kubernetes reads; last error: %s",
+                self._errors, self._last_error,
+            )
+        if not self._observations:
+            logger.warning(
+                "No current replica status was available for %s",
+                ", ".join(
+                    f"ModelService/{resource.name}" for resource in self._resources
+                ),
+            )
+        before: dict[str, ReplicaObservation] = {}
+        selected: list[ReplicaObservation] = []
+        for item in self._observations:
+            if item.observed_at <= time_origin:
+                before[item.model_service] = item
+            elif duration is None or item.observed_at <= time_origin + duration:
+                selected.append(item)
+        selected.extend(before.values())
+        selected.sort(key=lambda item: (item.observed_at, item.model_service))
+        rows: list[dict[str, Any]] = []
+        for item in selected:
+            rows.append(
+                {
+                    "elapsed_time_s": max(0.0, item.observed_at - time_origin),
+                    "model": item.model,
+                    "model_service": item.model_service,
+                    "targets": [
+                        {
+                            "id": target.target_id,
+                            "role": target.role,
+                            "desired_replicas": target.desired_replicas,
+                            "ready_replicas": target.ready_replicas,
+                        }
+                        for target in item.targets
+                    ],
+                }
+            )
+        if duration is not None:
+            self.gpu_allocation = self._integrate_gpu(time_origin, duration)
+        return rows
+
+    def stop(self, deadline: float) -> None:
+        """Stop scheduling reads before the result owner joins its observation threads."""
+        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
+        self._stop.set()
+
+    def close(self, *, deadline: float | None = None) -> None:
+        """Join the bounded in-flight sample; repeated calls are harmless."""
+        thread = self._thread
+        if thread is None:
+            return
+        self._thread = None
+        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
+        thread.join()
 
     def _run(self) -> None:
         while not self._stop.wait(DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS):
@@ -340,55 +393,6 @@ class KubernetesReplicaObserver:
             raise ValueError(allocation_error)
         return GPUAllocationSample(observed_at, counts)
 
-    def finish(
-        self, time_origin: float, duration: float | None = None, *, deadline: float | None = None,
-    ) -> list[dict[str, Any]]:
-        """Stop and align replica rows, bracketing GPU allocation within the remaining budget."""
-        self.close(deadline=deadline)
-        self._sample(deadline=deadline)
-        if self._errors:
-            logger.warning(
-                "Replica observation skipped %d Kubernetes reads; last error: %s",
-                self._errors, self._last_error,
-            )
-        if not self._observations:
-            logger.warning(
-                "No current replica status was available for %s",
-                ", ".join(
-                    f"ModelService/{resource.name}" for resource in self._resources
-                ),
-            )
-        before: dict[str, ReplicaObservation] = {}
-        selected: list[ReplicaObservation] = []
-        for item in self._observations:
-            if item.observed_at <= time_origin:
-                before[item.model_service] = item
-            elif duration is None or item.observed_at <= time_origin + duration:
-                selected.append(item)
-        selected.extend(before.values())
-        selected.sort(key=lambda item: (item.observed_at, item.model_service))
-        rows: list[dict[str, Any]] = []
-        for item in selected:
-            rows.append(
-                {
-                    "elapsed_time_s": max(0.0, item.observed_at - time_origin),
-                    "model": item.model,
-                    "model_service": item.model_service,
-                    "targets": [
-                        {
-                            "id": target.target_id,
-                            "role": target.role,
-                            "desired_replicas": target.desired_replicas,
-                            "ready_replicas": target.ready_replicas,
-                        }
-                        for target in item.targets
-                    ],
-                }
-            )
-        if duration is not None:
-            self.gpu_allocation = self._integrate_gpu(time_origin, duration)
-        return rows
-
     def _integrate_gpu(self, time_origin: float, duration: float) -> dict[str, Any]:
         """Integrate only intervals bracketed by successful Pod snapshots."""
         end = time_origin + duration
@@ -438,19 +442,15 @@ class KubernetesReplicaObserver:
             "failed_reads": len(failures),
         }
 
-    def stop(self, deadline: float) -> None:
-        """Stop scheduling reads before the result owner joins its observation threads."""
-        self._stop_deadline = deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
-        self._stop.set()
 
-    def close(self, *, deadline: float | None = None) -> None:
-        """Join the bounded in-flight sample; repeated calls are harmless."""
-        thread = self._thread
-        if thread is None:
-            return
-        self._thread = None
-        self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
-        thread.join()
+def _controlled_by(value: dict[str, Any], kind: str, name: str, uid: str) -> bool:
+    return any(
+        owner.get("kind") == kind
+        and owner.get("name") == name
+        and owner.get("uid") == uid
+        and owner.get("controller") is True
+        for owner in value["metadata"].get("ownerReferences", [])
+    )
 
 
 def replica_history_rows(

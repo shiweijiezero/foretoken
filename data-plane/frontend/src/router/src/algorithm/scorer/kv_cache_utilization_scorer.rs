@@ -26,7 +26,8 @@ impl RouteScorer for KvCacheUtilizationScorer {
         candidates
             .iter()
             .map(|candidate| RouteScore {
-                preference: candidate.data_parallel_stats()
+                preference: candidate
+                    .data_parallel_stats()
                     .and_then(|stats| stats.kv_cache_usage)
                     .map_or(f64::NEG_INFINITY, |usage| 1.0 - usage),
             })

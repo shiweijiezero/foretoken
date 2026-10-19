@@ -35,27 +35,12 @@ pub enum ResponsesInput {
     Items(Vec<Value>),
 }
 
-impl Default for ResponsesInput {
-    fn default() -> Self {
-        Self::Items(Vec::new())
-    }
-}
-
 /// A conversation reference accepted in either OpenAI request form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConversationReference {
     Id(String),
     Object { id: String },
-}
-
-impl ConversationReference {
-    /// Returns the referenced resource without changing its public identity.
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Id(id) | Self::Object { id } => id,
-        }
-    }
 }
 
 /// Responses API reasoning configuration.
@@ -228,10 +213,6 @@ pub struct ResponsesRequest {
     pub vllm_xargs: Option<HashMap<String, Value>>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// One typed input/output item, parsed from the raw JSON in
 /// [`ResponsesInput::Items`] during conversion.
 ///
@@ -359,20 +340,6 @@ pub enum TextPart {
     SummaryText { text: String },
 }
 
-impl TextPart {
-    /// Construct one `reasoning_text` part with the given text.
-    pub fn reasoning_text(text: String) -> Self {
-        Self::ReasoningText { text }
-    }
-
-    /// Return the carried text.
-    pub fn text(&self) -> &str {
-        match self {
-            Self::ReasoningText { text } | Self::SummaryText { text } => text,
-        }
-    }
-}
-
 /// Status of a response object or one of its output items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -433,15 +400,6 @@ pub enum ResponseOutputItem {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AssistantRole;
-
-impl serde::Serialize for AssistantRole {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str("assistant")
-    }
-}
 
 /// Usage block of a completed response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -531,6 +489,48 @@ pub struct ResponsesResponse {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct ResponseObject;
+
+impl Default for ResponsesInput {
+    fn default() -> Self {
+        Self::Items(Vec::new())
+    }
+}
+
+impl ConversationReference {
+    /// Returns the referenced resource without changing its public identity.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Id(id) | Self::Object { id } => id,
+        }
+    }
+}
+
+impl TextPart {
+    /// Construct one `reasoning_text` part with the given text.
+    pub fn reasoning_text(text: String) -> Self {
+        Self::ReasoningText { text }
+    }
+
+    /// Return the carried text.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::ReasoningText { text } | Self::SummaryText { text } => text,
+        }
+    }
+}
+
+impl serde::Serialize for AssistantRole {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str("assistant")
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
 
 impl serde::Serialize for ResponseObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

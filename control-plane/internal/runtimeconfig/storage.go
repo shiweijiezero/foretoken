@@ -16,33 +16,6 @@ import (
 
 const DirectoryOwnerAnnotation = "inference.foretoken.io/directory-owner"
 
-// CacheObservationPort selects the cache observer endpoint next to a runtime port.
-func CacheObservationPort(runtimePort int32) int32 {
-	if runtimePort < 65535 {
-		return runtimePort + 1
-	}
-	return runtimePort - 1
-}
-
-// DefaultStorageIdentity is the platform identity for new runtime-owned files.
-func DefaultStorageIdentity() api.StorageIdentity {
-	return api.StorageIdentity{UID: 1000, GID: 1000}
-}
-
-// ParseStorageIdentity reads a discovered directory owner without inventing one for absent metadata.
-func ParseStorageIdentity(value string) (*api.StorageIdentity, error) {
-	if value == "" {
-		return nil, nil
-	}
-	uidText, gidText, found := strings.Cut(value, ":")
-	uid, uidErr := strconv.ParseUint(uidText, 10, 32)
-	gid, gidErr := strconv.ParseUint(gidText, 10, 32)
-	if !found || uidErr != nil || gidErr != nil || uid == 0 || uid == 1<<32-1 || gid == 1<<32-1 {
-		return nil, fmt.Errorf("invalid storage identity %q", value)
-	}
-	return &api.StorageIdentity{UID: int64(uid), GID: int64(gid)}, nil
-}
-
 // VolumeAccess associates one mounted volume with its resolved filesystem identity.
 // PrepareRoot authorizes permission changes to the mount root, never its existing contents.
 // Directories lists controller-derived relative paths to create and share under the volume identity.
@@ -51,34 +24,6 @@ type VolumeAccess struct {
 	Identity    api.StorageIdentity
 	PrepareRoot bool
 	Directories []string
-}
-
-// CacheStorageAccess preserves a discovered owner or prepares the cache root for the platform user.
-// Existing files retain their ownership and permissions in either case.
-func CacheStorageAccess(cache *api.RuntimeCacheBinding) VolumeAccess {
-	access := VolumeAccess{Name: "runtime-cache", Identity: DefaultStorageIdentity()}
-	if cache != nil {
-		access.PrepareRoot = cache.DirectoryOwner == nil
-		if cache.DirectoryOwner != nil {
-			access.Identity = *cache.DirectoryOwner
-		}
-	}
-	return access
-}
-
-// WorkloadCacheAccess confines retained applications to storage outside managed download collection.
-// Their local loaders cannot register shared-cache references, so the new shared area is hidden.
-func WorkloadCacheAccess(pod *corev1.PodTemplateSpec, cache *api.RuntimeCacheBinding, preparationVersion int32) VolumeAccess {
-	access := CacheStorageAccess(cache)
-	if cache != nil && preparationVersion < SharedModelCachePreparationVersion {
-		access.Directories = []string{"shared"}
-		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-			Name: "legacy-shared-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-		})
-		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "legacy-shared-cache", MountPath: path.Join(cache.MountPath, "shared")})
-	}
-	return access
 }
 
 // ConfigurePodStorage sets the process identity and combines access to independently owned volumes.
@@ -174,4 +119,59 @@ for offset in range(1, len(sys.argv), 4):
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}
 	pod.InitContainers = append([]corev1.Container{prepare}, pod.InitContainers...)
+}
+
+// CacheStorageAccess preserves a discovered owner or prepares the cache root for the platform user.
+// Existing files retain their ownership and permissions in either case.
+func CacheStorageAccess(cache *api.RuntimeCacheBinding) VolumeAccess {
+	access := VolumeAccess{Name: "runtime-cache", Identity: DefaultStorageIdentity()}
+	if cache != nil {
+		access.PrepareRoot = cache.DirectoryOwner == nil
+		if cache.DirectoryOwner != nil {
+			access.Identity = *cache.DirectoryOwner
+		}
+	}
+	return access
+}
+
+// WorkloadCacheAccess confines retained applications to storage outside managed download collection.
+// Their local loaders cannot register shared-cache references, so the new shared area is hidden.
+func WorkloadCacheAccess(pod *corev1.PodTemplateSpec, cache *api.RuntimeCacheBinding, preparationVersion int32) VolumeAccess {
+	access := CacheStorageAccess(cache)
+	if cache != nil && preparationVersion < SharedModelCachePreparationVersion {
+		access.Directories = []string{"shared"}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: "legacy-shared-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "legacy-shared-cache", MountPath: path.Join(cache.MountPath, "shared")})
+	}
+	return access
+}
+
+// DefaultStorageIdentity is the platform identity for new runtime-owned files.
+func DefaultStorageIdentity() api.StorageIdentity {
+	return api.StorageIdentity{UID: 1000, GID: 1000}
+}
+
+// ParseStorageIdentity reads a discovered directory owner without inventing one for absent metadata.
+func ParseStorageIdentity(value string) (*api.StorageIdentity, error) {
+	if value == "" {
+		return nil, nil
+	}
+	uidText, gidText, found := strings.Cut(value, ":")
+	uid, uidErr := strconv.ParseUint(uidText, 10, 32)
+	gid, gidErr := strconv.ParseUint(gidText, 10, 32)
+	if !found || uidErr != nil || gidErr != nil || uid == 0 || uid == 1<<32-1 || gid == 1<<32-1 {
+		return nil, fmt.Errorf("invalid storage identity %q", value)
+	}
+	return &api.StorageIdentity{UID: int64(uid), GID: int64(gid)}, nil
+}
+
+// CacheObservationPort selects the cache observer endpoint next to a runtime port.
+func CacheObservationPort(runtimePort int32) int32 {
+	if runtimePort < 65535 {
+		return runtimePort + 1
+	}
+	return runtimePort - 1
 }

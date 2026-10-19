@@ -14,10 +14,19 @@ type Queue struct{ TargetAverageQueuedRequests int64 }
 
 const queueName = "queue"
 
-// Name identifies the queue decision algorithm for registry consumers.
-func (Queue) Name() string { return queueName }
-
 var queueDescriptor = core.DecisionDescriptor{Name: queueName, Factory: NewQueue}
+
+// NewQueue constructs the queue policy for the built-in registry and validates its capacity target.
+func NewQueue(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	target := int64(1)
+	if err := core.DecodeParameters(parameters, map[string]any{"targetAverageQueuedRequests": &target}); err != nil {
+		return nil, err
+	}
+	if target <= 0 {
+		return nil, fmt.Errorf("autoscaling targetAverageQueuedRequests must be positive")
+	}
+	return Queue{TargetAverageQueuedRequests: target}, nil
+}
 
 // RecommendReplicas converts aggregate waiting requests into an HPA-style average-value recommendation.
 func (queue Queue) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
@@ -36,6 +45,9 @@ func (queue Queue) RecommendReplicas(snapshot core.ScalingSnapshot) (core.Replic
 	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "active requests keep current capacity"), nil
 }
 
+// Name identifies the queue decision algorithm for registry consumers.
+func (Queue) Name() string { return queueName }
+
 func divideRoundUp(value, divisor int64) int32 {
 	replicas := value / divisor
 	if value%divisor != 0 {
@@ -49,16 +61,4 @@ func divideRoundUp(value, divisor int64) int32 {
 
 func recommendation(replicas int32, state core.RecommendationState, reason core.RecommendationReason, message string) core.ReplicaRecommendation {
 	return core.ReplicaRecommendation{State: state, Replicas: replicas, Reason: reason, Message: message}
-}
-
-// NewQueue constructs the queue policy for the built-in registry and validates its capacity target.
-func NewQueue(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
-	target := int64(1)
-	if err := core.DecodeParameters(parameters, map[string]any{"targetAverageQueuedRequests": &target}); err != nil {
-		return nil, err
-	}
-	if target <= 0 {
-		return nil, fmt.Errorf("autoscaling targetAverageQueuedRequests must be positive")
-	}
-	return Queue{TargetAverageQueuedRequests: target}, nil
 }

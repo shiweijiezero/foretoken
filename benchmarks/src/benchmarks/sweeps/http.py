@@ -95,6 +95,49 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
 }
 
 
+class ParameterSweepBenchmark:
+    """Own sequential service selection while the shared sweep executes and publishes points."""
+
+    def __init__(self, benchmark: BenchmarkConfig) -> None:
+        self.benchmark = benchmark
+
+    def run(self) -> BenchmarkRun:
+        """Run HTTP repetitions and return the aggregate completion result."""
+        sweep = self.benchmark.sweep
+        resources = ExitStack()
+        adapter = _HttpSweepAdapter(resources)
+        definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume)
+        if sweep.path:
+            combinations = load_core_sweep_points(definition, adapter)
+        else:
+            definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison", sweep.resume)
+            combinations = [
+                {
+                    _BENCHMARK_NAME: f"service-{choice['name']}",
+                    _PARAMETER_GROUP: "service-comparison",
+                    "service": choice,
+                }
+                for choice in self.benchmark.service_choices
+            ]
+        # Complete all workloads for a method before releasing its temporary service.
+        methods: dict[str, ModelServiceSource] = {}
+        for point in combinations:
+            source = adapter.apply_point(self.benchmark, point).service
+            if source.name in methods and methods[source.name] != source:
+                raise ValueError(f"Sweep service name {source.name!r} refers to different services")
+            methods[source.name] = source
+        order = {name: index for index, name in enumerate(methods)}
+        combinations.sort(key=lambda point: order[adapter.apply_point(self.benchmark, point).service.name])
+        execution = run_sweep(
+            self.benchmark, definition, adapter,
+            mode="parameter_sweep", combinations=combinations,
+            service_resources=resources,
+        )
+        if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
+            log_sweep_results(execution.points)
+        return execution.run
+
+
 def _service_choice(value: Any) -> dict[str, str]:
     """Normalize a Kustomize path or named endpoint choice for one sweep method."""
     if isinstance(value, str):
@@ -217,46 +260,3 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         )
         metrics["label"] = label
         return replace(result, metrics=metrics)
-
-
-class ParameterSweepBenchmark:
-    """Own sequential service selection while the shared sweep executes and publishes points."""
-
-    def __init__(self, benchmark: BenchmarkConfig) -> None:
-        self.benchmark = benchmark
-
-    def run(self) -> BenchmarkRun:
-        """Run HTTP repetitions and return the aggregate completion result."""
-        sweep = self.benchmark.sweep
-        resources = ExitStack()
-        adapter = _HttpSweepAdapter(resources)
-        definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume)
-        if sweep.path:
-            combinations = load_core_sweep_points(definition, adapter)
-        else:
-            definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison", sweep.resume)
-            combinations = [
-                {
-                    _BENCHMARK_NAME: f"service-{choice['name']}",
-                    _PARAMETER_GROUP: "service-comparison",
-                    "service": choice,
-                }
-                for choice in self.benchmark.service_choices
-            ]
-        # Complete all workloads for a method before releasing its temporary service.
-        methods: dict[str, ModelServiceSource] = {}
-        for point in combinations:
-            source = adapter.apply_point(self.benchmark, point).service
-            if source.name in methods and methods[source.name] != source:
-                raise ValueError(f"Sweep service name {source.name!r} refers to different services")
-            methods[source.name] = source
-        order = {name: index for index, name in enumerate(methods)}
-        combinations.sort(key=lambda point: order[adapter.apply_point(self.benchmark, point).service.name])
-        execution = run_sweep(
-            self.benchmark, definition, adapter,
-            mode="parameter_sweep", combinations=combinations,
-            service_resources=resources,
-        )
-        if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
-            log_sweep_results(execution.points)
-        return execution.run

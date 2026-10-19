@@ -24,12 +24,42 @@ type TokenLoad struct {
 
 var tokenLoadDescriptor = core.DecisionDescriptor{Name: tokenLoadName, Factory: NewTokenLoad}
 
-// Name identifies the token-load algorithm for configuration and status consumers.
-func (TokenLoad) Name() string { return tokenLoadName }
-
-// RequiresEngineLoad tells the controller which targets need scheduler token observations.
-func (TokenLoad) RequiresEngineLoad(role core.TargetRole) bool {
-	return role != core.RoleEncoder
+// NewTokenLoad constructs a preset or explicit-threshold policy for the built-in registry.
+func NewTokenLoad(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	mode := "throughput"
+	var prefillUp, prefillDown *uint64
+	var decodeUp, decodeDown *float64
+	if err := core.DecodeParameters(parameters, map[string]any{
+		"mode":                        &mode,
+		"prefillScaleUpQueueTokens":   &prefillUp,
+		"prefillScaleDownQueueTokens": &prefillDown,
+		"decodeScaleUpTokenRatio":     &decodeUp,
+		"decodeScaleDownTokenRatio":   &decodeDown,
+	}); err != nil {
+		return nil, err
+	}
+	policy := TokenLoad{mode: mode, prefillUp: 1, prefillDown: 0.1, decodeUp: 1, decodeDown: 0.6}
+	switch mode {
+	case "throughput", "latency":
+		if prefillUp != nil || prefillDown != nil || decodeUp != nil || decodeDown != nil {
+			return nil, fmt.Errorf("token_load custom thresholds require mode load")
+		}
+		if mode == "latency" {
+			policy.prefillUp, policy.prefillDown, policy.decodeUp, policy.decodeDown = 0.1, 0, 0.4, 0.1
+		}
+	case "load":
+		if prefillUp == nil || prefillDown == nil || decodeUp == nil || decodeDown == nil {
+			return nil, fmt.Errorf("token_load mode load requires all four token thresholds")
+		}
+		if *prefillUp <= *prefillDown || !(*decodeDown >= 0 && *decodeUp <= 1 && *decodeUp > *decodeDown) {
+			return nil, fmt.Errorf("token_load scale-up thresholds must exceed scale-down thresholds; token ratios must be in [0, 1]")
+		}
+		policy.prefillUp, policy.prefillDown = float64(*prefillUp), float64(*prefillDown)
+		policy.decodeUp, policy.decodeDown = *decodeUp, *decodeDown
+	default:
+		return nil, fmt.Errorf("token_load mode must be throughput, latency, or load")
+	}
+	return policy, nil
 }
 
 // RecommendReplicas evaluates each engine and returns a one-Group capacity recommendation.
@@ -82,40 +112,10 @@ func (algorithm TokenLoad) RecommendReplicas(snapshot core.ScalingSnapshot) (cor
 	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "engine token load keeps current capacity"), nil
 }
 
-// NewTokenLoad constructs a preset or explicit-threshold policy for the built-in registry.
-func NewTokenLoad(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
-	mode := "throughput"
-	var prefillUp, prefillDown *uint64
-	var decodeUp, decodeDown *float64
-	if err := core.DecodeParameters(parameters, map[string]any{
-		"mode":                        &mode,
-		"prefillScaleUpQueueTokens":   &prefillUp,
-		"prefillScaleDownQueueTokens": &prefillDown,
-		"decodeScaleUpTokenRatio":     &decodeUp,
-		"decodeScaleDownTokenRatio":   &decodeDown,
-	}); err != nil {
-		return nil, err
-	}
-	policy := TokenLoad{mode: mode, prefillUp: 1, prefillDown: 0.1, decodeUp: 1, decodeDown: 0.6}
-	switch mode {
-	case "throughput", "latency":
-		if prefillUp != nil || prefillDown != nil || decodeUp != nil || decodeDown != nil {
-			return nil, fmt.Errorf("token_load custom thresholds require mode load")
-		}
-		if mode == "latency" {
-			policy.prefillUp, policy.prefillDown, policy.decodeUp, policy.decodeDown = 0.1, 0, 0.4, 0.1
-		}
-	case "load":
-		if prefillUp == nil || prefillDown == nil || decodeUp == nil || decodeDown == nil {
-			return nil, fmt.Errorf("token_load mode load requires all four token thresholds")
-		}
-		if *prefillUp <= *prefillDown || !(*decodeDown >= 0 && *decodeUp <= 1 && *decodeUp > *decodeDown) {
-			return nil, fmt.Errorf("token_load scale-up thresholds must exceed scale-down thresholds; token ratios must be in [0, 1]")
-		}
-		policy.prefillUp, policy.prefillDown = float64(*prefillUp), float64(*prefillDown)
-		policy.decodeUp, policy.decodeDown = *decodeUp, *decodeDown
-	default:
-		return nil, fmt.Errorf("token_load mode must be throughput, latency, or load")
-	}
-	return policy, nil
+// Name identifies the token-load algorithm for configuration and status consumers.
+func (TokenLoad) Name() string { return tokenLoadName }
+
+// RequiresEngineLoad tells the controller which targets need scheduler token observations.
+func (TokenLoad) RequiresEngineLoad(role core.TargetRole) bool {
+	return role != core.RoleEncoder
 }

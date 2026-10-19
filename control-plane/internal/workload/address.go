@@ -18,6 +18,8 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
+const frontendHTTPPortName = "http"
+
 // ChildName derives a bounded child-resource name while preserving the complete ownership identity.
 func ChildName(prefix, identity string) string {
 	suffix := fmt.Sprintf("-%x", sha256.Sum256([]byte(identity)))[:11]
@@ -25,15 +27,6 @@ func ChildName(prefix, identity string) string {
 		return prefix + suffix
 	}
 	return prefix[:63-len(suffix)] + suffix
-}
-
-func dns1035NamePart(value string) string {
-	return strings.Trim(strings.Map(func(character rune) rune {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
-			return character
-		}
-		return '-'
-	}, strings.ToLower(value)), "-")
 }
 
 // ModelGroupServiceName returns the stable ingress Service name shared by workload and routing consumers.
@@ -67,8 +60,6 @@ func ModelGroupServiceSelector(group *inferencev1alpha1.ModelGroup) map[string]s
 	return selector
 }
 
-const frontendHTTPPortName = "http"
-
 // FrontendPodEndpoint resolves the named HTTP listener used to observe one frontend replica.
 func FrontendPodEndpoint(pod *corev1.Pod) (string, error) {
 	if pod.Status.PodIP == "" {
@@ -94,4 +85,13 @@ func ModelGroupLeaderWorkerSetName(group *inferencev1alpha1.ModelGroup) string {
 // ModelGroupEndpoint returns the internal Service URL used for Group requests and lifecycle observation.
 func ModelGroupEndpoint(group *inferencev1alpha1.ModelGroup, port int32) string {
 	return fmt.Sprintf("http://%s.%s.svc:%d", ModelGroupServiceName(group), group.Namespace, port)
+}
+
+func dns1035NamePart(value string) string {
+	return strings.Trim(strings.Map(func(character rune) rune {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			return character
+		}
+		return '-'
+	}, strings.ToLower(value)), "-")
 }

@@ -5,7 +5,6 @@
 
 pub mod api;
 pub mod backend;
-mod backend_telemetry;
 pub mod cache_gc;
 pub mod config;
 pub mod instance_admission;

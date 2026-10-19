@@ -32,31 +32,6 @@ pub struct ModelArtifacts {
     pub tokenizer_revision: String,
 }
 
-impl ModelArtifacts {
-    /// Reads the controller's engine-neutral selection for a preparation Job.
-    pub fn from_env() -> io::Result<Self> {
-        let input = std::env::var(MODEL_ARTIFACTS_ENV).map_err(io::Error::other)?;
-        let artifacts: Self = serde_json::from_str(&input).map_err(io::Error::other)?;
-        artifacts.validate().map_err(io::Error::other)?;
-        Ok(artifacts)
-    }
-
-    /// Checks required artifact identities before preparation or engine startup consumes them.
-    pub fn validate(&self) -> Result<(), String> {
-        for (name, value) in [
-            ("model", &self.model),
-            ("revision", &self.revision),
-            ("tokenizer", &self.tokenizer),
-            ("tokenizerRevision", &self.tokenizer_revision),
-        ] {
-            if value.is_empty() {
-                return Err(format!("model artifacts.{name} must be nonempty"));
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Environment contracts shared by workload projection and first-party source adapters.
 pub const MODEL_ARTIFACTS_ENV: &str = "FORETOKEN_MODEL_ARTIFACTS";
 pub const MODEL_ROOT_ENV: &str = "FORETOKEN_MODEL_ROOT";
@@ -94,59 +69,6 @@ pub const MODEL_METADATA_FILES: &[&str] = &[
     "vocab.json",
     "vocab.txt",
 ];
-
-/// Resolves one publication scope within the caller's namespace-private preparation root.
-/// Model preparation and frontend metadata staging share this directory boundary.
-pub fn preparation_directory(root: &Path, scope: &str) -> io::Result<PathBuf> {
-    let relative = Path::new(scope);
-    if scope.is_empty()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid model preparation scope",
-        ));
-    }
-    Ok(root.join(relative))
-}
-
-/// Returns the controller-projected root for user-provided local models.
-pub fn model_root() -> Option<PathBuf> {
-    env_path(MODEL_ROOT_ENV)
-}
-
-/// Returns provider download storage, using the model root for standalone callers without a separate cache.
-pub fn model_cache_root() -> Option<PathBuf> {
-    env_path(MODEL_CACHE_ROOT_ENV).or_else(model_root)
-}
-
-/// Returns the namespace-private publication root for managed model and tokenizer preparation.
-pub fn preparation_root() -> Option<PathBuf> {
-    env_path(PREPARATION_ROOT_ENV)
-}
-
-/// Returns an explicit Hub file-cache location independently of the caller's HF account directory.
-pub fn huggingface_cache_root() -> Option<PathBuf> {
-    env_path(HF_HUB_CACHE_ENV)
-}
-
-/// Returns the Pod-scoped model root used when persistent frontend storage is unavailable.
-pub fn temporary_model_root() -> Option<PathBuf> {
-    env_path(TEMPORARY_MODEL_ROOT_ENV)
-}
-
-/// Returns the ModelScope SDK cache below one model root.
-pub fn modelscope_cache_root(model_root: &Path) -> PathBuf {
-    model_root.join("modelscope")
-}
-
-fn env_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-}
 
 /// Resolve a directory for frontend or model-server, relative to an optional model root.
 ///
@@ -207,6 +129,78 @@ pub fn resolve_directory(root: Option<&Path>, identifier: &str) -> io::Result<Op
     Ok(Some(directory))
 }
 
+impl ModelArtifacts {
+    /// Reads the controller's engine-neutral selection for a preparation Job.
+    pub fn from_env() -> io::Result<Self> {
+        let input = std::env::var(MODEL_ARTIFACTS_ENV).map_err(io::Error::other)?;
+        let artifacts: Self = serde_json::from_str(&input).map_err(io::Error::other)?;
+        artifacts.validate().map_err(io::Error::other)?;
+        Ok(artifacts)
+    }
+
+    /// Checks required artifact identities before preparation or engine startup consumes them.
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("model", &self.model),
+            ("revision", &self.revision),
+            ("tokenizer", &self.tokenizer),
+            ("tokenizerRevision", &self.tokenizer_revision),
+        ] {
+            if value.is_empty() {
+                return Err(format!("model artifacts.{name} must be nonempty"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Resolves one publication scope within the caller's namespace-private preparation root.
+/// Model preparation and frontend metadata staging share this directory boundary.
+pub fn preparation_directory(root: &Path, scope: &str) -> io::Result<PathBuf> {
+    let relative = Path::new(scope);
+    if scope.is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid model preparation scope",
+        ));
+    }
+    Ok(root.join(relative))
+}
+
+/// Returns the controller-projected root for user-provided local models.
+pub fn model_root() -> Option<PathBuf> {
+    env_path(MODEL_ROOT_ENV)
+}
+
+/// Returns provider download storage, using the model root for standalone callers without a separate cache.
+pub fn model_cache_root() -> Option<PathBuf> {
+    env_path(MODEL_CACHE_ROOT_ENV).or_else(model_root)
+}
+
+/// Returns the namespace-private publication root for managed model and tokenizer preparation.
+pub fn preparation_root() -> Option<PathBuf> {
+    env_path(PREPARATION_ROOT_ENV)
+}
+
+/// Returns an explicit Hub file-cache location independently of the caller's HF account directory.
+pub fn huggingface_cache_root() -> Option<PathBuf> {
+    env_path(HF_HUB_CACHE_ENV)
+}
+
+/// Returns the Pod-scoped model root used when persistent frontend storage is unavailable.
+pub fn temporary_model_root() -> Option<PathBuf> {
+    env_path(TEMPORARY_MODEL_ROOT_ENV)
+}
+
+/// Returns the ModelScope SDK cache below one model root.
+pub fn modelscope_cache_root(model_root: &Path) -> PathBuf {
+    model_root.join("modelscope")
+}
+
 // Managed downloads have source-owned lifetimes. A local model must keep its own
 // storage rather than bypassing those references through a cache path or directory link.
 fn validate_local_storage(directory: &Path) -> io::Result<()> {
@@ -225,4 +219,10 @@ fn validate_local_storage(directory: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }

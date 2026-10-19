@@ -24,75 +24,9 @@ const (
 	RuntimeCacheDirectoryAnnotation = "inference.foretoken.io/runtime-cache-directory"
 )
 
-// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
-func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
-		{Name: CacheClaimEnv, Value: cache.ClaimName},
-		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
-	}
-}
-
-// PlaceRuntimeCache keeps all consumers of a single-node writable claim together.
-// Self-affinity lets the first consumer establish placement; later preparation, serving,
-// and frontend Pods follow that node without maintaining a second attachment inventory.
-func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
-	if cache == nil {
-		return nil
-	}
-	claim := new(corev1.PersistentVolumeClaim)
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
-		return fmt.Errorf("read runtime cache access modes: %w", err)
-	}
-	for _, mode := range claim.Spec.AccessModes {
-		if mode == corev1.ReadWriteMany {
-			return nil
-		}
-	}
-	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
-	}
-	pod.Labels[claimLabel] = string(claim.UID)
-	if pod.Spec.Affinity == nil {
-		pod.Spec.Affinity = &corev1.Affinity{}
-	}
-	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
-		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
-			TopologyKey:   corev1.LabelHostname,
-			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
-		}},
-	}
-	return nil
-}
-
 // RuntimeCacheDirectoryBindings authorizes exact directories without granting PV access.
 // Directories absent from the map are not authorized.
 type RuntimeCacheDirectoryBindings map[string]string
-
-// DirectoryPVC selects prepared storage for cache reconciliation without taking ownership.
-func (bindings RuntimeCacheDirectoryBindings) DirectoryPVC(ctx context.Context, reader client.Reader, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, error) {
-	name := bindings[cache.Spec.Directory]
-	if name == "" {
-		return nil, fmt.Errorf("directory %q has no administrator-prepared claim in namespace %q", cache.Spec.Directory, cache.Namespace)
-	}
-	return ReadPreparedCachePVC(ctx, reader, cache.Namespace, name)
-}
-
-// ReadPreparedCachePVC returns a borrowed filesystem claim without changing its lifecycle.
-func ReadPreparedCachePVC(ctx context.Context, reader client.Reader, namespace, name string) (*corev1.PersistentVolumeClaim, error) {
-	claim := new(corev1.PersistentVolumeClaim)
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, claim); err != nil {
-		return nil, fmt.Errorf("read prepared runtime cache claim %q: %w", name, err)
-	}
-	if !claim.DeletionTimestamp.IsZero() {
-		return nil, fmt.Errorf("prepared runtime cache claim %q is deleting", name)
-	}
-	if claim.Spec.VolumeMode != nil && *claim.Spec.VolumeMode != corev1.PersistentVolumeFilesystem {
-		return nil, fmt.Errorf("prepared runtime cache claim %q requires Filesystem volume mode", name)
-	}
-	return claim, nil
-}
 
 // RuntimeCacheProfile selects persistent storage from administrator-prepared directory bindings or defaults.
 type RuntimeCacheProfile struct {
@@ -161,6 +95,80 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	return profile.binding(claim.Name, directory, claim.Annotations[DirectoryOwnerAnnotation])
 }
 
+// Validate rejects an invalid runtime cache mount path.
+func (profile RuntimeCacheProfile) Validate() error {
+	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
+		return fmt.Errorf("cache mount path must be an absolute non-root path")
+	}
+	return nil
+}
+
+// PlaceRuntimeCache keeps all consumers of a single-node writable claim together.
+// Self-affinity lets the first consumer establish placement; later preparation, serving,
+// and frontend Pods follow that node without maintaining a second attachment inventory.
+func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
+	if cache == nil {
+		return nil
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
+		return fmt.Errorf("read runtime cache access modes: %w", err)
+	}
+	for _, mode := range claim.Spec.AccessModes {
+		if mode == corev1.ReadWriteMany {
+			return nil
+		}
+	}
+	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[claimLabel] = string(claim.UID)
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &corev1.Affinity{}
+	}
+	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
+			TopologyKey:   corev1.LabelHostname,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
+		}},
+	}
+	return nil
+}
+
+// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
+func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
+		{Name: CacheClaimEnv, Value: cache.ClaimName},
+		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
+	}
+}
+
+// DirectoryPVC selects prepared storage for cache reconciliation without taking ownership.
+func (bindings RuntimeCacheDirectoryBindings) DirectoryPVC(ctx context.Context, reader client.Reader, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, error) {
+	name := bindings[cache.Spec.Directory]
+	if name == "" {
+		return nil, fmt.Errorf("directory %q has no administrator-prepared claim in namespace %q", cache.Spec.Directory, cache.Namespace)
+	}
+	return ReadPreparedCachePVC(ctx, reader, cache.Namespace, name)
+}
+
+// ReadPreparedCachePVC returns a borrowed filesystem claim without changing its lifecycle.
+func ReadPreparedCachePVC(ctx context.Context, reader client.Reader, namespace, name string) (*corev1.PersistentVolumeClaim, error) {
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, claim); err != nil {
+		return nil, fmt.Errorf("read prepared runtime cache claim %q: %w", name, err)
+	}
+	if !claim.DeletionTimestamp.IsZero() {
+		return nil, fmt.Errorf("prepared runtime cache claim %q is deleting", name)
+	}
+	if claim.Spec.VolumeMode != nil && *claim.Spec.VolumeMode != corev1.PersistentVolumeFilesystem {
+		return nil, fmt.Errorf("prepared runtime cache claim %q requires Filesystem volume mode", name)
+	}
+	return claim, nil
+}
+
 // binding pins the confirmed directory and storage identity for execution and lifecycle consumers.
 func (profile RuntimeCacheProfile) binding(claimName, directory, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	identity, err := ParseStorageIdentity(owner)
@@ -171,12 +179,4 @@ func (profile RuntimeCacheProfile) binding(claimName, directory, owner string) (
 		ClaimName: claimName, MountPath: profile.MountPath,
 		Directory: directory, DirectoryOwner: identity,
 	}, true, nil
-}
-
-// Validate rejects an invalid runtime cache mount path.
-func (profile RuntimeCacheProfile) Validate() error {
-	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
-		return fmt.Errorf("cache mount path must be an absolute non-root path")
-	}
-	return nil
 }
