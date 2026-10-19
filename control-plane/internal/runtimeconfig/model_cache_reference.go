@@ -6,7 +6,7 @@
 package runtimeconfig
 
 import (
-	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -26,14 +26,14 @@ const (
 // ModelCacheReference pins a source record's storage binding for platform collection.
 // The source namespace comes from ConfigMap metadata, never from this payload.
 type ModelCacheReference struct {
-	Directory      string               `json:"directory"`
-	ClaimName      string               `json:"claimName"`
-	ClaimUID       types.UID            `json:"claimUID"`
-	MountPath      string               `json:"mountPath"`
-	DirectoryOwner *api.StorageIdentity `json:"directoryOwner,omitempty"`
+	Directory      string                             `json:"directory"`
+	ClaimName      string                             `json:"claimName"`
+	ClaimUID       types.UID                          `json:"claimUID"`
+	MountPath      string                             `json:"mountPath"`
+	DirectoryOwner *inferencev1alpha1.StorageIdentity `json:"directoryOwner,omitempty"`
 }
 
 // PreparationSourceName gives model acquisition and collection the same Pool-cohort record name.
-func PreparationSourceName(spec api.ModelGroupSpec) string {
+func PreparationSourceName(spec inferencev1alpha1.ModelGroupSpec) string {
 	return "model-source-" + spec.ModelPoolRef.UID + "-" + spec.Revision
 }

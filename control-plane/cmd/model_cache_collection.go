@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Runs the platform cache collector independently of serving namespaces.
+// Runs the platform cache collector independently of deployment instances.
 
 package main
 
@@ -28,7 +28,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-// maintainModelCache starts the platform collector with an election separate from namespace controllers.
+// maintainModelCache starts the platform collector with an election separate from deployment-instance controllers.
 func maintainModelCache(arguments []string) error {
 	flags := flag.NewFlagSet("maintain-model-cache", flag.ContinueOnError)
 	namespace := flags.String("namespace", "", "Platform namespace owning cache collection Jobs.")
