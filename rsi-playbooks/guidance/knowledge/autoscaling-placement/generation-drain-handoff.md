@@ -44,7 +44,7 @@ Acknowledged drain prevents new work from racing retirement and preserves accept
 
 ## References
 
-- [Foretoken Group drain owner](../../../../control-plane/controllers/modelgroup_drain.go)
+- [Foretoken Group drain owner](../../../../control-plane/controllers/model/drain.go)
 - [Foretoken request workflow](../../../../data-plane/frontend/src/server/src/runtime/workflow.rs)
 - [Dynamo graceful-shutdown utility](https://github.com/ai-dynamo/dynamo/blob/b2078c3127bd2ad3a70a6d39beeb06ff2d0a67fd/components/src/dynamo/common/utils/graceful_shutdown.py)
 - [AIBrix drain controller helper](https://github.com/vllm-project/aibrix/blob/d0500b0399cf35ad0bf95d073faa83c23308f463/pkg/controller/drain/drain.go)

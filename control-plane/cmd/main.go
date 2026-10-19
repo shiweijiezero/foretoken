@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Starts the Foretoken control-plane manager and health endpoints.
+// Starts the Foretoken controller manager and registers domain controllers.
 
 package main
 
@@ -15,6 +15,16 @@ import (
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/frontend"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/kv"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/model"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/profiling"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/video"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/observability"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,11 +40,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
-	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/deployments"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 const (
@@ -111,14 +117,17 @@ func main() {
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
-	cacheDirectoryBindings := controllers.RuntimeCacheDirectoryBindings{}
+	cacheDirectoryBindings := runtimeconfig.RuntimeCacheDirectoryBindings{}
 	var admissionStoreURLSecretName string
 	var admissionStoreURLSecretKey string
+	var responseStoreURLSecretName string
+	var responseStoreURLSecretKey string
+	var responseRetention string
+	var responseReplayRetention string
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
-	var dragonflySocketPath string
-	var modelExpress bool
+	var modelDownloadProxyURL string
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
 
@@ -168,11 +177,14 @@ func main() {
 	})
 	flag.StringVar(&admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
+	flag.StringVar(&responseStoreURLSecretName, "response-store-url-secret-name", "", "Namespace-local Secret containing the shared API cache URL.")
+	flag.StringVar(&responseStoreURLSecretKey, "response-store-url-secret-key", "", "Key in the shared API cache URL Secret.")
+	flag.StringVar(&responseRetention, "response-retention", "", "Retention for stored responses and chat completions, such as 30d.")
+	flag.StringVar(&responseReplayRetention, "response-replay-retention", "", "Retention for response stream replay and temporary background results, such as 10m.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
-	flag.StringVar(&dragonflySocketPath, "model-distribution-dragonfly-socket", "", "Node-local Dragonfly download socket used by model preparation.")
-	flag.BoolVar(&modelExpress, "model-distribution-modelexpress", false, "Use ModelExpress weight sources for compatible inference workloads.")
+	flag.StringVar(&modelDownloadProxyURL, "model-distribution-download-proxy", "", "Optional internal HTTP proxy for model preparation.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.StringVar(&omniInferenceEngineImage, "omni-inference-engine-image", "", "Optional vLLM-Omni image containing the Foretoken Omni adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
@@ -207,20 +219,36 @@ func main() {
 	for index, name := range workloadImagePullSecretNames {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
-	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath, DirectoryBindings: cacheDirectoryBindings}
-	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
-	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
+	cacheProfile := runtimeconfig.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath, DirectoryBindings: cacheDirectoryBindings}
+	huggingFaceAccessProfile := runtimeconfig.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
+	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{ProxyURL: modelDownloadProxyURL}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
-	admissionStore := &inferencev1alpha1.AdmissionStoreConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
+	admissionStore := &inferencev1alpha1.RedisConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
 	if admissionStoreURLSecretName != "" || admissionStoreURLSecretKey != "" {
 		admissionStore.URLSecretRef = &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: admissionStoreURLSecretName},
 			Key:                  admissionStoreURLSecretKey,
 		}
 	}
-	if err := runtimeconfig.ValidateAdmissionStore(admissionStore); err != nil {
+	if err := runtimeconfig.ValidateRedisConnection(admissionStore); err != nil {
 		ctrl.Log.Error(err, "invalid admission store configuration")
 		os.Exit(1)
+	}
+	var responseStore *inferencev1alpha1.ResponseStoreConfig
+	if frontendEnabled {
+		connection := inferencev1alpha1.RedisConnection{URL: os.Getenv(runtimeconfig.ResponseStoreURLEnv)}
+		if responseStoreURLSecretName != "" || responseStoreURLSecretKey != "" {
+			connection.URLSecretRef = &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: responseStoreURLSecretName},
+				Key:                  responseStoreURLSecretKey,
+			}
+		}
+		var err error
+		responseStore, err = runtimeconfig.ResponseStoreConfiguration(connection, responseRetention, responseReplayRetention)
+		if err != nil {
+			ctrl.Log.Error(err, "invalid response store configuration")
+			os.Exit(1)
+		}
 	}
 	var applicationFiles runtimeconfig.ApplicationFiles
 	if err := json.Unmarshal([]byte(applicationFilesJSON), &applicationFiles); err != nil {
@@ -391,40 +419,40 @@ func main() {
 		ctrl.Log.Error(err, "invalid observability labels")
 		os.Exit(1)
 	}
-	serviceAlerts, err := controllers.NewServiceAlerts(manager, observabilityPrometheus, observabilityLabels)
+	serviceAlerts, err := observability.NewServiceAlerts(manager, observabilityPrometheus, observabilityLabels)
 	if err != nil {
 		ctrl.Log.Error(err, "invalid observability configuration")
 		os.Exit(1)
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
-	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&profiling.Reconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&video.Reconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient(), Profile: cacheProfile}).SetupWithManager(manager); err != nil {
+	if err := (&storage.RuntimeCacheReconciler{Client: manager.GetClient(), Profile: cacheProfile}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
 	}
 	if frontendEnabled {
-		var gateway *controllers.GatewayParent
+		var gateway *frontend.GatewayParent
 		if frontendMode == frontendModeGateway {
-			gateway = &controllers.GatewayParent{
+			gateway = &frontend.GatewayParent{
 				Name:        frontendGatewayName,
 				Namespace:   frontendGatewayNamespace,
 				SectionName: frontendGatewaySectionName,
 			}
 		}
-		frontendReconciler := &controllers.FrontendServiceReconciler{
+		frontendReconciler := &frontend.Reconciler{
 			Client:       manager.GetClient(),
 			APIReader:    manager.GetAPIReader(),
 			CacheProfile: cacheProfile,
 			Alerts:       serviceAlerts,
-			RuntimeProfile: controllers.FrontendRuntimeProfile{
+			RuntimeProfile: frontend.FrontendRuntimeProfile{
 				SourceMode:        sourceMode,
 				ApplicationFiles:  applicationFiles,
 				Image:             frontendImage,
@@ -434,6 +462,7 @@ func main() {
 				ImagePullSecrets:  workloadImagePullSecrets,
 				HuggingFaceAccess: huggingFaceAccessProfile.Access(),
 				AdmissionStore:    admissionStore,
+				ResponseStore:     responseStore,
 				Gateway:           gateway,
 			},
 		}
@@ -442,12 +471,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	metricsProvider, err := controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
+	metricsProvider, err := model.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
 	if err != nil {
 		ctrl.Log.Error(err, "invalid autoscaling telemetry configuration")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelServiceReconciler{
+	if err := (&model.ServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
 		SourceMode:               sourceMode,
@@ -461,25 +490,24 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&kv.ServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVService controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVPoolReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&kv.PoolReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
+	if err := (&kv.GroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVGroup controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelPoolReconciler{
+	if err := (&model.PoolReconciler{
 		Client: manager.GetClient(),
-		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
+		RuntimeProfile: resolver.RuntimeProfile{
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
-			ModelExpress:       modelExpress,
 			ModelServerPort:    int32(modelServerPort),
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,
@@ -489,12 +517,12 @@ func main() {
 			RDMA:               rdma,
 			EC:                 ec,
 			MooncakeStore:      mooncakeStore,
-		}},
+		},
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
+	if err := (&model.GroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

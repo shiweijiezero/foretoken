@@ -121,7 +121,7 @@ impl AdmissionRegistry {
     }
 
     /// Reconciles controller-observed owners independently of candidate settings preparation.
-    /// The snapshot watcher supplies model names; existing queues and draining models are retained.
+    /// The snapshot watcher supplies current models; the ledger includes retired model records.
     /// Store retries do not block runtime activation or acknowledge the candidate configuration.
     pub fn publish_membership(
         self: &Arc<Self>,
@@ -142,11 +142,6 @@ impl AdmissionRegistry {
             return;
         }
         state.membership_version = Some(version);
-        let models: BTreeSet<_> = models
-            .into_iter()
-            .chain(state.current.keys().cloned())
-            .chain(state.retired.keys().cloned())
-            .collect();
         drop(state);
         let members = AdmissionMembers {
             frontends: frontend_instances.to_vec(),
@@ -165,24 +160,17 @@ impl AdmissionRegistry {
                 }) {
                     return;
                 }
-                let mut applied = true;
-                for model in &models {
-                    if ledger
-                        .publish_membership(
-                            &scope,
-                            model,
-                            version,
-                            &members.frontends,
-                            &members.backends,
-                        )
-                        .await
-                        .is_err()
-                    {
-                        applied = false;
-                        break;
-                    }
-                }
-                if applied {
+                if ledger
+                    .publish_membership(
+                        &scope,
+                        &models,
+                        version,
+                        &members.frontends,
+                        &members.backends,
+                    )
+                    .await
+                    .is_ok()
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -489,7 +477,10 @@ impl Admission {
         if Instant::now() >= expires {
             return Err(AdmissionError::QueueTimeout);
         }
-        if config.max_waiting_requests.is_none() && config.role_rules.is_empty() {
+        if config.max_waiting_requests.is_none()
+            && config.role_rules.is_empty()
+            && !request.track_execution
+        {
             return Ok(AdmissionPermit::unrestricted(
                 self.clone(),
                 expires,
@@ -645,7 +636,9 @@ impl Admission {
             let mut callers = BTreeSet::new();
             let mut bands: BTreeMap<i32, Vec<WaitingRequest>> = BTreeMap::new();
             for entry in &state.waiting {
-                if !callers.insert(entry.caller.clone()) || entry.reserved {
+                let ordered =
+                    config.max_waiting_requests.is_some() || !config.role_rules.is_empty();
+                if (ordered && !callers.insert(entry.caller.clone())) || entry.reserved {
                     continue;
                 }
                 if entry.error.is_some() || !entry.ready || entry.retry_at > Instant::now() {

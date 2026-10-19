@@ -11,6 +11,7 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -126,13 +127,13 @@ func (c *scopedClient) List(ctx context.Context, objects client.ObjectList, opti
 	return (&scopedReader{Reader: c.Client, metadata: c.Client, scope: c.scope}).List(ctx, objects, options...)
 }
 
-// Namespace KV credentials predate instance controllers and are shared independently of instance cleanup.
+// Namespace KV credentials remain shared and outlive individual deployments.
 func sharedCredential(object client.Object) bool {
 	_, secret := object.(*corev1.Secret)
 	if value, ok := object.(*unstructured.Unstructured); ok {
 		secret = value.GroupVersionKind().GroupKind() == corev1.SchemeGroupVersion.WithKind("Secret").GroupKind()
 	}
-	return secret && object.GetName() == "foretoken-kv-indexer"
+	return secret && object.GetName() == servingconfig.KVIndexerSecretName
 }
 
 func (scope Scope) label(metadata metav1.Object) error {

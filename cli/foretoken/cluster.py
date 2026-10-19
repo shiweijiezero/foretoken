@@ -147,7 +147,7 @@ def _delete(command: ClusterCommand) -> None:
     tool = "kind" if command.kind == "kind" else "k3d"
     _require_commands((tool,))
     arguments = (
-        [tool, "delete", "cluster", command.name]
+        [tool, "delete", "cluster", "--name", command.name]
         if command.kind == "kind"
         else [tool, "cluster", "delete", command.name]
     )

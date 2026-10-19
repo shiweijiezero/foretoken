@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,7 +37,7 @@ from foretoken.platform.config import (
     load_platform_values,
 )
 from foretoken.platform.directory_bindings import prepare_directory_bindings
-from foretoken.platform.helm_client import HelmClient
+from foretoken.platform.helm_client import HelmClient, HelmCommandError
 from foretoken.platform.types import (
     LoadBalancerConfig,
     PlatformGatewayConfig,
@@ -293,10 +293,6 @@ class Helm(HelmClient):
             ],
         ).stdout)
 
-    def deployment_values(self, kubectl: Kubectl | None = None) -> dict[str, Any]:
-        """Read resolved runtime choices using the caller's observation deadline and cluster when supplied."""
-        return json.loads(self.platform_configuration(kubectl)["data"]["deploymentValues"])
-
     def prometheus_release(self) -> ReleaseRef:
         """Return the Prometheus release managed with the platform."""
         return ReleaseRef(self._config.prometheus.release_name, self._config.namespace)
@@ -483,14 +479,16 @@ class Helm(HelmClient):
         """Return the optional file-distribution release owned by platform installation."""
         return ReleaseRef(self._config.dragonfly.release_name, self._config.namespace)
 
-    def dragonfly_daemonset(self, release: ReleaseRef) -> ResourceRef:
-        """Read the actual node client identity from the selected Dragonfly release."""
-        return self._managed_chart_resource(
-            release,
-            api_version="apps/v1",
-            kind="DaemonSet",
-            chart_description="Dragonfly chart",
-        )
+    def dragonfly_daemonset(self, release: ReleaseRef) -> ResourceRef | None:
+        """Return the native client identity when the release declares one compatible DaemonSet."""
+        daemons = [
+            resource for resource in self._installed_chart_manifest(release)
+            if resource["apiVersion"] == "apps/v1" and resource["kind"] == "DaemonSet"
+        ]
+        if len(daemons) != 1:
+            return None
+        metadata = daemons[0]["metadata"]
+        return ResourceRef("DaemonSet", metadata["name"], metadata.get("namespace") or release.namespace)
 
     def install_dragonfly(
         self,
@@ -498,8 +496,8 @@ class Helm(HelmClient):
         accelerator_resource: str,
         image_pull_secrets: tuple[dict[str, str], ...],
         timeout: str,
-    ) -> None:
-        """Install standalone scheduling and node peers without databases or runtime rewrites."""
+    ) -> bool:
+        """Submit optional node downloads and report a completed native installation failure."""
         chart = self._config.dragonfly
         values = self._stored_chart_values(release)
         args = self._upgrade_install_args(release, chart.source)
@@ -541,7 +539,16 @@ class Helm(HelmClient):
                     ),
                 ]
             )
-        with self._prepared_chart(chart.source, chart.version) as prepared:
+        with ExitStack() as artifacts:
+            try:
+                prepared = artifacts.enter_context(self._prepared_chart(chart.source, chart.version))
+            except HelmCommandError as error:
+                if error.operation != "pull":
+                    raise
+                if execution := CommandExecution.current():
+                    execution.check()
+                print(f"Shared download chart is unavailable; using model providers directly: {error}", flush=True)
+                return False
             args[3] = str(prepared)
             self._set_chart_image_sources(
                 prepared,
@@ -549,9 +556,20 @@ class Helm(HelmClient):
                 release=release,
                 overrides=values,
             )
-            args.extend(["--reset-values", "--values", "-"])
-            self._finish_upgrade(args, timeout)
-            self.run(args, input_text=yaml.safe_dump(values))
+            args.extend(["--reset-values", "--values", "-", f"--timeout={timeout}"])
+            completed = self._execute([self._helm, *args], input_text=yaml.safe_dump(values))
+            if execution := CommandExecution.current():
+                execution.check()
+            if completed.returncode:
+                detail = completed.stderr.strip() or completed.stdout.strip()
+                print(f"Shared download installation failed; using model providers directly: {detail}", flush=True)
+                return False
+        return True
+
+    @staticmethod
+    def _add_download_proxy(args: list[str], proxy_url: str) -> None:
+        """Project the optional download endpoint into bootstrap and final platform renders."""
+        args.extend(["--set-string", f"modelDistribution.proxyURL={proxy_url}"])
 
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
@@ -743,7 +761,7 @@ class Helm(HelmClient):
                     and document["metadata"]
                     .get("labels", {})
                     .get("app.kubernetes.io/name")
-                    == "foretoken-admission-store"
+                    in {"foretoken-admission-store", "foretoken-response-store"}
                 ):
                     images["admissionStore.image"] = container["image"]
                 if container["name"] == "rdma-device-plugin":
@@ -826,7 +844,8 @@ class Helm(HelmClient):
         self._set_chart_defaults(Path(args[3]), updates)
 
     def prepare_source_origin(
-        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str
+        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str,
+        *, download_proxy_url: str,
     ) -> ApplicationFiles:
         """Prepare chart-owned storage and return its ready source-build publisher location."""
         release = self.platform_release()
@@ -848,6 +867,7 @@ class Helm(HelmClient):
                 "applicationFiles.releaseURL=",
             ]
         )
+        self._add_download_proxy(args, download_proxy_url)
         input_text = yaml.safe_dump(merged)
         with self._prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
@@ -1255,7 +1275,7 @@ class Helm(HelmClient):
         rdma_resource_name: str | None,
         rdma_managed: bool,
         rdma_node_names: tuple[str, ...],
-        dragonfly_socket_path: str,
+        download_proxy_url: str,
         stored_values: dict[str, Any] | None,
         timeout: str,
     ) -> None:
@@ -1319,12 +1339,7 @@ class Helm(HelmClient):
                     f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
                 ]
             )
-        args.extend(
-            [
-                "--set-string",
-                f"modelDistribution.dragonfly.socketPath={dragonfly_socket_path}",
-            ]
-        )
+        self._add_download_proxy(args, download_proxy_url)
         if rdma_managed:
             args.extend(
                 [

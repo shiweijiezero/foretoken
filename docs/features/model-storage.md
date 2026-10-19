@@ -102,3 +102,11 @@ Use `ReadWriteOnce` for a single-node volume when that is what the StorageClass 
 An administrator can set `workload.cache.claimName` to use an existing namespace-local PVC as the default. An explicit authorized `directory` selection takes precedence over that default.
 
 Profiling results stay in the instance's private data area; use [Profiling](../../benchmarks/docs/profile/README.md) to collect and view them.
+
+## Distribute models across nodes
+
+`foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. For anonymously accessible models on the official Hugging Face and ModelScope services, preparation uses node peers when the shared download service is available. Otherwise, files come directly from the model provider. Authenticated downloads and custom model endpoints use their provider directly.
+
+Compatible replicas automatically reuse loaded weights when their runtime has the required CUDA and RDMA support. When weight sharing is unavailable, they load the prepared model files.
+
+`foretoken uninstall` removes managed download services once no workloads or controllers use them; independently installed services are retained.

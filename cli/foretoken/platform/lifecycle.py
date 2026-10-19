@@ -49,6 +49,7 @@ from foretoken.platform.config import (
     default_platform_config,
     grafana_anonymous_access_from_values,
     load_platform_values,
+    migrate_stored_platform_values,
     resolve_load_balancer_config,
     runtime_overrides_from_values,
 )
@@ -57,12 +58,8 @@ from foretoken.platform.helm import Helm, _owned_by_release
 from foretoken.platform.leader_worker import LeaderWorkerLifecycle
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
 from foretoken.platform.logs import LogCollectionLifecycle, log_config_from_values
-from foretoken.platform.model_distribution import (
-    ModelDistributionLifecycle,
-    dragonfly_config_from_values,
-)
+from foretoken.platform.model_distribution import ModelDistributionLifecycle
 from foretoken.platform.rdma import (
-    migrate_stored_rdma_values,
     require_unused_managed_rdma,
     select_rdma,
 )
@@ -219,7 +216,7 @@ class PlatformLifecycle:
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
         stored_values = (
-            (migrate_stored_rdma_values(helm.release_user_values(platform)),)
+            (migrate_stored_platform_values(helm.release_user_values(platform)),)
             if platform_exists
             else ()
         )
@@ -231,9 +228,7 @@ class PlatformLifecycle:
                 stored_logs.setdefault("initialSize", stored_logs.pop("storageSize"))
         log_config = log_config_from_values((*stored_values, *values))
         log_plan = self._logs.plan(log_config)
-        dragonfly_plan = self._model_distribution.resolve_install(
-            dragonfly_config_from_values((*stored_values, *values))
-        )
+        dragonfly_plan = self._model_distribution.resolve_install((*stored_values, *values))
         grafana_anonymous_access = grafana_anonymous_access_from_values(
             (*stored_values, *values)
         )
@@ -493,27 +488,17 @@ class PlatformLifecycle:
         _print_plan(
             "LeaderWorkerSet", leader_worker_plan.action, leader_worker_plan.detail
         )
-        if dragonfly_plan.config.enabled:
-            _print_plan(
-                "Model file distribution",
-                dragonfly_plan.action,
-                dragonfly_plan.release.display_name,
-            )
+        _print_plan("Model file distribution", dragonfly_plan.action, dragonfly_plan.detail)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
         self._leader_worker.apply(leader_worker_plan, command.timeout)
         _print_plan("LeaderWorkerSet", "Ready", leader_worker_plan.detail)
-        dragonfly_socket = self._model_distribution.apply(
+        download_proxy = self._model_distribution.apply(
             dragonfly_plan,
             runtime_selection.resource_name if runtime_selection is not None else "",
             command.timeout,
-            node_names=tuple(
-                node["metadata"]["name"] for node in runtime_selection.nodes
-            )
-            if runtime_selection is not None
-            else (),
         )
 
         installation_workers = ThreadPoolExecutor(max_workers=2)
@@ -530,6 +515,7 @@ class PlatformLifecycle:
                     Path(command.editable).expanduser().resolve(),
                     (*stored_values, *values),
                     command.timeout,
+                    download_proxy_url=download_proxy,
                 )
                 context = prepare_source_images(
                     command,
@@ -671,18 +657,18 @@ class PlatformLifecycle:
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,
             rdma_node_names=rdma.node_names,
-            dragonfly_socket_path=dragonfly_socket,
+            download_proxy_url=download_proxy,
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
-        if (
-            not dragonfly_plan.config.enabled
-            or dragonfly_plan.release != helm.dragonfly_release()
-        ) and helm.release_exists(helm.dragonfly_release()):
-            _print_plan(
-                "Model file distribution",
-                *self._model_distribution.finish_uninstall(command.timeout),
-            )
+        _print_plan(
+            "Model file distribution",
+            *self._model_distribution.finish_uninstall(
+                command.timeout,
+                keep_release=dragonfly_plan.release if download_proxy else None,
+                keep_proxy_url=download_proxy,
+            ),
+        )
         if rdma.managed:
             live_discovery = ExporterDiscovery(kubectl, command.timeout)
             live_runtime = _select_runtime(live_discovery.nodes, runtime_scope)
@@ -917,11 +903,10 @@ class PlatformLifecycle:
         _print_plan(
             "LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout)
         )
-        if helm.release_exists(helm.dragonfly_release()):
-            _print_plan(
-                "Model file distribution",
-                *self._model_distribution.finish_uninstall(command.timeout),
-            )
+        _print_plan(
+            "Model file distribution",
+            *self._model_distribution.finish_uninstall(command.timeout),
+        )
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)

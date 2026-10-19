@@ -69,6 +69,22 @@ workload:
 
 使用认证仓库时，通过 `--values deploy/platform-values.yaml` 安装。
 
+### 分配外部访问地址
+
+集群已经提供 LoadBalancer 地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+沿用原安装设置并应用配置：
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
+```
+
 ## 3. 部署与更新代码
 
 快速开始示例选择仓库中的 `data/` 目录。目标节点能访问该目录时可保留配置，跨节点部署应使用共享文件系统。成员使用的目录访问由[管理员提前准备](../features/model-storage_zh.md#跨命名空间复用模型文件)。

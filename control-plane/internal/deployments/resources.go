@@ -125,7 +125,7 @@ func (r *Reconciler) configureController(ctx context.Context, deployment *api.In
 			kind = "PersistentVolumeClaim"
 		case "vllm-mooncake-store-config-map-name":
 			kind = "ConfigMap"
-		case "model-source-token-secret-name", "admission-store-url-secret-name", "workload-image-pull-secret":
+		case "model-source-token-secret-name", "admission-store-url-secret-name", "response-store-url-secret-name", "workload-image-pull-secret":
 			kind = "Secret"
 		}
 		if kind != "" {
@@ -239,7 +239,7 @@ func (r *Reconciler) preparePermissions(ctx context.Context, deployment *api.Inf
 	r.bind(deployment, role)
 	// These credentials are administrator-selected namespace references, not discovery rights.
 	secretNames := []string{}
-	for _, flag := range []string{"model-source-token-secret-name", "admission-store-url-secret-name"} {
+	for _, flag := range []string{"model-source-token-secret-name", "admission-store-url-secret-name", "response-store-url-secret-name"} {
 		if name := controllerArgument(container, flag); name != "" {
 			secretNames = append(secretNames, name)
 		}

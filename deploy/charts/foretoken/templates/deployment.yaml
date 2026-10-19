@@ -119,11 +119,8 @@ spec:
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
             - {{ printf "--cache-directory-bindings=%s" (include "foretoken.cacheDirectoryBindings" .) | quote }}
-            {{- if .Values.modelDistribution.modelexpress.enabled }}
-            - --model-distribution-modelexpress=true
-            {{- end }}
-            {{- if .Values.modelDistribution.dragonfly.enabled }}
-            - {{ printf "--model-distribution-dragonfly-socket=%s" .Values.modelDistribution.dragonfly.socketPath | quote }}
+            {{- with .Values.modelDistribution.proxyURL }}
+            - {{ printf "--model-distribution-download-proxy=%s" . | quote }}
             {{- end }}
             {{- with .Values.runtime.vllm.modelSource.endpoint }}
             - {{ printf "--model-source-endpoint=%s" . | quote }}
@@ -137,6 +134,12 @@ spec:
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
             - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
             - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            {{- with .Values.responseStore.externalURLSecret.name }}
+            - {{ printf "--response-store-url-secret-name=%s" . | quote }}
+            - {{ printf "--response-store-url-secret-key=%s" $.Values.responseStore.externalURLSecret.key | quote }}
+            {{- end }}
+            - {{ printf "--response-retention=%s" .Values.responseStore.retention | quote }}
+            - {{ printf "--response-replay-retention=%s" .Values.responseStore.replayRetention | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
             - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}
@@ -191,6 +194,10 @@ spec:
             {{- if not .Values.admissionStore.externalURLSecret.name }}
             - name: FORETOKEN_ADMISSION_STORE_URL
               value: {{ include "foretoken.admissionStoreURL" . | quote }}
+            {{- end }}
+            {{- if and .Values.frontend.enabled (not .Values.responseStore.externalURLSecret.name) }}
+            - name: FORETOKEN_RESPONSE_STORE_URL
+              value: {{ include "foretoken.responseStoreURL" . | quote }}
             {{- end }}
             - name: POD_NAMESPACE
               valueFrom:

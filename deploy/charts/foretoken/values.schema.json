@@ -7,6 +7,7 @@
     "imagePullSecrets",
     "controller",
     "admissionStore",
+    "responseStore",
     "workload",
     "modelDistribution",
     "loadBalancer",
@@ -27,6 +28,28 @@
           "type": "string",
           "description": "Credential-free endpoint; authenticated URLs use externalURLSecret."
         },
+        "externalURLSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "responseStore": {
+      "type": "object",
+      "required": ["retention", "replayRetention", "externalURL", "externalURLSecret"],
+      "properties": {
+        "externalURL": {
+          "type": "string",
+          "description": "Credential-free Redis-compatible endpoint; authenticated URLs use externalURLSecret."
+        },
+        "retention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
+        "replayRetention": {"type": "string", "pattern": "^([0-9]+(y|w|d|h|m|s|ms))+$"},
         "externalURLSecret": {
           "type": "object",
           "required": ["name", "key"],
@@ -262,37 +285,10 @@
     },
     "modelDistribution": {
       "type": "object",
-      "required": ["dragonfly", "modelexpress"],
+      "required": ["proxyURL"],
       "additionalProperties": false,
       "properties": {
-        "modelexpress": {
-          "type": "object",
-          "required": ["enabled"],
-          "additionalProperties": false,
-          "properties": {"enabled": {"type": "boolean"}}
-        },
-        "dragonfly": {
-          "type": "object",
-          "required": ["enabled", "existingRelease", "socketPath"],
-          "additionalProperties": false,
-          "properties": {
-            "enabled": {"type": "boolean"},
-            "existingRelease": {
-              "type": "object",
-              "required": ["name", "namespace"],
-              "additionalProperties": false,
-              "properties": {
-                "name": {"type": "string"},
-                "namespace": {"type": "string"}
-              }
-            },
-            "socketPath": {"type": "string"}
-          },
-          "allOf": [{
-            "if": {"properties": {"enabled": {"const": true}}},
-            "then": {"properties": {"socketPath": {"minLength": 1, "pattern": "^/"}}}
-          }]
-        }
+        "proxyURL": {"type": "string"}
       }
     },
     "loadBalancer": {

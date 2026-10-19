@@ -20,15 +20,18 @@ foretoken-llm-facade = { path = "../llm-facade" }
 foretoken-metrics = { path = "../metrics" }
 foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-router = { path = "../router" }
+foretoken-request-ledger = { path = "../../../request-ledger" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+redis.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+tracing.workspace = true
 uuid.workspace = true
 vllm-llm.workspace = true
