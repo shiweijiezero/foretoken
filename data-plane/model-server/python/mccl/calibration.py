@@ -90,7 +90,7 @@ class McclNetworkCalibration:
         status = {"ok": False}
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "foretoken_mccl", "probe", json.dumps(options)],
+                [sys.executable, "-m", "mccl", "probe", json.dumps(options)],
                 env=environment,
                 capture_output=True,
                 check=False,

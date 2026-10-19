@@ -230,7 +230,7 @@ impl EcTransferPlan {
         let role = self.role?;
         Some(json!({
             "ec_connector": "SharedStorageConnector",
-            "ec_connector_module_path": "foretoken_ec",
+            "ec_connector_module_path": "connectors.ec",
             "ec_role": role.as_str(),
             "ec_connector_extra_config": {
                 "shared_storage_path": self.shared_storage_path,
@@ -409,7 +409,7 @@ impl LaunchPlanV1 {
                 .expect("distributed launcher requires transport ports");
             let mut launcher = Command::new(command.get_program());
             launcher
-                .args(["-m", "foretoken_mccl", "launch"])
+                .args(["-m", "mccl", "launch"])
                 .arg(
                     json!({
                         "member_index": member.index,
@@ -628,7 +628,7 @@ impl KvPlan {
                         "kv_role": role.as_str(),
                     });
                     if settings.bidirectional_kv_xfer {
-                        config["kv_connector_module_path"] = json!("foretoken_nixl");
+                        config["kv_connector_module_path"] = json!("connectors.nixl.connector");
                         config["kv_connector_extra_config"] = json!({
                             "bidirectional_kv_xfer": true,
                         });

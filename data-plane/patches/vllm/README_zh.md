@@ -47,6 +47,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## NIXL 保留前缀
 
-`compatibility/v1-031/nixl-retained-prefix.patch` 为 `foretoken_nixl` 扩展原生来源引用与读取完成流程。adapter 负责发现 token 前缀，实际 KV 块由原生 worker 保留。领取成功的来源不受 Decode 闲置 TTL 回收，直到全部 reader 完成，或尚未开始的读取被撤销；原生心跳失联时退役引擎，而不把可能仍在读取的块交回 allocator。
+`compatibility/v1-031/nixl-retained-prefix.patch` 为 [NIXL adapter](../../model-server/python/connectors/nixl/connector.py) 扩展原生来源引用与读取完成流程。adapter 负责发现 token 前缀，实际 KV 块由原生 worker 保留。领取成功的来源不受 Decode 闲置 TTL 回收，直到全部 reader 完成，或尚未开始的读取被撤销；原生心跳失联时退役引擎，而不把可能仍在读取的块交回 allocator。
 
 更新该补丁时，通过不同前端执行真实的两轮 P/D 生成，对比复用与重算的输出 token，并在取消、到期、对端退出和 TP 完成期间核对 allocator 引用。补丁成功应用或收到请求完成信号，都没有实际检验传输缓冲区的生命周期。正常部署使用 [NIXL 示例](../../../examples/feature/nixl-prefix-reuse)。

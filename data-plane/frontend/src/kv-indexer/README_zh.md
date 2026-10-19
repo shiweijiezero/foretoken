@@ -8,9 +8,11 @@
 为 Router 的 Filter 和 Scorer 提供 KV 前缀匹配：
 
 - 本地加速器缓存：`Device/Local`。
-- Prefill 可通过 [NIXL](../../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv) 读取的 Decode 设备缓存：`Device/Remote`。
+- Prefill 可读取的远端设备 KV 缓存：`Device/Remote`。
 - 引擎的 CPU 与文件卸载缓存：`HostPinned/Local`、`Disk/Local`。
 - Mooncake 共享内存与 SSD 缓存：`External/Remote`。
+
+这些位置描述 KV 存放在哪里，不绑定具体传输库。目前 Foretoken 通过 NIXL 查询和复用 Decode 保留的设备前缀；Mooncake 提供共享缓存查询和普通 Prefill 到 Decode 的传输。配置及运行条件见 [P/D 传输与复用](../../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)。
 
 ## 在路由算法中调用
 

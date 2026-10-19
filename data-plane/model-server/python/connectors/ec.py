@@ -25,13 +25,17 @@ class SharedStorageConnector(ECExampleConnector):
         if not self.is_producer:
             return False, None
         return False, {
-            "ec_items": [{"mm_hash": feature.identifier} for feature in request.mm_features]
+            "ec_items": [
+                {"mm_hash": feature.identifier} for feature in request.mm_features
+            ]
         }
 
     def _generate_filename_debug(self, mm_hash: str) -> str:
         """Share newly owned entry directories across workers using the volume's group."""
         filename = super()._generate_filename_debug(mm_hash)
-        directory = os.open(Path(filename).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = os.open(
+            Path(filename).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
         try:
             if os.fstat(directory).st_uid == os.geteuid():
                 os.fchmod(directory, 0o2770)

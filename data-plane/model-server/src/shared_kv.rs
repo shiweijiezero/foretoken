@@ -8,7 +8,7 @@ use serde::Deserialize;
 use zeromq::prelude::{Socket, SocketRecv, SocketSend};
 
 pub const LOOKUP_ENDPOINT_ENV: &str = "FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT";
-pub const MOONCAKE_CONNECTOR_MODULE: &str = "foretoken_mooncake";
+pub const MOONCAKE_CONNECTOR_MODULE: &str = "connectors.mooncake";
 pub const OFFLOADING_CONNECTOR_MODULE: &str =
     "vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector";
 
