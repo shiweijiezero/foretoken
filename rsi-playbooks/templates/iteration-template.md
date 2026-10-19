@@ -4,6 +4,8 @@ English | [简体中文](iteration-template_zh.md)
 
 Reference for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Identify the developer, executor, writer, and independent reviewer, and link supporting runs under `../runs/`. Follow the [recording guide](../experiment-records.md#complete-the-experiment-notes) to preserve the history of analysis, reviews, and decisions.
 
+Link task records for ownership and scheduling. Without task tools, record current owners, dependencies, resource allocations and measurement windows here.
+
 ## Summary and documents
 
 Introduce each topic with a short summary and link its complete document in this notes directory, such as `plan.md` or `analysis.md`. Keep concise findings and the review and decision history below; put full explanations in the linked files.

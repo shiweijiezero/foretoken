@@ -27,9 +27,8 @@
   - 性能指标：各负载在并发 1／16 下的输出吞吐（token/s）与平均 TPOT（ms/token），写入同一 iteration.md 的“性能指标”表。
   - 对照分析：相同负载下，与初始方案和上一轮的数值对照、变化百分比及原因分析，写入同一 iteration.md 的“对照分析”部分。
   - 结果证据：W&B 链接、图表和原始结果路径，写入同一 iteration.md 的“结果证据”部分；命令自动保存的原始产物保留在 results/qwen3.5-35b-a3b/iterations/<iteration>/runs/ 下。
-  - 执行效率：按任务开始至结束的完整时间区间，统计正在执行任务的子 Agent 数的时间加权平均值，并分别统计两台节点的 GPU 平均利用率，写入 results/qwen3.5-35b-a3b/notes/experiment.md 的“执行效率”部分；注明统计时段、资源范围、采样覆盖及低利用率原因，并引用原始记录。
-  - 最终方案：保留方案、对应代码／配置、各负载实测结果及逐轮对照汇总，写入 results/qwen3.5-35b-a3b/notes/experiment.md。
-  - 用户报告：按 rsi-playbooks/templates/report-template_zh.md 和实验记录手册中的报告维护流程，创建并持续维护 rsi-playbooks/tasks/qwen3.5-35b-a3b/<experiment>/report.md。包含各负载在并发 1／16 下的对照、相对 base 的变化、结论、执行效率和 W&B 结果链接；关键图表放在报告旁的 figures/ 中，用相对路径引用。
+  - 执行效率：按任务开始至结束的完整时间区间，统计正在执行任务的子 Agent 数的时间加权平均值，并分别统计两台节点的 GPU 平均利用率，写入报告的“执行效率”部分；注明统计时段、资源范围、采样覆盖及低利用率原因，并引用原始记录。
+  - 用户报告：按 rsi-playbooks/templates/report-template_zh.md 和实验记录手册中的报告维护流程，创建并持续维护 rsi-playbooks/tasks/qwen3.5-35b-a3b/<experiment>/report.md。包含各负载在并发 1／16 下的对照、相对 base 的变化、保留方案及其代码／配置、结论、执行效率、迭代笔记和 W&B 结果链接；关键图表放在报告旁的 figures/ 中，用相对路径引用。
 ```
 
 执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)，记录方法见[实验记录手册](../experiment-records_zh.md)。

@@ -33,7 +33,7 @@ The delivered version stays unchanged while it waits or runs. The Worker can dev
 
 The lead uses one set of task records to track candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can be adjusted separately. When preparation is slow and evaluation resources often sit idle, Workers can prepare a small set of useful, independent candidates ahead. When the queue is already long, they can spend more time interpreting results or improving work not yet delivered. The lead also accounts for the time needed to evaluate and analyze candidates before the budget ends.
 
-Use native task owners, dependencies and completion states when available. Members may self-claim when the tools prevent duplicate claims and the lead has assigned the necessary resources. Otherwise, the lead assigns an owner explicitly. Without task tools, keep these arrangements in the experiment overview.
+Use native task owners, dependencies and completion states when available. Members may self-claim when the tools prevent duplicate claims and the lead has assigned the necessary resources. Otherwise, the lead assigns an owner explicitly. Without task tools, keep these arrangements in the relevant iteration notes.
 
 ## Coordinate resources and environments
 
@@ -49,7 +49,7 @@ Existing sweeps can run fixed workload groups and repetitions continuously. Task
 
 After each group of measurements, the Experimenter sends the results directly to the members who need them, along with their location, resource state and proposed next action. If the lead needs to decide something, explain why. The lead handles resulting scheduling changes before returning to its own research, while members continue unaffected work when part of an assignment is blocked.
 
-Experimenters maintain their iteration notes, and the lead assigns one writer to update the overview and report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
+Experimenters maintain their iteration notes, and the lead assigns one writer to update the report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
 
 ## Review claims independently
 

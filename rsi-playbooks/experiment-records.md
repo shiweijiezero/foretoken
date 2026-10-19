@@ -47,7 +47,7 @@ For example, when logged in to W&B, replace the recipe's output options with:
 
 ```text
 results/decode/parallelism/
-├── notes/experiment.md        # Overview across iterations
+├── report.md                  # Agent-maintained overall report
 └── iterations/tp2/
     ├── notes/
     │   ├── iteration.md       # Summaries, document links and decisions
@@ -70,15 +70,15 @@ Records are saved on the machine running the evaluation. Relative paths start fr
 
 Store each approach's complete proposals, plans and analyses in `<output-dir>/iterations/<name>/notes/`. For example, `plan.md` explains the problem and evidence, the proposed approach and alternatives, key trade-offs, and the implementation and validation plan; `analysis.md` explains the measured results. Members can begin these documents before measurement and reuse the same name with `--iteration` when running experiments.
 
-Use a summary table in `iteration.md` to introduce each topic and link its full document. Keep dated reviews and decisions below the table. The experiment-level `notes/experiment.md` links these iteration notes and summarizes goals and findings across iterations.
+Use a summary table in `iteration.md` to introduce each topic and link its full document. Keep dated reviews and decisions below the table. `report.md` is the overall entry point: it links the iteration notes and summarizes goals, comparisons and findings across iterations.
 
-The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the overview.
+The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the report.
 
 Code stays in its assigned checkout or worktree. The proposal names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
 
 Exchange summaries together with the complete document paths. Members read the files and discuss the proposal, evidence, alternatives and validation plan, especially at the first exchange or when the approach changes. Record decisions and open questions in the notes. Members can browse one another's documents and code as needed; each document has one writer, with substantial reviews or alternative proposals saved in their authors' files.
 
-Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing overview and iteration notes without replacing existing content; members maintain the additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
+Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing iteration notes without replacing existing content; members maintain the report and additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Analyze results
 
@@ -103,17 +103,17 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
 | `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
 | Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
-| `notes/experiment.md` | The designated writer updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and decisions. |
+| `report.md` | The designated writer updates overall comparisons, the retained approach and open questions, linking the relevant iteration entries and decisions. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
 
 After each run, append its directory or W&B link, the hypothesis tested, the comparison artifact when available, and the supported conclusion. Record failures and interruptions as well. Use the [iteration template](templates/iteration-template.md) for the history. Send contributions to the assigned writer so parallel agents do not overwrite one another's entries.
 
-The overview is a current reading aid, not a second decision history. Refresh it as decisions change and link to the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
+Keep the report's current conclusions aligned with the iteration history and link the supporting entries. Reusable knowledge can also be revised as understanding improves, with links back to the experiment history.
 
 ## Maintain the user-facing report
 
-At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the report at the start of `notes/experiment.md` and keep the same report when resuming. The writer maintains the report; benchmark commands save the underlying evidence.
+At experiment start, the lead or a designated writer creates `report.md` using the [report template](templates/report-template.md) and shares its path with the user. Use the task's delivery location, or the experiment root when none is specified. Link the task, experiment directory and iteration notes from the report, resolving links from its actual location. Keep the same report when resuming. The writer maintains the report; benchmark commands save the underlying evidence.
 
 Update the report after each measured iteration and whenever analysis changes a conclusion or the retained approach. Start with measured task metrics and changes from base, briefly explain the iterations, and describe the currently retained approach with result links. Write for readers who did not participate in the experiment, separating supported conclusions from hypotheses and pending validation. Before measurements are available, state the objective, starting conditions and what remains unmeasured. Keep execution details and decision history in the linked iteration notes.
 

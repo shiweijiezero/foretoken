@@ -23,7 +23,7 @@ Experimenter 使用现有工具完成同步、构建、部署、诊断和测量�
 
 GPU 采集应贯穿实验过程。Experimenter 复用已经覆盖对应设备的[采集器](../SKILL_zh.md#采集-gpu-使用情况)，由主 Agent 为每组设备指定采集负责人。解释利用率时，应同时查看构建、测量和等待时间，并注明缺测时段。如果采集需要跨越多个实验，就随资源一起交接，直到不再需要后停止。
 
-完成一组测量后，Experimenter 将结果直接交给 Worker、主 Agent 和审查者，并维护自己负责的迭代记录。总览与报告由主 Agent 指定一名作者统一更新，其他成员向该作者提供分析和修改意见。记录方式见[实验记录手册](../../../../rsi-playbooks/experiment-records_zh.md)。
+完成一组测量后，Experimenter 将结果直接交给 Worker、主 Agent 和审查者，并维护自己负责的迭代记录。报告由主 Agent 指定一名作者统一更新，其他成员向该作者提供分析和修改意见。记录方式见[实验记录手册](../../../../rsi-playbooks/experiment-records_zh.md)。
 
 ## 继续下一项工作
 
