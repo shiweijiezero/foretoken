@@ -55,10 +55,10 @@ func manageDeployments(arguments []string) error {
 		Scheme: scheme,
 		Cache: cache.Options{
 			ReaderFailOnMissingInformer: true,
+			// Custom API watches use the default cache so discovery can wait for CRD installation.
 			ByObject: map[client.Object]cache.ByObject{
-				&api.InferenceDeployment{}: {},
-				&appsv1.Deployment{}:       {Label: managed},
-				&corev1.ConfigMap{}:        {Label: managed},
+				&appsv1.Deployment{}: {Label: managed},
+				&corev1.ConfigMap{}:  {Label: managed},
 			},
 		},
 		Metrics:                       metricsserver.Options{BindAddress: "0"},
