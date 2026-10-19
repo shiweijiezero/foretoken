@@ -1205,6 +1205,10 @@ rm -rf "$incoming"
 
         Dependency resolution uses metadata_only to inspect a base without exporting its layers.
         """
+        # Concurrency belongs to this invocation, not a saved environment recipe.
+        arguments = {key: value for key, value in (arguments or {}).items() if key != "BUILD_JOBS"}
+        if jobs := os.environ.get("BUILD_JOBS"):
+            arguments["BUILD_JOBS"] = jobs
         metadata = self.execution_root + "/results/" + uuid.uuid4().hex + ".json"
         args = [
             "buildctl",
@@ -1224,7 +1228,7 @@ rm -rf "$incoming"
         ]
         if target:
             args += ["--opt", "target=" + target]
-        syntax_image = (arguments or {}).get("BUILDKIT_SYNTAX_IMAGE")
+        syntax_image = arguments.get("BUILDKIT_SYNTAX_IMAGE")
         if syntax_image:
             source = self.workspace + "/" + dockerfile
             generated = (
@@ -1250,7 +1254,7 @@ rm -rf "$incoming"
             )
             dockerfile = generated.removeprefix(self.workspace + "/")
             args[args.index("--opt") + 1] = "filename=" + dockerfile
-        for key, value in (arguments or {}).items():
+        for key, value in arguments.items():
             local = None
             if key.endswith("_IMAGE"):
                 # Local contexts share OCI exports and their index. Resolve them

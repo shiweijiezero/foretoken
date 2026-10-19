@@ -143,7 +143,8 @@ type FrontendServiceSpec struct {
 	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
-	// Hostname is required when the platform exposes frontends through a Gateway.
+	// Hostname selects a custom Gateway host. HTTP access derives an instance-local
+	// routing host when omitted; HTTPS requires a hostname covered by its certificate.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"

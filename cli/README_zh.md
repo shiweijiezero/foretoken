@@ -97,7 +97,7 @@ kubectl create rolebinding foretoken-operator --namespace team-inference \
   --clusterrole foretoken-operator --user MEMBER_ID
 ```
 
-安装不会自动给用户授权。这条 RoleBinding 允许成员部署、查看、暂停和删除实例，无需管理平台。使用 `deploy -e` 开发源码仍需单独授予构建权限。
+安装不会自动给用户授权。这条 RoleBinding 允许成员部署、查看、暂停和删除实例，无需管理平台。`deploy -e` 使用平台级构建资源，由[可信开发执行者](../docs/deployment/source_zh.md#团队共用开发环境)承担。
 
 成员在自己的 kubeconfig 中选择一次分配的命名空间：
 
@@ -157,7 +157,7 @@ foretoken delete qwen
 
 ### endpoint
 
-输出供 API 客户端使用的前端 URL。`--host` 输出请求的 `Host` 取值，在 HTTP Gateway 模式下为路由域名。
+输出供 API 客户端使用的前端 URL，`--host` 输出请求的 `Host` 取值。HTTP Gateway 默认按实例自动分配路由主机名，也可通过 `FrontendService.spec.hostname` 指定。HTTPS 或限定主机名的监听器需要显式设置 Gateway 接受的 `hostname`；HTTPS 还需匹配的 DNS 和证书。
 
 ```bash
 # 公开访问 URL

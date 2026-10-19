@@ -4,11 +4,11 @@ English | [简体中文](qwen3.5-35b-a3b_zh.md)
 
 ```text
 Models: Qwen3.5-35B-A3B
-Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token MTP and 500G local CPU KV offload, adjustable during optimization
+Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token MTP and 128G local CPU KV offload, adjustable during optimization
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Precision: fixed BF16
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
-Final deployment budget: 4 GPUs on one node; at most 32 CPU cores and 512 GiB memory in total for the model and frontend workloads
+Final deployment budget: 4 GPUs on one node; at most 32 CPU cores and 250G host memory (250 GB, about 232.8 GiB) in total for the model and frontend workloads
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: 2 nodes, each with 8 available GPUs, 64 CPU cores, and 1 TiB memory
 Minimum concurrently working subagents: 6
@@ -38,9 +38,19 @@ Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and reso
 
 The example enables four-token multi-token prediction (MTP): the model verifies draft tokens before returning them. It uses asynchronous scheduling while retaining graph acceleration and automatic GPU KV cache sizing.
 
-Local KV offload uses `500G` of host memory (500 GB, about 465.7 GiB) across the instance's four TP workers. The model requests and is limited to 508Gi, including this cache; the frontend has a 4Gi limit, keeping the combined limit at 512Gi. Account for model loading and steady-state memory use when evaluating this configuration. The separate volume for model files and runtime caches starts at 128Gi and can grow to 256Gi when its StorageClass supports online expansion.
+The model requests and is limited to `246G` of host memory; the frontend requests and is limited to `4G`, for a combined `250G`. CPU KV offload starts at `128G` across all four TP workers, leaving `118G` of the model's budget for loading, processes, staging and shared memory. Adjust offload from observed memory use while keeping the total budget unchanged. Builds, preparation jobs and benchmark clients use separately allocated node capacity.
 
-Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Adapt the example's engine arguments and environment variables to the target hardware before deployment. Concurrent Gateway candidates need distinct `hostname` values in their `frontend.yaml`. Deploy with `foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --timeout 60m`, then evolve it within the task budget. This creates the `qwen-rsi` instance in the current kubeconfig namespace; inspect it with `foretoken status qwen-rsi` and use that name for `stop`, `delete` and `endpoint`. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+The example selects the repository's shared `data/` directory. Worktrees use the primary checkout's data, so candidates reuse model downloads while keeping runtime state and profiling captures private to each instance. The platform administrator prepares [directory access](../../docs/features/model-storage.md#share-model-files-across-namespaces) once.
+
+Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a source-installed Foretoken platform with a compatible runtime, shared directory access and a reachable LoadBalancer or HTTP Gateway. Adapt the engine arguments and environment variables to the target hardware, then deploy from the candidate checkout:
+
+```bash
+foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi -e . --timeout 60m
+```
+
+Each parallel candidate uses its own checkout and `--name`. HTTP Gateway routing assigns a distinct host automatically; `foretoken endpoint qwen-rsi --host` returns it, and benchmarks discover it themselves. Inspect the starting instance with `foretoken status qwen-rsi`; `stop`, `delete` and `endpoint` use the same name. Keep the starting instance stopped between comparisons to retain shared model references, and delete it when the task ends.
+
+Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
 ## Evaluation commands
 

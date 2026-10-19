@@ -35,6 +35,12 @@ foretoken install -e .
 
 源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
+## 团队共用开发环境
+
+管理员一次性准备源码版平台、镜像仓库访问和共享模型目录。普通成员获得[实例操作权限](../../cli/README_zh.md#为成员准备命名空间)，即可使用已安装的应用部署和管理服务。
+
+源码构建和发布会使用平台级资源，由执行主机上的可信开发者或 RSI Experimenter 持相应身份执行。Worker 交付候选工作区和版本，无需领取执行者的 kubeconfig；执行者沿用同一条 `deploy -e` 路径更新各具名实例。平台安装与集群变更仍由管理员单独负责。
+
 ## 部署模型服务
 
 在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码：
@@ -49,7 +55,9 @@ foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
@@ -110,6 +118,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 ```
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
+
+在部署命令前设置 `BUILD_JOBS` 可调整原生编译并发，例如 `BUILD_JOBS=4 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m`。该值在下一次需要原生构建时生效，仅改变并发不会重建未变的应用。它作用于本地引擎及 MetaX SDK、Mooncake 构建；Go/Rust 编译和总内存预算需另行安排。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 

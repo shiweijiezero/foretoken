@@ -29,7 +29,7 @@ The first update should explain the chosen reference and planned comparison. Thi
 
 When different members develop and evaluate an approach, record them as two tasks with a dependency between them. The Worker provides a reproducible version, explains the change and expected effect, and supplies the reference results, workload and execution requirements. These inputs let the Experimenter determine how to deploy and evaluate the candidate.
 
-The delivered version stays unchanged while it waits or runs. The Worker can develop in a different checkout or preserve a separate copy for evaluation before continuing. This keeps the measured version consistent with the handoff.
+The delivered checkout and execution environment stay unchanged while the candidate waits, builds or runs. Reuse the checkout after evaluation; create a separate development or evaluation copy only when further implementation needs to overlap those stages.
 
 The lead uses one set of task records to track candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can be adjusted separately. When preparation is slow and evaluation resources often sit idle, Workers can prepare a small set of useful, independent candidates ahead. When the queue is already long, they can spend more time interpreting results or improving work not yet delivered. The lead also accounts for the time needed to evaluate and analyze candidates before the budget ends.
 
@@ -37,11 +37,13 @@ Use native task owners, dependencies and completion states when available. Membe
 
 ## Coordinate resources and environments
 
-One member is responsible for running and cleaning up each deployment. The lead allocates resources within the user's authorization and coordinates changes to CRDs, drivers and shared platform installations. Code changes also need clear owners and scope so members do not overwrite one another's files.
+One member owns each deployment's execution and cleanup. On shared hosts, the administrator confirms GPU usage windows against host processes and Kubernetes workloads; healthy registered devices do not establish availability. The lead allocates within the user's authorization, records assigned nodes, windows, resource budgets and owners in the existing tasks, and coordinates changes to CRDs, drivers and shared platform installations. Code changes also need clear owners and scope.
 
-Use Kubernetes requests, limits and device plugins to place managed model workloads, while also budgeting for builds, preparation jobs and benchmark clients. Separate namespaces and caches prevent data conflicts, but workloads on one node may still compete for CPU, storage and network capacity. Before a comparison that requires isolation, the affected members therefore confirm that competing work has stopped.
+Base placement on live node allocatable resources and existing Pod requests. Request GPU counts through the device plugin, not host device indices. Kubernetes schedules declared requests and enforces declared limits; it does not budget for undeclared work. Include builds, model/data preparation, GPU warmup and benchmark clients alongside serving, accounting for shared CPU, memory, storage and network use. Use the [native build concurrency setting](../../../../docs/deployment/source.md#edit-an-inference-engine) where applicable; allocate CPU and memory separately.
 
-An executor can continue with another authorized candidate in the same allocation. Resources become available to another task only after their processes and services stop or the receiving member accepts the handoff. After an SSH disconnect, inspect the original remote job before deciding whether to start it again.
+Preparation can overlap evaluation when resources allow. For comparable final measurements, arrange a quiet window for the affected nodes and shared I/O paths. The relevant owners finish or stop this task's competing experiments, builds and warmup before measuring the reference and retained approaches under the same conditions. Other members continue work that does not compete for those resources.
+
+An executor can continue with another authorized candidate in the same allocation. Release capacity after its processes and services exit, or transfer the running allocation, jobs and collectors to an owner who accepts the handoff. After an SSH disconnect, inspect the original remote job before deciding whether to start it again.
 
 ## Return results as work finishes
 

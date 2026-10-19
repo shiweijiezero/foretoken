@@ -123,14 +123,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 ### 4.3 网关模式
 
-先在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中设置对外域名：
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-启用网关模式并部署快速开始示例：
+启用网关模式并部署快速开始示例。HTTP 路由会自动为各实例分配不同的主机名：
 
 ```bash
 foretoken install -e . --frontend-mode gateway

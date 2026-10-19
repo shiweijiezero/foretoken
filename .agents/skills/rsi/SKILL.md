@@ -18,7 +18,7 @@ Before starting, every role [learns how Foretoken works](roles/common.md#learn-t
 
 The team starts experiments only when the user requests execution or resumption. A new task records its start and deadline; a resumed task first checks existing jobs and results and keeps the original time budget. A supplied configuration is a starting point that can evolve with evidence. If none is supplied, the team records an initial approach for comparison. The team builds on existing findings and continues until the task's end conditions are met.
 
-Before allocating resources, the lead checks every node in the task and its current users. Capacity planning includes model services, builds, preparation jobs and benchmark clients. If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
+Before allocating resources, the lead checks the task's nodes, current users and available GPU windows, following the [resource coordination guidance](roles/common.md#coordinate-resources-and-environments). If a node cannot be used, the lead records the reason and addresses problems that can be resolved.
 
 The lead establishes W&B naming before parallel experiments begin. An ongoing research topic uses one project, named with a `foretoken-` prefix and the model, hardware and objective, such as `foretoken-qwen35-metax-inference`. Each experiment uses a dated or named group, with run names distinguishing approaches, workloads and repetitions. Resumption keeps the original names, and experiment records retain the run links.
 
@@ -36,17 +36,27 @@ The lead keeps the task moving toward its objectives: choosing research directio
 
 Assignments include absolute paths to the task, role instructions, code and evidence, together with the reference approach and relevant decisions. Members read the original sources themselves. Use stable names such as `worker-01` and `experimenter-01`, with the role prefixes `lead`, `advisor`, `worker` and `experimenter`. When the harness assigns the lead a messaging address, the team uses that address.
 
-During execution, the lead maintains the task's required number of working members and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time. During an isolated final measurement, other members continue research and analysis that does not compete for the affected resources.
+During execution, the lead maintains the task's required number of working members and tracks candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can change independently according to observed durations, backlog and remaining time.
 
 ## Isolate candidate workspaces and execution
 
-The team edits code on task branches and gives concurrent writers separate checkouts. Independent clones can provide separate execution directories; switching branches in one shared directory does not isolate simultaneous edits. The lead records source versions, responsible members and resource assignments.
+Give each Worker a task branch, a separate checkout and a stable deployment instance name; reuse them across iterations. Concurrent writers need separate directories, not branch switches in a shared directory. The lead records source versions and owners in the existing tasks, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
 
-The shared CLI and platform are prepared using the [source deployment guide](../../../docs/deployment/source.md). The lead coordinates changes to CRDs, drivers and shared platform installations, while each candidate uses its own deployment, writable cache and result directory. Read-only model data can be reused where suitable.
+Prepare the CLI and shared platform once through the [source deployment guide](../../../docs/deployment/source.md). Use the initial build and model/dataset preparation to resolve registry, dependency and download access in the execution environment. Reuse the prepared source installation, workspaces and incremental build caches rather than reinstalling for each candidate.
 
-The executor runs from the candidate checkout using its Kustomize configuration and namespace. When running from another directory, pass `-e` with the checkout and an absolute deployment path. Candidate engine changes use `--engine-source`; subsequent runs reuse the recorded selection and incremental builds.
+Candidates can share a Kubernetes namespace. Select the same node-accessible [data directory](../../../docs/features/model-storage.md) to reuse downloaded model files and tokenizers; runtime state, runtime compilation caches and profiling captures stay private to each instance. Keep each candidate's result records distinct.
 
-Delivered code and the runtime environment stay unchanged during build and measurement. Task-owned remote sessions or an existing job manager preserve logs and exit status, and the executor checks the original job after a disconnect before deciding to restart it. A checkout and its resources can be removed after required changes and results are saved and their users have finished. Preserve unfinished work on pause and inspect the Git index before committing.
+The executor uses the assigned kubeconfig context and namespace. Set `CHECKOUT` to the candidate checkout, `DEPLOYMENT` to its Kustomize directory, both as absolute paths, and `INSTANCE` to its stable instance name:
+
+```bash
+foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" -e "$CHECKOUT"
+```
+
+Use the same configuration and `--name` for `perf` and `eval`, and select that instance by name for `status`, `endpoint`, `stop` and `delete`. Engine changes use `--engine-source`; subsequent runs reuse the recorded source selection and incremental builds.
+
+Keep the baseline instance while the task still needs its shared model files. Use `foretoken stop` when it is idle rather than deleting it between candidate runs; this retains its model-cache references. At task completion, save required results, then delete the baseline and other unused task instances.
+
+Task-owned remote sessions or an existing job manager preserve logs and exit status. After a disconnect, inspect the original job before restarting it. Remove workspaces and resources only after required changes and results are saved and their users have finished. Preserve unfinished work on pause and inspect the Git index before committing.
 
 ## Advance each iteration
 
@@ -56,7 +66,7 @@ When preparation or measurement is blocked, the lead assigns an owner to resolve
 
 The Worker implements and explains the approach, then the Experimenter builds and measures it, confirming that the intended change ran. Fixed workload groups and repetitions can run through sweeps. Results return directly to developers and reviewers so analysis, preparation and recording can continue while other evaluations run.
 
-Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload, using a quiet measurement window when required.
+Before retaining or integrating a change, the lead reads the implementation and relevant call paths and reviews the independent assessment. The combined approach is still validated under the task's workload.
 
 The lead continually adjusts directions and resources as research and experiments advance. When an Advisor flags stalled or misdirected work, the lead revisits the task objectives, current understanding and available results, explains whether to continue, change or stop the direction, and assigns the next action and owner. The responsible member fixes recurring execution problems and checks the affected workflow before the team relies on the fix.
 

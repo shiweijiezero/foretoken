@@ -35,6 +35,12 @@ This installs the shared Foretoken platform; builds run in the cluster. It can a
 
 Source builds automatically reuse persistent node-local compiler caches. To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
 
+## Shared development
+
+The administrator prepares the source-installed platform, registry access and shared model directory once. Ordinary members receive [instance permissions](../../cli/README.md#prepare-a-namespace-for-members) and can operate services using installed applications.
+
+Source builds and publication use platform-level resources. Assign this access to a trusted developer or RSI Experimenter on the execution host; Workers can hand off their candidate checkout and version without receiving the executor's kubeconfig. The executor uses the same `deploy -e` path for each named instance. Platform installation and cluster changes remain separate administrative operations.
+
 ## Deploy a model service
 
 From the Foretoken repository root, deploy the Quick Start using the code in this directory:
@@ -49,7 +55,9 @@ The instance runs in your current kubeconfig namespace, with a frontend and a `Q
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
@@ -110,6 +118,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 ```
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
+
+Set `BUILD_JOBS` on the deployment command to control native compilation concurrency, for example `BUILD_JOBS=4 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m`. It applies when the next native build is needed; changing it alone does not rebuild an unchanged application. This setting covers local engine builds and MetaX SDK/Mooncake builds, not Go or Rust compilation or a total memory limit.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
