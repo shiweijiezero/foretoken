@@ -78,5 +78,4 @@ Start with [Contributing](../CONTRIBUTING.md) and the [code style](development/c
 - [Preview and build the documentation](development/documentation.md) when updating guides or navigation.
 - Validate changes with the [testing guidelines](development/testing.md) and [CI guidelines](development/ci.md).
 - Maintain deployment and storage behavior using the [source-deployment](development/source-deployment.md) and [runtime-cache](development/runtime-cache.md) guides.
-- Keep defaults, derived values and listener configuration with their [runtime configuration owners](development/runtime-configuration.md).
 - Build and publish versions with the [release guide](development/release.md).
