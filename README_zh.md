@@ -79,14 +79,16 @@ foretoken install -e .
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-这会创建名为 `quickstart-frontend` 的实例，包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。
+
+实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
 同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -169,8 +171,8 @@ foretoken install -e . --frontend-mode gateway
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 # 发送测试请求
 curl --fail-with-body --no-buffer \
@@ -186,7 +188,7 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 # 只删除快速开始实例
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 
 # 平台管理员：不再有部署需要平台时卸载
 foretoken uninstall

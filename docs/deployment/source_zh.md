@@ -43,10 +43,12 @@ foretoken install -e .
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-这会在当前 kubeconfig 的命名空间中创建 `quickstart-frontend` 实例，包含前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
+不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。添加 `--name candidate-a` 则使用 `candidate-a`，后续操作也用这个名字。
+
+实例在当前 kubeconfig 的命名空间中运行，包含前端和 `Qwen/Qwen3-0.6B` 模型服务，使用一张 GPU。部署完成后，发送请求：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
@@ -61,7 +63,7 @@ CLI 代码使用执行 `pip install -e .` 时的目录；修改其 Python 依赖
 示例使用完后删除：
 
 ```bash
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 ```
 
 ### 并行运行候选方案

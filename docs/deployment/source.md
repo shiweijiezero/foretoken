@@ -43,10 +43,12 @@ From the Foretoken repository root, deploy the Quick Start using the code in thi
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-This creates the `quickstart-frontend` instance in your current kubeconfig namespace, with a frontend and a `Qwen/Qwen3-0.6B` model service using one GPU. Once deployment completes, send a request:
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. Add `--name candidate-a` to choose `candidate-a` instead, and use that name in subsequent commands.
+
+The instance runs in your current kubeconfig namespace, with a frontend and a `Qwen/Qwen3-0.6B` model service using one GPU. Once deployment completes, send a request:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
@@ -61,7 +63,7 @@ CLI changes use the directory where `pip install -e .` was run. Reinstall the CL
 Remove the example when finished:
 
 ```bash
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 ```
 
 ### Run candidates in parallel

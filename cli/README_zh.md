@@ -121,7 +121,7 @@ foretoken uninstall
 
 从 Kustomize 目录部署一个前端及其模型，实例使用当前 kubeconfig 的命名空间。各实例拥有独立的控制器和服务，更新、暂停和删除不会影响同一命名空间中的相邻实例。
 
-下面使用[单模型快速开始](../examples/quickstart/qwen3-0.6b/README_zh.md)，资源要求和配置说明见该示例。不传 `--name` 时，默认使用渲染后 FrontendService 的名称，本例为 `quickstart-frontend`；前端资源也使用该实例名。
+下面使用[单模型快速开始](../examples/quickstart/qwen3-0.6b/README_zh.md)，资源要求和配置说明见该示例。不传 `--name` 时，实例名取自 [`frontend.yaml`](../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。下文通过 `--name qwen` 指定实例名，后续操作也使用 `qwen`。
 
 ### deploy
 

@@ -41,15 +41,15 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 The command exits when the model and frontend services are Ready.
 
-This creates the `quickstart-frontend` instance in the namespace selected by your kubeconfig. Pass `--name` to deploy another independent instance in the same namespace. To select another model, edit `examples/quickstart/qwen3-0.6b/model.yaml`; resources and cache settings are described in the [single-model example](../../examples/quickstart/qwen3-0.6b/README.md).
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. Add `--name candidate-a` to choose another instance name, then use `candidate-a` in the commands below. To select another model, edit `examples/quickstart/qwen3-0.6b/model.yaml`; resources and cache settings are described in the [single-model example](../../examples/quickstart/qwen3-0.6b/README.md).
 
 ## 2. Send a request
 
 Resolve the service URL and HTTP Host. Gateway uses the Host to route the request to the correct service:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -72,20 +72,20 @@ For CPU/GPU execution traces, use [PyTorch profiling](../../benchmarks/docs/prof
 ## 3. Inspect or remove the deployment
 
 ```bash
-foretoken status quickstart-frontend
-foretoken status quickstart-frontend --watch
+foretoken status qwen3-0-6b
+foretoken status qwen3-0-6b --watch
 ```
 
 When finished, remove the resources created by the same configuration:
 
 ```bash
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 ```
 
 Deletion removes only this instance and its controller, releasing its model-cache references after its workloads exit. Neighboring instances, the Kubernetes namespace and administrator-provided storage remain. See [Model storage](../features/model-storage.md#stop-delete-and-reuse) for cache collection and retained user files. The administrator maintains the shared platform.
 
 ## If the request does not succeed
 
-- Deployment keeps waiting or a Pod is Pending: find the affected Pod in `foretoken status quickstart-frontend`, then run `kubectl describe pod` with that Pod's name. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
+- Deployment keeps waiting or a Pod is Pending: find the affected Pod in `foretoken status qwen3-0-6b`, then run `kubectl describe pod` with that Pod's name. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
 - HTTP 404: check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
 - HTTP 503: inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.

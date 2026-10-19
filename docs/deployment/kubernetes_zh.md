@@ -105,12 +105,14 @@ spec:
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-这会在当前 kubeconfig 的命名空间中创建 `quickstart-frontend` 实例。修改控制器、前端或模型服务代码后，继续执行同一条命令，只更新该实例。使用另一个 `--name`，即可在同一命名空间运行独立实例。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。实例使用当前 kubeconfig 的命名空间。添加 `--name candidate-a` 则使用 `candidate-a`，后续操作也用这个名字。
+
+修改控制器、前端或模型服务代码后，继续执行同一条部署命令，只更新该实例。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 
 ```bash
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 foretoken uninstall
 ```
 

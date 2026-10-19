@@ -105,12 +105,14 @@ Deploy and update code:
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-This creates the `quickstart-frontend` instance in the current kubeconfig namespace. After editing controller, frontend or model-server code, run the same command again to update only this instance. Use another `--name` for an independent instance in the same namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. It is deployed in the current kubeconfig namespace. Add `--name candidate-a` to use `candidate-a` instead, including in subsequent commands.
+
+After editing controller, frontend or model-server code, run the same deployment command again to update only that instance. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 
 ```bash
-foretoken delete quickstart-frontend
+foretoken delete qwen3-0-6b
 foretoken uninstall
 ```
 

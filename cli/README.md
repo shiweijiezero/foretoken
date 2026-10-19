@@ -121,7 +121,7 @@ foretoken uninstall
 
 Deploy one frontend and its models from a Kustomize directory. Instances use the current kubeconfig namespace. Each has its own controller and services, so updates, stop and deletion do not affect neighboring instances in the same namespace.
 
-The examples use the [single-model Quick Start](../examples/quickstart/qwen3-0.6b/README.md); its resource requirements and configuration are documented there. Without `--name`, its instance name is the rendered FrontendService name, `quickstart-frontend`. The frontend uses the instance name in either case.
+The examples use the [single-model Quick Start](../examples/quickstart/qwen3-0.6b/README.md); its resource requirements and configuration are documented there. Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. The commands below override it with `--name qwen` and use `qwen` afterward.
 
 ### deploy
 

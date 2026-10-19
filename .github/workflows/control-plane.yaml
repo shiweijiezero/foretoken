@@ -160,7 +160,7 @@ jobs:
             updateID: initial
             resources:
               - {apiVersion: inference.foretoken.io/v1alpha1, kind: ModelService, name: quickstart-qwen3-0.6b}
-              - {apiVersion: inference.foretoken.io/v1alpha1, kind: FrontendService, name: quickstart-frontend}
+              - {apiVersion: inference.foretoken.io/v1alpha1, kind: FrontendService, name: qwen3-0-6b}
               - {apiVersion: inference.foretoken.io/v1alpha1, kind: RuntimeCache, name: models}
           EOF
           kubectl wait --for=condition=Ready inferencedeployment/lifecycle \
