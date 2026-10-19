@@ -26,15 +26,15 @@ type EffectiveConfig struct {
 	EngineArgs  inferencev1alpha1.EngineArguments
 }
 
-// LaunchPlanV1 is the controller-owned command and lifecycle contract consumed by the Omni adapter.
-type LaunchPlanV1 struct {
+// LaunchPlanV2 is the controller-owned command and lifecycle contract consumed by the Omni adapter.
+type LaunchPlanV2 struct {
 	Version      int                               `json:"version"`
-	Model        string                            `json:"model"`
-	Source       inferencev1alpha1.ModelSource     `json:"source"`
-	Revision     string                            `json:"revision"`
+	Artifacts    runtimeconfig.ModelArtifacts      `json:"artifacts"`
 	UpstreamPort int32                             `json:"upstreamPort"`
 	Lifecycle    runtimeconfig.LaunchLifecycle     `json:"lifecycle"`
 	EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
+
+	nativeAcquisition bool
 }
 
 // Compile validates the supported single-node Omni topology and normalizes engine arguments.
@@ -78,30 +78,52 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 }
 
 // BuildLaunchPlan derives the internal engine command contract from one resolved ModelGroup.
-func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
+func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV2, error) {
 	if group.Runtime.Backend != Backend {
-		return LaunchPlanV1{}, fmt.Errorf("vLLM-Omni launch plan requires backend %q", Backend)
+		return LaunchPlanV2{}, fmt.Errorf("vLLM-Omni launch plan requires backend %q", Backend)
 	}
 	if group.Artifacts.Model == "" || group.Artifacts.Source == "" || group.Artifacts.ModelRevision == "" {
-		return LaunchPlanV1{}, fmt.Errorf("vLLM-Omni model, source, and revision must be nonempty")
+		return LaunchPlanV2{}, fmt.Errorf("vLLM-Omni model, source, and revision must be nonempty")
+	}
+	nativeAcquisition := group.Runtime.PreparationVersion == 0
+	if !nativeAcquisition && (group.Artifacts.Tokenizer == "" || group.Artifacts.TokenizerRevision == "") {
+		return LaunchPlanV2{}, fmt.Errorf("vLLM-Omni tokenizer and tokenizer revision must be nonempty")
 	}
 	if group.Runtime.Port < 1 || group.Runtime.Port > 65533 {
-		return LaunchPlanV1{}, fmt.Errorf("vLLM-Omni model-server port must be between 1 and 65533")
+		return LaunchPlanV2{}, fmt.Errorf("vLLM-Omni model-server port must be between 1 and 65533")
 	}
 	lifecycle, err := runtimeconfig.CompileModelLifecycle(group.Timeouts)
 	if err != nil {
-		return LaunchPlanV1{}, err
+		return LaunchPlanV2{}, err
 	}
-	return LaunchPlanV1{
-		Version: 1, Model: group.Artifacts.Model, Source: group.Artifacts.Source,
-		Revision: group.Artifacts.ModelRevision, UpstreamPort: group.Runtime.Port + 2,
-		Lifecycle:  lifecycle,
-		EngineArgs: group.Runtime.EngineArgs.DeepCopy(),
+	return LaunchPlanV2{
+		Version:           2,
+		Artifacts:         runtimeconfig.ProjectModelArtifacts(group.Artifacts),
+		UpstreamPort:      group.Runtime.Port + 2,
+		Lifecycle:         lifecycle,
+		EngineArgs:        group.Runtime.EngineArgs.DeepCopy(),
+		nativeAcquisition: nativeAcquisition,
 	}, nil
 }
 
 // JSON serializes the launch plan for the workload's FORETOKEN_OMNI_LAUNCH_PLAN environment.
-func (plan LaunchPlanV1) JSON() (string, error) {
+func (plan LaunchPlanV2) JSON() (string, error) {
+	if plan.nativeAcquisition {
+		data, err := json.Marshal(struct {
+			Version      int                               `json:"version"`
+			Model        string                            `json:"model"`
+			Source       inferencev1alpha1.ModelSource     `json:"source"`
+			Revision     string                            `json:"revision"`
+			UpstreamPort int32                             `json:"upstreamPort"`
+			Lifecycle    runtimeconfig.LaunchLifecycle     `json:"lifecycle"`
+			EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
+		}{
+			Version: 1, Model: plan.Artifacts.Model, Source: plan.Artifacts.Source,
+			Revision: plan.Artifacts.Revision, UpstreamPort: plan.UpstreamPort,
+			Lifecycle: plan.Lifecycle, EngineArgs: plan.EngineArgs,
+		})
+		return string(data), err
+	}
 	data, err := json.Marshal(plan)
 	return string(data), err
 }

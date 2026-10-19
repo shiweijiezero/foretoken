@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Owns RuntimeCache PVC creation, expansion, retention, and deletion.
+// Selects prepared cache claims and manages RuntimeCache-owned dynamic PVCs.
 
 package storage
 
@@ -23,28 +23,31 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 const (
-	runtimeCacheFinalizer                = "inference.foretoken.io/runtimecache-protection"
-	runtimeCacheDirectoryBookkeepingSize = "1Gi"
-	runtimeCacheDirectoryAnnotation      = "inference.foretoken.io/runtime-cache-directory"
-	runtimeCacheLabel                    = "inference.foretoken.io/runtime-cache"
-	runtimeCacheRetentionAnnotation      = "inference.foretoken.io/runtime-cache-retention"
+	runtimeCacheFinalizer           = "inference.foretoken.io/runtimecache-protection"
+	runtimeCacheLabel               = "inference.foretoken.io/runtime-cache"
+	runtimeCacheRetentionAnnotation = "inference.foretoken.io/runtime-cache-retention"
 )
 
-// RuntimeCacheReconciler owns the PVC lifecycle for one RuntimeCache.
-type RuntimeCacheReconciler struct{ client.Client }
+// RuntimeCacheReconciler owns dynamic PVCs and observes administrator-selected storage.
+type RuntimeCacheReconciler struct {
+	client.Client
+	Profile runtimeconfig.RuntimeCacheProfile
+}
 
-// SetupWithManager registers RuntimeCache reconciliation and its owned PVC.
+// SetupWithManager observes both owned PVCs and borrowed storage bindings.
 func (reconciler *RuntimeCacheReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.RuntimeCache{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.preparedClaimRequests)).
 		Complete(reconciler)
 }
 
-// Reconcile creates, expands, retains, or deletes the managed cache PVC.
+// Reconcile publishes the selected storage and manages only the cache's own dynamic PVC.
 func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	cache := new(inferencev1alpha1.RuntimeCache)
 	if err := reconciler.Get(ctx, request.NamespacedName, cache); err != nil {
@@ -67,6 +70,7 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseDegraded, false, "ApplyFailed", err.Error(), nil)
 		return ctrl.Result{}, errors.Join(fmt.Errorf("reconcile RuntimeCache PVC: %w", err), statusErr)
 	}
+	ownsClaim := metav1.IsControlledBy(pvc, cache)
 	if message, failed := pvcResizeFailure(pvc); failed {
 		phase, usable := inferencev1alpha1.RuntimeCachePhaseDegraded, false
 		if pvcHasUsableCapacity(pvc) {
@@ -86,10 +90,10 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		phase, reason, message = inferencev1alpha1.RuntimeCachePhaseReady, "Ready", "Runtime cache PVC is bound"
 	}
 	result := ctrl.Result{}
-	if cache.Spec.MaxSize != "" && pvc.Status.Phase == corev1.ClaimBound && !ready {
+	if ownsClaim && cache.Spec.MaxSize != "" && pvc.Status.Phase == corev1.ClaimBound && !ready {
 		result.RequeueAfter = runtimeCachePollInterval
 	}
-	if ready && cache.Spec.MaxSize != "" {
+	if ownsClaim && ready && cache.Spec.MaxSize != "" {
 		state, err := reconciler.reconcileAutomaticExpansion(ctx, cache, pvc)
 		if err != nil {
 			statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseReady, true, "ExpansionFailed", err.Error(), pvc)
@@ -113,9 +117,6 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 }
 
 func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
-	if cache.Spec.Directory != "" {
-		return cache.Name
-	}
 	identity := strings.ReplaceAll(string(cache.UID), "-", "")
 	if identity == "" {
 		identity = "cache"
@@ -130,27 +131,11 @@ func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
 	return prefix + "-" + identity
 }
 
-// runtimeCacheDirectoryPVName identifies the static volume for one namespace and cache.
-// Namespaces cannot contain dots, so this separator keeps distinct cache identities separate.
-func runtimeCacheDirectoryPVName(cache *inferencev1alpha1.RuntimeCache) string {
-	return "foretoken." + cache.Namespace + "." + cache.Name
-}
-
-// desiredRuntimeCachePVC builds the immutable storage class, access mode, and retention contract.
+// desiredRuntimeCachePVC builds a dynamic claim's storage, access mode, and retention contract.
 func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, error) {
-	initialSize := cache.Spec.InitialSize
-	if initialSize == "" {
-		if cache.Spec.Directory == "" {
-			return nil, fmt.Errorf("runtime cache initialSize is required without directory")
-		}
-		initialSize = inferencev1alpha1.ResourceQuantity(runtimeCacheDirectoryBookkeepingSize)
-	}
-	size, err := resource.ParseQuantity(string(initialSize))
+	size, err := resource.ParseQuantity(string(cache.Spec.InitialSize))
 	if err != nil || size.Sign() <= 0 {
 		return nil, fmt.Errorf("runtime cache initialSize must be a positive Kubernetes quantity")
-	}
-	if cache.Spec.Directory != "" && cache.Spec.MaxSize != "" {
-		return nil, fmt.Errorf("directory-backed runtime cache %q cannot set maxSize", cache.Name)
 	}
 	accessMode := corev1.PersistentVolumeAccessMode(cache.Spec.AccessMode)
 	if accessMode == "" {
@@ -175,22 +160,22 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 			}},
 		},
 	}
-	if cache.Spec.Directory != "" {
-		pvc.Annotations[runtimeCacheDirectoryAnnotation] = cache.Spec.Directory
-		if owner := cache.Annotations[runtimeconfig.DirectoryOwnerAnnotation]; owner != "" {
-			pvc.Annotations[runtimeconfig.DirectoryOwnerAnnotation] = owner
-		}
-		storageClassName := ""
-		pvc.Spec.StorageClassName = &storageClassName
-		pvc.Spec.VolumeName = runtimeCacheDirectoryPVName(cache)
-	} else if cache.Spec.StorageClassName != "" {
+	if cache.Spec.StorageClassName != "" {
 		pvc.Spec.StorageClassName = &cache.Spec.StorageClassName
 	}
 	return pvc, nil
 }
 
-// reconcilePVC creates the claim or increases its requested capacity without replacing it.
+// reconcilePVC borrows configured storage or creates and grows the cache's own dynamic claim.
 func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, bool, error) {
+	if cache.Spec.Directory != "" {
+		claim, err := reconciler.Profile.DirectoryBindings.DirectoryPVC(ctx, reconciler.Client, cache)
+		return claim, false, err
+	}
+	if reconciler.Profile.ClaimName != "" {
+		claim, err := runtimeconfig.ReadPreparedCachePVC(ctx, reconciler.Client, cache.Namespace, reconciler.Profile.ClaimName)
+		return claim, false, err
+	}
 	desired, err := desiredRuntimeCachePVC(cache)
 	if err != nil {
 		return nil, false, err
@@ -209,42 +194,7 @@ func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cach
 		return nil, false, err
 	}
 	if !metav1.IsControlledBy(current, cache) {
-		// A Retain claim has its old controller reference removed at cache deletion.
-		// Only reclaim the same directory binding; unrelated claims must remain untouched.
-		if cache.Spec.Directory == "" || len(current.OwnerReferences) != 0 ||
-			current.Labels[runtimeCacheLabel] != cache.Name ||
-			current.Annotations[runtimeCacheRetentionAnnotation] != string(inferencev1alpha1.RuntimeCacheRetentionPolicyRetain) ||
-			current.Annotations[runtimeCacheDirectoryAnnotation] != cache.Spec.Directory ||
-			current.Spec.VolumeName != desired.Spec.VolumeName ||
-			!reflect.DeepEqual(current.Spec.StorageClassName, desired.Spec.StorageClassName) ||
-			!reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) ||
-			!current.DeletionTimestamp.IsZero() {
-			return nil, false, fmt.Errorf("PersistentVolumeClaim %q is not controlled by RuntimeCache", current.Name)
-		}
-		base := current.DeepCopy()
-		if err := controllerutil.SetControllerReference(cache, current, reconciler.Scheme()); err != nil {
-			return nil, false, err
-		}
-		current.Annotations[runtimeCacheRetentionAnnotation] = desired.Annotations[runtimeCacheRetentionAnnotation]
-		if err := reconciler.Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return nil, false, err
-		}
-	}
-	// Retained claims carry the directory identity for read-only capture viewers
-	// even after the RuntimeCache resource itself has been deleted.
-	if current.Annotations[runtimeconfig.DirectoryOwnerAnnotation] != desired.Annotations[runtimeconfig.DirectoryOwnerAnnotation] {
-		base := current.DeepCopy()
-		if current.Annotations == nil {
-			current.Annotations = make(map[string]string)
-		}
-		if owner := desired.Annotations[runtimeconfig.DirectoryOwnerAnnotation]; owner != "" {
-			current.Annotations[runtimeconfig.DirectoryOwnerAnnotation] = owner
-		} else {
-			delete(current.Annotations, runtimeconfig.DirectoryOwnerAnnotation)
-		}
-		if err := reconciler.Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return nil, false, err
-		}
+		return nil, false, fmt.Errorf("PersistentVolumeClaim %q is not controlled by RuntimeCache", current.Name)
 	}
 	currentRequest := current.Spec.Resources.Requests[corev1.ResourceStorage]
 	desiredRequest := desired.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -322,7 +272,7 @@ func runtimeCacheQuantityBytes(value inferencev1alpha1.ResourceQuantity, field s
 	return bytes, nil
 }
 
-// reconcileDelete releases retained storage or waits for Kubernetes to delete the claim safely.
+// reconcileDelete releases or deletes only the cache's own dynamic claim.
 func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(cache, runtimeCacheFinalizer) {
 		return ctrl.Result{}, nil
@@ -334,8 +284,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, c
 		}
 		return ctrl.Result{}, reconciler.removeFinalizer(ctx, cache)
 	}
-	// Stable directory claim names may collide with unrelated PVCs that reconciliation
-	// refused to adopt. Deleting the cache must not grant ownership of those claims.
+	// A borrowed claim never acquires this cache's controller reference.
 	if !metav1.IsControlledBy(pvc, cache) {
 		return ctrl.Result{}, reconciler.removeFinalizer(ctx, cache)
 	}
@@ -378,14 +327,15 @@ func (reconciler *RuntimeCacheReconciler) removeFinalizer(ctx context.Context, c
 	return reconciler.Patch(ctx, cache, client.MergeFrom(base))
 }
 
-// updateStatus publishes the managed claim identity, observed capacity, and readiness.
+// updateStatus publishes the selected claim identity, observed capacity, and readiness.
 func (reconciler *RuntimeCacheReconciler) updateStatus(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, phase inferencev1alpha1.RuntimeCachePhase, ready bool, reason, message string, pvc *corev1.PersistentVolumeClaim) error {
 	base := cache.DeepCopy()
 	cache.Status.ObservedGeneration = cache.Generation
 	cache.Status.Phase = phase
-	cache.Status.ClaimName = runtimeCachePVCName(cache)
+	cache.Status.ClaimName = ""
 	cache.Status.Capacity = ""
 	if pvc != nil {
+		cache.Status.ClaimName = pvc.Name
 		if capacity, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
 			cache.Status.Capacity = inferencev1alpha1.ResourceQuantity(capacity.String())
 		}

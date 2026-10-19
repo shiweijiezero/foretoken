@@ -5,6 +5,7 @@ package runtimeconfig
 
 import (
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,6 +62,21 @@ func CacheStorageAccess(cache *api.RuntimeCacheBinding) VolumeAccess {
 		if cache.DirectoryOwner != nil {
 			access.Identity = *cache.DirectoryOwner
 		}
+	}
+	return access
+}
+
+// WorkloadCacheAccess confines retained applications to storage outside managed download collection.
+// Their local loaders cannot register shared-cache references, so the new shared area is hidden.
+func WorkloadCacheAccess(pod *corev1.PodTemplateSpec, cache *api.RuntimeCacheBinding, preparationVersion int32) VolumeAccess {
+	access := CacheStorageAccess(cache)
+	if cache != nil && preparationVersion < SharedModelCachePreparationVersion {
+		access.Directories = []string{"shared"}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: "legacy-shared-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "legacy-shared-cache", MountPath: path.Join(cache.MountPath, "shared")})
 	}
 	return access
 }

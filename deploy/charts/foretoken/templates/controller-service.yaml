@@ -1,8 +1,9 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{/* Exposes controller-runtime metrics to the Prometheus Operator. */}}
-{{- if and (eq .Values.scope "deployment") (eq (include "foretoken.observabilityEnabled" .) "true") }}
+{{/* Compile instance controller metrics without creating a serving Service during installation. */}}
+{{- define "foretoken.deploymentMetricsService" }}
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 {{- $ports := include "foretoken.controllerPorts" . | fromJson }}
 apiVersion: v1
 kind: Service
@@ -20,4 +21,5 @@ spec:
       port: {{ int $ports.metrics }}
       targetPort: metrics
       protocol: TCP
+{{- end }}
 {{- end }}

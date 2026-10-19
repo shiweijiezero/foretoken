@@ -37,6 +37,7 @@ Choose the guide for the environment where the service will run:
 | Local CPU development cluster | [kind](deployment/kind.md) |
 | Existing Kubernetes cluster | [Kubernetes](deployment/kubernetes.md) |
 | MetaX GPUs | [Platform preparation](deployment/metax-platform.md) · [Model deployment](deployment/metax.md) |
+| Create and operate named deployment instances | [CLI](../cli/README.md#service-deployment) |
 | Build and deploy source changes, including parallel candidates | [Source deployment](deployment/source.md) |
 
 ### Model configuration

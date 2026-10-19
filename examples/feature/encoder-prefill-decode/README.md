@@ -98,4 +98,4 @@ Reapply the directory with `foretoken deploy` after editing it. Use `foretoken s
 foretoken delete examples/feature/encoder-prefill-decode
 ```
 
-This deletes the example namespace and cache claim. Encoder files are shared cache entries rather than per-request temporary files; the volume's reclaim policy determines whether their storage is retained. The shared Foretoken platform remains installed.
+This deletes the instance's services and encoder-cache claim, leaving the namespace in place. Encoder files are shared cache entries rather than per-request temporary files; the volume's reclaim policy determines whether their storage is retained. The shared Foretoken platform remains installed.

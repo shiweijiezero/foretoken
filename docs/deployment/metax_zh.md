@@ -18,7 +18,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 和管理员确认两件事：
 
 - 平台已配置沐曦镜像、GPU 和模型缓存存储。默认示例申请 1 张 GPU、8 个 CPU 和 52 GiB 内存。
-- 本文使用 `foretoken-demo` namespace 和 Gateway 访问方式。确认可以使用该 namespace，并取得分配给本次模型服务的访问域名。
+- kubeconfig 已选择有服务操作权限的命名空间。按下文使用 Gateway 时，还需取得分配给本次模型服务的访问域名。
 
 如果平台使用 `LoadBalancer` 直接访问而不是 Gateway，无需设置下面的 `hostname`；部署和调用步骤不变。
 
@@ -41,15 +41,15 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 命令在模型和前端服务 Ready 后退出。
 
-若要使用其他模型，修改 `examples/quickstart/qwen3-0.6b/model.yaml`；资源和缓存配置说明见[单模型示例](../../examples/quickstart/qwen3-0.6b/README_zh.md)。在共享集群中使用其他 namespace 时，需要同时调整示例的 `namespace.yaml` 和 `kustomization.yaml`，不能只修改本机 kubectl 默认 namespace。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。添加 `--name candidate-a` 可指定另一个实例名，后续命令也改用 `candidate-a`。若要更换模型，修改 `examples/quickstart/qwen3-0.6b/model.yaml`；资源和缓存配置见[单模型示例](../../examples/quickstart/qwen3-0.6b/README_zh.md)。
 
 ## 2. 发送请求
 
 取得服务地址和 HTTP Host。Host 用于让 Gateway 将请求送到正确的服务：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -72,20 +72,20 @@ curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
 ## 3. 查看状态或删除示例
 
 ```bash
-foretoken status examples/quickstart/qwen3-0.6b
-kubectl get pods --namespace foretoken-demo
+foretoken status qwen3-0-6b
+foretoken status qwen3-0-6b --watch
 ```
 
 使用完后，删除同一份配置创建的资源：
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 ```
 
-示例需使用独立 namespace。删除时先等待服务完成清理，再移除控制器、namespace 及其中的 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。共享平台仍由管理员维护。
+删除只移除该实例及其控制器，等待工作负载退出后释放模型缓存引用，不影响相邻实例、Kubernetes 命名空间或管理员提供的存储。缓存回收与自备文件的保留规则见[模型存储](../features/model-storage_zh.md#暂停删除与复用)，共享平台仍由管理员维护。
 
 ## 请求未成功时
 
-- 部署一直等待或 Pod 为 Pending： 查看 `kubectl describe pod --namespace foretoken-demo <pod-name>`。GPU、CPU、内存不足或缓存卷无法绑定时，将具体事件交给管理员处理。
+- 部署一直等待或 Pod 为 Pending： 在 `foretoken status qwen3-0-6b` 中找到对应 Pod，再用 `kubectl describe pod` 加上该 Pod 名称查看事件。GPU、CPU、内存不足或缓存卷无法绑定时，将具体事件交给管理员处理。
 - 返回 404： 检查配置中的 `hostname` 和请求的 Host 是否一致；`model_not_found` 则表示模型名称不匹配，使用 `/v1/models` 查询。
 - 返回 503： 先查看 `foretoken status` 和 Pod 日志，确认模型已加载、服务已 Ready，再检查访问入口。

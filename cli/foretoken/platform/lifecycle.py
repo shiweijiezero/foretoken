@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import json
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -36,9 +36,14 @@ from foretoken.build.storage import (
     remove_build_storage,
 )
 from foretoken.command_execution import CommandExecution
+from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.kubernetes.namespace import NamespaceMutation
+from foretoken.kubernetes.client import (
+    Kubectl,
+    KubernetesVersionConflictError,
+    timeout_seconds,
+)
+from foretoken.kubernetes.mutation import DeploymentMutation
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
@@ -49,7 +54,7 @@ from foretoken.platform.config import (
     runtime_overrides_from_values,
 )
 from foretoken.platform.gateway import GatewayControllerLifecycle
-from foretoken.platform.helm import Helm
+from foretoken.platform.helm import Helm, _owned_by_release
 from foretoken.platform.leader_worker import LeaderWorkerLifecycle
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
 from foretoken.platform.logs import LogCollectionLifecycle, log_config_from_values
@@ -59,12 +64,13 @@ from foretoken.platform.rdma import (
     select_rdma,
 )
 from foretoken.platform.resources import (
-    control_plane_deployments,
     mark_managed_metrics_scraper_namespace,
     platform_service_resources,
     unmark_managed_metrics_scraper_namespace,
 )
 from foretoken.platform.types import RuntimeOverrides
+
+_PLATFORM_UID_LABEL = "inference.foretoken.io/platform-uid"
 
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
@@ -166,7 +172,7 @@ class PlatformLifecycle:
         """Install the platform and commit successful source inputs to its workstation binding."""
         with (
             (CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))) as execution,
-            source_operation(self._kubectl, command.timeout, installing=command.editable is not None),
+            source_operation(self._kubectl, command.timeout, required=command.editable is not None),
             ExitStack() as artifacts,
         ):
             self._install(
@@ -215,6 +221,8 @@ class PlatformLifecycle:
             else ()
         )
         if stored_values:
+            stored_values[0].pop("scope", None)
+            stored_values[0].pop("namespaceAccess", None)
             stored_logs = stored_values[0].get("observability", {}).get("logs", {})
             if "storageSize" in stored_logs:
                 stored_logs.setdefault("initialSize", stored_logs.pop("storageSize"))
@@ -653,8 +661,6 @@ class PlatformLifecycle:
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
-        if platform_exists:
-            self._adopt_existing_deployments(command)
         _print_plan(
             "Model file distribution",
             *self._model_distribution.finish_uninstall(
@@ -716,53 +722,13 @@ class PlatformLifecycle:
                 "loadBalancer.managedAddresses in --values to install managed MetalLB",
             )
 
-    def _adopt_existing_deployments(self, command: InstallCommand) -> None:
-        """Give legacy services a namespace owner without advancing their recorded runtime selections.
-
-        Discovery also resumes an interrupted handoff: services remain authoritative
-        after the shared controller has gone. Independent namespace controllers keep
-        their own lifecycle, and no service intent or deployment revision is rewritten.
-        """
-        helm, kubectl = self._helm, self._kubectl
-        namespaces = {resource.namespace for resource in platform_service_resources(kubectl)}
-        defaults = None
-        for namespace in sorted(namespaces):
-            with NamespaceMutation(kubectl, namespace, command.timeout).hold():
-                # Deletion or a candidate deployment may have completed since discovery.
-                if not any(resource.namespace == namespace for resource in platform_service_resources(kubectl)):
-                    continue
-                installed = {release.namespace: release for release in helm.deployment_releases()}
-                release = installed.get(namespace)
-                if release is not None:
-                    status = json.loads(helm.run([
-                        "status", release.name, "--namespace", release.namespace, "--output", "json",
-                    ]).stdout)["info"]["status"]
-                    if status == "deployed":
-                        continue
-                    # Retry a failed release with its own recorded runtime choices.
-                    values = helm.release_user_values(release)
-                else:
-                    if any(resource.namespace == namespace for resource in control_plane_deployments(kubectl)):
-                        _print_plan("Serving controller", "Preserve", f"existing controller in {namespace}")
-                        continue
-                    if defaults is None:
-                        defaults = helm.deployment_values(kubectl)
-                    values = defaults
-                    release = helm.deployment_release(namespace)
-                _print_plan("Serving controller", "Adopt", release.display_name)
-                helm.install_deployment(
-                    release, values, command.timeout,
-                    source_root=Path(command.editable).expanduser().resolve() if command.editable else None,
-                )
-            helm.wait_control_plane(release, command.timeout)
-
     def uninstall(self, command: UninstallCommand) -> None:
         """Own command cancellation and exclusive source cleanup while removing the platform."""
         with CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)), source_operation(self._kubectl, command.timeout):
             self._uninstall(command)
 
     def _uninstall(self, command: UninstallCommand) -> None:
-        """Remove CLI-owned releases after user services are gone."""
+        """Retire deployment instances before removing platform-owned storage and releases."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
@@ -780,6 +746,12 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
+        configuration = kubectl.get_if_exists("configmap", platform.name + "-platform", platform.namespace)
+        if configuration is not None and not _owned_by_release(configuration, platform):
+            raise DeploymentError(f"Platform configuration is not owned by {platform.display_name}")
+        if configuration is not None:
+            configuration = helm.set_platform_retiring(kubectl, configuration, retiring=True)
+        platform_uid = configuration["metadata"]["uid"] if configuration is not None else ""
         source_storage = managed_build_storage_resources(kubectl, platform.namespace)
         source_builds = (
             platform_exists and helm.release_install_source(platform) == "source"
@@ -801,7 +773,28 @@ class PlatformLifecycle:
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
-        deployments = helm.deployment_releases()
+        deployments = (
+            DeploymentInstance.list(kubectl, all_namespaces=True)
+            if DEPLOYMENT_RESOURCE in kubectl.api_resource_names("inference.foretoken.io")
+            else ()
+        )
+        for deployment in deployments:
+            _print_plan("Deployment instance", "Remove", f"{deployment.namespace}/{deployment.name}")
+            mutation = DeploymentMutation(
+                kubectl, deployment.namespace, deployment.name, command.timeout, uid=deployment.uid,
+            )
+            try:
+                # Platform retirement must also wait for an in-flight CLI write;
+                # the marker prevents new controllers, not a submitted API request.
+                with mutation.hold():
+                    mutation.supersede()
+                    deployment.delete(command.timeout, wait=False)
+            except DeploymentError:
+                current = kubectl.get_if_exists(DEPLOYMENT_RESOURCE, deployment.name, deployment.namespace)
+                if current is not None and current["metadata"]["uid"] == deployment.uid and not current["metadata"].get("deletionTimestamp"):
+                    raise
+        for deployment in deployments:
+            deployment.wait_deleted(command.timeout)
         dragonfly_managed = helm.is_cli_managed(helm.dragonfly_release())
         if (
             platform_exists
@@ -817,14 +810,22 @@ class PlatformLifecycle:
             or deployments
         ):
             resources = platform_service_resources(kubectl)
-            if resources or deployments:
+            controllers = tuple(
+                controller
+                for controller in kubectl.list_all_resources(
+                    ("deployment.apps",),
+                    label_selector="app.kubernetes.io/name=foretoken-control-plane",
+                )
+                if not _owned_by_release(controller, platform)
+            )
+            if resources or controllers:
                 remaining = ", ".join([
                     *(f"{resource.namespace}/{resource.display_name}" for resource in resources),
-                    *(release.display_name for release in deployments),
+                    *(f"{controller['metadata']['namespace']}/Deployment/{controller['metadata']['name']}" for controller in controllers),
                 ])
                 raise DeploymentError(
-                    "delete Foretoken deployments and wait for their services and controllers to be removed before uninstalling the platform: "
-                    f"{remaining}"
+                    "Foretoken resources remain; finish their existing owner's cleanup "
+                    f"before uninstalling the platform: {remaining}"
                 )
 
         if platform_exists:
@@ -865,6 +866,7 @@ class PlatformLifecycle:
             _print_plan(
                 "Logs", "Remove", release.display_name + " (retain stored logs)"
             )
+        self._remove_directory_bindings(platform_uid, command.timeout)
         helm.stop_platform_tasks(kubectl, command.timeout)
         if source_builds:
             reconcile_source_resources(kubectl, command.timeout, uninstall=True)
@@ -916,3 +918,58 @@ class PlatformLifecycle:
                 *remove_build_storage(kubectl, platform.namespace, command.timeout),
             )
         forget_install(kubectl)
+
+    def _remove_directory_binding(
+        self, resource: str, observed: dict[str, Any], timeout: str,
+        *, platform_uid: str,
+    ) -> None:
+        """Remove one observed alias UID without deleting replacements or borrowed claims."""
+        kubectl = self._kubectl
+        metadata = observed["metadata"]
+        name, namespace, uid = metadata["name"], metadata.get("namespace", ""), metadata["uid"]
+        deadline = time.monotonic() + timeout_seconds(timeout)
+        with kubectl.until(deadline):
+            while time.monotonic() < deadline:
+                current = kubectl.get_if_exists(resource, name, namespace)
+                if current is None or current["metadata"]["uid"] != uid:
+                    return
+                if current["metadata"].get("labels", {}).get(_PLATFORM_UID_LABEL) != platform_uid:
+                    raise DeploymentError(f"Directory binding {resource}/{name} changed ownership")
+                if current["kind"] == "PersistentVolume":
+                    if current["spec"]["persistentVolumeReclaimPolicy"] != "Retain":
+                        raise DeploymentError(f"Directory binding PV/{name} does not use Retain")
+                    binding = current["spec"].get("claimRef")
+                    if binding:
+                        claim = kubectl.get_if_exists("persistentvolumeclaim", binding["name"], binding["namespace"])
+                        if claim is not None and (not binding.get("uid") or claim["metadata"]["uid"] == binding["uid"]):
+                            raise DeploymentError(f"Directory binding PV/{name} still has a claim")
+                if not current["metadata"].get("deletionTimestamp"):
+                    try:
+                        kubectl.delete_object(current, timeout, wait=False)
+                    except KubernetesVersionConflictError:
+                        continue
+                    except DeploymentError:
+                        remaining = kubectl.get_if_exists(resource, name, namespace)
+                        if remaining is None or remaining["metadata"]["uid"] != uid:
+                            return
+                        raise
+                kubectl.wait_deleted(resource, metadata, timeout)
+                return
+        raise DeploymentError(f"Timed out removing {resource}/{name} in {namespace}")
+
+    def _remove_directory_bindings(self, platform_uid: str, timeout: str) -> None:
+        """Remove this platform's alias objects after instances and collection have released them."""
+        if not platform_uid:
+            return
+        selector = _PLATFORM_UID_LABEL + "=" + platform_uid
+        claims = self._kubectl.list_all_resources(("persistentvolumeclaims",), label_selector=selector)
+        volumes = self._kubectl.list_cluster_resources(("persistentvolumes",), label_selector=selector)
+        for volume in volumes:
+            if volume["spec"]["persistentVolumeReclaimPolicy"] != "Retain":
+                raise DeploymentError(f"Directory binding PV/{volume['metadata']['name']} does not use Retain")
+        for claim in claims:
+            self._remove_directory_binding("persistentvolumeclaim", claim, timeout, platform_uid=platform_uid)
+        for volume in volumes:
+            self._remove_directory_binding("persistentvolume", volume, timeout, platform_uid=platform_uid)
+        if claims or volumes:
+            _print_plan("Directory bindings", "Removed", "retained directory files")

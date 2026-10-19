@@ -17,9 +17,10 @@ from urllib.parse import parse_qs, urlsplit
 
 READER_PORT: Final = 8080
 CAPTURE_MOUNT_PATH: Final = "/captures"
-# Published output only; files in profiles/.staging may still be written.
-CAPTURE_DIRECTORY: Final = "profiles/runs"
+LEGACY_CAPTURE_DIRECTORY: Final = "profiles/runs"
 READER_SECRET_ENV: Final = "FORETOKEN_PROFILE_READER_SECRET"
+READER_NAMESPACE_ENV: Final = "FORETOKEN_PROFILE_READER_NAMESPACE"
+READER_DEPLOYMENT_UID_ENV: Final = "FORETOKEN_DEPLOYMENT_UID"
 CAPTURE_FORMATS: Final = {
     ".pt.trace.json": "perfetto",
     ".nsys-rep": "nsight",
@@ -47,10 +48,23 @@ def _relative_parts(value: str) -> list[str]:
     return parts
 
 
-def capture_path(value: str) -> str:
-    """Accept the capture directory or a child scope, never another part of the PVC."""
-    root = CAPTURE_DIRECTORY.split("/")
-    if _relative_parts(value)[:len(root)] != root:
+def capture_directory(deployment_uid: str) -> str:
+    """Return one deployment's published capture root relative to its RuntimeCache mount."""
+    return f"deployments/{deployment_uid}/profiles/runs"
+
+
+def capture_path(value: str, namespace: str, deployment_uid: str = "") -> str:
+    """Accept the current capture root or an explicitly selected historical run in this namespace."""
+    parts = _relative_parts(value)
+    root = capture_directory(deployment_uid).split("/") if deployment_uid else None
+    historical = [
+        LEGACY_CAPTURE_DIRECTORY.split("/"),
+        f"namespaces/{namespace}/profiles/runs".split("/"),
+    ]
+    if not (root is not None and parts[:len(root)] == root) and not any(
+        parts[:len(previous)] == previous and len(parts) > len(previous)
+        for previous in historical
+    ):
         raise ValueError("invalid capture path")
     return value
 
@@ -87,9 +101,14 @@ def _capture_name(value: str) -> tuple[list[str], str]:
 class CaptureReader(ThreadingHTTPServer):
     """Own the mounted root descriptor and process-local authentication secret."""
 
-    def __init__(self, address: tuple[str, int], root: str, secret: str) -> None:
+    def __init__(
+        self, address: tuple[str, int], root: str, secret: str, namespace: str,
+        deployment_uid: str = "",
+    ) -> None:
         self.root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self.secret = secret
+        self.namespace = namespace
+        self.deployment_uid = deployment_uid
         try:
             super().__init__(address, CaptureHandler)
         except BaseException:
@@ -126,7 +145,9 @@ class CaptureHandler(BaseHTTPRequestHandler):
         request = urlsplit(self.path)
         query = parse_qs(request.query)
         try:
-            path = capture_path(query.get("root", [""])[0])
+            path = capture_path(
+                query.get("root", [""])[0], self.server.namespace, self.server.deployment_uid
+            )
         except ValueError:
             self._json(400, {"error": "invalid_capture"})
             return
@@ -211,7 +232,11 @@ class CaptureHandler(BaseHTTPRequestHandler):
 def main() -> None:
     """Run the packaged reader inside the temporary read-only PVC Pod."""
     secret = os.environ[READER_SECRET_ENV]
-    with CaptureReader(("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret) as server:
+    namespace = os.environ[READER_NAMESPACE_ENV]
+    deployment_uid = os.environ.get(READER_DEPLOYMENT_UID_ENV, "")
+    with CaptureReader(
+        ("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret, namespace, deployment_uid
+    ) as server:
         server.serve_forever()
 
 

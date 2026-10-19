@@ -528,6 +528,12 @@ spec:
                     format: int32
                     maximum: 1
                     type: integer
+                  preparationVersion:
+                    description: |-
+                      PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                      Absence retains the backend's earlier acquisition protocol.
+                    format: int32
+                    type: integer
                   responseStore:
                     description: ResponseStore retains the selected connection and
                       retention across workload recovery.

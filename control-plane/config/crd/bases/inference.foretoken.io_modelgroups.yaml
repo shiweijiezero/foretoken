@@ -102,6 +102,11 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directory:
+                        description: |-
+                          Directory identifies the authorized data directory retained by this execution cohort.
+                          Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+                        type: string
                       directoryOwner:
                         description: DirectoryOwner preserves the discovered directory
                           identity across cache consumers.
@@ -855,11 +860,10 @@ spec:
                       request policy for this instance.
                     type: boolean
                   preparationVersion:
-                    description: |-
-                      PreparationVersion selects the source-publication contract for this immutable cohort.
-                      Omitted on cohorts created before source preparation was introduced.
+                    description: PreparationVersion selects native acquisition (0),
+                      vLLM preparation (1), or shared-cache preparation (2).
                     format: int32
-                    maximum: 1
+                    maximum: 2
                     minimum: 0
                     type: integer
                   profiling:

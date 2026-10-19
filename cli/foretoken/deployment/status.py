@@ -11,10 +11,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from foretoken.arguments import StatusCommand
-from foretoken.deployment.manifest import load_deployment, service_requires_execution
+from foretoken.deployment.instances import (
+    DEPLOYMENT_RESOURCE,
+    DeploymentInstance,
+    resolve_deployment_target,
+)
+from foretoken.deployment.manifest import DEPLOYMENT_KIND, service_requires_execution
 from foretoken.deployment.progress import StartupProgress
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
+from foretoken.kubernetes.client import (
+    Kubectl,
+    ResourceRef,
+    resource_ref,
+    timeout_seconds,
+)
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,9 @@ def resource_progress(
         )
 
     condition_status = str(ready_condition.get("status") or "Unknown")
+    if resource.kind == DEPLOYMENT_KIND:
+        state = {"True": "ControllerReady", "False": "NotReady"}.get(condition_status, "Progressing")
+        return ResourceProgress(resource, state, reason, message, condition_status == "True")
     target = next((item for item in conditions if item.get("type") == "TargetReady"), None)
     if target is not None and int(target.get("observedGeneration") or 0) == generation and target.get("status") == "False":
         message = str(target["message"])
@@ -159,22 +172,26 @@ def resource_progress(
     return ResourceProgress(resource, "Progressing", reason, message, False)
 
 
-def namespace_progress(
-    namespace: str, kubectl: Kubectl
-) -> tuple[ResourceProgress, ...]:
-    """Read every user-facing Foretoken service in one namespace."""
-    progress: list[ResourceProgress] = []
-    values = kubectl.list_resources(
-        ("frontendservice", "modelservice"), namespace
-    )
-    for value in values:
-        resource = resource_ref(value)
-        if resource.kind in {"FrontendService", "ModelService"}:
+def _instance_progress(instance: DeploymentInstance) -> tuple[ResourceProgress, ...]:
+    """Read controller and declared services without treating not-yet-created roots as configuration."""
+    deployment = instance.deployment(allow_missing=True)
+    assert instance.resource is not None
+    progress = [
+        resource_progress(ResourceRef(DEPLOYMENT_KIND, instance.name, instance.namespace), instance.resource),
+    ]
+    objects = {
+        (document["kind"], document["metadata"]["name"]): document
+        for document in deployment.objects
+        if document["apiVersion"].startswith("inference.foretoken.io/")
+    }
+    for resource in deployment.service_refs():
+        value = objects[(resource.kind, resource.name)]
+        if "spec" not in value:
+            progress.append(ResourceProgress(
+                resource, "Pending", "NotCreated", "Waiting for the instance to submit this service", False,
+            ))
+        else:
             progress.append(resource_progress(resource, value))
-    if not progress:
-        raise DeploymentError(
-            f"no FrontendService or ModelService resources found in namespace {namespace}"
-        )
     return tuple(progress)
 
 
@@ -265,7 +282,10 @@ def report_progress(elapsed: float, progress: ResourceProgress) -> None:
 
 
 def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
-    """Print a point-in-time readiness table for selected services."""
+    """Print a point-in-time readiness table for selected instances or services."""
+    if not progress:
+        print("No deployment instances found.")
+        return
     resource_width = max(
         len("RESOURCE"), *(len(item.resource.display_name) for item in progress)
     )
@@ -281,16 +301,21 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
 def show_status(command: StatusCommand) -> None:
     """Print CLI-selected service state, retaining log readers only for the observation lifetime."""
     kubectl = Kubectl()
-    resources = (
-        load_deployment(command.kustomize_path, kubectl).service_refs()
-        if command.kustomize_path is not None else None
-    )
+    namespace = kubectl.current_namespace()
+    instance = None
+    if command.target is not None:
+        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
+        instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
+        instance.uid = deployment.uid
 
     def selected_progress() -> tuple[ResourceProgress, ...]:
-        """Read fixed deployment targets or the namespace's current services."""
-        if resources is not None:
-            return read_progress(resources, kubectl)
-        return namespace_progress(command.namespace or "", kubectl)
+        """Read a selected instance or list only instances visible in the current namespace."""
+        if instance is not None:
+            return _instance_progress(instance)
+        return tuple(
+            resource_progress(resource_ref(value), value)
+            for value in kubectl.list_resources((DEPLOYMENT_RESOURCE,), namespace)
+        )
 
     if not command.watch:
         progress = selected_progress()

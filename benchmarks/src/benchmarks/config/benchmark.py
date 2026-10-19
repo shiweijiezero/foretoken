@@ -52,7 +52,7 @@ def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
 
 @dataclass
 class ModelServiceSource:
-    """Store the model service chosen by the user: a Kustomize deployment or an existing URL."""
+    """Select a Kustomize instance or URL; ``name`` labels a benchmark comparison method."""
 
     kustomize_path: str = ""
     url: str = ""
@@ -63,11 +63,14 @@ class ModelServiceSource:
     max_retries: int = 0
     wait_timeout: str = "15m"
     name: str = ""
+    instance_name: str = ""
 
     def validate(self, *, require_model: bool = True) -> None:
         """Require one service source and, normally, a model for an existing URL."""
         if bool(self.kustomize_path) == bool(self.url):
             raise ValueError("provide either PATH or --url")
+        if self.instance_name and not self.kustomize_path:
+            raise ValueError("--name selects a deployment instance for PATH, not --url")
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("--timeout must be finite and > 0")
         if self.max_retries < 0:
@@ -559,6 +562,7 @@ class BenchmarkConfig:
             "timeout": self.service.timeout_seconds,
             "max_retries": self.service.max_retries,
             "wait_timeout": self.service.wait_timeout,
+            **({"instance_name": self.service.instance_name} if self.service.instance_name else {}),
         }
 
         load = {

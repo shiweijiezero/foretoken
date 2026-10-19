@@ -40,18 +40,18 @@
 
 本地 KV offload 使用 `500G` 主机内存，即 500 GB、约 465.7 GiB，由该实例的四个 TP worker 合计使用。模型的内存请求与上限均为 508Gi，包含这部分缓存；frontend 上限为 4Gi，合计上限保持 512Gi。评估该配置时，还需计入模型加载与稳态运行的内存占用。另用于模型文件和运行时缓存的存储卷初始为 128Gi；StorageClass 支持在线扩容时，可增长至最多 256Gi。
 
-[四卡起始配置](../../examples/rsi/qwen3.5-35b-a3b/)需要已配置兼容运行环境的 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。部署前按实际硬件调整示例中的引擎参数和环境变量。执行 `foretoken deploy examples/rsi/qwen3.5-35b-a3b --timeout 60m` 部署，再在任务预算内演进。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+[四卡起始配置](../../examples/rsi/qwen3.5-35b-a3b/)需要已配置兼容运行环境的 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。部署前按实际硬件调整示例中的引擎参数和环境变量；并行运行的 Gateway 候选还需在各自 `frontend.yaml` 中使用不同的 `hostname`。执行 `foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --timeout 60m`，在当前 kubeconfig 的命名空间中创建 `qwen-rsi` 实例，再在任务预算内演进。通过 `foretoken status qwen-rsi` 查看状态，`stop`、`delete` 和 `endpoint` 也使用该实例名。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
 
 ## 评测命令
 
-在仓库根目录执行。下列命令使用起始部署，对照其他方案时换成各候选自己的部署目录。使用 W&B 前先通过 `wandb login` 登录。结果统一保存到执行机器上的 `results/qwen3.5-35b-a3b/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
+在仓库根目录执行。下列命令选择起始实例 `qwen-rsi`；对照其他方案时，同时替换候选的部署目录和 `--name`。使用 W&B 前先通过 `wandb login` 登录。结果统一保存到执行机器上的 `results/qwen3.5-35b-a3b/`；`baseline` 是初始方案名，新方案更名，同一方案补测沿用名称。上述笔记由 Agent 填写，指标与图表由命令生成。
 
 下面两段性能评测循环分别按并发 1 和 16 顺序执行，使用相同输入，每组包含 80 条正式请求和 4 条预热请求。最终保留方案必须完成 StudyChat，中间迭代按需执行。GSM8K 命令最多并发发送 64 个 API 请求，由引擎按自身序列数上限调度。更多负载见 [recipes](../../benchmarks/docs/recipes_zh.md)。
 
 ```bash
 # 每轮速度迭代：随机长度负载，分别测量并发 1 和 16
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b --dataset random \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --dataset random \
     --min-prompt-length 128 --max-prompt-length 4096 \
     --min-output-length 128 --max-output-length 512 \
     --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
@@ -61,7 +61,7 @@ done
 
 # 最终保留方案必跑：StudyChat 对话，分别测量并发 1 和 16
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
     --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
@@ -69,7 +69,7 @@ for concurrency in 1 16; do
 done
 
 # 按需精度评测，最多并发 64 个请求
-foretoken eval examples/rsi/qwen3.5-35b-a3b \
+foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
   --model_args num_concurrent=64 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b --iteration baseline

@@ -194,11 +194,10 @@ const InstanceAdmissionFileProtocol uint32 = 1
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
-	// PreparationVersion selects the source-publication contract for this immutable cohort.
-	// Omitted on cohorts created before source preparation was introduced.
+	// PreparationVersion selects native acquisition (0), vLLM preparation (1), or shared-cache preparation (2).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=1
+	// +kubebuilder:validation:Maximum=2
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
 	// SourceRevision selects the immutable source bundle at the platform application origin.

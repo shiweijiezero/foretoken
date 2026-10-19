@@ -162,11 +162,12 @@ async fn load_prepared_text_backend(
     let same_binding = prepared.cache_binding.as_ref().is_some_and(|binding| {
         std::env::var(foretoken_artifacts::RUNTIME_CACHE_BINDING_ENV).as_ref() == Ok(binding)
     });
-    if same_binding && let Some(root) = foretoken_artifacts::model_root() {
-        let directory = Path::new(&prepared.directory);
-        if !directory.is_absolute() || !directory.starts_with(&root) {
-            return Err(TextBackendLoadError::PreparedPath);
-        }
+    let directory = Path::new(&prepared.directory);
+    if same_binding
+        && let Some(root) = foretoken_artifacts::model_cache_root()
+        && directory.is_absolute()
+        && directory.starts_with(&root)
+    {
         match std::fs::canonicalize(directory) {
             Ok(directory) => {
                 let root =
@@ -200,7 +201,9 @@ async fn load_prepared_text_backend(
                 .build()
                 .map_err(|_| TextBackendLoadError::HubClient)?;
             let cache = foretoken_artifacts::temporary_model_root()
-                .map(|root| Cache::new(root.join("hub")))
+                .map(|root| root.join("hub"))
+                .or_else(foretoken_artifacts::huggingface_cache_root)
+                .map(Cache::new)
                 .unwrap_or_else(Cache::from_env);
             let mut snapshot = None;
             for (file, file_revision) in &prepared.files {
@@ -232,8 +235,11 @@ async fn load_prepared_text_backend(
 // Both ordinary Hub loading and prepared metadata use the same credential/cache boundary.
 fn hf_api_builder() -> ApiBuilder {
     let mut builder = ApiBuilder::from_env().with_progress(false);
-    if let Some(root) = foretoken_artifacts::temporary_model_root() {
-        builder = builder.with_cache_dir(root.join("hub"));
+    if let Some(cache) = foretoken_artifacts::temporary_model_root()
+        .map(|root| root.join("hub"))
+        .or_else(foretoken_artifacts::huggingface_cache_root)
+    {
+        builder = builder.with_cache_dir(cache);
     }
     if let Ok(token) = std::env::var(foretoken_artifacts::HF_TOKEN_ENV)
         && !token.is_empty()
@@ -244,7 +250,10 @@ fn hf_api_builder() -> ApiBuilder {
 }
 
 fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {
-    let repo = Cache::from_env().repo(Repo::with_revision(
+    let cache = foretoken_artifacts::huggingface_cache_root()
+        .map(Cache::new)
+        .unwrap_or_else(Cache::from_env);
+    let repo = cache.repo(Repo::with_revision(
         model_id.to_owned(),
         RepoType::Model,
         revision.to_owned(),

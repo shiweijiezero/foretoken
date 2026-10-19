@@ -15,14 +15,23 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from foretoken.arguments import ProfileViewCommand
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.profiling.reader import CAPTURE_DIRECTORY
+from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
 
 
+def _capture_artifact(status: dict[str, Any]) -> dict[str, str] | None:
+    """Resolve a run's actual output scope, preferring its persisted execution plan."""
+    plan = status.get("plan") or {}
+    if plan.get("artifactDirectory"):
+        return {"claimName": plan["runtimeCacheClaim"], "path": plan["artifactDirectory"]}
+    return status.get("artifact")
+
+
 class CaptureDirectories:
-    """Discover capture storage; retained run records enrich files but do not gate access."""
+    """Discover deployment capture roots and explicitly published historical run paths."""
 
     def __init__(self, kubectl: Kubectl, namespace: str | None) -> None:
         self.kubectl = kubectl
@@ -48,16 +57,18 @@ class CaptureDirectories:
             namespace = metadata["namespace"]
             if item["kind"] == "RuntimeCache":
                 claim = status.get("claimName")
-                if claim:
-                    key = f"{namespace}/{claim}"
+                deployment_uid = metadata.get("labels", {}).get(DEPLOYMENT_UID_LABEL, "")
+                if claim and deployment_uid:
+                    key = f"{namespace}/{claim}/{deployment_uid}"
                     stores[key] = {
                         "id": key,
                         "namespace": namespace,
                         "claim": claim,
                         "name": metadata["name"],
+                        "deployment_uid": deployment_uid,
                     }
-            elif status.get("artifact"):
-                runs.append(item)
+            elif (artifact := _capture_artifact(status)) is not None:
+                runs.append({**item, "status": {**status, "artifact": artifact}})
         runs.sort(
             key=lambda run: (
                 run.get("status", {}).get("startedAt")
@@ -69,9 +80,19 @@ class CaptureDirectories:
         for run in runs:
             namespace = run["metadata"]["namespace"]
             claim = run["status"]["artifact"]["claimName"]
-            key = f"{namespace}/{claim}"
+            deployment_uid = run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL, "")
+            key = (
+                f"{namespace}/{claim}/{deployment_uid}"
+                if deployment_uid else f"{namespace}/{claim}"
+            )
             stores.setdefault(
-                key, {"id": key, "namespace": namespace, "claim": claim, "name": claim}
+                key, {
+                    "id": key,
+                    "namespace": namespace,
+                    "claim": claim,
+                    "name": f"{claim} / {deployment_uid}" if deployment_uid else claim,
+                    "deployment_uid": deployment_uid,
+                }
             )
             if latest is None and run["status"].get("phase") == "Succeeded":
                 latest = key
@@ -81,27 +102,42 @@ class CaptureDirectories:
             "latest": latest,
         }
 
-    def directory(self, store_id: str) -> tuple[str, str, str]:
+    def directory(self, store_id: str) -> tuple[str, str, str | None, str]:
         """Resolve only discovered storage, never a browser-supplied PVC identity."""
         store = self.stores.get(store_id)
         if store is None:
             raise FileNotFoundError(
                 "Capture storage is no longer listed; refresh the page."
             )
-        return store["namespace"], store["claim"], CAPTURE_DIRECTORY
+        namespace, deployment_uid = store["namespace"], store["deployment_uid"]
+        root = capture_directory(deployment_uid) if deployment_uid else None
+        return namespace, store["claim"], root, deployment_uid
 
     def files(self, store_id: str, storage: ProfileStorage) -> list[dict[str, Any]]:
         """Recursively list saved traces, attaching historical metadata where available."""
-        namespace, claim, root = self.directory(store_id)
+        namespace, claim, root, deployment_uid = self.directory(store_id)
         runs = [
             run
             for run in self.runs
             if run["metadata"]["namespace"] == namespace
             and run["status"]["artifact"]["claimName"] == claim
+            and run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL, "") == deployment_uid
         ]
-        entries = storage.list_files(namespace, claim, root)
+        # Historical runs retain their published scopes; do not scan another deployment's root.
+        roots = {root} if root is not None else set()
+        for run in runs:
+            historical = run["status"]["artifact"]["path"]
+            if root is None or historical != root and not historical.startswith(root + "/"):
+                roots.add(historical)
+        entries = []
+        for directory in sorted(roots):
+            for entry in storage.list_files(
+                namespace, claim, directory, deployment_uid=deployment_uid
+            ):
+                entry["name"] = f"{directory}/{entry['name']}"
+                entries.append(entry)
         for entry in entries:
-            path = f"{root}/{entry['name']}"
+            path = entry["name"]
             run = next(
                 (
                     run
@@ -251,7 +287,6 @@ class ProfileHandler(BaseHTTPRequestHandler):
             elif route in {"api/files", "api/trace", "api/nsight"}:
                 query = parse_qs(query_string)
                 store_id = query.get("store", [""])[0]
-                artifact = self.server.history.directory(store_id)
                 files = self.server.history.files(store_id, self.server.storage)
                 if route == "api/files":
                     self._json(200, files)
@@ -260,16 +295,23 @@ class ProfileHandler(BaseHTTPRequestHandler):
                 selected = next((item for item in files if item["name"] == name), None)
                 if selected is None:
                     raise FileNotFoundError("Trace file is no longer available.")
+                namespace, claim, _, deployment_uid = self.server.history.directory(store_id)
+                directory, filename = selected["name"].rsplit("/", 1)
+                artifact = namespace, claim, directory
                 if route == "api/nsight":
                     if selected["format"] != "nsight":
                         self._json(400, {"error": "Select an Nsight Systems report."})
                         return
-                    url = self.server.storage.open_nsight(*artifact, name)
+                    url = self.server.storage.open_nsight(
+                        *artifact, filename, deployment_uid=deployment_uid
+                    )
                     self._json(200, {"url": url})
                     return
                 self._headers(200, "application/octet-stream", selected["size"])
                 streaming = True
-                self.server.storage.stream_file(*artifact, name, self.wfile)
+                self.server.storage.stream_file(
+                    *artifact, filename, self.wfile, deployment_uid=deployment_uid
+                )
             else:
                 self.send_error(404)
         except (FileNotFoundError, DeploymentError) as error:

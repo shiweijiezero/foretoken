@@ -31,7 +31,7 @@ type EffectiveConfig struct {
 type LaunchPlanV1 struct {
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
-	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
+	Artifacts                             runtimeconfig.ModelArtifacts       `json:"artifacts"`
 	Parallelism                           LaunchParallelism                  `json:"parallelism"`
 	KV                                    LaunchKVPlan                       `json:"kv"`
 	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
@@ -39,14 +39,6 @@ type LaunchPlanV1 struct {
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
-}
-
-type LaunchArtifacts struct {
-	Model             string                        `json:"model"`
-	Source            inferencev1alpha1.ModelSource `json:"source"`
-	Revision          string                        `json:"revision"`
-	Tokenizer         string                        `json:"tokenizer"`
-	TokenizerRevision string                        `json:"tokenizerRevision"`
 }
 
 type LaunchParallelism struct {
@@ -168,7 +160,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: lifecycle, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: lifecycle, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.

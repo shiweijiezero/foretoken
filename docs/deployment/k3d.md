@@ -111,13 +111,15 @@ foretoken install
 
 ### 4.2 Local mode
 
-Deploy the Quick Start and resolve the address assigned by k3s ServiceLB:
+Deploy the Quick Start and resolve the address assigned by k3s ServiceLB. With `--name` omitted, the instance takes `qwen3-0-6b` from the `FrontendService`'s `metadata.name` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml):
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 ```
+
+To choose another instance name, add `--name candidate-a` to `deploy` and use `candidate-a` with `endpoint`.
 
 ### 4.3 Gateway mode
 
@@ -139,8 +141,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 Resolve the configured Gateway endpoint:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 ```
 
 ### 4.4 Send an OpenAI API-compatible request

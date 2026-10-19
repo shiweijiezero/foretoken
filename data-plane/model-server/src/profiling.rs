@@ -41,7 +41,7 @@ pub struct Preparation {
     pub engine: Engine,
 }
 
-const PROFILE_DIRECTORY: &str = "profiles";
+const PROFILE_ROOT_ENV: &str = "FORETOKEN_PROFILE_ROOT";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -50,6 +50,7 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct Config {
     runtime_cache_claim: String,
     data_root: PathBuf,
+    profile_directory: PathBuf,
     pod_uid: String,
     group_uid: String,
     pub(crate) runtime_id: String,
@@ -59,28 +60,36 @@ pub struct Config {
 }
 
 impl Config {
-    /// Builds profiling identity and paths from the already validated RuntimeCache mount.
+    /// Builds capture identity from the controller-projected root within the persistent cache.
     pub fn from_runtime_cache(
         cache: &crate::runtime_cache::Config,
         group_uid: String,
         workers: usize,
         engine: Engine,
         python: String,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let profile_root = std::env::var(PROFILE_ROOT_ENV)
+            .map(PathBuf::from)
+            .map_err(|_| "FORETOKEN_PROFILE_ROOT must be set when a RuntimeCache is mounted")?;
+        let profile_directory = profile_root
+            .strip_prefix(&cache.mount_path)
+            .map_err(|_| "profile storage must remain within FORETOKEN_CACHE_MOUNT_PATH")?
+            .to_path_buf();
+        Ok(Self {
             runtime_cache_claim: cache.claim_name.clone(),
             data_root: cache.mount_path.clone(),
+            profile_directory,
             pod_uid: cache.pod_uid.clone(),
             group_uid,
             runtime_id: Uuid::new_v4().to_string(),
             workers,
             engine,
             python,
-        }
+        })
     }
 
     fn profile_root(&self) -> PathBuf {
-        self.data_root.join(PROFILE_DIRECTORY)
+        self.data_root.join(&self.profile_directory)
     }
 
     fn staging(&self) -> PathBuf {
@@ -604,11 +613,12 @@ fn seal(config: &Config, mut record: Record) -> io::Result<Record> {
     if record.gpu_activity == Some(false) {
         record.message = "No GPU kernel activity was recorded in this window".into();
     }
-    let relative = format!(
-        "{PROFILE_DIRECTORY}/runs/{}/{}",
-        record.run_uid, config.runtime_id
-    );
-    record.artifact_dir = Some(relative.clone());
+    let relative = config
+        .profile_directory
+        .join("runs")
+        .join(&record.run_uid)
+        .join(&config.runtime_id);
+    record.artifact_dir = Some(relative.display().to_string());
     let mut manifest = File::create(staging.join("manifest.json"))?;
     serde_json::to_writer(&mut manifest, &record)?;
     manifest.write_all(b"\n")?;

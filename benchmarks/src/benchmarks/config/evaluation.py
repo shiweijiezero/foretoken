@@ -101,6 +101,10 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         "--url", default=source.url, help="existing Chat Completions or Completions URL"
     )
     parser.add_argument(
+        "--name", dest="instance_name", default=source.instance_name,
+        help="deployment instance name for a single Kustomize PATH; not a model alias",
+    )
+    parser.add_argument(
         "--model",
         default=source.model,
         help="served model ID; inferred for a single-model PATH",
@@ -140,6 +144,8 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         parser.error("deployment paths in one comparison must be distinct")
     if paths and options.url:
         parser.error("select deployment paths or --url, not both")
+    if options.instance_name and len(paths) != 1:
+        parser.error("--name requires exactly one Kustomize PATH")
     if len(paths) > 1 and options.resume:
         parser.error("--resume applies to one evaluation; omit it for a multi-deployment comparison")
     config = EvaluationConfig(
@@ -150,6 +156,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
                 model=options.model,
                 api_key=options.api_key,
                 wait_timeout=options.wait_timeout,
+                instance_name=options.instance_name,
             )
             for path in (paths or [""])
         ),

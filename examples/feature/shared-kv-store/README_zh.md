@@ -60,7 +60,7 @@ nodeSelector:
 查看 Store 和存储成员：
 
 ```bash
-kubectl get kvservice,kvpool,kvgroup --namespace foretoken-shared-kv
+kubectl get kvservice,kvpool,kvgroup
 ```
 
 ## 清理
@@ -69,4 +69,4 @@ kubectl get kvservice,kvpool,kvgroup --namespace foretoken-shared-kv
 foretoken delete examples/feature/shared-kv-store
 ```
 
-Store 及其 PVC 会被删除，模型数据目录中的文件保留，可供下次部署复用。
+Store 及其 PVC 会被删除。已下载的模型版本会在[不再被任何服务引用后回收](../../../docs/features/model-storage_zh.md#暂停删除与复用)。

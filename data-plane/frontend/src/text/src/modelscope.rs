@@ -79,7 +79,8 @@ pub async fn resolve_prepared_snapshot(
     prepared: &foretoken_model_protocol::PreparedTokenizer,
 ) -> Result<PathBuf, ModelScopeError> {
     let root = foretoken_artifacts::temporary_model_root()
-        .or_else(foretoken_artifacts::model_root)
+        .map(|root| root.join("prepared"))
+        .or_else(foretoken_artifacts::preparation_root)
         .ok_or(ModelScopeError::MissingCacheRoot)?;
     let snapshot = foretoken_artifacts::preparation_directory(&root, &prepared.scope)?
         .join("frontend-tokenizer");
@@ -99,7 +100,7 @@ fn snapshot_has_frontend_artifact(snapshot: &Path, accepted_files: &[&str]) -> b
 }
 
 fn model_cache_root() -> Result<PathBuf, ModelScopeError> {
-    foretoken_artifacts::model_root()
+    foretoken_artifacts::model_cache_root()
         .map(|root| foretoken_artifacts::modelscope_cache_root(&root))
         .ok_or(ModelScopeError::MissingCacheRoot)
 }

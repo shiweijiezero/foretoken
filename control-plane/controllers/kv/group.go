@@ -175,8 +175,12 @@ func kvGroupWorkloadName(group *inferencev1alpha1.KVGroup) string {
 }
 
 // One KVGroup materializes a single Mooncake client together with its optional offload disk,
-// management Service, and namespace-scoped network boundary as one owned resource set.
+// management Service, and deployment-scoped network boundary as one owned resource set.
 func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNamespace string) (*appsv1.Deployment, *corev1.Service, *corev1.PersistentVolumeClaim, *networkingv1.NetworkPolicy, error) {
+	deploymentUID := group.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	if deploymentUID == "" {
+		return nil, nil, nil, nil, fmt.Errorf("KVGroup %q has no deployment UID", group.Name)
+	}
 	requests, limits, err := kvResources(group.Spec.Client.Resources)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -272,8 +276,9 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		}},
 	}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labels, Ports: servicePorts}}
-	// Keep namespace ingress open because the provider may use dynamic data paths.
-	ingress := []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}}
+	// The provider uses dynamic data ports within the deployment.
+	deploymentLabels := map[string]string{inferencev1alpha1.DeploymentUIDLabel: deploymentUID}
+	ingress := []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchLabels: deploymentLabels}}}}}
 	if registrationEnabled {
 		if controlPlaneNamespace == "" {
 			return nil, nil, nil, nil, fmt.Errorf("control-plane namespace is required for storage registration")
@@ -283,7 +288,10 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 			From: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": controlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{workload.ControlPlanePodLabel: workload.ControlPlanePodLabelValue}},
+				PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					workload.ControlPlanePodLabel:        workload.ControlPlanePodLabelValue,
+					inferencev1alpha1.DeploymentUIDLabel: deploymentUID,
+				}},
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Port: &managementNetworkPort, Protocol: &protocol}},
 		})
