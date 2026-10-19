@@ -3,6 +3,7 @@
 
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde::Serialize;
 
-use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
+use crate::backend::{Backend, BackendError, ExecutionControl, GenerateInput, TokenEvent};
 use crate::instance_admission::{InstanceAdmissionConfig, InstanceAdmissionStatus};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
 use crate::runtime_cache;
@@ -165,7 +166,7 @@ impl RuntimeHealth {
         self.process_alive.load(Ordering::Acquire) && self.client_healthy.load(Ordering::Acquire)
     }
 
-    /// Returns readiness for the `/readyz` probe; it currently shares the health lifecycle signal.
+    /// 供内部 Service 判断进程是否可用；关闭接纳后仍须让控制器观察排空。
     pub fn ready(&self) -> bool {
         self.healthy()
     }
@@ -244,11 +245,13 @@ pub struct AppState {
     backend: Arc<dyn Backend>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
+    kv_source_endpoint: Option<String>,
     kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
     shared_kv: Option<crate::shared_kv::SharedKvLookup>,
     ledger: Option<ExecutionStore>,
+    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -261,11 +264,13 @@ impl AppState {
             backend,
             health,
             metadata,
+            kv_source_endpoint: None,
             kv_events: None,
             runtime_cache: None,
             profiling: None,
             shared_kv: None,
             ledger: None,
+            executions: Arc::default(),
         }
     }
 
@@ -281,6 +286,12 @@ impl AppState {
             pod_uid,
             epoch,
         });
+        self
+    }
+
+    /// 绑定当前进程的物理监听地址，使来源观察与后续领取、撤销指向同一个实例。
+    pub fn with_kv_source_endpoint(mut self, endpoint: String) -> Self {
+        self.kv_source_endpoint = Some(endpoint);
         self
     }
 
@@ -339,6 +350,18 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route(
             foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
             post(shared_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_RETAINED_PREFIX_PATH,
+            post(retained_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CLAIM_PATH,
+            post(claim_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CANCEL_PATH,
+            post(cancel_kv_prefix),
         )
         .with_state(state)
         .merge(profiling)
@@ -408,6 +431,98 @@ async fn shared_kv_prefix(
     {
         Ok(Some(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+// 来源观察与领取均经现有 API；原生引用不归 HTTP handler 持有。
+async fn retained_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
+) -> Response {
+    if !state.health.ready()
+        || !state.health.accepting()
+        || !state
+            .metadata
+            .kv_transfer
+            .as_ref()
+            .is_some_and(|kv| kv.bidirectional_kv_xfer)
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(adapter) = state.kv_events.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::time::timeout(
+        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
+        state.backend.retained_prefixes(&request),
+    )
+    .await
+    {
+        Ok(Ok(ranks)) => {
+            let Some(model_server_endpoint) = state.kv_source_endpoint else {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            };
+            Json(foretoken_model_protocol::KvRetainedPrefixResponse {
+                model_group_id: adapter.model_group_id.clone(),
+                scope_id: adapter.scope_id.clone(),
+                model_server_endpoint,
+                ranks,
+            })
+            .into_response()
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+async fn claim_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixClaim>,
+) -> Response {
+    use foretoken_model_protocol::KvPrefixClaimResult;
+    if !state.health.ready()
+        || !state.health.accepting()
+        || !state
+            .metadata
+            .kv_transfer
+            .as_ref()
+            .is_some_and(|kv| kv.bidirectional_kv_xfer)
+        || !state
+            .kv_events
+            .as_ref()
+            .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+    {
+        return Json(KvPrefixClaimResult::Miss).into_response();
+    }
+    match state.backend.claim_kv_prefix(&request).await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => ApiError::backend(error).into_response(),
+    }
+}
+
+async fn cancel_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvPrefixCancel>,
+) -> Response {
+    use foretoken_model_protocol::KvPrefixCancelResult;
+    if !state
+        .metadata
+        .kv_transfer
+        .as_ref()
+        .is_some_and(|kv| kv.bidirectional_kv_xfer)
+        || !state
+            .kv_events
+            .as_ref()
+            .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+    {
+        return Json(KvPrefixCancelResult::Miss).into_response();
+    }
+    if !state.health.process_alive.load(Ordering::Acquire) {
+        return Json(KvPrefixCancelResult::Miss).into_response();
+    }
+    // 关闭新接纳后仍允许清理已存在的领取，进程退役则已不存在原生引用。
+    match state.backend.cancel_kv_prefix(&request).await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => ApiError::backend(error).into_response(),
     }
 }
 
@@ -564,9 +679,25 @@ async fn start_execution(
     mut input: GenerateInput,
     permit: AdmissionPermit,
 ) -> Result<crate::backend::TokenStream, ApiError> {
-    let (reply, received) = tokio::sync::oneshot::channel();
+    let request_id = input.request_id.clone();
+    let execution = Arc::new(ExecutionControl::default());
+    {
+        let mut executions = state
+            .executions
+            .lock()
+            .expect("execution registry lock poisoned");
+        if executions.contains_key(&request_id) {
+            return Err(ApiError::Rejected);
+        }
+        executions.insert(request_id.clone(), execution.clone());
+    }
+    let registration = ExecutionRegistration {
+        request_id: request_id.clone(),
+        executions: state.executions.clone(),
+    };
+    let (mut reply, received) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let owner = uuid::Uuid::new_v4().to_string();
+        let owner = execution.owner.clone();
         let shared = match input.reservation.take() {
             Some(reference) => match state.ledger.clone() {
                 Some(store) => Some((store, reference)),
@@ -595,7 +726,8 @@ async fn start_execution(
                         let _ = reply.send(Err(ApiError::InvalidRequest));
                         return;
                     }
-                    Err(_) if reply.is_closed() => {
+                    Err(_) if reply.is_closed() || execution.is_cancelled() => {
+                        let _ = reply.send(Err(ApiError::Rejected));
                         drop(permit);
                         finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
                         return;
@@ -604,22 +736,42 @@ async fn start_execution(
                 }
             }
         }
-        if reply.is_closed() {
+        if reply.is_closed() || execution.is_cancelled() {
+            let _ = reply.send(Err(ApiError::Rejected));
             drop(permit);
             finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
             return;
         }
-        let request_id = input.request_id.clone();
-        let submission = tokio::select! {
-            biased;
-            () = state.health.wait_stopped() => Err(BackendError::Unavailable),
-            result = state.backend.generate(input) => result,
+        // 取消从领取前生效；若已经进入原生提交，仍保留 future 直到获得完成所有者。
+        let submission = {
+            let generation = state.backend.generate(input, execution.clone());
+            tokio::pin!(generation);
+            let cancellation = async {
+                tokio::select! {
+                    () = execution_cancelled(&execution, &shared) => {},
+                    () = reply.closed() => {},
+                }
+            };
+            tokio::pin!(cancellation);
+            tokio::select! {
+                biased;
+                () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+                () = &mut cancellation => {
+                    execution.cancel();
+                    tokio::select! {
+                        result = &mut generation => result,
+                        () = state.health.wait_stopped() => Err(BackendError::Unavailable),
+                    }
+                },
+                result = &mut generation => result,
+            }
         };
         let generation = match submission {
             Ok(generation) => generation,
             Err(error) => {
                 let _ = reply.send(Err(ApiError::backend(error)));
-                let end = if matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
+                let end = if !execution.submitted()
+                    || matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
                 {
                     ReservationEnd::NotSubmitted
                 } else {
@@ -631,31 +783,19 @@ async fn start_execution(
                 return;
             }
         };
-        let cancel = Arc::new(tokio::sync::Notify::new());
-        let cancellation = cancel.clone();
+        let cancellation = execution.clone();
         let (completed, mut completion) = tokio::sync::watch::channel(false);
         let crate::backend::BackendGeneration {
             mut stream,
             completion: mut engine_completion,
         } = generation;
         tokio::spawn(async move {
-            let cancellation_requested = async {
-                loop {
-                    tokio::select! {
-                        _ = cancellation.notified() => return,
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {},
-                    }
-                    if let Some((store, reference)) = &shared
-                        && matches!(store.ledger.cancelled(reference).await, Ok(true))
-                    {
-                        return;
-                    }
-                }
-            };
+            let _registration = registration;
             let result = tokio::select! {
                 result = &mut engine_completion => result,
                 () = state.health.wait_stopped() => Err(BackendError::Unavailable),
-                () = cancellation_requested => {
+                () = execution_cancelled(&cancellation, &shared) => {
+                    cancellation.cancel();
                     let ids = [request_id];
                     let abort = tokio::select! {
                         result = state.backend.abort(&ids) => result,
@@ -663,11 +803,13 @@ async fn start_execution(
                     };
                     if abort.is_err() { state.health.fail_execution(); }
                     tokio::select! {
-                        result = engine_completion => result,
+                        result = &mut engine_completion => result,
                         () = state.health.wait_stopped() => Err(BackendError::Unavailable),
                     }
                 },
             };
+            // 先将远端领取交给清理任务，再释放排空计数，避免监督者观察到暂时的空集合。
+            drop(engine_completion);
             if result.is_err() {
                 stop_uncertain_execution(&state.health).await;
             }
@@ -691,7 +833,7 @@ async fn start_execution(
                 completed.send_replace(true);
             }
         });
-        let cleanup = CancelExecution(cancel);
+        let cleanup = CancelExecution(execution);
         let output: crate::backend::TokenStream = Box::pin(async_stream::stream! {
             let _cleanup = cleanup;
             while let Some(item) = stream.next().await {
@@ -712,10 +854,42 @@ async fn start_execution(
     received.await.map_err(|_| ApiError::RequestFailed)?
 }
 
-struct CancelExecution(Arc<tokio::sync::Notify>);
+// 同一个取消观察覆盖准备和执行阶段，保留平台 ledger 的取消语义。
+async fn execution_cancelled(
+    execution: &ExecutionControl,
+    shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
+) {
+    loop {
+        tokio::select! {
+            () = execution.cancelled() => return,
+            () = tokio::time::sleep(std::time::Duration::from_millis(250)) => {},
+        }
+        if let Some((store, reference)) = shared
+            && matches!(store.ledger.cancelled(reference).await, Ok(true))
+        {
+            return;
+        }
+    }
+}
+
+struct ExecutionRegistration {
+    request_id: String,
+    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
+}
+
+impl Drop for ExecutionRegistration {
+    fn drop(&mut self) {
+        self.executions
+            .lock()
+            .expect("execution registry lock poisoned")
+            .remove(&self.request_id);
+    }
+}
+
+struct CancelExecution(Arc<ExecutionControl>);
 impl Drop for CancelExecution {
     fn drop(&mut self) {
-        self.0.notify_one();
+        self.0.cancel();
     }
 }
 
@@ -774,11 +948,15 @@ async fn abort(
     if input.request_ids.is_empty() {
         return Err(ApiError::InvalidRequest);
     }
-    state
-        .backend
-        .abort(&input.request_ids)
-        .await
-        .map_err(ApiError::backend)?;
+    let executions = state
+        .executions
+        .lock()
+        .expect("execution registry lock poisoned");
+    for request_id in &input.request_ids {
+        if let Some(execution) = executions.get(request_id) {
+            execution.cancel();
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

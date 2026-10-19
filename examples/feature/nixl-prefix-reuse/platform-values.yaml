@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# 选择 NIXL TCP，让示例无需 RDMA 设备即可运行。
+runtime:
+  vllm:
+    pd:
+      connector: nixl
+      protocol: tcp

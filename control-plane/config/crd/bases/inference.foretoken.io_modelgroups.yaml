@@ -443,6 +443,9 @@ spec:
                     minimum: 1
                     type: integer
                   bootstrapPort:
+                    description: |-
+                      BootstrapPort is the Mooncake bootstrap port or the NIXL side-channel base.
+                      NIXL allocates one listener per DP rank at base + rank.
                     format: int32
                     maximum: 65535
                     minimum: 1
@@ -450,6 +453,7 @@ spec:
                   connector:
                     enum:
                     - MooncakeConnector
+                    - NixlConnector
                     type: string
                   profileName:
                     description: ProfileName and ProfileRevision are opaque platform-owned
@@ -468,8 +472,9 @@ spec:
                     type: string
                   rdmaDeviceName:
                     description: |-
-                      RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
-                      When omitted, Mooncake selects from the devices allocated to the Pod.
+                      RDMADeviceName optionally selects a comma-separated connector-native device list.
+                      Mooncake uses HCA names; NIXL uses UCX device:port identifiers such as mlx5_0:1.
+                      When omitted, the connector selects from the devices allocated to the Pod.
                     type: string
                   serviceUID:
                     description: ServiceUID bounds transfer side channels to Pools

@@ -6,7 +6,7 @@ mod facade;
 mod http;
 use async_trait::async_trait;
 pub use facade::{
-    consume_encoder, consume_prefill, encoder_stage_request, inject_ec_transfer_params,
+    DecodeHandoff, consume_encoder, encoder_stage_request, inject_ec_transfer_params,
     pd_stage_requests, reject_client_transfer_params,
 };
 use foretoken_request_ledger::ReservationRef;
@@ -187,7 +187,13 @@ pub trait LlmFacadeResolver: Send + Sync {
         stage: RouteStage,
     ) -> Option<Arc<dyn LlmFacade>>;
 
-    /// Returns the live prefill bootstrap endpoint for P/D request construction.
+    /// Returns the P/D transport selected by this Prefill component's runtime profile.
+    fn pd_connector(
+        &self,
+        prefill: &RouteDecision,
+    ) -> Option<foretoken_model_protocol::KvConnector>;
+
+    /// Returns the live prefill bootstrap endpoint for Mooncake P/D request construction.
     ///
     /// The workflow reads it immediately before starting prefill and passes it to the decode
     /// connector; `None` prevents the workflow from admitting that staged request.

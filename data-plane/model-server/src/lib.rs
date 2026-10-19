@@ -9,6 +9,7 @@ mod backend_telemetry;
 pub mod config;
 pub mod instance_admission;
 pub mod kv_event_adapter;
+mod kv_reuse;
 pub mod launch;
 pub mod managed_engine;
 pub mod preparation;

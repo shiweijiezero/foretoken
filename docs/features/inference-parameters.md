@@ -138,6 +138,57 @@ P/D and E/P/D Pools can select their own parallelism settings within the model a
 
 Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP requests RDMA devices only when its active communication backend requires them.
 
+## Prefill/decode separation and KV reuse
+
+Prefill processes the input; Decode generates the answer. With NIXL, a later request can also reuse the KV cache retained by a previous Decode instance. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
+
+The [NIXL example](../../examples/feature/nixl-prefix-reuse) serves `Qwen/Qwen2.5-0.5B-Instruct` on two NVIDIA GPUs, one per stage, with two frontend replicas. It uses the default vLLM 0.31 source environment, reuses the Quick Start's model storage and chooses TCP, so RDMA devices are not required. From the repository root, on a cluster prepared for [source deployment](../deployment/source.md):
+
+```bash
+foretoken install -e . --values examples/feature/nixl-prefix-reuse/platform-values.yaml
+foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
+export FRONTEND_URL="$(foretoken endpoint examples/feature/nixl-prefix-reuse)"
+
+python3 - <<'PY'
+import json
+import os
+from urllib.request import Request, urlopen
+
+messages = []
+for question in (
+    "Explain prompt caching in detail, with examples and its effect on latency.",
+    "How does this help when a conversation continues on another server?",
+):
+    messages.append({"role": "user", "content": question})
+    request = Request(
+        os.environ["FRONTEND_URL"] + "/v1/chat/completions",
+        data=json.dumps({
+            "model": "Qwen/Qwen2.5-0.5B-Instruct",
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 256,
+        }).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=300) as response:
+        answer = json.load(response)["choices"][0]["message"]["content"]
+    print(answer, "\n")
+    messages.append({"role": "assistant", "content": answer})
+PY
+```
+
+Retain any registry options required by your installation. For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
+
+Foretoken automatically enables Decode-to-Prefill transfer with vLLM 0.31, CUDA device-resident KV and full attention. This reuse covers plain text without LoRA; other supported engine versions and requests keep ordinary P/D behavior. NIXL currently requires one node per model replica, matching Prefill/Decode TP sizes and KV layouts, and PP/PCP/DCP of 1. Encoder separation and Mooncake Store use the existing Mooncake path.
+
+Mooncake remains the default connector. To select NIXL for another P/D service, set `runtime.vllm.pd.connector: nixl` in its platform values, reapply the installation with those values, then redeploy its model and frontend. The example also sets `protocol: tcp`; an RDMA deployment uses `protocol: rdma` and allocated RDMA devices. If selecting RDMA interfaces explicitly, NIXL's `rdmaDeviceName` uses UCX identifiers such as `mlx5_0:1,mlx5_1:1`.
+
+Remove the example when finished:
+
+```bash
+foretoken delete examples/feature/nixl-prefix-reuse
+```
+
 ## Speculative decoding
 
 Keep the complete native dictionary together:

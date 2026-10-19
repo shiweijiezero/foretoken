@@ -27,10 +27,11 @@ type MooncakeStoreProfile struct {
 	PythonHashSeed string
 }
 
-// MooncakePDProfile contains platform-owned Mooncake transfer identity and settings.
-type MooncakePDProfile struct {
+// PDProfile contains the identity and transport settings of one platform P/D connector.
+type PDProfile struct {
 	Name                       string
 	Revision                   string
+	Connector                  string
 	Protocol                   string
 	BootstrapPort              int32
 	AbortRequestTimeoutSeconds int32
@@ -58,7 +59,7 @@ type RuntimeProfile struct {
 	RuntimeClassName   string
 	NodeSelectorKey    string
 	NodeSelectorValue  string
-	MooncakePD         *MooncakePDProfile
+	PD                 *PDProfile
 	RDMA               *inferencev1alpha1.RDMAAllocation
 	EC                 *ECProfile
 	MooncakeStore      *MooncakeStoreProfile
@@ -132,7 +133,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if effective.Revision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
 	}
-	pdRuntime, err := resolvePDRuntime(template, profile.MooncakePD)
+	pdRuntime, err := resolvePDRuntime(template, profile.PD)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
@@ -145,7 +146,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, err
 	}
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
+		return ModelGroupTemplate{}, fmt.Errorf("P/D does not support local KV offload")
 	}
 	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
 		if template.Application == nil {
@@ -184,7 +185,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D with RDMA transport requires a platform RDMA allocation")
+		return ModelGroupTemplate{}, fmt.Errorf("P/D with RDMA transport requires a platform RDMA allocation")
 	}
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
@@ -391,16 +392,19 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}, nil
 }
 
-// resolvePDRuntime resolves the platform Mooncake P/D profile for split serving roles.
-func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
+// resolvePDRuntime resolves the platform P/D connector profile for split serving roles.
+func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *PDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
 	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
 		return nil, nil
 	}
 	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 {
-		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
+		return nil, fmt.Errorf("P/D runtime profile is incomplete")
+	}
+	if profile.Connector != inferencev1alpha1.MooncakeConnector && profile.Connector != inferencev1alpha1.NixlConnector {
+		return nil, fmt.Errorf("P/D connector %q is not supported", profile.Connector)
 	}
 	if profile.Protocol != "rdma" && profile.Protocol != "tcp" {
-		return nil, fmt.Errorf("Mooncake P/D protocol %q is not supported", profile.Protocol)
+		return nil, fmt.Errorf("P/D protocol %q is not supported", profile.Protocol)
 	}
 	rdmaDeviceName := profile.RDMADeviceName
 	if profile.Protocol == "tcp" {
@@ -409,7 +413,7 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	return &inferencev1alpha1.ModelGroupPDRuntimeConfig{
 		ProfileName:                profile.Name,
 		ProfileRevision:            profile.Revision,
-		Connector:                  "MooncakeConnector",
+		Connector:                  profile.Connector,
 		Protocol:                   profile.Protocol,
 		BootstrapPort:              profile.BootstrapPort,
 		AbortRequestTimeoutSeconds: profile.AbortRequestTimeoutSeconds,

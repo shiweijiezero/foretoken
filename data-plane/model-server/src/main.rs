@@ -10,13 +10,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, RuntimeModelIdentity};
+use foretoken_model_protocol::{
+    KvConnector, PreparedTokenizer, RuntimeKvTransferMetadata, RuntimeMetadataResponse,
+    RuntimeModelIdentity,
+};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
-use foretoken_model_server::backend::VllmBackend;
+use foretoken_model_server::backend::{Backend, BackendError, VllmBackend};
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
-use foretoken_model_server::launch::LaunchPlanV1;
+use foretoken_model_server::launch::{KvPlan, LaunchPlanV1};
 use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::preparation;
 use foretoken_model_server::profiling;
@@ -111,6 +114,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bind before recovering process ownership: another live ingress in this Pod must not have
     // its reservations retired by a second process that will later fail to acquire the port.
     let listener = TcpListener::bind(config.listen_address).await?;
+    let kv_source_endpoint = if matches!(
+        config.launch.kv,
+        KvPlan::Pd {
+            connector: KvConnector::Nixl,
+            ..
+        }
+    ) {
+        let host = required_env("VLLM_NIXL_SIDE_CHANNEL_HOST")?.parse::<std::net::IpAddr>()?;
+        Some(format!(
+            "http://{}",
+            std::net::SocketAddr::new(host, listener.local_addr()?.port())
+        ))
+    } else {
+        None
+    };
     let execution_store = if let Some(ledger) = request_ledger {
         let pod_uid = required_env("FORETOKEN_POD_UID")?;
         let epoch = ledger.register_backend(&pod_uid).await?;
@@ -130,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The model-server owns one startup deadline across the persistent attempt and one
     // Pod-scoped temporary retry, including complete teardown of a failed child process.
     let startup_deadline = Instant::now() + config.launch.startup_timeout();
-    let (engine, client, cache_mode, prepared_tokenizer) = match start_engine_attempt(
+    let (connected, cache_mode) = match start_engine_attempt(
         &config,
         cache_config.as_ref(),
         profiling_config.as_ref(),
@@ -140,9 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await
     {
-        Ok((engine, client, prepared)) => {
-            (engine, client, runtime_cache::Mode::Persistent, prepared)
-        }
+        Ok(connected) => (connected, runtime_cache::Mode::Persistent),
         Err(EngineStartupFailure::PersistentCache { context, source }) => {
             // Distributed members restart together; a local retry would reuse stale peers.
             if config.member.is_some() {
@@ -167,12 +183,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await
             {
-                Ok((engine, client, prepared)) => {
+                Ok(connected) => {
                     info!(
                         cache_mode = runtime_cache::Mode::Temporary.as_str(),
                         "EngineCore started with Pod-scoped temporary cache storage"
                     );
-                    (engine, client, runtime_cache::Mode::Temporary, prepared)
+                    (connected, runtime_cache::Mode::Temporary)
                 }
                 Err(failure) => {
                     return Err(io::Error::other(format!(
@@ -185,6 +201,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(failure) => return Err(failure.into_error().into()),
     };
+    let ConnectedEngine {
+        engine,
+        client,
+        prepared_tokenizer,
+        kv_transfer,
+        kv_connector_utility,
+    } = connected;
     health.set_process_alive(true);
 
     let mut client_health = client.subscribe_health();
@@ -214,6 +237,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .first()
             .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
+        // Mooncake 保留旧 metadata 线格式；NIXL 发布其实际生效的传输设置。
+        kv_transfer: kv_transfer.filter(|transfer| transfer.connector == KvConnector::Nixl),
         prepared_tokenizer,
         capabilities: if config.launch.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()
@@ -257,7 +282,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     health.set_client_healthy(true);
     health.set_accepting(true);
-    let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let backend = Arc::new(VllmBackend::new(
+        Llm::new(client),
+        max_concurrent_requests,
+        metadata
+            .kv_transfer
+            .as_ref()
+            .is_some_and(|kv| kv.bidirectional_kv_xfer),
+        kv_connector_utility,
+    ));
     let profiling = if cache_mode == runtime_cache::Mode::Persistent {
         profiling_config
     } else {
@@ -270,6 +303,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    if let Some(endpoint) = kv_source_endpoint {
+        app_state = app_state.with_kv_source_endpoint(endpoint);
+    }
     if let Some((ledger, pod_uid, epoch)) = execution_store {
         app_state = app_state.with_request_ledger(ledger, pod_uid, epoch);
     }
@@ -289,16 +325,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(cache_config) = cache_config {
         app_state = app_state.with_runtime_cache(cache_config);
     }
+    let app = router(
+        app_state,
+        config.launch.internal_generate_request_body_limit_bytes,
+    );
     let mut server = Box::pin(
-        axum::serve(
-            listener,
-            router(
-                app_state,
-                config.launch.internal_generate_request_body_limit_bytes,
-            ),
-        )
-        .with_graceful_shutdown(async move { server_shutdown.notified().await })
-        .into_future(),
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .into_future(),
     );
 
     // Signals, client health, child exit, and server failure converge on one shutdown path.
@@ -340,14 +374,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         | Stop::Profiling(reason) => warn!(%reason),
     }
 
-    // Stop new admission before draining HTTP handlers, the client, and finally the child process.
+    // 先关闭新接纳，HTTP 继续服务已有请求的 abort 与 KV 撤销，直到执行和传输排空。
     if let Some(profiler) = &profiler {
         profiler.handle().close();
     }
     health.set_accepting(false);
-    health.set_client_healthy(false);
-    shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
+    // 进入退出阶段后独立服务清理请求，即使监督者正在等待引擎进程终止。
+    let mut server = (!matches!(&stop, Stop::Server(_))).then(|| tokio::spawn(server));
     let deadline = Instant::now() + config.launch.drain_timeout();
     // Only an active native capture requires forced profiler stop. Merely preparing
     // profiling must not bypass normal request draining on SIGTERM.
@@ -361,33 +395,91 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             profiler.engine_stopped("runtime terminated").await;
         }
     }
-    let server_stopped = matches!(&stop, Stop::Server(_));
-    let drain = async {
-        if !server_stopped && let Err(error) = server.as_mut().await {
-            error!(%error, "HTTP server failed while draining");
-        }
-        health.wait_drained().await;
-    };
-    tokio::pin!(drain);
-    // Graceful shutdown still supervises the engine. A crash cannot finish accepted work,
-    // so close its request registry immediately instead of waiting for HTTP drain to time out.
-    loop {
-        tokio::select! {
-            biased;
-            reason = engine_failure(&engine, &health, &mut client_health), if !engine_stopped => {
-                warn!(%reason, "engine failed while draining");
-                stop = Stop::Engine(reason);
-                stop_failed_engine(&engine, &backend, &health, deadline).await?;
-                engine_stopped = true;
-            }
-            result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
-                if result.is_err() {
-                    warn!("accepted requests did not finish before the drain deadline");
-                    stop_failed_engine(&engine, &backend, &health, deadline).await?;
+    // 独立任务持有 utility 等待，监督者关闭 client 时仍能被唤醒并释放读锁。
+    let kv_drain = tokio::spawn({
+        let backend = backend.clone();
+        let health = health.clone();
+        async move {
+            health.wait_drained().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    () = health.wait_stopped() => return Ok::<(), BackendError>(()),
+                    result = backend.drain_kv_transfers() => match result {
+                        Ok(0) => return Ok(()),
+                        Ok(_) => {},
+                        Err(error) => {
+                            health.fail_execution();
+                            health.wait_stopped().await;
+                            return Err(error);
+                        }
+                    },
                 }
-                break;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
         }
+    });
+    {
+        let drain = async {
+            let executions = async {
+                match kv_drain.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        warn!(%error, "KV transfer draining ended after engine retirement")
+                    }
+                    Err(error) => {
+                        error!(%error, "KV transfer drain task failed");
+                        health.fail_execution();
+                        health.wait_stopped().await;
+                    }
+                }
+                health.wait_drained().await;
+                backend.wait_for_kv_cleanup().await;
+                shutdown.notify_one();
+            };
+            let http = async {
+                if let Some(server) = &mut server {
+                    match server.await {
+                        Ok(Ok(())) => {}
+                        result => {
+                            error!(?result, "HTTP server failed while draining");
+                            health.fail_execution();
+                        }
+                    }
+                }
+            };
+            tokio::join!(executions, http);
+        };
+        tokio::pin!(drain);
+        // Graceful shutdown still supervises the engine. A crash cannot finish accepted work,
+        // so close its request registry immediately instead of waiting for HTTP drain to time out.
+        loop {
+            tokio::select! {
+                biased;
+                reason = engine_failure(&engine, &health, &mut client_health), if !engine_stopped => {
+                    warn!(%reason, "engine failed while draining");
+                    stop = Stop::Engine(reason);
+                    stop_failed_engine(&engine, &backend, &health, deadline).await?;
+                    engine_stopped = true;
+                }
+                result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
+                    if result.is_err() {
+                        stop = Stop::Engine("model-server drain deadline elapsed".into());
+                        stop_failed_engine(&engine, &backend, &health, deadline).await?;
+                        error!(
+                            accepted_requests = health.running_requests(),
+                            pending_kv_cleanup = backend.pending_kv_cleanup(),
+                            "execution and KV drain did not complete before the shutdown deadline"
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    shutdown.notify_one();
+    if let Some(server) = server.filter(|server| !server.is_finished()) {
+        server.abort();
     }
     if let Err(error) = backend.shutdown().await {
         warn!(%error, "could not shut down EngineCore client cleanly");
@@ -456,7 +548,7 @@ async fn run_worker(
     cache_shutdown: Arc<Notify>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(config.listen_address).await?;
-    let (engine, _, _, _) = spawn_engine_attempt(
+    let (engine, _, _, _, _) = spawn_engine_attempt(
         config,
         cache,
         profiling,
@@ -588,6 +680,7 @@ async fn spawn_engine_attempt(
         EngineCoreProtocol,
         u16,
         Option<PreparedTokenizer>,
+        Option<RuntimeKvTransferMetadata>,
     ),
     EngineStartupFailure,
 > {
@@ -609,6 +702,13 @@ async fn spawn_engine_attempt(
     }
     if config.member.is_some()
         || config.launch.shared_prefix_lookup()
+        || matches!(
+            config.launch.kv,
+            KvPlan::Pd {
+                connector: KvConnector::Nixl,
+                ..
+            }
+        )
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
@@ -654,15 +754,32 @@ async fn spawn_engine_attempt(
                 .to_string(),
         ));
     }
+    let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
+    if protocol_timeout.is_zero() {
+        return Err(EngineStartupFailure::Other(io::Error::other(
+            "EngineCore startup deadline elapsed before version detection",
+        )));
+    }
+    let (vllm_minor, engine_protocol) = tokio::time::timeout(
+        protocol_timeout,
+        detect_engine_protocol(&config.launch.python_executable(), &environment),
+    )
+    .await
+    .map_err(|_| {
+        EngineStartupFailure::Other(io::Error::other(
+            "EngineCore startup deadline elapsed during version detection",
+        ))
+    })?
+    .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
     let handshake_port = if config.member.is_some() {
         29700
     } else {
         allocate_handshake_port(LOOPBACK_HOST)
             .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
     };
-    let mut managed_engine = config
+    let (mut managed_engine, kv_transfer) = config
         .launch
-        .managed_engine(handshake_port, config.member.as_ref())
+        .managed_engine(handshake_port, config.member.as_ref(), vllm_minor)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     if let Some(member) = &config.member {
         environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
@@ -725,23 +842,6 @@ async fn spawn_engine_attempt(
                 .push("--worker-cls=foretoken_mctracer.Worker".into());
         }
     }
-    let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
-    if protocol_timeout.is_zero() {
-        return Err(EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed before version detection",
-        )));
-    }
-    let engine_protocol = tokio::time::timeout(
-        protocol_timeout,
-        detect_engine_protocol(&managed_engine.python, &environment),
-    )
-    .await
-    .map_err(|_| {
-        EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed during version detection",
-        ))
-    })?
-    .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
     // Rust preprocessing already normalizes pixels. Newer engines otherwise normalize them twice.
     if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_31) {
         managed_engine
@@ -764,7 +864,23 @@ async fn spawn_engine_attempt(
                 format!("could not spawn managed EngineCore: {error}"),
             )
         })?;
-    Ok((engine, engine_protocol, handshake_port, prepared_tokenizer))
+    Ok((
+        engine,
+        engine_protocol,
+        handshake_port,
+        prepared_tokenizer,
+        kv_transfer,
+    ))
+}
+
+// Ready 后的进程、客户端与实际 KV 配置共同交给运行监督者。
+struct ConnectedEngine {
+    engine: ManagedEngine,
+    client: EngineCoreClient,
+    prepared_tokenizer: Option<PreparedTokenizer>,
+    kv_transfer: Option<RuntimeKvTransferMetadata>,
+    // adapter 即使关闭双向传输，仍拥有普通 P→D 的原生排空。
+    kv_connector_utility: bool,
 }
 
 // Only the group leader owns the EngineCore handshake, DP coordination and request transport.
@@ -775,8 +891,8 @@ async fn start_engine_attempt(
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngine, EngineCoreClient, Option<PreparedTokenizer>), EngineStartupFailure> {
-    let (engine, engine_protocol, handshake_port, prepared_tokenizer) =
+) -> Result<ConnectedEngine, EngineStartupFailure> {
+    let (engine, engine_protocol, handshake_port, prepared_tokenizer, kv_transfer) =
         spawn_engine_attempt(config, cache, profiling, mode, startup_deadline).await?;
     // vLLM keeps its single EngineCore handshake local even when TP/PP spans nodes.
     let advertised_host = config
@@ -820,7 +936,29 @@ async fn start_engine_attempt(
         error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
     };
     match client {
-        Ok(client) => Ok((engine, client, prepared_tokenizer)),
+        Ok(client) => {
+            let kv_connector_utility = kv_transfer
+                .as_ref()
+                .is_some_and(|kv| kv.bidirectional_kv_xfer);
+            let observed = observe_kv_transfer(&client, kv_transfer, startup_deadline).await;
+            match observed {
+                Ok(kv_transfer) => Ok(ConnectedEngine {
+                    engine,
+                    client,
+                    prepared_tokenizer,
+                    kv_transfer,
+                    kv_connector_utility,
+                }),
+                Err(error) => {
+                    let _ = client.shutdown().await;
+                    engine
+                        .shutdown(config.launch.drain_timeout())
+                        .await
+                        .map_err(|reason| EngineStartupFailure::Other(io::Error::other(reason)))?;
+                    Err(error)
+                }
+            }
+        }
         Err(error) => {
             // Failed cleanup must end this runtime, not start a temporary-cache retry beside the old engine.
             engine
@@ -830,6 +968,60 @@ async fn start_engine_attempt(
             Err(error)
         }
     }
+}
+
+// KV 布局在引擎初始化后确定；发布 adapter 实际生效的同一份配置。
+async fn observe_kv_transfer(
+    client: &EngineCoreClient,
+    configured: Option<RuntimeKvTransferMetadata>,
+    startup_deadline: Instant,
+) -> Result<Option<RuntimeKvTransferMetadata>, EngineStartupFailure> {
+    let Some(configured) = configured else {
+        return Ok(None);
+    };
+    if !configured.bidirectional_kv_xfer {
+        return Ok(Some(configured));
+    }
+    let values = tokio::time::timeout_at(
+        startup_deadline.into(),
+        client.call_utility::<serde_json::Value, _>(
+            "kv_connector_utility",
+            ("configuration", serde_json::json!({})),
+        ),
+    )
+    .await
+    .map_err(|_| {
+        EngineStartupFailure::Other(io::Error::other(
+            "KV configuration observation exceeded startup deadline",
+        ))
+    })?
+    .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
+    let mut settings = values
+        .into_iter()
+        .map(serde_json::from_value::<RuntimeKvTransferMetadata>);
+    let first = settings
+        .next()
+        .ok_or_else(|| {
+            EngineStartupFailure::Other(io::Error::other(
+                "no KV connector configuration was reported",
+            ))
+        })?
+        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    for setting in settings {
+        let setting =
+            setting.map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+        if setting != first {
+            return Err(EngineStartupFailure::Other(io::Error::other(
+                "engines reported different KV connector configurations",
+            )));
+        }
+    }
+    if first.connector != configured.connector {
+        return Err(EngineStartupFailure::Other(io::Error::other(
+            "engine KV connector differs from its launch configuration",
+        )));
+    }
+    Ok(Some(first))
 }
 
 fn local_artifact_path(identifier: &str) -> io::Result<String> {
@@ -860,11 +1052,11 @@ async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Resul
     }
 }
 
-/// Select protocol layouts from installed package metadata without loading engine plugins.
+/// Reads the installed version once for EngineCore transport and native launch arguments.
 async fn detect_engine_protocol(
     python: &str,
     environment: &[(String, String)],
-) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
+) -> Result<(u64, EngineCoreProtocol), Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .kill_on_drop(true)
         .envs(environment.iter().cloned())
@@ -882,10 +1074,15 @@ async fn detect_engine_protocol(
     let major = parts.next().and_then(|part| part.parse::<u64>().ok());
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
     match (major, minor) {
-        (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
-        (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
-        (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
-        (Some(0), Some(28..=31)) => Ok(EngineCoreProtocol::V0_28ToV0_31),
+        (Some(0), Some(minor @ 20..=31)) => {
+            let protocol = match minor {
+                20 => EngineCoreProtocol::V0_20,
+                21..=25 => EngineCoreProtocol::V0_21ToV0_25,
+                26..=27 => EngineCoreProtocol::V0_26ToV0_27,
+                _ => EngineCoreProtocol::V0_28ToV0_31,
+            };
+            Ok((minor, protocol))
+        }
         _ => Err(format!(
             "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
         )

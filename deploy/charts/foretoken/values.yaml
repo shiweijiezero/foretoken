@@ -156,7 +156,7 @@ runtime:
       metax: ""
     # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.
     nsightImage: ""
-    profileRevision: default # Mooncake P/D compatibility revision.
+    profileRevision: default # P/D compatibility revision.
     modelServerPort: 9000
     # Optional Hugging Face-compatible endpoint and credential.
     modelSource:
@@ -179,10 +179,13 @@ runtime:
       sharedStoragePath: "/var/lib/foretoken/ec"
     # Connector settings; RDMA device allocation is shared with distributed execution.
     pd:
+      connector: mooncake # mooncake or nixl.
       protocol: rdma
-      # Empty lets Mooncake select from the Pod's allocated devices by topology.
+      # Comma-separated Mooncake HCA names or NIXL UCX device:port identifiers.
+      # Empty lets the connector select from the Pod's allocated RDMA devices.
       rdmaDeviceName: ""
-      bootstrapPort: 8998
+      # Mooncake bootstrap listener or NIXL side-channel base + DP rank.
+      bootstrapPort: 5600
       abortRequestTimeoutSeconds: 600
     # Set every field to enable the platform-owned external Mooncake Store profile.
     mooncakeStore:

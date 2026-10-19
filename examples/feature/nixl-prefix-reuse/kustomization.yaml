@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# 复用 Quick Start 的缓存和前端，将计算拆成各使用一张 GPU 的 P/D Pool。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: foretoken-nixl
+resources:
+  - ../../quickstart/qwen3-0.6b
+patches:
+  - target:
+      kind: ModelService
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: qwen-nixl
+      - op: replace
+        path: /spec/model
+        value: Qwen/Qwen2.5-0.5B-Instruct
+      - op: add
+        path: /spec/modelPools
+        value:
+          - name: prefill
+            role: prefill
+            replicas: 1
+          - name: decode
+            role: decode
+            replicas: 1
+      - op: copy
+        from: /spec/resources
+        path: /spec/modelPools/0/resources
+      - op: copy
+        from: /spec/resources
+        path: /spec/modelPools/1/resources
+      - op: remove
+        path: /spec/resources
+      - op: remove
+        path: /spec/replicas
+      - op: remove
+        path: /spec/nodes

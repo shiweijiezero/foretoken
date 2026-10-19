@@ -28,6 +28,47 @@ pub enum ModelServerRole {
     Decode,
 }
 
+/// Concrete P/D transport selected by the runtime profile and consumed by engine adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KvConnector {
+    #[serde(rename = "MooncakeConnector")]
+    Mooncake,
+    #[serde(rename = "NixlConnector")]
+    Nixl,
+}
+
+impl KvConnector {
+    /// Returns the upstream connector name used by the vLLM launcher.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mooncake => "MooncakeConnector",
+            Self::Nixl => "NixlConnector",
+        }
+    }
+}
+
+/// Effective P/D settings shared by engine launch and frontend runtime observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeKvTransferMetadata {
+    pub connector: KvConnector,
+    #[serde(default)]
+    pub bidirectional_kv_xfer: bool,
+}
+
+/// A source-owned retained prefix selected by routing, not permission to read its blocks.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KvReuseSource {
+    pub route_target_id: String,
+    /// 与实例身份同时观测的物理地址，领取和撤销不再经过 Group Service。
+    pub model_server_endpoint: String,
+    pub dp_rank: u32,
+    pub instance_id: String,
+    pub offer_id: String,
+    pub matched_tokens: usize,
+}
+
 /// Request accepted by the single model-server ingress owned by one routable ModelGroup.
 /// Its Pod placement is a runtime detail and does not create another routing identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,6 +76,8 @@ pub enum ModelServerRole {
 pub struct GenerateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<foretoken_request_ledger::ReservationRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_reuse: Option<KvReuseSource>,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -53,6 +96,7 @@ impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
             reservation: None,
+            kv_reuse: None,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,
@@ -169,6 +213,8 @@ pub struct RuntimeMetadataResponse {
     pub max_logprobs: Option<i32>,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_transfer: Option<RuntimeKvTransferMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_tokenizer: Option<PreparedTokenizer>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
@@ -266,6 +312,13 @@ pub const KV_LOCAL_PREFIX_PATH: &str = "/v1/internal/kv-index/local-prefix";
 /// Read-only shared-cache observations for a tokenized routing request.
 pub const KV_SHARED_PREFIX_PATH: &str = "/v1/internal/kv-index/shared-prefix";
 
+/// Source-owned Decode prefixes observed without acquiring a native read lease.
+pub const KV_RETAINED_PREFIX_PATH: &str = "/v1/internal/kv-index/retained-prefix";
+/// Atomically acquires one retained prefix for an accepted Prefill execution.
+pub const KV_PREFIX_CLAIM_PATH: &str = "/v1/internal/kv-transfer/claim";
+/// Revokes an unstarted read or observes native completion of an in-use lease.
+pub const KV_PREFIX_CANCEL_PATH: &str = "/v1/internal/kv-transfer/cancel";
+
 /// Existing KV observation deadline shared by HTTP callers and Pod-local connector queries.
 pub const KV_OBSERVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -292,6 +345,65 @@ pub struct KvPrefixRequest {
     pub lora_path: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub multimodal: Vec<KvMultimodalIdentity>,
+}
+
+/// One native request whose exact computed prefix remains retained by a Decode engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvRetainedOffer {
+    pub id: String,
+    pub matched_tokens: usize,
+}
+
+/// Read-only retained-prefix observation from one native DP scheduler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvRetainedRankPrefix {
+    pub dp_rank: u32,
+    pub instance_id: String,
+    pub offer: Option<KvRetainedOffer>,
+}
+
+/// Source identity and native offers returned to the frontend's request-local KV reader.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvRetainedPrefixResponse {
+    pub model_group_id: String,
+    pub scope_id: String,
+    pub model_server_endpoint: String,
+    pub ranks: Vec<KvRetainedRankPrefix>,
+}
+
+/// Acquires a retained source for one already accepted Prefill execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KvPrefixClaim {
+    pub source: KvReuseSource,
+    pub consumer_id: String,
+    pub prefix: KvPrefixRequest,
+}
+
+/// Granted means native source workers hold the blocks until read completion or revocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status")]
+pub enum KvPrefixClaimResult {
+    Granted { descriptor: serde_json::Value },
+    Miss,
+}
+
+/// Identifies a claim independently of whether its acknowledgement reached the receiver.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KvPrefixCancel {
+    pub source: KvReuseSource,
+    pub consumer_id: String,
+}
+
+/// Native cancellation result; in-use references remain held until transport completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status")]
+pub enum KvPrefixCancelResult {
+    Released,
+    InUse,
+    Miss,
 }
 
 /// A source-confirmed reusable prefix, not resident block count or a cache lease.

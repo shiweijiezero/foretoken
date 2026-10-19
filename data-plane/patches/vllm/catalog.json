@@ -107,6 +107,14 @@
       }
     },
     {
+      "path": "compatibility/v1-031/nixl-retained-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
       "path": "common/offload-prefix-lookup.patch",
       "rust": true,
       "python": {

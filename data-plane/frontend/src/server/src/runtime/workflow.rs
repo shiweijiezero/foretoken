@@ -6,10 +6,11 @@
 use foretoken_admission::AdmissionPermit;
 use foretoken_llm_facade::{
     LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, consume_encoder,
-    consume_prefill, encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
+    encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
 };
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::RouteDecision;
+use futures::StreamExt;
 
 use super::{GenerationError, before_waiting_deadline};
 
@@ -24,7 +25,7 @@ pub(crate) async fn execute_workflow(
     admission: &AdmissionPermit,
     role_priority: Option<i32>,
 ) -> Result<(RouteDecision, TokenStream), GenerationError> {
-    match initial.role {
+    let (decision, stream) = match initial.role {
         ModelServerRole::Aggregate => {
             execute_aggregate(resolver, initial, request, admission, role_priority).await
         }
@@ -62,7 +63,16 @@ pub(crate) async fn execute_workflow(
             .map_err(after_acceptance)
         }
         ModelServerRole::Decode => Err(GenerationError::Internal),
-    }
+    }?;
+    // 跨阶段交接已结束，connector 描述符不进入公开响应及 API 会话存储。
+    let output = stream.map(|event| {
+        event.map(|mut output| {
+            output.kv_transfer_params = None;
+            output.ec_transfer_params = None;
+            output
+        })
+    });
+    Ok((decision, Box::pin(output)))
 }
 
 // Accepted stage ownership is never reset by a later busy response. The caller cancels the
@@ -187,20 +197,26 @@ async fn execute_pd(
     let facade = resolver
         .resolve_stage(&prefill_decision, RouteStage::Prefill)
         .ok_or(GenerationError::Internal)?;
-    let bootstrap = resolver
-        .bootstrap_endpoint(&prefill_decision)
+    let connector = resolver
+        .pd_connector(&prefill_decision)
         .ok_or(GenerationError::Internal)?;
+    let bootstrap = resolver.bootstrap_endpoint(&prefill_decision);
     let initial_stage = encoder.is_none();
     let (descriptor, mut cleanup) = match encoder {
         Some((descriptor, cleanup)) => (Some(descriptor), cleanup),
         None => (None, MultiStageCleanup::new()),
     };
     let shape = async {
-        pd_stage_requests(request, &bootstrap, prefill_decision.data_parallel_rank)
-            .await
-            .map_err(GenerationError::from)
+        pd_stage_requests(
+            request,
+            connector,
+            bootstrap.as_deref(),
+            prefill_decision.data_parallel_rank,
+        )
+        .await
+        .map_err(GenerationError::from)
     };
-    let (mut prefill_request, decode_request) = if initial_stage {
+    let (mut prefill_request, decode_handoff) = if initial_stage {
         before_waiting_deadline(admission.waiting_deadline(), shape).await?
     } else {
         shape.await?
@@ -218,7 +234,8 @@ async fn execute_pd(
         &mut cleanup,
     )
     .await?;
-    consume_prefill(stream)
+    let decode_request = decode_handoff
+        .complete_prefill(stream)
         .await
         .map_err(GenerationError::from)?;
 

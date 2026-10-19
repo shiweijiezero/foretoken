@@ -25,6 +25,14 @@ pub trait RouteInventory: Send + Sync {
         None
     }
 
+    /// 返回健康刷新取得的实际 KV 传输配置；缺失时不启用跨轮来源查询。
+    fn kv_transfer(
+        &self,
+        _route_target_id: &RouteTargetId,
+    ) -> Option<foretoken_model_protocol::RuntimeKvTransferMetadata> {
+        None
+    }
+
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

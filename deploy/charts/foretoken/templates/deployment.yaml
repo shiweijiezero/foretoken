@@ -167,8 +167,9 @@ spec:
             - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
             {{- end }}
             {{- if or (eq $.Values.runtime.vllm.pd.protocol "tcp") (include "foretoken.rdmaResourceName" $) }}
-            - --vllm-pd-profile-name=mooncake
+            - {{ printf "--vllm-pd-profile-name=%s" $.Values.runtime.vllm.pd.connector | quote }}
             - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
+            - {{ printf "--vllm-pd-connector=%s" (index (dict "mooncake" "MooncakeConnector" "nixl" "NixlConnector") $.Values.runtime.vllm.pd.connector) | quote }}
             - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
             - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
             - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}

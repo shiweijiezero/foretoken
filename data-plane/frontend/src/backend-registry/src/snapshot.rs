@@ -3,7 +3,7 @@
 
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{KvConnector, ModelServerRole};
 use foretoken_router::{ModelRoutingStages, RouteTargetId, RouteTargetSet, RouterPipelineConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -124,7 +124,7 @@ pub struct SnapshotPdComponent {
     pub prefix_cache_isolation: Option<bool>,
     pub profile_name: String,
     pub profile_revision: String,
-    pub connector: String,
+    pub connector: KvConnector,
     pub protocol: String,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
@@ -376,7 +376,7 @@ pub enum SnapshotError {
     DuplicateRouteTarget(RouteTargetId),
     #[error("routing snapshot has incomplete P/D component {0:?}")]
     IncompletePdComponent(RouteTargetId),
-    #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma or tcp")]
+    #[error("routing snapshot P/D component {0:?} must use rdma or tcp")]
     UnsupportedPdTransport(RouteTargetId),
     #[error(
         "routing configuration P/D linked processing unit {0:?} is incomplete or crosses a ModelService boundary"

@@ -54,6 +54,8 @@ pub struct KvPrefixQuery<'a> {
 pub struct KvPrefixMatch {
     pub placement: KvPlacement,
     pub matched_tokens: usize,
+    /// 可供本次 Prefill 执行领取的来源；普通缓存事实不持有读取引用。
+    pub kv_source: Option<foretoken_model_protocol::KvReuseSource>,
 }
 
 pub trait KvLocalityIndex: Send {

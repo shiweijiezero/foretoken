@@ -153,20 +153,31 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
-	if group.Spec.PDRuntime != nil {
-		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
-		// uses Mooncake's CUDA-aware host staging instead of silently falling back.
-		forceTransport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
-		if group.Spec.PDRuntime.Protocol == "tcp" {
-			forceTransport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
-		}
-		env = append(env,
-			forceTransport,
-			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},
-			corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(group.Spec.PDRuntime.AbortRequestTimeoutSeconds))},
-		)
-		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-			ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
+	if pd := group.Spec.PDRuntime; pd != nil {
+		switch pd.Connector {
+		case inferencev1alpha1.MooncakeConnector:
+			// Mooncake requires an allocated HCA for RDMA or explicit host staging for TCP.
+			forceTransport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
+			if pd.Protocol == "tcp" {
+				forceTransport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
+			}
+			env = append(env,
+				forceTransport,
+				corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(pd.BootstrapPort))},
+				corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(pd.AbortRequestTimeoutSeconds))},
+			)
+			if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+				ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: pd.BootstrapPort, Protocol: corev1.ProtocolTCP})
+			}
+		case inferencev1alpha1.NixlConnector:
+			// Each DP scheduler serves the native TP handshake at base + DP rank.
+			env = append(env,
+				corev1.EnvVar{Name: "VLLM_NIXL_SIDE_CHANNEL_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
+				corev1.EnvVar{Name: "VLLM_NIXL_SIDE_CHANNEL_PORT", Value: strconv.Itoa(int(pd.BootstrapPort))},
+			)
+			for rank := int32(0); rank < group.Spec.Parallelism.DP; rank++ {
+				ports = append(ports, corev1.ContainerPort{Name: fmt.Sprintf("nixl-%d", rank), ContainerPort: pd.BootstrapPort + rank, Protocol: corev1.ProtocolTCP})
+			}
 		}
 	}
 
@@ -334,9 +345,15 @@ func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container 
 		managed["LWS_LEADER_ADDRESS"] = true
 		managed["VLLM_HOST_IP"] = true
 	}
-	if spec.PDRuntime != nil {
-		managed["MC_FORCE_HCA"] = true
-		managed["MC_FORCE_TCP"] = true
+	if pd := spec.PDRuntime; pd != nil {
+		switch pd.Connector {
+		case inferencev1alpha1.MooncakeConnector:
+			managed["MC_FORCE_HCA"] = true
+			managed["MC_FORCE_TCP"] = true
+		case inferencev1alpha1.NixlConnector:
+			managed["UCX_TLS"] = true
+			managed["UCX_NET_DEVICES"] = true
+		}
 	}
 	if spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight" {
 		managed["VLLM_WORKER_MULTIPROC_METHOD"] = true
@@ -384,13 +401,24 @@ func (reconciler *GroupReconciler) reconcileService(ctx context.Context, group *
 			}},
 		},
 	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
-		desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
-			Name:       "mc-bootstrap",
-			Port:       group.Spec.PDRuntime.BootstrapPort,
-			TargetPort: intstr.FromString("mc-bootstrap"),
-			Protocol:   corev1.ProtocolTCP,
-		})
+	if pd := group.Spec.PDRuntime; pd != nil {
+		if pd.Connector == inferencev1alpha1.MooncakeConnector && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+			desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
+				Name:       "mc-bootstrap",
+				Port:       pd.BootstrapPort,
+				TargetPort: intstr.FromString("mc-bootstrap"),
+				Protocol:   corev1.ProtocolTCP,
+			})
+		}
+		if pd.Connector == inferencev1alpha1.NixlConnector {
+			for rank := int32(0); rank < group.Spec.Parallelism.DP; rank++ {
+				name := fmt.Sprintf("nixl-%d", rank)
+				desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
+					Name: name, Port: pd.BootstrapPort + rank,
+					TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP,
+				})
+			}
+		}
 	}
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
 		return fmt.Errorf("set Service owner: %w", err)
@@ -466,14 +494,14 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 		}},
 	})
 	if group.Spec.PDRuntime != nil {
-		// Mooncake opens bidirectional runtime side channels on dynamic ports
-		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.
+		// Native connectors use bidirectional side channels, including dynamic transport ports.
+		// The service-local scope also permits P to claim retained KV through D's model-server.
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
 			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
 				workload.ModelGroupPDPipelineScopeLabel: group.Spec.PDRuntime.ServiceUID,
 			}},
 		}}})
-		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+		if group.Spec.PDRuntime.Connector == inferencev1alpha1.MooncakeConnector && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
 			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 				From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{

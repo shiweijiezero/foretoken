@@ -67,6 +67,12 @@ type RDMAAllocation struct {
 	ResourceCount int32 `json:"resourceCount"`
 }
 
+// P/D connector identities use the class names consumed by the vLLM adapter.
+const (
+	MooncakeConnector = "MooncakeConnector"
+	NixlConnector     = "NixlConnector"
+)
+
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.
 type ModelGroupPDRuntimeConfig struct {
 	// ProfileName and ProfileRevision are opaque platform-owned identifiers.
@@ -82,12 +88,14 @@ type ModelGroupPDRuntimeConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	ServiceUID string `json:"serviceUID"`
 
-	// +kubebuilder:validation:Enum=MooncakeConnector
+	// +kubebuilder:validation:Enum=MooncakeConnector;NixlConnector
 	Connector string `json:"connector"`
 
 	// +kubebuilder:validation:Enum=rdma;tcp
 	Protocol string `json:"protocol"`
 
+	// BootstrapPort is the Mooncake bootstrap port or the NIXL side-channel base.
+	// NIXL allocates one listener per DP rank at base + rank.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	BootstrapPort int32 `json:"bootstrapPort"`
@@ -95,8 +103,9 @@ type ModelGroupPDRuntimeConfig struct {
 	// +kubebuilder:validation:Minimum=1
 	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds"`
 
-	// RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
-	// When omitted, Mooncake selects from the devices allocated to the Pod.
+	// RDMADeviceName optionally selects a comma-separated connector-native device list.
+	// Mooncake uses HCA names; NIXL uses UCX device:port identifiers such as mlx5_0:1.
+	// When omitted, the connector selects from the devices allocated to the Pod.
 	// +optional
 	RDMADeviceName string `json:"rdmaDeviceName,omitempty"`
 }

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use foretoken_model_protocol::{
-    AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
+    AbortInput, GenerateInput, KvReuseSource, TokenErrorCode, TokenEvent, TokenOutput,
 };
 use foretoken_request_ledger::ReservationRef;
 use futures::StreamExt;
@@ -23,6 +23,7 @@ pub struct HttpFacade {
     endpoint: String,
     client: reqwest::Client,
     request_start_timeout: Duration,
+    kv_reuse: Option<KvReuseSource>,
 }
 impl HttpFacade {
     /// Creates the transport resolved by the backend registry for one model-server endpoint.
@@ -40,8 +41,17 @@ impl HttpFacade {
             endpoint: validate_endpoint(endpoint)?,
             client: reqwest::Client::new(),
             request_start_timeout,
+            kv_reuse: None,
         })
     }
+
+    /// Binds a registry-resolved KV source to this request's Prefill transport.
+    /// The receiving model-server owns source acquisition and native transfer cleanup.
+    pub fn with_kv_reuse(mut self, source: KvReuseSource) -> Self {
+        self.kv_reuse = Some(source);
+        self
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.endpoint)
     }
@@ -64,6 +74,7 @@ impl HttpFacade {
         }
         let mut input = GenerateInput::from(request);
         input.reservation = reservation;
+        input.kv_reuse = self.kv_reuse.clone();
         let body = rmp_serde::to_vec_named(&input).map_err(|_| LlmFacadeError::RequestFailed)?;
         let response = tokio::time::timeout(
             self.request_start_timeout,

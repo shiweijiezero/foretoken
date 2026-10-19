@@ -46,7 +46,7 @@ func equalRoutingPDComponent(left, right PDComponent) bool {
 		left.Connector == right.Connector && left.Protocol == right.Protocol &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&
-		left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
+		left.DataParallelSize == right.DataParallelSize && left.Parallelism == right.Parallelism && slices.Equal(left.Capabilities, right.Capabilities)
 }
 
 func equalRoutingPDPipelineScope(left, right PDPipelineScope) bool {
@@ -62,7 +62,7 @@ func equalRoutingEPDComponent(left, right EPDComponent) bool {
 		ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) && slices.Equal(left.Capabilities, right.Capabilities) &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&
-		left.DataParallelSize == right.DataParallelSize
+		left.DataParallelSize == right.DataParallelSize && left.Parallelism == right.Parallelism
 }
 
 func equalRoutingEPDPipelineScope(left, right EPDPipelineScope) bool {

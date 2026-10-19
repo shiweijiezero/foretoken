@@ -6,12 +6,12 @@
 use super::{KvEventSourceConfig, KvIndexer, OBSERVATION_CONCURRENCY};
 use crate::{
     KvPrefixIndexer, KvPrefixLookup, KvPrefixMatch, KvPrefixMatches, KvPrefixQueryResult,
-    KvPrefixUnavailableReason,
+    KvPrefixReuseScope, KvPrefixUnavailableReason,
 };
 use foretoken_model_protocol::{
-    KV_LOCAL_PREFIX_PATH, KV_OBSERVATION_TIMEOUT, KV_SHARED_PREFIX_PATH, KvCacheLocality,
-    KvLocalPrefixResponse, KvMultimodalIdentity, KvPlacement, KvPrefixRequest,
-    KvSharedPrefixResponse, KvStorageTier,
+    KV_LOCAL_PREFIX_PATH, KV_OBSERVATION_TIMEOUT, KV_RETAINED_PREFIX_PATH, KV_SHARED_PREFIX_PATH,
+    KvCacheLocality, KvLocalPrefixResponse, KvMultimodalIdentity, KvPlacement, KvPrefixRequest,
+    KvRetainedPrefixResponse, KvReuseSource, KvSharedPrefixResponse, KvStorageTier,
 };
 use futures::{StreamExt, stream};
 use serde::de::DeserializeOwned;
@@ -47,7 +47,11 @@ impl KvPrefixIndexer for PreparedPrefixes {
 
 #[async_trait::async_trait]
 impl KvPrefixIndexer for KvIndexer {
-    async fn prepare(&self, lookups: &[KvPrefixLookup<'_>]) -> Option<Arc<dyn KvPrefixIndexer>> {
+    async fn prepare(
+        &self,
+        lookups: &[KvPrefixLookup<'_>],
+        reuse_scopes: &[KvPrefixReuseScope<'_>],
+    ) -> Option<Arc<dyn KvPrefixIndexer>> {
         self.state.as_ref()?;
         // Resolve candidates before I/O. One local query covers every DP scheduler;
         // shared queries are deduplicated by their storage, layout and request identity.
@@ -92,7 +96,71 @@ impl KvPrefixIndexer for KvIndexer {
             return None;
         }
 
-        // Observe both providers concurrently, retaining completed responses within the deadline.
+        // Router 按兼容 P/D 流水线限定来源；调度参数不同可使两端事件 scope 不同。
+        // 一个来源 Group 的查询覆盖全部 DP ranks，响应仍按来源自身的 scope 校验。
+        let mut retained_queries = BTreeMap::new();
+        let mut retained_targets = BTreeMap::<_, BTreeSet<_>>::new();
+        for lookup in lookups {
+            if lookup.lora_name.is_some()
+                || lookup.lora_path.is_some()
+                || !lookup.multimodal.is_empty()
+            {
+                continue;
+            }
+            let Ok((_, receiver)) = self.route_source(lookup) else {
+                continue;
+            };
+            for scope in reuse_scopes.iter().filter(|scope| {
+                scope
+                    .prefill_route_target_ids
+                    .contains(&lookup.route_target_id)
+            }) {
+                for source_id in &scope.decode_route_target_ids {
+                    let Some((&data_parallel_rank, _)) = self
+                        .config
+                        .route_bindings
+                        .get(*source_id)
+                        .and_then(|binding| {
+                            binding
+                                .data_parallel_rank_event_source_ids
+                                .first_key_value()
+                        })
+                    else {
+                        continue;
+                    };
+                    let source_lookup = KvPrefixLookup {
+                        route_target_id: source_id,
+                        data_parallel_rank,
+                        ..lookup.clone()
+                    };
+                    let Ok((binding, source)) = self.route_source(&source_lookup) else {
+                        continue;
+                    };
+                    if source.model_revision != receiver.model_revision {
+                        continue;
+                    }
+                    retained_queries
+                        .entry(source_lookup.route_target_id.to_owned())
+                        .or_insert_with(|| {
+                            (
+                                source.clone(),
+                                source_lookup.to_request(),
+                                binding
+                                    .data_parallel_rank_event_source_ids
+                                    .keys()
+                                    .copied()
+                                    .collect(),
+                            )
+                        });
+                    retained_targets
+                        .entry((lookup.route_target_id.to_owned(), lookup.data_parallel_rank))
+                        .or_default()
+                        .insert(source_lookup.route_target_id.to_owned());
+                }
+            }
+        }
+
+        // 所有观测共用既有 deadline 与有界并发，各来源卡顿不丢弃已完成的结果。
         let local_queries = stream::iter(local_queries.into_iter().map(
             |(id, (source, request))| async move {
                 (
@@ -111,9 +179,19 @@ impl KvPrefixIndexer for KvIndexer {
             },
         ))
         .buffer_unordered(OBSERVATION_CONCURRENCY);
-        let (local_observations, shared_observations) = tokio::join!(
+        let retained_queries = stream::iter(retained_queries.into_iter().map(
+            |(id, (source, request, ranks))| async move {
+                (
+                    id,
+                    fetch_retained_prefix(&self.client, &source, &request, &ranks).await,
+                )
+            },
+        ))
+        .buffer_unordered(OBSERVATION_CONCURRENCY);
+        let (local_observations, shared_observations, retained_observations) = tokio::join!(
             observe_prefixes(local_queries),
-            observe_prefixes(shared_queries)
+            observe_prefixes(shared_queries),
+            observe_prefixes(retained_queries),
         );
 
         // Bind results back to exact candidates. A confirmed miss is usable information;
@@ -156,6 +234,7 @@ impl KvPrefixIndexer for KvIndexer {
                         locality: KvCacheLocality::Local,
                     },
                     matched_tokens: rank.matched_tokens,
+                    kv_source: None,
                 });
                 // Each offload result already includes the locally reusable prefix.
                 matches.extend(rank.offloaded.iter().map(|hit| KvPrefixMatch {
@@ -164,15 +243,59 @@ impl KvPrefixIndexer for KvIndexer {
                         locality: KvCacheLocality::Local,
                     },
                     matched_tokens: hit.matched_tokens,
+                    kv_source: None,
                 }));
             }
             if let Some(hit) = shared {
                 matches.push(KvPrefixMatch {
                     placement: hit.placement,
                     matched_tokens: hit.matched_tokens,
+                    kv_source: None,
                 });
             }
-            let result = if known_local || shared.is_some() {
+
+            // 每个长度都是完整前缀边界，远端来源只有严格扩展现有可复用范围才有收益。
+            let existing_tokens = matches
+                .iter()
+                .map(|hit| hit.matched_tokens)
+                .max()
+                .unwrap_or(0);
+            let retained = retained_targets
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter_map(|source_id| {
+                    retained_observations
+                        .get(source_id)
+                        .and_then(Option::as_ref)
+                        .map(|response| (source_id, response))
+                })
+                .flat_map(|(source_id, response)| {
+                    response.ranks.iter().filter_map(move |rank| {
+                        let offer = rank.offer.as_ref()?;
+                        (offer.matched_tokens > existing_tokens).then(|| KvReuseSource {
+                            route_target_id: source_id.clone(),
+                            dp_rank: rank.dp_rank,
+                            instance_id: rank.instance_id.clone(),
+                            model_server_endpoint: response.model_server_endpoint.clone(),
+                            offer_id: offer.id.clone(),
+                            matched_tokens: offer.matched_tokens,
+                        })
+                    })
+                })
+                .max_by_key(|source| source.matched_tokens);
+            let has_retained = retained.is_some();
+            if let Some(source) = retained {
+                matches.push(KvPrefixMatch {
+                    placement: KvPlacement {
+                        tier: KvStorageTier::Device,
+                        locality: KvCacheLocality::Remote,
+                    },
+                    matched_tokens: source.matched_tokens,
+                    kv_source: Some(source),
+                });
+            }
+            let result = if known_local || shared.is_some() || has_retained {
                 KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
             } else {
                 KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy)
@@ -249,6 +372,38 @@ async fn fetch_local_prefix(
     {
         return None;
     }
+    Some(response)
+}
+
+/// 校验来源的实际实例地址以及 snapshot 绑定的 Group、KV scope 和 DP ranks。
+async fn fetch_retained_prefix(
+    client: &reqwest::Client,
+    source: &KvEventSourceConfig,
+    request: &KvPrefixRequest,
+    allowed_ranks: &BTreeSet<u32>,
+) -> Option<KvRetainedPrefixResponse> {
+    let mut response: KvRetainedPrefixResponse =
+        fetch_prefix(client, source, KV_RETAINED_PREFIX_PATH, request).await?;
+    let endpoint = reqwest::Url::parse(&response.model_server_endpoint).ok()?;
+    let mut ranks = BTreeSet::new();
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || endpoint.host_str().is_none()
+        || response.model_group_id != source.model_group_id
+        || response.scope_id != source.scope_id
+        || response.ranks.iter().any(|rank| {
+            !ranks.insert(rank.dp_rank)
+                || !allowed_ranks.contains(&rank.dp_rank)
+                || rank.instance_id.is_empty()
+                || rank.offer.as_ref().is_some_and(|offer| {
+                    offer.id.is_empty()
+                        || offer.matched_tokens == 0
+                        || offer.matched_tokens > request.prompt_token_ids.len()
+                })
+        })
+    {
+        return None;
+    }
+    response.ranks.sort_by_key(|rank| rank.dp_rank);
     Some(response)
 }
 

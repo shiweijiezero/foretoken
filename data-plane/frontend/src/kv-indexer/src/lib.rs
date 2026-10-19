@@ -63,6 +63,13 @@ impl<'a> KvPrefixLookup<'a> {
     }
 }
 
+/// Router 已确认允许在同一传输 scope 内读取的 Prefill 与 Decode 路由。
+#[derive(Debug)]
+pub struct KvPrefixReuseScope<'a> {
+    pub prefill_route_target_ids: Vec<&'a str>,
+    pub decode_route_target_ids: Vec<&'a str>,
+}
+
 /// Route-local prefix observations; an unavailable result is distinct from a confirmed miss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KvPrefixQueryResult {
@@ -80,11 +87,12 @@ pub enum KvPrefixUnavailableReason {
 }
 #[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
-    /// Prepares request-local observations from engines and connectors before synchronous scoring.
-    /// Event-only implementations may retain their existing reader.
+    /// 在同步选路前准备请求内缓存事实，并在 Router 允许的范围内观察 Decode 来源。
+    /// 返回的 reader 只供当前请求使用；查询不领取原生块，事件索引也可继续使用原有 reader。
     async fn prepare(
         &self,
         _lookups: &[KvPrefixLookup<'_>],
+        _reuse_scopes: &[KvPrefixReuseScope<'_>],
     ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
         None
     }

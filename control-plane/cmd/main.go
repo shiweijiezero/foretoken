@@ -84,6 +84,7 @@ func main() {
 	var vllmECSharedStoragePath string
 	var vllmPDProfileName string
 	var vllmPDProfileRevision string
+	var vllmPDConnector string
 	var vllmPDProtocol string
 	var vllmPDBootstrapPort int
 	var vllmPDAbortRequestTimeoutSeconds int
@@ -158,12 +159,13 @@ func main() {
 	flag.StringVar(&vllmECConnector, "vllm-ec-connector", "", "Fixed EC connector identity for the configured vLLM adapter.")
 	flag.StringVar(&vllmECSharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the configured EC connector.")
 	flag.StringVar(&vllmECSharedStoragePath, "vllm-ec-shared-storage-path", "/var/lib/foretoken/ec", "In-container shared EC storage path.")
-	flag.StringVar(&vllmPDProfileName, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
-	flag.StringVar(&vllmPDProfileRevision, "vllm-pd-profile-revision", "", "Opaque platform-owned Mooncake P/D profile revision.")
-	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D transport: rdma or tcp.")
-	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
+	flag.StringVar(&vllmPDProfileName, "vllm-pd-profile-name", "", "Opaque platform-owned P/D profile name; empty disables P/D.")
+	flag.StringVar(&vllmPDProfileRevision, "vllm-pd-profile-revision", "", "Opaque platform-owned P/D profile revision.")
+	flag.StringVar(&vllmPDConnector, "vllm-pd-connector", inferencev1alpha1.MooncakeConnector, "P/D connector class: MooncakeConnector or NixlConnector.")
+	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "P/D transport: rdma or tcp.")
+	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port or NIXL side-channel base port.")
 	flag.IntVar(&vllmPDAbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
-	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
+	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated RDMA devices: Mooncake HCA names or NIXL UCX device:port identifiers; empty selects allocated devices.")
 	flag.StringVar(&rdmaResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
 	flag.IntVar(&rdmaResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
 	flag.StringVar(&vllmMooncakeStoreProfileName, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
@@ -242,6 +244,7 @@ func main() {
 		PD: runtimeconfig.PDProfile{
 			Name:                       vllmPDProfileName,
 			Revision:                   vllmPDProfileRevision,
+			Connector:                  vllmPDConnector,
 			Protocol:                   vllmPDProtocol,
 			BootstrapPort:              vllmPDBootstrapPort,
 			AbortRequestTimeoutSeconds: vllmPDAbortRequestTimeoutSeconds,
@@ -262,7 +265,7 @@ func main() {
 	if rdmaResourceName != "" {
 		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: rdmaResourceName, ResourceCount: int32(rdmaResourceCount)}
 	}
-	var mooncakePD *resolver.MooncakePDProfile
+	var pd *resolver.PDProfile
 	var ec *resolver.ECProfile
 	var mooncakeStore *resolver.MooncakeStoreProfile
 	if vllmECProfileName != "" {
@@ -277,9 +280,10 @@ func main() {
 		mooncakeStore = &resolver.MooncakeStoreProfile{Name: vllmMooncakeStoreProfileName, Revision: vllmMooncakeStoreProfileRevision, ConfigMapName: vllmMooncakeStoreConfigMapName, ConfigMapKey: vllmMooncakeStoreConfigMapKey, PythonHashSeed: vllmMooncakeStorePythonHashSeed}
 	}
 	if vllmPDProfileName != "" {
-		mooncakePD = &resolver.MooncakePDProfile{
+		pd = &resolver.PDProfile{
 			Name:                       vllmPDProfileName,
 			Revision:                   vllmPDProfileRevision,
+			Connector:                  vllmPDConnector,
 			Protocol:                   vllmPDProtocol,
 			BootstrapPort:              int32(vllmPDBootstrapPort),
 			AbortRequestTimeoutSeconds: int32(vllmPDAbortRequestTimeoutSeconds),
@@ -448,7 +452,7 @@ func main() {
 			RuntimeClassName:   runtimeClassName,
 			NodeSelectorKey:    gpuNodeSelectorKey,
 			NodeSelectorValue:  gpuNodeSelectorValue,
-			MooncakePD:         mooncakePD,
+			PD:                 pd,
 			RDMA:               rdma,
 			EC:                 ec,
 			MooncakeStore:      mooncakeStore,

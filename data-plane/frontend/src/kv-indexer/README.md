@@ -8,6 +8,7 @@ English | [中文](README_zh.md)
 Provides KV prefix matches to Router filters and scorers:
 
 - Local accelerator cache: `Device/Local`.
+- Decode device cache available to Prefill through [NIXL](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse): `Device/Remote`.
 - Native CPU and filesystem offload: `HostPinned/Local` and `Disk/Local`.
 - Mooncake shared memory and SSD cache: `External/Remote`.
 
@@ -21,7 +22,7 @@ fn needs_kv_prefix(&self) -> bool {
 }
 ```
 
-`PipelineRouter::start` calls `KvPrefixIndexer::prepare` asynchronously before selection. The algorithm then uses the supplied reader synchronously in `filter` or `score`:
+`PipelineRouter::start` calls `KvPrefixIndexer::prepare` asynchronously before selection. Enabled Decode-to-Prefill reuse also prepares these observations independently of scoring. The algorithm then uses the supplied reader synchronously in `filter` or `score`:
 
 ```rust
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};
@@ -33,7 +34,7 @@ fn candidate_prefix(
     indexer: &dyn KvPrefixIndexer,
 ) -> KvPrefixQueryResult {
     match request.kv_prefix_lookup(
-        &candidate.route_target_id,
+        candidate.route_target_id.as_str(),
         candidate.data_parallel_rank,
     ) {
         Ok(lookup) => indexer.prefix_matches(lookup),

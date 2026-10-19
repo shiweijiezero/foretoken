@@ -44,3 +44,9 @@ Patches for another library belong in a separate directory alongside `vllm/`.
 `common/engine-abort-completion.patch` makes Python EngineCore publish scheduler-confirmed aborted request IDs on every transport, including eager aborts. Keep both patches aligned when upstream request registration, scheduler termination, or output delivery changes.
 Completion marks the end of request scheduling, not GPU synchronization or connector KV release.
 When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.
+
+## NIXL retained prefixes
+
+`compatibility/v1-031/nixl-retained-prefix.patch` extends the native source-reference and read-completion lifecycle used by `foretoken_nixl`. The adapter owns token-prefix discovery; native workers retain the actual KV blocks after acquisition. An acquired source outlives the decoder's idle TTL and remains held until all readers finish or an unstarted read is revoked. Loss of the existing native heartbeat retires the engine instead of returning possibly active blocks to the allocator.
+
+When updating this patch, run real two-turn P/D generation through different frontends, compare reused and recomputed output tokens, and check allocator references during cancellation, expiry, peer exit and TP completion. A successful patch application or request-completion signal does not exercise the transport's buffer lifetime. The [NIXL example](../../../examples/feature/nixl-prefix-reuse) provides the normal deployment path.

@@ -287,6 +287,7 @@ func ProjectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 
 func compatibleEncoderPrefill(encoder, prefill *inferencev1alpha1.ModelGroup) bool {
 	return MatchingRoutingIdentity(routingGroup(encoder), routingGroup(prefill)) &&
+		vllmconfig.CompletePDRuntime(prefill.Spec.PDRuntime) && prefill.Spec.PDRuntime.Connector == inferencev1alpha1.MooncakeConnector &&
 		vllmconfig.CompleteECRuntime(encoder.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) && vllmconfig.CompleteECRuntime(prefill.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) &&
 		matchingECRuntime(encoder.Spec.ECRuntime, prefill.Spec.ECRuntime)
 }
@@ -494,7 +495,7 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		DataParallelSize:     group.Spec.Parallelism.DP,
 		Parallelism:          routingParallelism(group),
 	}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && pd.Connector == inferencev1alpha1.MooncakeConnector {
 		component.PrefillBootstrapEndpoint = workload.ModelGroupEndpoint(group, pd.BootstrapPort)
 	}
 	return component

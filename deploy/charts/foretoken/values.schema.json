@@ -569,12 +569,20 @@
             "pd": {
               "type": "object",
               "required": [
+                "connector",
                 "protocol",
                 "bootstrapPort",
                 "abortRequestTimeoutSeconds",
                 "rdmaDeviceName"
               ],
               "properties": {
+                "connector": {
+                  "type": "string",
+                  "enum": [
+                    "mooncake",
+                    "nixl"
+                  ]
+                },
                 "protocol": {
                   "type": "string",
                   "enum": [

@@ -4,11 +4,13 @@
 //! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
 use crate::routing_load::{ReservationKey, RoutingReservations};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
+use foretoken_kv_indexer::{
+    KvPrefixIndexer, KvPrefixQueryResult, KvPrefixReuseScope, NoopKvPrefixIndexer,
+};
 use foretoken_model_protocol::ModelServerRole;
 
 use crate::inventory::supports_request;
@@ -155,6 +157,86 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .collect()
     }
 
+    /// 按已生效的传输配置形成来源范围；来源不承担本轮计算或 admission 容量。
+    fn kv_reuse_scopes(&self, request: &RouterRequest) -> Vec<KvPrefixReuseScope<'_>> {
+        let mut scopes = BTreeMap::<_, (BTreeSet<_>, BTreeSet<_>)>::new();
+        for route in self
+            .inventory
+            .model_routes()
+            .routes()
+            .iter()
+            .filter(|route| {
+                route.ready
+                    && route.model == request.model
+                    && matches!(
+                        route.role,
+                        ModelServerRole::Prefill | ModelServerRole::Decode
+                    )
+                    && (request.allowed_pools.is_empty()
+                        || request.allowed_pools.contains(&route.target.name))
+                    && self
+                        .inventory
+                        .is_route_target_healthy(&route.route_target_id)
+            })
+        {
+            let Some(pipeline_scope_id) = route.pipeline_scope_id.as_deref() else {
+                continue;
+            };
+            let Some(transfer) = self.inventory.kv_transfer(&route.route_target_id) else {
+                continue;
+            };
+            if !transfer.bidirectional_kv_xfer {
+                continue;
+            }
+            let roles = scopes
+                .entry((
+                    route.target.service_uid.as_str(),
+                    route.model.as_str(),
+                    route.revision.as_str(),
+                    pipeline_scope_id,
+                    transfer.connector.as_str(),
+                ))
+                .or_default();
+            match route.role {
+                ModelServerRole::Prefill => {
+                    roles.0.insert(route.route_target_id.as_str());
+                }
+                ModelServerRole::Decode => {
+                    roles.1.insert(route.route_target_id.as_str());
+                }
+                ModelServerRole::Aggregate | ModelServerRole::Encoder => unreachable!(),
+            }
+        }
+        scopes
+            .into_values()
+            .filter(|(prefills, decodes)| !prefills.is_empty() && !decodes.is_empty())
+            .map(|(prefills, decodes)| KvPrefixReuseScope {
+                prefill_route_target_ids: prefills.into_iter().collect(),
+                decode_route_target_ids: decodes.into_iter().collect(),
+            })
+            .collect()
+    }
+
+    /// 将 Prefill 的请求内只读匹配交给执行链，不创建或领取传输描述符。
+    fn decision(&self, request: &RouterRequest, candidate: &RouteCandidate) -> RouteDecision {
+        let mut decision = candidate.decision();
+        if candidate.role != ModelServerRole::Prefill {
+            return decision;
+        }
+        if let Ok(lookup) = request.kv_prefix_lookup(
+            candidate.route_target_id.as_str(),
+            candidate.data_parallel_rank,
+        ) && let KvPrefixQueryResult::Matches(matches) =
+            self.kv_prefix_indexer.prefix_matches(lookup)
+        {
+            decision.kv_source = matches
+                .into_iter()
+                .filter_map(|hit| hit.kv_source)
+                .max_by_key(|source| source.matched_tokens);
+        }
+        decision
+    }
+
     // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
     // computing stage eligibility before scoring; only eligible candidates reach Picker.
     fn select(
@@ -298,11 +380,24 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         foretoken_kv_indexer::KvPrefixQueryResult::Unavailable,
                         |lookup| self.kv_prefix_indexer.prefix_matches(lookup),
                     );
+                let (cache_matches, unavailable_reason) = match observation {
+                    KvPrefixQueryResult::Matches(matches) => (
+                        Some(
+                            matches
+                                .into_iter()
+                                .map(|hit| (hit.placement, hit.matched_tokens))
+                                .collect::<Vec<_>>(),
+                        ),
+                        None,
+                    ),
+                    KvPrefixQueryResult::Unavailable(reason) => (None, Some(reason)),
+                };
                 tracing::debug!(
                     request_id = %request.request_id(),
                     route_target_id = %candidate.route_target_id.as_str(),
                     data_parallel_rank = candidate.data_parallel_rank,
-                    cache_observation = ?observation,
+                    cache_matches = ?cache_matches,
+                    cache_unavailable_reason = ?unavailable_reason,
                     "KV routing observation"
                 );
             }
@@ -511,7 +606,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         ));
-        Ok(candidate.decision())
+        Ok(self.router.decision(&self.request, &candidate))
     }
 
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError> {
@@ -538,7 +633,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         };
         self.selected
             .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
-        Ok(prefill.decision())
+        Ok(self.router.decision(&self.request, &prefill))
     }
 
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
@@ -586,7 +681,8 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 let pipeline = self.pipelines.get(&request.model, route.role);
                 pipeline.filter.needs_kv_prefix() || pipeline.scorer.needs_kv_prefix()
             });
-        let kv_prefix_indexer = if needs_prefix {
+        let reuse_scopes = self.kv_reuse_scopes(&request);
+        let kv_prefix_indexer = if needs_prefix || !reuse_scopes.is_empty() {
             let candidates = {
                 let reservations = self
                     .routing_load
@@ -597,12 +693,21 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
             let lookups = candidates
                 .iter()
                 .filter(|candidate| {
-                    matches!(
-                        candidate.role,
-                        ModelServerRole::Aggregate
-                            | ModelServerRole::Prefill
-                            | ModelServerRole::Decode
-                    )
+                    if needs_prefix {
+                        matches!(
+                            candidate.role,
+                            ModelServerRole::Aggregate
+                                | ModelServerRole::Prefill
+                                | ModelServerRole::Decode
+                        )
+                    } else {
+                        candidate.role == ModelServerRole::Prefill
+                            && reuse_scopes.iter().any(|scope| {
+                                scope
+                                    .prefill_route_target_ids
+                                    .contains(&candidate.route_target_id.as_str())
+                            })
+                    }
                 })
                 .filter_map(|candidate| {
                     request
@@ -614,7 +719,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 })
                 .collect::<Vec<_>>();
             self.kv_prefix_indexer
-                .prepare(&lookups)
+                .prepare(&lookups, &reuse_scopes)
                 .await
                 .unwrap_or_else(|| self.kv_prefix_indexer.clone())
         } else {

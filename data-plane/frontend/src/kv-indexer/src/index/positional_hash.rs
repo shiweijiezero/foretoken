@@ -165,6 +165,7 @@ impl PositionalHashIndex {
                 matches.push(KvPrefixMatch {
                     placement,
                     matched_tokens,
+                    kv_source: None,
                 });
             }
         }

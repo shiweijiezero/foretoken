@@ -33,6 +33,70 @@ pub struct BackendGeneration {
     pub completion: Pin<Box<dyn Future<Output = Result<(), BackendError>> + Send>>,
 }
 
+/// 将一个已接纳请求的准备、取消与原生提交串行化；API 与 backend 共用该所有者。
+pub struct ExecutionControl {
+    pub(crate) owner: String,
+    phase: Mutex<ExecutionPhase>,
+    cancellation: CancellationToken,
+}
+
+impl Default for ExecutionControl {
+    fn default() -> Self {
+        Self {
+            owner: uuid::Uuid::new_v4().to_string(),
+            phase: Mutex::default(),
+            cancellation: CancellationToken::new(),
+        }
+    }
+}
+
+#[derive(Default)]
+enum ExecutionPhase {
+    #[default]
+    Preparing,
+    Submitted,
+    Cancelled,
+}
+
+impl ExecutionControl {
+    /// 接收 abort 或断连信号；准备阶段的取消阻止后续原生提交。
+    pub fn cancel(&self) {
+        let mut phase = self.phase.lock().expect("execution phase lock poisoned");
+        if matches!(*phase, ExecutionPhase::Preparing) {
+            *phase = ExecutionPhase::Cancelled;
+        }
+        self.cancellation.cancel();
+    }
+
+    /// 由接收执行等待取消，原生提交后的实际终止仍由 completion 确认。
+    pub async fn cancelled(&self) {
+        self.cancellation.cancelled().await;
+    }
+
+    /// 供尚未提交的等待阶段停止推进；提交后的终止仍需原生 completion。
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    /// 标记不可重放的原生提交起点，与准备阶段的取消共享一个原子边界。
+    fn begin_submission(&self) -> bool {
+        let mut phase = self.phase.lock().expect("execution phase lock poisoned");
+        if !matches!(*phase, ExecutionPhase::Preparing) {
+            return false;
+        }
+        *phase = ExecutionPhase::Submitted;
+        true
+    }
+
+    /// 供 API 的错误收尾区分明确未提交与结果未知的原生执行。
+    pub fn submitted(&self) -> bool {
+        matches!(
+            *self.phase.lock().expect("execution phase lock poisoned"),
+            ExecutionPhase::Submitted
+        )
+    }
+}
+
 /// Cumulative backend observations included in a telemetry snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
@@ -130,7 +194,11 @@ impl BackendError {
 #[async_trait]
 pub trait Backend: Send + Sync {
     /// Submits one request and returns separate output and engine-completion ownership to the API task.
-    async fn generate(&self, request: GenerateInput) -> Result<BackendGeneration, BackendError>;
+    async fn generate(
+        &self,
+        request: GenerateInput,
+        execution: Arc<ExecutionControl>,
+    ) -> Result<BackendGeneration, BackendError>;
 
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
@@ -140,6 +208,27 @@ pub trait Backend: Send + Sync {
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
     ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
+
+    /// 查询各 DP scheduler 保留的 Decode 前缀，不领取或保留新的 KV。
+    async fn retained_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRetainedRankPrefix>, BackendError>;
+
+    /// 在原生来源处原子领取，只有实际 worker 保留成功才返回 Granted。
+    async fn claim_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixClaim,
+    ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError>;
+
+    /// 撤销未开始的读取；InUse 表示原生传输仍拥有块引用。
+    async fn cancel_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixCancel,
+    ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError>;
+
+    /// 关闭新领取并返回尚未排空的原生传输数，供进程监督退出使用。
+    async fn drain_kv_transfers(&self) -> Result<u64, BackendError>;
 
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
@@ -159,11 +248,20 @@ pub struct VllmBackend {
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
+    bidirectional_kv_xfer: bool,
+    kv_connector_utility: bool,
+    kv_client: reqwest::Client,
+    kv_cleanup: tokio_util::task::TaskTracker,
 }
 
 impl VllmBackend {
     /// Creates the model-server adapter and retains the provided vLLM `Llm` facade until shutdown.
-    pub fn new(llm: Llm, max_concurrent_requests: Option<u64>) -> Self {
+    pub fn new(
+        llm: Llm,
+        max_concurrent_requests: Option<u64>,
+        bidirectional_kv_xfer: bool,
+        kv_connector_utility: bool,
+    ) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
         let engine_labels = client
@@ -180,7 +278,41 @@ impl VllmBackend {
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
+            bidirectional_kv_xfer,
+            kv_connector_utility,
+            kv_client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT)
+                .build()
+                .expect("static KV client configuration"),
+            kv_cleanup: tokio_util::task::TaskTracker::new(),
         }
+    }
+
+    /// 通过已有 EngineCore utility 读取各 rank 的 connector 结果，不新建控制通道。
+    async fn kv_utility<T: serde::de::DeserializeOwned>(
+        &self,
+        operation: &str,
+        payload: serde_json::Value,
+    ) -> Result<Vec<T>, BackendError> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .engine_core_client();
+        let results =
+            self.closing
+                .run_until_cancelled(client.call_utility::<serde_json::Value, _>(
+                    "kv_connector_utility",
+                    (operation, payload),
+                ))
+                .await
+                .ok_or(BackendError::Unavailable)?
+                .map_err(BackendError::from_engine_client)?;
+        results
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
+            .collect()
     }
 
     /// Takes and shuts down the owned vLLM `Llm` facade during model-server teardown.
@@ -192,6 +324,17 @@ impl VllmBackend {
             return Ok(());
         };
         llm.shutdown().await.map_err(BackendError::from_llm)
+    }
+
+    /// 监督者在计算排空后等待远端领取清理；本地引擎退役不结束这项责任。
+    pub async fn wait_for_kv_cleanup(&self) {
+        self.kv_cleanup.close();
+        self.kv_cleanup.wait().await;
+    }
+
+    /// 返回退出预算到期时尚未确认的远端领取数，供监督者报告未完成的清理。
+    pub fn pending_kv_cleanup(&self) -> usize {
+        self.kv_cleanup.len()
     }
 
     /// Runs the MetaX worker capture method on every rank; the supervisor owns its deadline.
@@ -342,6 +485,7 @@ impl Backend for VllmBackend {
     async fn generate(
         &self,
         mut request: GenerateInput,
+        execution: Arc<ExecutionControl>,
     ) -> Result<BackendGeneration, BackendError> {
         // HTTP decoding discards backend hints; headless EngineCore skips frontend
         // validation and retains its first grammar backend. Use Xgrammar consistently
@@ -350,8 +494,36 @@ impl Backend for VllmBackend {
             outputs.backend = StructuredOutputBackend::Xgrammar;
         }
         let started_at = Instant::now();
+        // 来源是可选加速提示；实例更换后配置若已不适用，仍执行普通 Prefill。
+        let source_read = if let Some(source) = request
+            .kv_reuse
+            .take()
+            .filter(|_| self.bidirectional_kv_xfer)
+        {
+            let mut read = crate::kv_reuse::RemoteKvRead::new(
+                source,
+                execution.owner.clone(),
+                self.kv_client.clone(),
+                self.kv_cleanup.clone(),
+            );
+            if self
+                .closing
+                .run_until_cancelled(read.prepare(&mut request, &execution))
+                .await
+                .ok_or(BackendError::Unavailable)??
+            {
+                Some(read)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let guard = self.llm.read().await;
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        if !execution.begin_submission() {
+            return Err(BackendError::Rejected);
+        }
         let request_id = request.request_id.clone();
         let stream = self
             .closing
@@ -368,6 +540,7 @@ impl Backend for VllmBackend {
                 self.boundary_latency.clone(),
             ),
             completion: Box::pin(async move {
+                let _source_read = source_read;
                 completion
                     .wait()
                     .await
@@ -428,6 +601,114 @@ impl Backend for VllmBackend {
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
             .collect()
+    }
+
+    async fn retained_prefixes(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<Vec<foretoken_model_protocol::KvRetainedRankPrefix>, BackendError> {
+        if !self.bidirectional_kv_xfer
+            || request.lora_name.is_some()
+            || !request.multimodal.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        self.kv_utility(
+            "retained_prefix",
+            serde_json::json!({
+                "prompt_token_ids": request.prompt_token_ids,
+                "cache_salt": request.cache_salt,
+            }),
+        )
+        .await
+    }
+
+    async fn claim_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixClaim,
+    ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError> {
+        use foretoken_model_protocol::KvPrefixClaimResult;
+        if !self.bidirectional_kv_xfer
+            || request.prefix.lora_name.is_some()
+            || !request.prefix.multimodal.is_empty()
+        {
+            return Ok(KvPrefixClaimResult::Miss);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            dp_rank: u32,
+            instance_id: String,
+            #[serde(flatten)]
+            result: KvPrefixClaimResult,
+        }
+        let results: Vec<Reply> = self
+            .kv_utility(
+                "claim",
+                serde_json::json!({
+                    "dp_rank": request.source.dp_rank,
+                    "instance_id": request.source.instance_id,
+                    "offer_id": request.source.offer_id,
+                    "consumer_id": request.consumer_id,
+                    "prompt_token_ids": request.prefix.prompt_token_ids,
+                    "cache_salt": request.prefix.cache_salt,
+                }),
+            )
+            .await?;
+        // 重启或 rank 变化使旧来源失效；该请求继续普通 Prefill。
+        Ok(results
+            .into_iter()
+            .find(|result| {
+                result.dp_rank == request.source.dp_rank
+                    && result.instance_id == request.source.instance_id
+            })
+            .map_or(KvPrefixClaimResult::Miss, |result| result.result))
+    }
+
+    async fn cancel_kv_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixCancel,
+    ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError> {
+        use foretoken_model_protocol::KvPrefixCancelResult;
+        if !self.bidirectional_kv_xfer {
+            return Ok(KvPrefixCancelResult::Miss);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            dp_rank: u32,
+            instance_id: String,
+            #[serde(flatten)]
+            result: KvPrefixCancelResult,
+        }
+        let results: Vec<Reply> = self
+            .kv_utility(
+                "cancel",
+                serde_json::json!({
+                    "dp_rank": request.source.dp_rank,
+                    "instance_id": request.source.instance_id,
+                    "offer_id": request.source.offer_id,
+                    "consumer_id": request.consumer_id,
+                }),
+            )
+            .await?;
+        Ok(results
+            .into_iter()
+            .find(|result| {
+                result.dp_rank == request.source.dp_rank
+                    && result.instance_id == request.source.instance_id
+            })
+            .map_or(KvPrefixCancelResult::Miss, |result| result.result))
+    }
+
+    async fn drain_kv_transfers(&self) -> Result<u64, BackendError> {
+        if !self.kv_connector_utility {
+            return Ok(0);
+        }
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            active_leases: u64,
+        }
+        let results: Vec<Reply> = self.kv_utility("drain", serde_json::json!({})).await?;
+        Ok(results.into_iter().map(|result| result.active_leases).sum())
     }
 
     fn telemetry(&self) -> BackendTelemetry {
