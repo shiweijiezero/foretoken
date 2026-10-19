@@ -473,16 +473,14 @@ spec:
                         - message: exactly one Store source is required
                           rule: has(self.profile) != has(self.managedBinding)
                       offload:
-                        description: KVOffload defines local CPU and optionally filesystem-backed
-                          KV offload.
+                        description: NormalizedKVOffload retains parsed capacity while
+                          preserving the Pool's quantity wire format.
                         properties:
                           cpuCacheSize:
-                            allOf:
-                            - minLength: 1
-                            - minLength: 1
                             description: CPUCacheSize is the CPU tier capacity available
-                              to vLLM.
+                              to the inference engine.
                             maxLength: 64
+                            minLength: 1
                             type: string
                             x-kubernetes-validations:
                             - message: must be a valid non-negative Kubernetes resource

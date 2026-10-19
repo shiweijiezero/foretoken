@@ -7,12 +7,6 @@ use foretoken_model_protocol::{KvPlacement, KvPrefixRequest, KvSharedPrefixRespo
 use serde::Deserialize;
 use zeromq::prelude::{Socket, SocketRecv, SocketSend};
 
-const LOOKUP_BASE_PORT: u32 = 30200;
-
-/// Uses vLLM's global DP-rank port offset for both query clients and connector servers.
-pub fn lookup_endpoint(host: &str, dp_rank: u32) -> String {
-    format!("tcp://{host}:{}", LOOKUP_BASE_PORT + dp_rank)
-}
 pub const LOOKUP_ENDPOINT_ENV: &str = "FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT";
 pub const MOONCAKE_CONNECTOR_MODULE: &str = "foretoken_mooncake";
 pub const OFFLOADING_CONNECTOR_MODULE: &str =
@@ -53,7 +47,7 @@ impl SharedKvLookup {
                         )
                     },
                 );
-                lookup_endpoint(&host, rank as u32)
+                config.ports.lookup_endpoint(&host, rank as u32)
             })
             .collect();
         Self {

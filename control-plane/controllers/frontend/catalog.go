@@ -256,27 +256,25 @@ func (err *modelCatalogProjectionError) Error() string {
 
 // configuredTemplateIdentity uses the runtime's backend compiler for pre-serving discovery.
 func configuredTemplateIdentity(template inferencev1alpha1.NormalizedPoolTemplate) (servingconfig.Group, error) {
-	identity := servingconfig.Group{PrefixCacheIsolation: template.PrefixCacheIsolation}
+	identity := servingconfig.Group{
+		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
+		Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
+		PrefixCacheIsolation: template.PrefixCacheIsolation,
+	}
 	features := template.Features
 	if template.Role == inferencev1alpha1.ModelRolePrefill || template.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
 	}
 	identity.Capabilities = servingconfig.RoutingCapabilities(features)
 	if template.Backend == "vllm-omni" {
-		effective, err := vllmomniconfig.Compile(template)
-		if err != nil {
+		if _, err := vllmomniconfig.Compile(template); err != nil {
 			return servingconfig.Group{}, err
 		}
-		identity.Model, identity.Source, identity.Revision = effective.Model, effective.Source, effective.Revision
-		identity.Tokenizer, identity.TokenizerRevision = effective.Tokenizer, effective.TokenizerRevision
 		identity.Capabilities = []string{"video"}
 	} else {
-		effective, err := vllmconfig.Compile(template)
-		if err != nil {
+		if _, err := vllmconfig.Compile(template); err != nil {
 			return servingconfig.Group{}, err
 		}
-		identity.Model, identity.Source, identity.Revision = effective.Model, effective.Source, effective.Revision
-		identity.Tokenizer, identity.TokenizerRevision = effective.Tokenizer, effective.TokenizerRevision
 	}
 	return identity, nil
 }
