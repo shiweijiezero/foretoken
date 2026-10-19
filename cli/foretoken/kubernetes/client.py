@@ -18,7 +18,7 @@ from typing import Any, BinaryIO
 
 from foretoken.command_execution import command_deadline, run_command
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.namespace import mutation_lock_fds
+from foretoken.kubernetes.mutation import mutation_lock_fds
 from foretoken.tools import resolve_tool
 
 
@@ -38,6 +38,10 @@ class ResourceRef:
 
 class KubernetesServiceUnavailableError(DeploymentError):
     """Identify API-server unavailability for callers that own a readiness deadline."""
+
+
+class KubernetesPermissionError(DeploymentError):
+    """Identify an API authorization denial for owners that can defer privileged cleanup."""
 
 
 class KubernetesVersionConflictError(DeploymentError):
@@ -102,9 +106,12 @@ class Kubectl:
             message = f"{' '.join(command)} failed: {detail}"
             if detail.startswith("Error from server (ServiceUnavailable):"):
                 raise KubernetesServiceUnavailableError(message)
+            if detail.startswith("Error from server (Forbidden):"):
+                raise KubernetesPermissionError(message)
             if (
                 "the object has been modified; please apply your changes to the latest version" in detail
                 or "metadata.resourceVersion: Invalid value: 0: must be specified for an update" in detail
+                or "Precondition failed: ResourceVersion in precondition:" in detail
             ):
                 raise KubernetesVersionConflictError(message)
             raise DeploymentError(message)
@@ -180,8 +187,8 @@ class Kubectl:
             input_text=rendered,
         )
 
-    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True) -> None:
-        """Conditionally delete one observed UID/version; callers may wait outside a mutation lock."""
+    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True, propagation: str = "Foreground") -> None:
+        """Delete an observed UID/version, letting lifecycle finalizers order children with Background propagation."""
         metadata = value["metadata"]
         version = value["apiVersion"]
         base = f"/api/{version}" if "/" not in version else f"/apis/{version}"
@@ -196,7 +203,7 @@ class Kubectl:
             input_text=json.dumps({
                 "apiVersion": "v1", "kind": "DeleteOptions",
                 "preconditions": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
-                "propagationPolicy": "Foreground",
+                "propagationPolicy": propagation,
             }),
             timeout=timeout_seconds(timeout),
         )

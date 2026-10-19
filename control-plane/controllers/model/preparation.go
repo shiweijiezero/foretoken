@@ -7,6 +7,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -16,10 +17,10 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,13 +151,22 @@ func (reconciler *GroupReconciler) preparationFailure(ctx context.Context, job *
 
 // desiredPreparationJob builds a CPU/network/storage-only source preparation workload.
 func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, distribution runtimeconfig.ModelDistributionProfile, files runtimeconfig.ApplicationFiles) (*batchv1.Job, error) {
-	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
-	if err != nil {
-		return nil, fmt.Errorf("build model preparation launch plan: %w", err)
+	inputEnv := runtimeconfig.ModelArtifactsEnv
+	var input any = runtimeconfig.ProjectModelArtifacts(group.Spec.Artifacts)
+	if group.Spec.Runtime.PreparationVersion == 1 {
+		plan, err := vllmconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("build retained model preparation plan: %w", err)
+		}
+		input, inputEnv = plan, "FORETOKEN_VLLM_LAUNCH_PLAN"
 	}
-	launchJSON, err := launchPlan.JSON()
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		return nil, fmt.Errorf("marshal model preparation launch plan: %w", err)
+		return nil, fmt.Errorf("marshal model preparation input: %w", err)
+	}
+	binary := "foretoken-model-server"
+	if group.Spec.Runtime.Backend == vllmomniconfig.Backend {
+		binary = "foretoken-omni-model-server"
 	}
 	cache := group.Spec.Artifacts.Cache
 	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
@@ -164,15 +174,15 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	}
 	name := "prepare-" + string(group.UID)
 	env := []corev1.EnvVar{
-		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: inputEnv, Value: string(inputJSON)},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: runtimeconfig.ModelPreparationScopeEnv, Value: group.Spec.ModelPoolRef.UID + "/" + group.Spec.Revision},
-		{Name: preparationConfigMapEnv, Value: preparationSourceName(group.Spec)},
+		{Name: runtimeconfig.PreparationConfigMapEnv, Value: runtimeconfig.PreparationSourceName(group.Spec)},
 		{Name: preparationNamespaceEnv, Value: group.Namespace},
 		// CUDA base images expose all devices unless CPU-only preparation overrides them.
 		{Name: "NVIDIA_VISIBLE_DEVICES", Value: "void"},
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, "")...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], "", group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	startupSeconds, err := runtimeconfig.WholeDurationSeconds(group.Spec.Timeouts.Startup)
 	if err != nil {
@@ -209,7 +219,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 				// Preparation Pods must not match serving member or cache-observer selectors.
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{workload.ModelPreparationGroupLabel: group.Name}},
 				Spec: corev1.PodSpec{
-					ServiceAccountName:           preparationSourceName(group.Spec),
+					ServiceAccountName:           runtimeconfig.PreparationSourceName(group.Spec),
 					AutomountServiceAccountToken: &automountToken,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ImagePullSecrets:             slices.Clone(imagePullSecrets),
@@ -233,8 +243,8 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	if revision := group.Spec.Runtime.SourceRevision; revision != "" {
 		job.Spec.Template.Annotations = map[string]string{runtimeconfig.SourceRevisionAnnotation: revision}
 	}
-	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), "foretoken-model-server")
-	access := runtimeconfig.CacheStorageAccess(cache)
+	files.Configure(&job.Spec.Template, &job.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), binary)
+	access := runtimeconfig.WorkloadCacheAccess(&job.Spec.Template, cache, group.Spec.Runtime.PreparationVersion)
 	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, files.Image, access.Identity, access)
 	return job, nil
 }
@@ -289,112 +299,4 @@ func preparationNodeTaintsSupported(taints []corev1.Taint, accelerator string) b
 		}
 	}
 	return true
-}
-
-const (
-	preparationConfigMapEnv      = "FORETOKEN_MODEL_PREPARATION_CONFIGMAP"
-	preparationNamespaceEnv      = "FORETOKEN_MODEL_PREPARATION_NAMESPACE"
-	preparationRecordEnv         = "FORETOKEN_MODEL_PREPARATION_RECORD"
-	preparationRecordDirectory   = "/etc/foretoken/model-source"
-	preparationRecordKey         = "source.json"
-	preparationPoolLabel         = "inference.foretoken.io/preparation-pool"
-	preparationSourceReadyReason = "SourcePrepared"
-)
-
-func preparationSourceName(spec inferencev1alpha1.ModelGroupSpec) string {
-	return "model-source-" + spec.ModelPoolRef.UID + "-" + spec.Revision
-}
-
-// reconcilePreparationSource gives acquisition workers access to one Pool revision's source record.
-// Workers publish resolved provider versions with a resourceVersion precondition; reconciliation
-// never rewrites that data. Pool ownership preserves the record across replica and PVC replacement.
-func (reconciler *GroupReconciler) reconcilePreparationSource(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
-	name := preparationSourceName(group.Spec)
-	metadata := metav1.ObjectMeta{Name: name, Namespace: group.Namespace, Labels: map[string]string{preparationPoolLabel: string(pool.UID)}}
-	automount := false
-	objects := []client.Object{
-		&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metadata},
-		&corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metadata, AutomountServiceAccountToken: &automount},
-		&rbacv1.Role{
-			TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "Role"}, ObjectMeta: metadata,
-			Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{name}, Verbs: []string{"get", "patch"}}},
-		},
-		&rbacv1.RoleBinding{
-			TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "RoleBinding"}, ObjectMeta: metadata,
-			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
-			Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: group.Namespace}},
-		},
-	}
-	var owner client.Object = pool
-	for _, desired := range objects {
-		if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-			return err
-		}
-		current := desired.DeepCopyObject().(client.Object)
-		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); apierrors.IsNotFound(err) {
-			if err := reconciler.Create(ctx, desired); err != nil {
-				return fmt.Errorf("create model source %s: %w", desired.GetObjectKind().GroupVersionKind().Kind, err)
-			}
-			if _, record := desired.(*corev1.ConfigMap); record {
-				owner = desired
-			}
-			continue
-		} else if err != nil {
-			return err
-		}
-		if !metav1.IsControlledBy(current, owner) {
-			return fmt.Errorf("model source %s %q belongs to another owner", desired.GetObjectKind().GroupVersionKind().Kind, name)
-		}
-		if _, record := desired.(*corev1.ConfigMap); record {
-			owner = current
-			continue
-		}
-		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
-			return fmt.Errorf("apply model source permissions: %w", err)
-		}
-	}
-	return nil
-}
-
-// cleanupPreparationSources releases records and their dependent permissions after the last cohort is gone.
-func (reconciler *PoolReconciler) cleanupPreparationSources(ctx context.Context, pool *inferencev1alpha1.ModelPool) error {
-	groups, err := ownedModelGroups(ctx, reconciler.APIReader, pool)
-	if err != nil {
-		return err
-	}
-	live := make(map[string]bool, len(groups))
-	for _, group := range groups {
-		live[preparationSourceName(group.Spec)] = true
-	}
-	var records corev1.ConfigMapList
-	if err := reconciler.List(ctx, &records, client.InNamespace(pool.Namespace), client.MatchingLabels{preparationPoolLabel: string(pool.UID)}); err != nil {
-		return err
-	}
-	for index := range records.Items {
-		record := &records.Items[index]
-		if live[record.Name] || !metav1.IsControlledBy(record, pool) {
-			continue
-		}
-		if err := client.IgnoreNotFound(reconciler.Delete(ctx, record, client.Preconditions{UID: &record.UID})); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// mountPreparationSource projects the durable provider identity without API credentials.
-func mountPreparationSource(group *inferencev1alpha1.ModelGroup, pod *corev1.PodTemplateSpec) {
-	spec := group.Spec
-	if spec.Runtime.PreparationVersion == 0 || spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
-		return
-	}
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name: "model-source", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: preparationSourceName(spec)},
-			Items:                []corev1.KeyToPath{{Key: preparationRecordKey, Path: preparationRecordKey}},
-		}},
-	})
-	container := &pod.Spec.Containers[0]
-	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "model-source", MountPath: preparationRecordDirectory, ReadOnly: true})
-	container.Env = append(container.Env, corev1.EnvVar{Name: preparationRecordEnv, Value: preparationRecordDirectory + "/" + preparationRecordKey})
 }

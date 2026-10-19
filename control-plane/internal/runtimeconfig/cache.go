@@ -16,10 +16,18 @@ import (
 const (
 	// ModelRootEnv identifies the persistent model root consumed by both data-plane processes.
 	ModelRootEnv = "FORETOKEN_MODEL_ROOT"
+	// ModelCacheRootEnv selects provider-owned downloads shared by cache consumers.
+	ModelCacheRootEnv = "FORETOKEN_MODEL_CACHE_ROOT"
+	// PreparationRootEnv separates deployment acquisition state from shared model files.
+	PreparationRootEnv = "FORETOKEN_MODEL_PREPARATION_ROOT"
 	// TemporaryModelRootEnv is consumed by foretoken-artifacts in the frontend process.
 	TemporaryModelRootEnv = "FORETOKEN_TEMPORARY_MODEL_ROOT"
 	// RuntimeCacheBindingEnv carries namespace/claim identity for prepared tokenizer reuse.
 	RuntimeCacheBindingEnv = "FORETOKEN_RUNTIME_CACHE_BINDING"
+	// DeploymentUIDEnv binds runtime consumers to the deployment's private state directories.
+	DeploymentUIDEnv = "FORETOKEN_DEPLOYMENT_UID"
+	// ProfileRootEnv records the serving workload's actual capture storage directory.
+	ProfileRootEnv = "FORETOKEN_PROFILE_ROOT"
 	// ModelPreparationScopeEnv selects the Pool revision's immutable acquisition publication.
 	ModelPreparationScopeEnv = "FORETOKEN_MODEL_PREPARATION_SCOPE"
 	// SourceRevisionAnnotation selects a CLI-published bundle for service reconciliation.
@@ -71,8 +79,26 @@ func ModelServiceReferencesKV(service *api.ModelService, name string) bool {
 	return false
 }
 
-// ModelDirectory returns the stable model area of a workload's persistent data root.
-// Model providers keep their own cache layouts beneath this directory.
+// ModelDirectory locates user-provided model files, outside managed download-cache cleanup.
 func ModelDirectory(dataRoot string) string {
 	return path.Join(dataRoot, "models")
+}
+
+// ModelCacheDirectory locates provider-owned downloads shared across namespace bindings.
+func ModelCacheDirectory(dataRoot string) string {
+	return path.Join(dataRoot, "shared", "models")
+}
+
+// RuntimeCacheIdentity permits direct tokenizer reuse only between consumers of the same claim and layout.
+func RuntimeCacheIdentity(namespace, claim string, preparationVersion int32) string {
+	binding := namespace + "/" + claim
+	if preparationVersion >= SharedModelCachePreparationVersion {
+		binding += "/shared-models"
+	}
+	return binding
+}
+
+// DeploymentCacheDirectory isolates mutable runtime state for one deployment across Pod replacement.
+func DeploymentCacheDirectory(dataRoot, deploymentUID string) string {
+	return path.Join(dataRoot, "deployments", deploymentUID)
 }

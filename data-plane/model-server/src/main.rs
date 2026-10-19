@@ -16,13 +16,13 @@ use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
-use foretoken_model_server::launch::LaunchPlanV1;
 use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::preparation;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use foretoken_model_server::shared_kv;
+use foretoken_model_server::shutdown_signal;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -43,12 +43,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match std::env::args().nth(1).as_deref() {
         Some("prepare") => {
-            prepare_model().await?;
+            preparation::prepare_job(
+                &foretoken_artifacts::ModelArtifacts::from_env()?,
+                &foretoken_model_server::launch::python_executable(),
+            )
+            .await?;
             return Ok(());
         }
         Some("resolve") => {
-            let plan = LaunchPlanV1::parse(&required_env("FORETOKEN_VLLM_LAUNCH_PLAN")?)?;
-            preparation::resolve(&plan).await?;
+            preparation::resolve(
+                &foretoken_artifacts::ModelArtifacts::from_env()?,
+                &foretoken_model_server::launch::python_executable(),
+            )
+            .await?;
+            return Ok(());
+        }
+        Some("collect-cache") => {
+            println!("{}", foretoken_model_server::cache_gc::collect().await?);
             return Ok(());
         }
         _ => {}
@@ -64,13 +75,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             * config.launch.parallelism.pp
             * config.launch.parallelism.dp
             * config.launch.parallelism.pcp;
-        Some(profiling::Config::from_runtime_cache(
-            cache,
-            required_env(MODEL_GROUP_UID_ENV)?,
-            workers,
-            config.launch.profiling.engine,
-            config.launch.python_executable(),
-        ))
+        Some(
+            profiling::Config::from_runtime_cache(
+                cache,
+                required_env(MODEL_GROUP_UID_ENV)?,
+                workers,
+                config.launch.profiling.engine,
+                foretoken_model_server::launch::python_executable(),
+            )
+            .map_err(std::io::Error::other)?,
+        )
     } else {
         None
     };
@@ -319,12 +333,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } => match never {},
         reason = engine_failure(&engine, &health, &mut client_health) => Stop::Engine(reason),
-        () = shutdown_signal() => Stop::Signal,
+        signal = shutdown_signal() => match signal {
+            Ok(()) => Stop::Signal,
+            Err(error) => Stop::Server(format!("shutdown signal handler failed: {error}")),
+        },
         result = &mut server => Stop::Server(match result {
             Ok(()) => "HTTP server stopped unexpectedly".into(),
             Err(error) => format!("HTTP server failed: {error}"),
         }),
-        reason = wait_cache_server(&mut cache_server) => Stop::CacheServer(reason),
+        reason = runtime_cache::wait_for_server(&mut cache_server) => Stop::CacheServer(reason),
         result = async {
             match &mut profiler {
                 Some(profiler) => profiler.run().await,
@@ -489,10 +506,10 @@ async fn run_worker(
             .into_future(),
     );
     let failure = tokio::select! {
-        () = shutdown_signal() => None,
+        signal = shutdown_signal() => signal.err().map(|error| format!("shutdown signal handler failed: {error}")),
         status = engine.wait_for_exit() => Some(format!("managed worker exited: {status}")),
         result = &mut server => Some(format!("worker health server stopped: {result:?}")),
-        reason = wait_cache_server(cache_server) => Some(reason),
+        reason = runtime_cache::wait_for_server(cache_server) => Some(reason),
         error = wait_cache_write_failure(cache, runtime_cache::Mode::Persistent) => Some(error.to_string()),
         result = async {
             match &mut profiler {
@@ -636,9 +653,13 @@ async fn spawn_engine_attempt(
     }
     // Both cache modes consume the same mounted source publication.
     let model_root = cache
-        .map(|cache| cache.model_root(mode))
-        .or_else(foretoken_artifacts::model_root)
+        .map(|cache| cache.model_cache_root(mode))
+        .or_else(foretoken_artifacts::model_cache_root)
         .unwrap_or_else(|| PathBuf::from(TEMPORARY_MODEL_SOURCE_ROOT));
+    let preparation_root = cache
+        .map(|cache| cache.preparation_root(mode))
+        .or_else(foretoken_artifacts::preparation_root)
+        .unwrap_or_else(|| model_root.join("prepared"));
     // Existing Pod templates retain native acquisition until their Pool rolls out preparation.
     let legacy_acquisition = std::env::var_os(preparation::PREPARATION_SCOPE_ENV).is_none();
     environment.push((
@@ -672,13 +693,28 @@ async fn spawn_engine_attempt(
         let scope = required_env(preparation::PREPARATION_SCOPE_ENV)
             .map_err(|error| EngineStartupFailure::Other(io::Error::other(error.to_string())))?;
         let remaining = startup_deadline.saturating_duration_since(Instant::now());
-        let persistent_root = cache.map(|cache| cache.model_root(runtime_cache::Mode::Persistent));
-        let reusable_root = persistent_root
-            .as_deref()
-            .filter(|root| *root != model_root);
+        let persistent_root =
+            cache.map(|cache| cache.model_cache_root(runtime_cache::Mode::Persistent));
+        let persistent_state =
+            cache.map(|cache| cache.preparation_root(runtime_cache::Mode::Persistent));
+        let storage = preparation::PreparationStorage {
+            model_root: &model_root,
+            state_root: &preparation_root,
+            reusable_roots: persistent_root
+                .as_deref()
+                .zip(persistent_state.as_deref())
+                .filter(|(root, _)| *root != model_root),
+            environment: &environment,
+        };
         let prepared = tokio::time::timeout(
             remaining,
-            preparation::prepare(&config.launch, &model_root, &scope, true, reusable_root),
+            preparation::prepare(
+                &config.launch.artifacts,
+                &managed_engine.python,
+                &storage,
+                &scope,
+                true,
+            ),
         )
         .await
         .map_err(|_| {
@@ -822,7 +858,7 @@ async fn start_engine_attempt(
         },
         status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
         _ = tokio::time::sleep_until(startup_deadline.into()) => Err(EngineStartupFailure::Other(io::Error::other("EngineCore connection exceeded the startup deadline"))),
-        reason = wait_cache_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
+        reason = runtime_cache::wait_for_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
         error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
     };
     match client {
@@ -853,17 +889,6 @@ fn local_artifact_path(identifier: &str) -> io::Result<String> {
             "local artifact path is not UTF-8",
         )
     })
-}
-
-async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>) -> String {
-    let Some(server) = server else {
-        return std::future::pending().await;
-    };
-    match server.await {
-        Ok(Ok(())) => "cache observation server stopped unexpectedly".into(),
-        Ok(Err(error)) => format!("cache observation server failed: {error}"),
-        Err(error) => format!("cache observation task failed: {error}"),
-    }
 }
 
 /// Inspect protocol and optional weight-loader support without importing engine plugins.
@@ -935,55 +960,9 @@ fn kv_event_adapter(
     ))
 }
 
-/// Publishes provider snapshots for the controller-owned preparation Job.
-async fn prepare_model() -> Result<(), Box<dyn std::error::Error>> {
-    let plan = LaunchPlanV1::parse(&required_env("FORETOKEN_VLLM_LAUNCH_PLAN")?)?;
-    let model_root = foretoken_artifacts::model_root()
-        .ok_or("FORETOKEN_MODEL_ROOT must be set for model preparation")?;
-    let scope = required_env(preparation::PREPARATION_SCOPE_ENV)?;
-    let shutdown = Arc::new(Notify::new());
-    let mut observer =
-        if let Some(cache) = runtime_cache::Config::from_env().map_err(io::Error::other)? {
-            let listener = TcpListener::bind(("0.0.0.0", cache.observation_port())).await?;
-            let stopped = shutdown.clone();
-            Some(tokio::spawn(runtime_cache::serve(listener, cache, stopped)))
-        } else {
-            None
-        };
-    let result = tokio::select! {
-        result = preparation::prepare(&plan, &model_root, &scope, false, None) => result,
-        reason = wait_cache_server(&mut observer) => return Err(io::Error::other(reason).into()),
-        () = shutdown_signal() => Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled")),
-    };
-    shutdown.notify_one();
-    if let Some(observer) = observer {
-        observer.await??;
-    }
-    result?;
-    Ok(())
-}
-
 fn required_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(name)
         .ok()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{name} must be set by the ModelGroup controller").into())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("installing Ctrl-C signal handler must succeed");
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("installing SIGTERM signal handler must succeed")
-            .recv()
-            .await;
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-    tokio::select! { () = ctrl_c => {}, () = terminate => {} }
 }

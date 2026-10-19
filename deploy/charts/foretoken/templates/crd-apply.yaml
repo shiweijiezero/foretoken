@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Shared API definitions are upgraded only by platform installation.
-{{- if eq .Values.scope "platform" }}
 {{- $application := index (include "foretoken.applications" . | fromJson) "control-plane" }}
 {{- $arguments := list }}
 {{- if $application }}
@@ -33,4 +32,3 @@ spec:
       {{- end }}
     spec:
       {{- include "foretoken.platformJobPod" (dict "root" . "binary" "crd-apply" "args" $arguments) | nindent 6 }}
-{{- end }}

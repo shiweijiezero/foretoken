@@ -9,28 +9,34 @@ For deployment configuration, see [Model storage](../features/model-storage.md).
 
 ## Storage ownership
 
-A namespace's RuntimeCache owns its PVC and publishes the claim name and readiness. Workload controllers mount that claim into model-server and frontend Pods. An administrator-supplied `workload.cache.claimName` takes precedence and remains administrator-managed.
+RuntimeCache selects a namespace-local claim and publishes its readiness. An explicit directory must match a platform-authorized binding and takes precedence over the administrator's existing-claim default. The RuntimeCache borrows that claim without adopting or deleting it. Members do not need access to PVs or other namespaces.
+
+Platform installation resolves authorized directory sources. The deployment manager creates shared namespace bindings when an instance needs them and publishes access to its controller. Instance deletion does not remove these administrator-provided bindings. Local k3d placement follows the actual host bind mounts; multi-node directory storage must expose the same filesystem to its consumers.
 
 Dynamic caches request storage from a StorageClass. If `maxSize` is configured, the controller requests expansion when the lowest observed free-space ratio reaches 20%, doubling capacity up to the maximum. Workloads can continue using a bound volume when an expansion request fails.
 
-For directory caches, the CLI resolves node-visible paths before applying user intent. The RuntimeCache controller creates the PVC and determines its name, volume name, access mode and binding capacity. The CLI reads that claim to prepare a static PV.
+## Model references and collection
 
-A remote ReadWriteOnce directory requires the effective node selectors of all models sharing the cache to select one node. ReadWriteMany requires the directory to expose the same shared filesystem on every cluster node. Local k3d volumes use PV node affinity based on the nodes' host bind mounts.
+A service using model X keeps a source reference even while stopped. Deleting the service first retires its preparation and serving workloads, then releases that reference. Another service using X keeps X available; a service using only Y does not retain X.
 
-## Retention and redeployment
+The Pool retains its selected source record independently of its current replica count. Old execution cohorts retain their own records through draining. Provider acquisition publishes fixed model and tokenizer versions before accessing shared files, so a moving branch does not change an existing reference after a restart.
 
-The controller removes PVC ownership when retaining a deleted cache. A new directory cache can adopt the unchanged retained claim only when its path, volume binding and ownership match. Namespace deletion still removes namespaced PVCs.
+Preparation and collection coordinate through one stable filesystem lock per model-cache root. The root's persistent identity distinguishes independent directories while recognizing namespace claims and mount aliases for the same data. Collection rechecks live source references under the exclusive lock before deleting provider-owned snapshots and unreferenced blobs. Local model files are outside this managed area.
 
-The CLI retains directory PVs by default. When a namespace is recreated, it can rebind the same PV to the controller's new PVC after the old claim is gone. Resource-version and old-claim preconditions prevent overwriting concurrent binding changes.
+The platform owns collection workers and their temporary storage bindings; deployment instance controllers own their service intent and source-record retirement. Native NFS, NFS CSI and directory-backed hostPath volumes can be mounted through dedicated Retain aliases without changing the original volume. Other dynamically provisioned storage follows its storage driver's lifecycle. Worker completion precedes cleanup of its Job and aliases, and final release of the source record.
 
-With `retentionPolicy: Delete`, the controller deletes the PVC after its workloads release it, and the CLI deletes its directory PV object. The volume reclaim policy is Retain, preserving directory files. Dynamic volumes follow their StorageClass reclaim policy.
+## Cache layout and application updates
 
-## Model files and runtime caches
+Current instance-scoped applications use `shared/models` for provider downloads, `deployments/<InferenceDeployment UID>` for mutable runtime state, and `models` for user-maintained local files. The instance UID keeps neighboring deployments separate while preserving reuse across Pod replacement. Hugging Face account state stays separate from the shared Hub file cache. Model repository configuration and tokenizer files belong with shared model artifacts, not runtime configuration.
 
-The artifacts library owns local model/tokenizer directory resolution for both data-plane consumers. The platform projects the model root below the data mount, separately from provider and compilation cache locations. Relative references resolve to directories within the model root. The inference engine and tokenizer loaders handle downloads and format validation. Public model identifiers remain unchanged after resolving local files.
+An application selection pins its preparation contract along with its executable. Retained applications keep their earlier input and cache layout, including namespace-local paths, until an explicit deployment selects the current application. Updating a controller must not send a new preparation protocol to a retained older image.
 
-The runtime cache mount stores model-provider caches and engine compilation caches such as vLLM and TorchInductor. For single-node services, model-server can stop a failed EngineCore and retry under the Pod's `/tmp` volume when the persistent cache fails its write probe. Multi-node members restart together. A frontend with a missing Hub snapshot can use its temporary tokenizer cache.
+Triton uses the instance's `triton/<node-name>` directory to separate node writers while retaining reuse after Pod replacement. Engine-managed compiler subdirectories remain under the inference engine's control. For single-node services, model-server can stop a failed EngineCore and retry with Pod-local temporary storage when the persistent cache fails its write probe. Readable persistent model files can still be reused. Multi-node members restart together.
 
-Triton's initial cache uses `triton/<node-name>` on the PVC, separating node writes while retaining reuse after Pod replacement. Cache location changes follow the Group rollout; existing Groups keep their original environment until replaced. Engine-managed compiler subdirectories remain under vLLM's control.
+Profiling publishes under the instance's `deployments/<UID>/profiles/runs` directory. Each capture plan retains its actual output path, including earlier layouts used by retained applications. The viewer selects instance-local results and explicitly retained historical run paths; profiling is unavailable during a temporary-cache retry.
 
-The persistent data root contains `models`, `vllm`, `torch`, `triton`, and `profiles`. Prepared models resolve under `models`; Hub repositories retain the upstream `models/hub` layout with revision-aware cache lookup. Diagnostic captures publish below `profiles/runs` and are unavailable during a temporary-cache retry.
+## Volume retention
+
+With `retentionPolicy: Retain`, deleting a RuntimeCache removes its PVC ownership and leaves the claim available for explicit reuse. Namespace deletion still removes namespaced PVCs. Directory PVs use Retain: deleting their Kubernetes objects does not recursively delete user files or instance-local state. Managed model downloads have the separate reference lifecycle above.
+
+With `retentionPolicy: Delete`, the RuntimeCache controller waits for workloads to release an owned PVC before completing deletion. Borrowed directory claims remain administrator-managed. Dynamic volumes follow their StorageClass reclaim policy. Rebinding a retained directory volume uses the observed claim UID and resource version to avoid replacing a concurrent binding.

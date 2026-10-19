@@ -79,7 +79,7 @@ def hf_snapshot(repository, revision):
         try_to_load_from_cache,
     )
     from huggingface_hub.constants import HF_HUB_ETAG_TIMEOUT
-    from huggingface_hub.errors import HfHubHTTPError, OfflineModeIsEnabled
+    from huggingface_hub.utils import HfHubHTTPError, OfflineModeIsEnabled
 
     api = HfApi()
     if (
@@ -352,9 +352,9 @@ def cached_peer_snapshot(source, repository, revision, files):
 
 
 def distributed_directory(source, repository, revision):
-    """Locate an immutable peer snapshot independently of the current transport endpoint."""
+    """Locate a peer snapshot in the shared cache independently of its transport endpoint."""
     return (
-        Path(os.environ["FORETOKEN_MODEL_ROOT"])
+        Path(os.environ["FORETOKEN_MODEL_CACHE_ROOT"])
         / "distributed"
         / source
         / repository

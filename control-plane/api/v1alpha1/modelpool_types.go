@@ -69,6 +69,11 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
 
+	// Directory identifies the authorized data directory retained by this execution cohort.
+	// Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+	// +optional
+	Directory string `json:"directory,omitempty"`
+
 	// DirectoryOwner preserves the discovered directory identity across cache consumers.
 	// +optional
 	DirectoryOwner *StorageIdentity `json:"directoryOwner,omitempty"`
@@ -94,6 +99,10 @@ type ApplicationSelection struct {
 	// ImageProfile distinguishes serving, Omni and diagnostic environments during selection.
 	// +optional
 	ImageProfile string `json:"imageProfile,omitempty"`
+	// PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+	// Absence retains the backend's earlier acquisition protocol.
+	// +optional
+	PreparationVersion *int32 `json:"preparationVersion,omitempty"`
 	// SourceRevision retains the admitted source intent independently of source-mode defaults.
 	// +optional
 	SourceRevision string `json:"sourceRevision,omitempty"`
@@ -258,6 +267,11 @@ type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PreparedRevision string `json:"preparedRevision,omitempty"`
+
+	// ArtifactSource retains the selected source record, including a pending publication, while stopped.
+	// Superseded cohorts retain their own records until their workloads finish draining.
+	// +optional
+	ArtifactSource *LocalObjectReference `json:"artifactSource,omitempty"`
 
 	// InstanceAdmissionVersion is reserved before publishing an instance configuration.
 	// It prevents ConfigMap restoration from rolling the publication version backward.

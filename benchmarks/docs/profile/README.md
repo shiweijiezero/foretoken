@@ -89,12 +89,12 @@ Add `--values nsight-values.yaml` to the installation command used for this clus
 The [Nsight example](../../../examples/feature/profile/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
 
 ```bash
-foretoken perf examples/feature/profile/nsight \
+foretoken perf examples/feature/profile/nsight --name nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
 
-For external traffic, use `foretoken deploy examples/feature/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
+For external traffic, use `foretoken deploy examples/feature/profile/nsight --name nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
 
 ## Clean up
 
@@ -104,4 +104,4 @@ When the deployment and capture records are no longer needed, clean up with:
 foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-Use `examples/feature/profile/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.
+For the named Nsight instance, use `foretoken delete nsight` instead. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.

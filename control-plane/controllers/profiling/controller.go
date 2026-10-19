@@ -16,9 +16,11 @@ import (
 	"path"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,11 +34,9 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
-const (
-	profileFinalizer    = "inference.foretoken.io/profile-stop"
-	profilePath         = "/v1/internal/profiling"
-	profileArtifactRoot = "profiles/runs"
-)
+const profileFinalizer = "inference.foretoken.io/profile-stop"
+const profilePath = "/v1/internal/profiling"
+const profileLegacyArtifactRoot = "profiles/runs"
 
 // Reconciler owns capture coordination, never serving resources or artifact storage.
 type Reconciler struct {
@@ -106,6 +106,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		return ctrl.Result{Requeue: true}, r.writeProfileStatus(ctx, run)
 	}
 	plan := *run.Status.Plan
+	if plan.ArtifactDirectory == "" {
+		// Plans persisted before scoped capture storage keep their original directory.
+		plan.ArtifactDirectory = path.Join(profileLegacyArtifactRoot, string(run.UID))
+	}
 
 	action := run.Spec.Action
 	if !run.DeletionTimestamp.IsZero() || run.Status.Reason != "" {
@@ -210,7 +214,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		if record == nil || record.RunUID != string(run.UID) {
 			return ctrl.Result{}, fmt.Errorf("runtime returned an invalid capture identity")
 		}
-		expectedArtifact := profileParticipantArtifactPath(string(run.UID), participant.RuntimeID)
+		expectedArtifact := path.Join(plan.ArtifactDirectory, participant.RuntimeID)
 		if record.ArtifactDir != nil && *record.ArtifactDir == expectedArtifact {
 			hasArtifacts = true
 		}
@@ -276,7 +280,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
 		}
 		if hasArtifacts {
-			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: profileRunArtifactPath(string(run.UID))}
+			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: plan.ArtifactDirectory}
 		}
 	}
 	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
@@ -353,6 +357,14 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 				if err := r.verifyProfilePod(ctx, &pod, &group); err != nil {
 					return plan, err
 				}
+				directory, err := profileRunArtifactPath(&pod, cache.MountPath, string(run.UID), group.Spec.Runtime.PreparationVersion)
+				if err != nil {
+					return plan, err
+				}
+				if plan.ArtifactDirectory != "" && plan.ArtifactDirectory != directory {
+					return plan, fmt.Errorf("serving runtimes use different profiling directory layouts; redeploy ModelService %s before profiling", service.Name)
+				}
+				plan.ArtifactDirectory = directory
 				member := inferencev1alpha1.ProfileMember{GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID)}
 				for _, container := range pod.Status.ContainerStatuses {
 					if container.Name == "model-server" && container.State.Running != nil {
@@ -536,12 +548,27 @@ func profileTerminal(phase string) bool {
 	return phase == "Succeeded" || phase == "Failed" || phase == "Cancelled"
 }
 
-func profileRunArtifactPath(runUID string) string {
-	return path.Join(profileArtifactRoot, runUID)
-}
-
-func profileParticipantArtifactPath(runUID, runtimeID string) string {
-	return path.Join(profileRunArtifactPath(runUID), runtimeID)
+// profileRunArtifactPath retains the selected Pod's actual output layout in a new execution plan.
+func profileRunArtifactPath(pod *corev1.Pod, dataRoot, runUID string, preparationVersion int32) (string, error) {
+	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
+		return path.Join(profileLegacyArtifactRoot, runUID), nil
+	}
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "model-server" {
+			continue
+		}
+		for _, variable := range container.Env {
+			if variable.Name != runtimeconfig.ProfileRootEnv {
+				continue
+			}
+			root, within := strings.CutPrefix(path.Clean(variable.Value), path.Clean(dataRoot)+"/")
+			if !within {
+				return "", fmt.Errorf("diagnostic Pod %s has profiling storage outside its RuntimeCache", pod.Name)
+			}
+			return path.Join(root, "runs", runUID), nil
+		}
+	}
+	return "", fmt.Errorf("diagnostic Pod %s has no profiling storage root", pod.Name)
 }
 
 // writeProfileStatus publishes only observed progress while preserving user-owned intent.

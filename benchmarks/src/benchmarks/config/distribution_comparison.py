@@ -67,6 +67,7 @@ class DistributionComparisonConfig:
             default,
             kustomize_path=self.reference_path or (default.kustomize_path if not self.reference_url else ""),
             url=self.reference_url or (default.url if not self.reference_path else ""),
+            instance_name="" if self.reference_path or self.reference_url else default.instance_name,
             model=self.reference_model if self.reference_path or self.reference_url else self.reference_model or default.model,
             api_key=default.api_key if self.reference_api_key is None else self.reference_api_key,
         )
@@ -79,6 +80,7 @@ class DistributionComparisonConfig:
             return {
                 "path": str(Path(source.kustomize_path).expanduser().resolve()) if source.kustomize_path else "",
                 "model": source.model,
+                **({"instance_name": source.instance_name} if source.instance_name else {}),
             }
 
         return {
@@ -210,6 +212,7 @@ def parse_distribution_comparison_arguments(
                 service,
                 kustomize_path=str(row.get("path") or (service.kustomize_path if not row.get("url") else "")),
                 url=str(row.get("url") or (service.url if not row.get("path") else "")),
+                instance_name="" if row.get("url") else service.instance_name,
                 model=str(row.get("model") or ("" if row.get("path") or row.get("url") else service.model)),
             )
             candidate_service.validate()

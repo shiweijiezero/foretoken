@@ -147,6 +147,10 @@ spec:
                 description: Plan is fixed once selected; reconciliation never retargets
                   replacement runtimes.
                 properties:
+                  artifactDirectory:
+                    description: ArtifactDirectory retains the run's PVC-relative
+                      output directory across workload replacement.
+                    type: string
                   members:
                     description: Members includes every engine container covered by
                       the selected controls.

@@ -27,7 +27,7 @@ kind loads source-built images directly into its node containerd; no registry is
 foretoken install -e .
 ```
 
-The Quick Start model requires a GPU; use the [k3d deployment guide](k3d.md) for that path. Use this kind cluster to validate platform installation and CPU-compatible workloads.
+The platform is installed once; subsequent model services are separate deployment instances. The Quick Start model requires a GPU; use the [k3d deployment guide](k3d.md) for that path. Use this kind cluster to validate platform installation and CPU-compatible workloads.
 
 ## 3. Remove the cluster
 

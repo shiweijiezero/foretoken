@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
-use foretoken_artifacts::ModelSource;
+use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
     KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
 };
@@ -20,6 +20,14 @@ use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint}
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
 const DEFAULT_VLLM_PYTHON: &str = "python3";
+
+/// Selects the image's interpreter for engine, provider, report, and cache-worker subprocesses.
+pub fn python_executable() -> String {
+    std::env::var(VLLM_PYTHON_ENV)
+        .ok()
+        .filter(|python| !python.is_empty())
+        .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into())
+}
 
 /// Python adapters bundled with the model-server image for its managed engine.
 pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
@@ -31,7 +39,7 @@ pub struct LaunchPlanV1 {
     /// Kubernetes nodes participating in this complete execution group.
     #[serde(rename = "nodeCount")]
     pub node_count: usize,
-    pub artifacts: Artifacts,
+    pub artifacts: ModelArtifacts,
     pub parallelism: Parallelism,
     pub kv: KvPlan,
     #[serde(default)]
@@ -43,17 +51,6 @@ pub struct LaunchPlanV1 {
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
     pub engine_args: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Artifacts {
-    pub model: String,
-    pub source: ModelSource,
-    pub revision: String,
-    pub tokenizer: String,
-    #[serde(rename = "tokenizerRevision")]
-    pub tokenizer_revision: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -271,16 +268,7 @@ impl LaunchPlanV1 {
         if self.node_count == 0 {
             return Err("launch plan requires a positive node count".into());
         }
-        for (name, value) in [
-            ("model", &self.artifacts.model),
-            ("revision", &self.artifacts.revision),
-            ("tokenizer", &self.artifacts.tokenizer),
-            ("tokenizerRevision", &self.artifacts.tokenizer_revision),
-        ] {
-            if value.is_empty() {
-                return Err(format!("launch plan artifacts.{name} must be nonempty"));
-            }
-        }
+        self.artifacts.validate()?;
         let p = &self.parallelism;
         if p.tp == 0 || p.pp == 0 || p.dp == 0 || p.pcp == 0 || p.dcp == 0 {
             return Err("launch plan topology values must be positive".into());
@@ -327,14 +315,6 @@ impl LaunchPlanV1 {
         self.ec.validate()
     }
 
-    /// Resolves the image's Python interpreter for engine launch and native report inspection.
-    pub fn python_executable(&self) -> String {
-        std::env::var(VLLM_PYTHON_ENV)
-            .ok()
-            .filter(|python| !python.is_empty())
-            .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into())
-    }
-
     /// Returns the EngineCore connection deadline consumed during model-server startup.
     ///
     /// The duration is derived from the retained controller-owned lifecycle plan.
@@ -359,7 +339,7 @@ impl LaunchPlanV1 {
         member: Option<&crate::config::MemberContext>,
     ) -> Result<ManagedEngineConfig, String> {
         let mut config = ManagedEngineConfig {
-            python: self.python_executable(),
+            python: python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,

@@ -1319,6 +1319,12 @@ spec:
                       format: int32
                       maximum: 1
                       type: integer
+                    preparationVersion:
+                      description: |-
+                        PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                        Absence retains the backend's earlier acquisition protocol.
+                      format: int32
+                      type: integer
                     sourceRevision:
                       description: SourceRevision retains the admitted source intent
                         independently of source-mode defaults.
