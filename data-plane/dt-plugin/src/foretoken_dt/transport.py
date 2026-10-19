@@ -10,6 +10,7 @@ import ctypes
 import json
 import math
 import os
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -167,7 +168,11 @@ class TensorBuffer:
         self.publication = None
 
     async def read(
-        self, source: PayloadRef, *, ready_event: torch.cuda.Event | None = None
+        self,
+        source: PayloadRef,
+        *,
+        ready_event: torch.cuda.Event | None = None,
+        timing: dict | None = None,
     ) -> None:
         """Pull into this buffer; cancellation keeps transfer and memory ownership alive.
 
@@ -188,18 +193,26 @@ class TensorBuffer:
             or source.shape[1:] != tuple(self.tensor.shape[1:])
         ):
             raise ValueError("source layout must fit the destination's row capacity")
-        self.transfer = asyncio.create_task(self._read(source, ready_event))
+        self.transfer = asyncio.create_task(self._read(source, ready_event, timing))
         await asyncio.shield(self.transfer)
 
     async def _read(
-        self, source: PayloadRef, ready_event: torch.cuda.Event | None
+        self,
+        source: PayloadRef,
+        ready_event: torch.cuda.Event | None,
+        timing: dict | None,
     ) -> None:
         """Fence old consumers and retain failed or cancelled transfer ownership."""
         # The destination may have been used by the previous GPU computation.
+        started = time.monotonic()
         await self._wait_device(ready_event)
+        ready = time.monotonic()
         self.failed = True
         await self.owner.read(self.tensor, source)
         self.failed = False
+        if timing is not None:
+            timing["read_fence_seconds"] = ready - started
+            timing["transport_read_seconds"] = time.monotonic() - ready
 
     def _require_idle(self) -> None:
         """Reject reuse while exported, transferring, closed, or quarantined."""

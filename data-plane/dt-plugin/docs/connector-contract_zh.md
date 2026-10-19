@@ -46,6 +46,10 @@ RDMA 和 GPU IPC 使用 Mooncake segment 和正整数设备地址；ZMQ 使用 T
 这些字段描述存储位置，不表达候选是否被接受。Target 自行分配本地 GPU 缓冲区并校验
 布局；前端不会读取张量内容，也不会把概率序列化成 JSON。
 
+特征按连续确认区间传输。Draft 会话保留收到的前缀，首次读取后只传新增确认行。
+增量追加后，传输 buffer 经最后一次使用的 fence 再回收；会话特征保留到原生 abort
+和已启动操作清理完成。
+
 ## Peer 控制与传输归属
 
 每个 role 的 `RoleCommunication` 统一持有 HTTP client 和连接池，供控制消息、
@@ -70,6 +74,11 @@ role 退出时，先保持 HTTP 连接池可用，等待请求关闭和共享通
 再停止 engine。失败或完成不确定的传输继续沿用隔离与进程退出边界。连接池不另设
 请求容量限制，长生命周期 session stream 不会耗尽一套额外的连接额度；现有
 admission 继续负责请求容量。
+
+准备耗时复用上述操作采集：源端 claim/ACK 回复携带本地 Worker RPC 分段，
+接收端补上接收与轮询、分配、旧使用同步和后端读取的墙钟时间。特征导出、追加与
+接收 buffer 回收单独计时。轮次的 transfer breakdown 保留这些相互包含的区间，
+不改变资源归属，也不新增 RPC 或同步。详见[观测边界](role-protocol.md#observations)。
 
 ## Worker 与引擎如何衔接
 

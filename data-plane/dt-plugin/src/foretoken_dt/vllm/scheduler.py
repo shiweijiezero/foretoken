@@ -12,7 +12,7 @@ from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.engine import EngineCoreOutputs
 from vllm.v1.outputs import ModelRunnerOutput
-from vllm.v1.request import Request
+from vllm.v1.request import Request, RequestStatus
 
 from . import METAX_VLLM_VERSION
 
@@ -137,7 +137,7 @@ class ObservedScheduler(Scheduler):
                 req_id = output.request_id
                 record = self.dt_observations[req_id]
                 if not isinstance(self, ExternalScheduler):
-                    # Draft emits FINAL_ONLY: retain only its latest cumulative result.
+                    # Draft consumes one cumulative observation per completed turn.
                     record["outputs"].clear()
                 record["outputs"][requests[req_id].num_output_tokens] = {
                     **record["totals"],
@@ -194,7 +194,10 @@ class ObservedScheduler(Scheduler):
         remote = [
             r
             for r in self.running
-            if getattr(r, "waiting_for_external_draft", False)
+            if (
+                getattr(r, "waiting_for_external_draft", False)
+                or getattr(r, "dt_draft_waiting", False)
+            )
             and not getattr(r, "external_draft_recovering", False)
         ]
         ready = [r for r in self.running if r not in remote]
@@ -243,6 +246,151 @@ class ObservedScheduler(Scheduler):
         for consumed in [value for value in outputs if value <= key]:
             del outputs[consumed]
         return result
+
+
+class DraftScheduler(ObservedScheduler):
+    """Retain private native Draft KV between confirmed streaming-input turns."""
+
+    def __init__(self, *args, **kwargs):
+        """Keep resumed neural input bounded by confirmed features and the native method budget."""
+        super().__init__(*args, **kwargs)
+        if self.num_spec_tokens:
+            # A resumed neural turn can need just one new confirmed feature.
+            # Disable native static padding with synthetic speculative inputs;
+            # those positions have no Target features. Keep the method's budget.
+            self.dynamic_sd_lookup = [self.num_spec_tokens] * (
+                self.scheduler_config.max_num_seqs + 1
+            )
+
+    def add_request(self, request):
+        """Admit a first turn or replace a paused turn with the exact confirmed prefix."""
+        previous = self.requests.get(request.request_id)
+        if not request.resumable:
+            # Native streaming input sends a non-resumable sentinel on closure,
+            # including when preprocessing rejected its very first input chunk.
+            self.finish_requests(request.request_id, RequestStatus.FINISHED_ABORTED)
+            return
+        if previous is not None:
+            if not previous.dt_draft_waiting:
+                raise ValueError(
+                    "Draft input arrived before its previous turn completed"
+                )
+            self.running = [r for r in self.running if r is not previous]
+            for queue in self.dt_waiting_queues:
+                queue.remove_requests((previous,))
+            # Native streaming admission applies the update immediately only in
+            # this status. This transient counter is consumed by its update hook.
+            if previous.status != RequestStatus.WAITING_FOR_STREAMING_REQ:
+                previous.status = RequestStatus.WAITING_FOR_STREAMING_REQ
+                self.num_waiting_for_streaming_input += 1
+        else:
+            request.dt_draft_waiting = False
+        super().add_request(request)
+        if previous is not None:
+            # The previous slot must be rebuilt with the updated prompt, sampler
+            # and feature binding, while retaining the scheduler's physical pages.
+            previous.dt_draft_waiting = False
+            self._enqueue_waiting_request(previous)
+
+    def _update_request_as_session(self, session, update):
+        """Discard unconfirmed suffix state before native streaming input resumes KV."""
+        prompt = update.prompt_token_ids
+        extra = update.sampling_params.extra_args
+        old_extra = session.sampling_params.extra_args
+        if extra["dt_version"] <= old_extra["dt_version"]:
+            raise ValueError("Draft turn did not advance its confirmed frontier")
+        old_prompt = session.prompt_token_ids
+        if prompt[: len(old_prompt)] != old_prompt:
+            raise ValueError("Draft confirmed input changed an earlier prefix")
+        reused = 0
+        for old, new in zip(session.all_token_ids, prompt):
+            if old != new:
+                break
+            reused += 1
+        reused = min(reused, session.num_computed_tokens)
+        if self.vllm_config.additional_config.get("foretoken_dt_context_role"):
+            # Neural proposal KV is conditioned on provisional features/anchors.
+            # Only rows computed from the previous confirmed Target context are
+            # reusable; its last row also requires the same next-token anchor.
+            old_confirmed = [*old_prompt, old_extra["dt_anchor_token"]]
+            new_confirmed = [*prompt, extra["dt_anchor_token"]]
+            if new_confirmed[: len(old_confirmed)] != old_confirmed:
+                raise ValueError("Draft anchor changed a confirmed input")
+            reused = min(reused, len(old_prompt))
+        session.num_computed_tokens = reused
+        del session._all_token_ids[reused:]
+        session._output_token_ids.clear()
+        session.prompt_token_ids[:] = prompt[:reused]
+        session.num_prompt_tokens = reused
+        session.spec_token_ids = []
+        session.block_hashes.clear()
+        update.prompt_token_ids = prompt[reused:]
+        super()._update_request_as_session(session, update)
+        session.max_tokens = update.max_tokens
+        session.next_decode_eligible_step = 0
+
+    def _handle_stopped_request(self, request):
+        """Park a completed turn as a preemptible resident, without ending the session."""
+        request.dt_draft_waiting = True
+        request.status = RequestStatus.RUNNING
+        record = self.dt_observations[request.request_id]
+        record["ready_at"] = None
+        record["remote_since"] = time.monotonic()
+        return False
+
+    def update_from_output(self, scheduler_output, model_runner_output):
+        """Restore parked turns removed from running by native turn-stop handling."""
+        outputs = super().update_from_output(scheduler_output, model_runner_output)
+        for request_id in scheduler_output.num_scheduled_tokens:
+            request = self.requests.get(request_id)
+            if (
+                request is not None
+                and request.dt_draft_waiting
+                and request not in self.running
+            ):
+                self.running.append(request)
+        return outputs
+
+    def _preempt_request(self, request, timestamp, drop_stale_output=False):
+        """Let native pressure release parked KV without replaying an unconfirmed turn."""
+        super()._preempt_request(request, timestamp, drop_stale_output)
+        if request.dt_draft_waiting:
+            # Native may inspect the victim again during this schedule call.
+            # Block it until the confirmed next input arrives, rather than
+            # regenerating its already returned candidates after preemption.
+            request.status = RequestStatus.WAITING_FOR_STREAMING_REQ
+            self.num_waiting_for_streaming_input += 1
+
+    def schedule(self, throttle_prefills=False):
+        """Batch ready turns natively while parked turns retain preemptible KV."""
+        for request in self.running:
+            if request.dt_draft_waiting:
+                request.next_decode_eligible_step = self.current_step + 2
+        try:
+            return super().schedule(throttle_prefills)
+        finally:
+            # Evicted parked turns own no KV or runner slot. Leave their logical
+            # request in the native request table, outside admission queues.
+            for request in self.requests.values():
+                if request.status == RequestStatus.WAITING_FOR_STREAMING_REQ:
+                    for queue in self.dt_waiting_queues:
+                        queue.remove_requests((request,))
+                    self.num_waiting_for_streaming_input -= 1
+                    request.status = RequestStatus.PREEMPTED
+
+    def has_schedulable_requests(self):
+        """Sleep between turns; input, abort and other ready requests wake EngineCore."""
+        if self.pause_state == PauseState.PAUSED_ALL:
+            return self.has_finished_requests()
+        return bool(
+            self.has_finished_requests()
+            or any(not r.dt_draft_waiting for r in self.running)
+            or (
+                self.pause_state == PauseState.UNPAUSED
+                and len(self.running) < self.scheduler_config.max_num_seqs
+                and any(self.dt_waiting_queues)
+            )
+        )
 
 
 class ExternalScheduler(ObservedScheduler):
@@ -375,7 +523,7 @@ class ExternalScheduler(ObservedScheduler):
         can_admit = (
             self.pause_state == PauseState.UNPAUSED
             and len(self.running) + self.num_waiting_for_streaming_input
-            < self.max_num_active_reqs
+            < self.scheduler_config.max_num_seqs
         )
         return bool(
             (can_admit and any(self.dt_waiting_queues))

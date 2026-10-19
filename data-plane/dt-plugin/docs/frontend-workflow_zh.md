@@ -76,7 +76,8 @@ Frontend ← confirmed output ← 原生 Target sampling 与 stop 处理
 
 `TargetCoordinator` 管理累计确认输出 frontier、round 和固定绑定，转发准确的确认
 delta。原生 Target state 管理完整 token 前缀；`DraftSession` 保留同步前缀，用于每轮
-普通 Draft 请求。
+推进同一个持久原生 Draft 请求。其私有 KV 按每次确认结果更新；神经特征只追加缺失的
+确认区间，并在 KV 被抢占后保留供重算使用。
 `RoleService` 管理原生 session、当前 ticket、已启动操作和清理。原生 ticket 由内部
 request ID 和确认输出计数组成，admission 只消费一次；候选不能推进确认前缀。
 Target 按配置的默认候选数（3）和剩余输出长度选择本轮 K，
@@ -109,7 +110,8 @@ budget 扩展点。默认读取启动器拥有的 K 配置，省略时为 3，�
 
 本地 batching 属于各 engine 的 Scheduler。`ObservedScheduler.schedule()`
 观察原生决策；`ExternalScheduler.schedule()` 排除仍等待远端输入的请求，再调用
-原生调度。以后修改 batch 成员、优先级或执行安排，应在这个 Scheduler 边界实现，
+原生调度。`DraftScheduler.schedule()` 将已完成的 Draft 轮次停放为可抢占的驻留请求，
+就绪轮次仍由原生调度组批。以后修改 batch 成员、优先级或执行安排，应在这个 Scheduler 边界实现，
 保留原生 token/KV accounting 和 preemption。Worker/Runner 与 Connector
 继续准备、执行和回收选中的工作。
 

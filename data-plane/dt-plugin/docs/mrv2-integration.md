@@ -97,7 +97,7 @@ no artificial static K limit. Neural Drafts compute their native block; the
 adapter truncates returned tokens and exported q rows to the requested prefix.
 Their native block length is the advertised method limit. Request-level routing
 checks execution compatibility; each round caps the configured K by the selected
-method and Target capacities. These fields are carried by role protocol v9 and
+method and Target capacities. These fields are carried by role protocol v10 and
 `DraftTargetCapabilities`; `requested_tokens` records the selected round count
 alongside proposal, verification and acceptance counts.
 
@@ -163,7 +163,26 @@ combination, not all models or an end-to-end N:M/RDMA deployment, and does not
 measure performance. The default remains disabled; changing the mode requires
 re-running both sides of the comparison.
 
-End-to-end greedy checks also exercised Qwen3-8B with a block-7 DSpark Draft and
+MetaX FlashAttention's fixed decode split count does not make chunked prefill
+and decode use identical reductions. Qwen3-8B concurrent requests exposed logit
+variation even with batch invariance enabled. The source manifest therefore
+marks that backend as incompatible with batch invariance and registers the
+matching core vLLM Triton backend. Its fixed-reduction attention is selected
+through native capability filtering; the SDK's copied Triton backend still
+imports an obsolete KV-layout API. No DT scheduler or sampler is replaced by
+this adaptation. With batch invariance disabled, FlashAttention remains the
+default. Strict comparisons must use the same attention backend on both sides.
+
+The retained-state regression on MXC500 uses this source runtime, BF16 and eager
+execution with Qwen3-8B Target, block-7 DSpark or ordinary Qwen3-4B Draft, K=3
+and same-host ZMQ TCP. Both Draft profiles matched complete Target-only token IDs
+and finish/stop reasons for serial, eight-concurrent and twelve-request KV-pressure
+workloads. Explicit Draft/Target KV eviction, duplicate-ticket rejection and
+proposal-preparation cancellation also passed; final session, artifact, transfer
+and native KV counters returned to zero. Cancellation during a measured in-flight
+transfer and random-sampling distributions were not covered by this regression.
+
+Earlier end-to-end greedy checks also exercised Qwen3-8B with a block-7 DSpark Draft and
 Target K=3: native vLLM 0.31.0 on A100 over cross-host ZMQ TCP, and MetaX's pinned
 0.30 runtime on MXC500 over same-host ZMQ TCP and MACA GPU IPC. Both sides used
 BF16 and batch invariance. Complete token IDs and finish/stop reasons matched
@@ -203,41 +222,62 @@ KV eviction never revokes a publication or proves a transfer complete; the norma
 claim/read/ACK and GPU-consumption fences still govern buffer reuse.
 Target APC is disabled so a cache hit cannot leave gaps in that history.
 
-TargetCoordinator supplies the current Target session address during Draft preparation.
-Draft claims and reads the context before admitting a normal native request
-whose prompt excludes the anchor token. Its loader initializes the Target on meta
-and materializes shared embedding/output and native normalization weights,
-preserving tied parameters. Native MRV2 loads the selected native speculator and
-allocates its own KV pages. The feature
-forward gathers staged rows for the locally scheduled prefill chunk; sampling supplies
-the confirmed anchor. Native speculator execution and request postprocessing
-remain unchanged. The adapter defers output copying until the native proposal
-exists, returning that chain as the terminal result of the ordinary request.
-Partial prefill chunks return no tokens. DFlash/DSpark's full immutable Draft prefix pages
-remain eligible for native APC. EAGLE/MTP KV at position t also consumes token t+1;
-a page's final row can therefore depend on an anchor outside its hashed prompt.
-These methods disable Draft APC. No Target page index crosses the role boundary.
-Native profiling and warmup use synthetic features without remote artifact bindings;
-output normalization weights are materialized for Targets that apply normalization
-inside `compute_logits`.
+TargetCoordinator supplies the bound Target session address during Draft preparation.
+Draft requests only the missing interval `[start_token, end_token)` from that
+session's confirmed feature prefix, excluding the final anchor. Profile, full
+confirmed tokens, interval and tensor layout are checked before consumption.
+The first interval starts at zero. Draft advances its retained-prefix cursor only
+after a completed read is appended to its Worker-owned `DraftContext`.
+Claim/read/ACK and the transfer buffer's last-use fence remain with the existing
+artifact owner. Session features survive individual transfers and KV eviction;
+closing the session joins native abort and outstanding operations before dropping them.
 
-Features use the existing artifact claim/read/ACK lifecycle. Each round currently
-copies the full computed prefix, including when Draft APC skips its first rows.
-This is a correctness baseline with potentially substantial repeated transfer cost.
+`DraftScheduler` uses native streaming input to retain one native request and its
+private pages across turns. The input for reconciliation is the complete confirmed
+prefix; the computed-token cursor advances only through its still-valid rows.
+For an ordinary autoregressive Draft this includes matching computed candidates.
+For neural methods reuse stops at the previous confirmed feature frontier, and
+the shifted token/anchor input must also match. Proposal-conditioned tails are
+recomputed from newly confirmed Target features. Draft APC is disabled so no
+mutable tail can be shared or published under a token-only cache key. Full-attention
+KV is required; recurrent-state and sliding-window Drafts are rejected at startup.
+No Target page index crosses the role boundary.
+
+Resumed neural turns disable native static speculative padding. A turn with just
+one new confirmed feature must not be padded with synthetic positions lacking
+Target features. The native method still produces its configured proposal block;
+the adapter returns only the requested K candidates and distribution rows.
+
+A completed Draft turn remains a sleeping, preemptible native resident. Native
+allocation can evict its KV; an evicted idle turn owns no runner slot and does not
+replay its already returned candidates. The next confirmed input makes it ready
+again, using retained features for any necessary replay. EngineCore sleeps when
+only parked turns remain. Abort joins the native streaming-input task and its
+pending admission before fencing GPU work. The native output processor gets a
+fresh per-turn view so it does not append complete prompts or rejected candidates
+to an ever-growing output history.
+
+The neural loader initializes the Target on meta and materializes shared
+embedding/output and normalization weights, preserving tied parameters. MRV2 loads
+the selected native speculator and allocates KV. Feature forward reads only the
+locally scheduled rows of the retained prefix, and sampling supplies the confirmed
+anchor. Native execution, batching and request postprocessing remain in the engine.
+The adapter returns the native proposal at the end of each input turn; partial
+prefill chunks return no candidates. Profiling and warmup use synthetic features
+without remote bindings.
+
 The adapter enables DFlashDraftModel, Qwen3DSparkModel, EAGLE/EAGLE3 and
-single-module MTP. Multi-module MTP, HC residuals and
-Target-shared sparse indices remain excluded. Gemma4 needs Target KV sharing.
-Other DFlash and DSpark architectures require separate integration.
-DSpark reuses the native anchor layout, Markov sampling and reduced-vocabulary
-mapping. Export reads the native `draft_logits` cache after Markov bias and any
-`dspark_draft_topk` truncation, so each transferred q row is conditioned on the
-preceding sampled candidates. Remote roles reject `enable_adaptive_verification`:
-its confidence feedback and verifier cost scheduling are not part of this path.
+single-module MTP. Multi-module MTP, HC residuals and Target-shared sparse indices
+remain excluded. Gemma4 needs Target KV sharing. Other DFlash and DSpark
+architectures require separate integration. DSpark retains native anchor layout,
+Markov sampling and reduced-vocabulary mapping. Export reads native `draft_logits`
+after Markov bias and any `dspark_draft_topk` truncation, preserving each q row's
+conditioning on preceding sampled candidates. Remote roles reject
+`enable_adaptive_verification`; confidence scheduling is not part of this path.
 
 The NVIDIA scheduler uses vLLM 0.31's ordinary waiting and KV-holding waiting
-queues. The pinned MetaX core uses its waiting and skipped-waiting queues. Workload
-observations and schedulable-work checks read the corresponding native queues;
-remote waits continue to use running requests with decode eligibility deferred.
+queues; the pinned MetaX core uses waiting and skipped-waiting queues. Workload
+and readiness observations use the corresponding native queues.
 
 ## KV recovery and CPU offload
 
@@ -265,8 +305,8 @@ The Target default candidate count is 3, capped by remaining output; its engine
 capacity can be configured independently. There is
 no shared stage pool, global rules policy or explicit logical-batch scheduler.
 
-Each engine owns local batching and KV state. Draft rounds are ordinary vLLM
-requests, using native prefix caching where the method permits it. Frontend's
+Each engine owns local batching and KV state. Draft rounds are turns of one
+retained native streaming-input request, reconciled against Target confirmation. Frontend's
 normal output processor retains text decoding and stop-string handling. It does
 not relay per-round candidates or reconstruct state from display text.
 
@@ -295,7 +335,7 @@ the fallback when the application does not exit within the drain deadline.
 entry point. It connects the plugin Runner's GPU I/O hooks to the selected tensor
 transport; EngineCore and scheduler adapters contain no transport-specific behavior.
 
-Draft marks each per-round request with `SamplingParams.extra_args["dt_artifact_id"]`.
+Draft marks each turn with `SamplingParams.extra_args["dt_artifact_id"]`.
 The sampler observer captures processed logits returned by native `Sampler.sample`,
 the shared entry point in both pinned runtimes. RoleService supplies independent
 per-proposal seeds, keeping native sampling on its materialized distribution path.

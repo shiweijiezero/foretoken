@@ -22,10 +22,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from .connections import RdmaIdentity, RoleCommunication
+from .observations import RpcTiming
 
 logger = logging.getLogger(__name__)
 
-ROLE_PROTOCOL_VERSION = 9
+ROLE_PROTOCOL_VERSION = 10
 CONTEXT_REVOKED = "Target context was revoked"
 
 if TYPE_CHECKING:
@@ -111,6 +112,15 @@ class Generate(Message):
     target_endpoint: str | None = None
 
 
+class RpcObservation(Message):
+    """Local Worker RPC accounting attached to successful source control replies."""
+
+    calls: StrictInt
+    dispatch_seconds: float
+    worker_seconds: float
+    return_seconds: float
+
+
 class TensorPayload(Message):
     """Worker tensor descriptor; physical tensor contents never enter HTTP."""
 
@@ -121,6 +131,7 @@ class TensorPayload(Message):
     nbytes: StrictInt = Field(gt=0)
     dtype: Literal["float32", "uint8", "float16", "bfloat16"]
     shape: list[StrictInt]
+    claim_rpc: RpcObservation | None = None
 
     def descriptor(self) -> dict:
         """Encode the transfer descriptor consumed by the worker RPC."""
@@ -199,6 +210,7 @@ class ExportContext(Message):
 
     version: StrictInt = Field(ge=0)
     tensor_transport: Literal["gpu_ipc", "rdma", "zmq"]
+    start_token: StrictInt = Field(ge=0)
 
 
 class ReleaseArtifact(Message):
@@ -227,7 +239,10 @@ class DraftSession:
     tensor_transport: str | None
     artifacts: set[str] = field(default_factory=set)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
-    active_request: str | None = None
+    proposing: bool = False
+    context_source: ContextSource | None = None
+    context_tokens: int = 0
+    proposed_version: int | None = None
 
 
 def _event(value: dict) -> bytes:
@@ -276,25 +291,38 @@ class RoleService:
                 "method": spec.method,
                 "target": identity.get("model", engine.model_config.model),
                 "target_revision": identity.get("resolved_revision")
-                or engine.model_config.hf_config._commit_hash
+                or getattr(engine.model_config.hf_config, "_commit_hash", None)
                 or engine.model_config.revision,
                 "draft": identity.get("draft_model", spec.draft_model_config.model),
                 "draft_revision": identity.get("resolved_draft_revision")
-                or spec.draft_model_config.hf_config._commit_hash
+                or getattr(spec.draft_model_config.hf_config, "_commit_hash", None)
                 or spec.draft_model_config.revision,
             }
 
-    async def worker(self, method: str, *args):
-        """Call the sole local worker without blocking the service event loop."""
-        results = await self.engine.collective_rpc(method, args=args)
+    async def worker(self, method: str, *args, timing: RpcTiming | None = None):
+        """Call the local Worker, optionally splitting its existing RPC's queue and execution."""
+        sent = time.monotonic()
+        results = await self.engine.collective_rpc(
+            method if timing is None else "dt_timed_rpc",
+            args=args if timing is None else (method, args),
+        )
         (result,) = results
+        if timing is not None:
+            timing.record(sent, time.monotonic(), result["started"], result["finished"])
+            return result["value"]
         return result
 
     async def release_artifact(
-        self, artifact_id: str, publication_id: str | None = None
+        self,
+        artifact_id: str,
+        publication_id: str | None = None,
+        *,
+        timing: RpcTiming | None = None,
     ) -> None:
         """Join Worker release, including DMA/GPU fencing and any outstanding source ACK."""
-        while not await self.worker("dt_release", artifact_id, publication_id):
+        while not await self.worker(
+            "dt_release", artifact_id, publication_id, timing=timing
+        ):
             await asyncio.sleep(0.001)
 
     def validate_sampling(self, sampling: Sampling) -> None:
@@ -350,13 +378,15 @@ class RoleService:
         if session is not None:
             session.closed.set()
             try:
-                if session.active_request is not None:
-                    await self.engine.abort(session.active_request)
+                await self.engine.abort(session_id)
             finally:
                 await asyncio.gather(
                     *tuple(self.session_tasks.get(session_id, ())),
                     return_exceptions=True,
                 )
+            await self.engine.forget_draft(session_id)
+            if self.context_profile is not None:
+                await self.worker("dt_forget_draft_context", session_id)
             for artifact_id in tuple(session.artifacts):
                 await self.release_artifact(artifact_id)
             self.transfer_observations.pop(session_id, None)
@@ -453,7 +483,11 @@ class RoleService:
         from vllm.sampling_params import RequestOutputKind
 
         session = self.draft_session(session_id)
-        if request.version != session.version or session.active_request is not None:
+        if (
+            request.version != session.version
+            or request.version == session.proposed_version
+            or session.proposing
+        ):
             raise HTTPException(409, "context version changed or proposal is in flight")
         if (
             self.max_candidate_tokens is not None
@@ -462,8 +496,9 @@ class RoleService:
             raise HTTPException(
                 422, "proposal exceeds the Draft method's candidate capacity"
             )
-        request_id = uuid4().hex
-        session.active_request = request_id
+        request_id = session_id
+        artifact_id = uuid4().hex
+        session.proposing = True
         logger.info(
             "DT proposal work=%s session=%s engine_request=%s",
             json.dumps(work),
@@ -471,13 +506,15 @@ class RoleService:
             request_id,
         )
         if self.tensor_transports:
-            session.artifacts.add(request_id)
+            session.artifacts.add(artifact_id)
         artifact = None
         context_task = None
-        context_id = None
+        completed = False
         try:
             prompt = list(session.token_ids)
-            extra = {"dt_artifact_id": request_id} if self.tensor_transports else {}
+            extra = {"dt_version": request.version}
+            if self.tensor_transports:
+                extra["dt_artifact_id"] = artifact_id
             if work is not None:
                 extra["dt_work"] = work
             if self.context_profile is not None:
@@ -486,13 +523,13 @@ class RoleService:
                 context_task = self.start_operation(
                     session_id, self.receive_context(session_id, session, request)
                 )
-                context_id = await asyncio.shield(context_task)
+                await asyncio.shield(context_task)
                 if session.closed.is_set():
                     raise HTTPException(
                         409, "Draft session closed during context transfer"
                     )
                 extra.update(
-                    dt_context_artifact=context_id, dt_anchor_token=prompt.pop()
+                    dt_context_session=session_id, dt_anchor_token=prompt.pop()
                 )
             sampling = session.sampling.parameters()
             # Independent engines may share the same default global RNG seed.
@@ -500,35 +537,31 @@ class RoleService:
             sampling["seed"] = randbits(63)
             params = SamplingParams(
                 **sampling,
-                extra_args=extra or None,
+                extra_args=extra,
                 max_tokens=request.max_tokens,
                 ignore_eos=True,
-                output_kind=RequestOutputKind.FINAL_ONLY,
+                output_kind=RequestOutputKind.DELTA,
             )
-            tokens = None
-            async with aclosing(
-                self.engine.generate(
-                    TokensPrompt(prompt_token_ids=prompt),
-                    params,
-                    request_id,
-                    priority=session.priority,
-                )
-            ) as outputs:
-                async for output in outputs:
-                    tokens = list(output.outputs[0].token_ids)
+            output = await self.engine.propose(
+                request_id,
+                TokensPrompt(prompt_token_ids=prompt),
+                params,
+                session.priority,
+            )
+            tokens = list(output.outputs[0].token_ids)
             if session.closed.is_set():
                 raise HTTPException(409, "session closed during proposal")
-            if tokens is None:
-                raise RuntimeError("Draft engine completed without a candidate")
             if self.tensor_transports:
                 while True:
                     publication = await self.worker(
-                        "dt_publish", request_id, session.tensor_transport
+                        "dt_publish", artifact_id, session.tensor_transport
                     )
                     if publication["ready"]:
                         break
                     await asyncio.sleep(0.001)
-                artifact = {"artifact_id": request_id}
+                artifact = {"artifact_id": artifact_id}
+            completed = True
+            session.proposed_version = request.version
             return {
                 "version": session.version,
                 "token_ids": tokens,
@@ -538,32 +571,35 @@ class RoleService:
             }
         finally:
             with CancelScope(shield=True):
-                await self.engine.abort(request_id)
+                if not completed or session.closed.is_set():
+                    await self.engine.abort(request_id)
                 if context_task is not None:
-                    (context_id,) = await asyncio.gather(
-                        context_task, return_exceptions=True
-                    )
-                    if isinstance(context_id, str):
-                        await self.release_artifact(context_id)
-                        session.artifacts.discard(context_id)
-                session.active_request = None
+                    await asyncio.gather(context_task, return_exceptions=True)
+                session.proposing = False
                 if self.tensor_transports and (
                     artifact is None or session.closed.is_set()
                 ):
-                    await self.release_artifact(request_id)
-                    session.artifacts.discard(request_id)
+                    await self.release_artifact(artifact_id)
+                    session.artifacts.discard(artifact_id)
 
     async def receive_context(
         self, session_id: str, session: DraftSession, request: Propose
-    ) -> str:
-        """Pull Target features before native Draft admission; the proposal owns their release."""
+    ) -> None:
+        """Append only missing confirmed features; retain transfer cleanup through cancellation."""
         source = request.context_source
+        if session.context_source is not None and source != session.context_source:
+            raise HTTPException(409, "Draft context source changed within its session")
+        session.context_source = source
+        start_token = session.context_tokens
+        exporting = time.monotonic()
         context = await self.communication.export_context(
             source.endpoint,
             source.session_id,
             request.version,
             session.tensor_transport,
+            start_token,
         )
+        export_seconds = time.monotonic() - exporting
         if context is None:
             raise HTTPException(409, CONTEXT_REVOKED)
         artifact_id = context["artifact_id"]
@@ -584,36 +620,69 @@ class RoleService:
             if (
                 context["profile"] != self.context_profile
                 or context["token_ids"] != session.token_ids
+                or context["start_token"] != start_token
+                or context["end_token"] != len(session.token_ids) - 1
             ):
                 raise HTTPException(
                     422, "Target context profile or confirmed tokens differ"
                 )
             if (
                 len(payload.shape) != 3
-                or payload.shape[0] != len(session.token_ids) - 1
+                or payload.shape[0] != context["end_token"] - start_token
             ):
                 raise HTTPException(
                     422, "Target context does not cover the computed prefix"
                 )
 
         started = time.monotonic()
-        result = await self.communication.read_artifact(
-            artifact_id, source.endpoint, validate
+        try:
+            result = await self.communication.read_artifact(
+                artifact_id, source.endpoint, validate
+            )
+            if result is None:
+                raise HTTPException(409, CONTEXT_REVOKED)
+            stage_rpc = RpcTiming()
+            await self.worker(
+                "dt_append_draft_context",
+                session_id,
+                artifact_id,
+                start_token,
+                context["end_token"],
+                timing=stage_rpc,
+            )
+            session.context_tokens = context["end_token"]
+            result["breakdown"].update(
+                export_seconds=export_seconds,
+                stage_rpc=stage_rpc.to_wire(),
+            )
+            self.transfer_observations[session_id] = {
+                "bytes": result["bytes"],
+                "transport": result["transport"],
+                "read_seconds": result["read_seconds"],
+                "prepare_seconds": time.monotonic() - started,
+                "breakdown": result["breakdown"],
+            }
+        finally:
+            releasing = time.monotonic()
+            await self.release_artifact(artifact_id)
+            session.artifacts.discard(artifact_id)
+        result["breakdown"].update(
+            release_seconds=time.monotonic() - releasing,
+            total_seconds=time.monotonic() - exporting,
         )
-        if result is None:
-            raise HTTPException(409, CONTEXT_REVOKED)
-        self.transfer_observations[session_id] = {
-            "bytes": result["bytes"],
-            "transport": result["transport"],
-            "read_seconds": result["read_seconds"],
-            "prepare_seconds": time.monotonic() - started,
-        }
-        return artifact_id
+        logger.info(
+            "DT feature prepared session=%s version=%s artifact=%s",
+            session_id,
+            request.version,
+            artifact_id,
+        )
 
-    async def export_context(self, session_id, ticket, artifact_id, transport):
+    async def export_context(
+        self, session_id, ticket, artifact_id, transport, start_token
+    ):
         """Publish a scheduler-selected snapshot while retaining session cancellation ownership."""
         try:
-            context = await self.engine.export_context(ticket, artifact_id)
+            context = await self.engine.export_context(ticket, artifact_id, start_token)
             if context is None:
                 raise HTTPException(409, "Target generation changed")
             while not (await self.worker("dt_publish", artifact_id, transport))[
@@ -776,11 +845,13 @@ class RoleService:
             if session_id not in self.targets:
                 return
             self.target_artifacts[session_id] = artifact_id
+            prepared = time.monotonic() - started
             self.transfer_observations[session_id] = {
                 "bytes": result["bytes"],
                 "transport": result["transport"],
                 "read_seconds": result["read_seconds"],
-                "prepare_seconds": time.monotonic() - started,
+                "prepare_seconds": prepared,
+                "breakdown": {**result["breakdown"], "total_seconds": prepared},
             }
             retained = True
         finally:
@@ -923,18 +994,35 @@ class RoleService:
                 )
             if self.targets.get(session_id) != ticket:
                 return False
+            stage_rpc = RpcTiming()
             await self.worker(
-                "dt_stage", artifact_id, ticket.request_id, ticket.generation
+                "dt_stage",
+                artifact_id,
+                ticket.request_id,
+                ticket.generation,
+                timing=stage_rpc,
             )
             if self.targets.get(session_id) != ticket:
                 return False
             self.target_artifacts[session_id] = artifact_id
+            prepared = time.monotonic() - started
+            result["breakdown"].update(
+                stage_rpc=stage_rpc.to_wire(),
+                total_seconds=prepared,
+            )
             self.transfer_observations[session_id] = {
                 "bytes": result["bytes"],
                 "transport": result["transport"],
                 "read_seconds": result["read_seconds"],
-                "prepare_seconds": time.monotonic() - started,
+                "prepare_seconds": prepared,
+                "breakdown": result["breakdown"],
             }
+            logger.info(
+                "DT proposal prepared session=%s version=%s artifact=%s",
+                session_id,
+                ticket.generation,
+                artifact_id,
+            )
             staged = True
             return True
         finally:
@@ -957,6 +1045,10 @@ def create_app(
 
     from .vllm.engine import ExternalAsyncLLM as AsyncLLM
 
+    engine_args.additional_config = {
+        **(engine_args.additional_config or {}),
+        "foretoken_dt_role": role,
+    }
     config = engine_args.create_engine_config(UsageContext.ENGINE_CONTEXT)
     max_candidate_tokens = (
         config.speculative_config.num_speculative_tokens
@@ -1237,12 +1329,11 @@ def create_app(
         if service.role == "target":
             if session_id not in service.targets:
                 raise HTTPException(404, "target session is closed or unknown")
-            request_id = session_id
         else:
-            request_id = service.draft_session(session_id).active_request
+            service.draft_session(session_id)
         return {
             "collected_at_unix_ms": time.time_ns() // 1_000_000,
-            "kv": await service.engine.request_kv(request_id) if request_id else None,
+            "kv": await service.engine.request_kv(session_id),
         }
 
     @app.post("/sessions/{session_id}/propose")
@@ -1256,9 +1347,9 @@ def create_app(
         session = app.state.service.draft_session(session_id)
         app.state.service.validate_tokens(request.token_ids)
         if (
-            session.active_request is not None
+            session.proposing
             or request.base_version != session.version
-            or request.version <= session.version
+            or request.version != session.version + len(request.token_ids)
         ):
             raise HTTPException(409, "context changed or proposal is in flight")
         session.token_ids.extend(request.token_ids)
@@ -1335,7 +1426,11 @@ def create_app(
         task = service.start_operation(
             session_id,
             service.export_context(
-                session_id, ticket, artifact_id, request.tensor_transport
+                session_id,
+                ticket,
+                artifact_id,
+                request.tensor_transport,
+                request.start_token,
             ),
         )
         return await asyncio.shield(task)
@@ -1377,22 +1472,26 @@ def create_app(
     async def claim_artifact(artifact_id: str):
         """Grant one Target a descriptor unless cancellation already revoked it."""
         service = app.state.service
-        payload = await service.worker("dt_claim", artifact_id)
+        timing = RpcTiming()
+        payload = await service.worker("dt_claim", artifact_id, timing=timing)
         if payload is None:
             raise HTTPException(409, "artifact is unavailable or already claimed")
-        return payload
+        return {**payload, "claim_rpc": timing.to_wire()}
 
     @app.post("/artifacts/{artifact_id}/release")
     async def release_artifact(artifact_id: str, request: ReleaseArtifact):
         """Release a claimed publication after Target guarantees no further read."""
         service = app.state.service
-        await service.release_artifact(artifact_id, request.publication_id)
+        timing = RpcTiming()
+        await service.release_artifact(
+            artifact_id, request.publication_id, timing=timing
+        )
         service.communication.released(artifact_id)
         for session in service.drafts.values():
             session.artifacts.discard(artifact_id)
         for exports in service.target_exports.values():
             exports.discard(artifact_id)
-        return {"released": True}
+        return {"released": True, "rpc": timing.to_wire()}
 
     @app.delete("/sessions/{session_id}")
     async def close(session_id: str):

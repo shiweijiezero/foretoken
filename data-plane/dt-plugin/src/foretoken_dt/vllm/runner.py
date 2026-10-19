@@ -71,6 +71,7 @@ class GPUModelRunner(model_runner.GPUModelRunner):
         )
         self.context_batch = None
         self.context_requests = {}
+        self.context_prefixes = {}
         self.external_speculation = speculative is not None and (
             speculative.method == "external" or self.context_role == "target"
         )
@@ -122,7 +123,7 @@ class GPUModelRunner(model_runner.GPUModelRunner):
                 if self.context_role == "draft":
                     extra = request.sampling_params.extra_args
                     self.context_requests[request.req_id] = (
-                        extra["dt_context_artifact"],
+                        extra["dt_context_session"],
                         extra["dt_anchor_token"],
                         request.sampling_params.max_tokens,
                     )

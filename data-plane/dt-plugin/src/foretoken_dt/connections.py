@@ -8,12 +8,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import httpx
 from anyio import CancelScope
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict
+
+from .observations import RpcTiming
 
 if TYPE_CHECKING:
     from .service import RoleService
@@ -291,12 +294,21 @@ class RoleCommunication:
         return task
 
     async def export_context(
-        self, endpoint: str, session_id: str, version: int, transport: str
+        self,
+        endpoint: str,
+        session_id: str,
+        version: int,
+        transport: str,
+        start_token: int,
     ) -> dict | None:
         """Obtain a confirmed feature handle; the calling engine stage validates its model context."""
         response = await self.client.post(
             f"{endpoint.rstrip('/')}/sessions/{session_id}/context",
-            json={"version": version, "tensor_transport": transport},
+            json={
+                "version": version,
+                "tensor_transport": transport,
+                "start_token": start_token,
+            },
             timeout=None,
         )
         if response.status_code == 409:
@@ -319,6 +331,12 @@ class RoleCommunication:
         service = self.service
         read_started = False
         read_finished = False
+        started = time.monotonic()
+        breakdown = {
+            "export_seconds": None,
+            "stage_rpc": None,
+            "release_seconds": None,
+        }
         try:
             source = f"{source_endpoint.rstrip('/')}/artifacts/{artifact_id}"
             response = await self.client.post(f"{source}/claim")
@@ -326,41 +344,64 @@ class RoleCommunication:
                 return None
             response.raise_for_status()
             payload = TensorPayload.model_validate(response.json())
+            breakdown["claim_seconds"] = time.monotonic() - started
+            breakdown["claim_rpc"] = (
+                payload.claim_rpc.model_dump() if payload.claim_rpc else None
+            )
             try:
+                validating = time.monotonic()
                 if payload.transport not in service.tensor_transports:
                     raise HTTPException(
                         422,
                         "source tensor transport is not initialized by receiver",
                     )
                 await validate(payload)
+                breakdown["validation_seconds"] = time.monotonic() - validating
+                receiving = time.monotonic()
+                rpc = RpcTiming()
+                poll_seconds = 0.0
                 while True:
                     read_started = True
                     result = await service.worker(
-                        "dt_receive", artifact_id, payload.descriptor()
+                        "dt_receive", artifact_id, payload.descriptor(), timing=rpc
                     )
                     if result["ready"]:
                         read_finished = True
-                        logger.info(
-                            "DT transfer completed artifact=%s source=%s observation=%s",
-                            artifact_id,
-                            source_endpoint,
-                            json.dumps(result),
-                        )
-                        return result
+                        break
+                    polling = time.monotonic()
                     await asyncio.sleep(0.001)
+                    poll_seconds += time.monotonic() - polling
+                breakdown.update(
+                    receive_seconds=time.monotonic() - receiving,
+                    receive_rpc=rpc.to_wire(),
+                    receive_poll_seconds=poll_seconds,
+                    **result["worker_read"],
+                )
             finally:
                 if not read_started or read_finished:
+                    acknowledging = time.monotonic()
                     response = await self.client.post(
                         f"{source}/release",
                         json={"publication_id": payload.publication_id},
                     )
                     response.raise_for_status()
+                    breakdown["ack_seconds"] = time.monotonic() - acknowledging
+                    breakdown["ack_rpc"] = response.json().get("rpc")
                     logger.info(
                         "DT transfer ACK artifact=%s source=%s publication=%s",
                         artifact_id,
                         source_endpoint,
                         payload.publication_id,
                     )
+            breakdown["total_seconds"] = time.monotonic() - started
+            result["breakdown"] = breakdown
+            logger.info(
+                "DT transfer completed artifact=%s source=%s observation=%s",
+                artifact_id,
+                source_endpoint,
+                json.dumps(result),
+            )
+            return result
         except BaseException:
             # An uncertain read stays registered: dt_release awaits its operation.
             if read_started:

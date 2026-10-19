@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
 /// Version of the internal role protocol; frontend and both roles upgrade together.
-pub const DRAFT_TARGET_PROTOCOL_VERSION: u32 = 9;
+pub const DRAFT_TARGET_PROTOCOL_VERSION: u32 = 10;
 
 /// Concrete tensor path advertised by DT workers for compatible peer selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +185,43 @@ pub struct DraftTargetPhysicalMember {
     pub scheduled_tokens: u64,
 }
 
+/// Local role-to-Worker RPC accounting; dispatch includes EngineCore/IPC queueing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftTargetRpcObservation {
+    pub calls: u64,
+    pub dispatch_seconds: f64,
+    pub worker_seconds: f64,
+    pub return_seconds: f64,
+}
+
+/// Preparation phases measured by their owners; nested intervals overlap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftTargetTransferBreakdown {
+    /// Includes feature export and receiver-buffer release when present.
+    pub total_seconds: f64,
+    pub export_seconds: Option<f64>,
+    pub claim_seconds: f64,
+    pub claim_rpc: Option<DraftTargetRpcObservation>,
+    pub validation_seconds: f64,
+    pub receive_seconds: f64,
+    /// Sum of start/poll RPCs; the asynchronous read can overlap these calls.
+    pub receive_rpc: DraftTargetRpcObservation,
+    pub receive_poll_seconds: f64,
+    /// Worker I/O-loop enqueue through coroutine entry.
+    pub io_queue_seconds: f64,
+    /// Pool lookup, tensor allocation and registration, as applicable.
+    pub buffer_seconds: f64,
+    pub buffer_reused: bool,
+    pub read_fence_seconds: f64,
+    /// Backend read wall time, including its own connection setup and polling.
+    pub transport_read_seconds: f64,
+    pub ack_seconds: f64,
+    pub ack_rpc: Option<DraftTargetRpcObservation>,
+    /// Proposal binding or feature-prefix append, depending on the direction.
+    pub stage_rpc: Option<DraftTargetRpcObservation>,
+    pub release_seconds: Option<f64>,
+}
+
 /// Worker-read measurement and role-side preparation wall time for a proposal, feature prefix or KV checkpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DraftTargetTransferObservation {
@@ -194,6 +231,9 @@ pub struct DraftTargetTransferObservation {
     pub read_seconds: f64,
     /// Claim through read, ACK and staging, including control/Worker RPC overhead.
     pub prepare_seconds: f64,
+    /// Absent in older observations; unavailable remote RPC phases remain null.
+    #[serde(default)]
+    pub breakdown: Option<DraftTargetTransferBreakdown>,
 }
 
 /// One Target-coordinated round, attached to confirmed output for tracing and metrics.

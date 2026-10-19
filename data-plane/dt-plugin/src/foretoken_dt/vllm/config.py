@@ -73,6 +73,9 @@ class ExternalEngineArgs(AsyncEngineArgs):
                 f"found vLLM {installed}"
             )
         self.scheduler_cls = "foretoken_dt.vllm.scheduler.ObservedScheduler"
+        draft = (self.additional_config or {}).get("foretoken_dt_role") == "draft"
+        if draft:
+            self.scheduler_cls = "foretoken_dt.vllm.scheduler.DraftScheduler"
         context_role = (self.additional_config or {}).get("foretoken_dt_context_role")
         if context_role and self.speculative_config.get("enable_adaptive_verification"):
             # Native confidence scheduling belongs to the verifier. Remote
@@ -88,6 +91,18 @@ class ExternalEngineArgs(AsyncEngineArgs):
             else None
         )
         result = super().create_engine_config(*args, **kwargs)
+        if draft:
+            # A retained request rewrites its unconfirmed tail in place. Keep
+            # these pages private; token-only APC must not publish that mutable
+            # tail or share neural KV conditioned on provisional features.
+            result.cache_config.enable_prefix_caching = False
+            if (
+                result.model_config.has_inner_state
+                or result.model_config.get_sliding_window()
+            ):
+                raise ValueError(
+                    "retained Draft turns currently require full-attention KV"
+                )
         if jit_warmup is not None:
             result.kernel_config.enable_jit_warmup = jit_warmup
         if context_role:
@@ -129,10 +144,8 @@ class ExternalEngineArgs(AsyncEngineArgs):
                 raise ValueError(
                     "neural DT context is not yet included in Target migration"
                 )
-            # A cache hit would skip the hidden states retained by TargetContext.
-            # Autoregressive draft KV includes the next token, including an anchor
-            # outside the hashed prompt. Token-only APC keys cannot identify it.
-            if context_role == "target" or spec.method not in ("dflash", "dspark"):
+            # A Target cache hit would skip hidden states needed by Draft replay.
+            if context_role == "target":
                 result.cache_config.enable_prefix_caching = False
         # Platform configuration must run before DT wraps its selected Worker.
         workers = {

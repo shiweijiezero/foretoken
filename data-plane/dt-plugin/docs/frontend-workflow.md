@@ -82,7 +82,9 @@ Frontend ← confirmed output ← native Target sampling and stop processing
 `TargetCoordinator` retains the cumulative confirmed output frontier, round and
 fixed peer binding and propagates confirmed deltas. Native Target state owns its
 complete token prefix; `DraftSession` retains the synchronized prefix used for
-ordinary per-round Draft requests. `RoleService` owns native sessions, current tickets,
+turns of one retained native Draft request. Its private KV is reconciled with each
+confirmation; neural features append only the missing confirmed interval and
+survive KV eviction. `RoleService` owns native sessions, current tickets,
 started operations and cleanup. A native ticket is an internal request ID plus
 confirmed output count; admission consumes it once. Candidates never advance the
 confirmed prefix. Target selects candidates from its configured default (3), capped
@@ -122,7 +124,8 @@ policy registry or dynamic-K algorithm.
 
 Local batching belongs to each engine's Scheduler. `ObservedScheduler.schedule()`
 observes native decisions; `ExternalScheduler.schedule()` excludes requests still
-waiting for remote inputs, then calls native scheduling. Algorithms changing
+waiting for remote inputs, while `DraftScheduler.schedule()` parks completed
+Draft turns as preemptible residents. Both call native scheduling. Algorithms changing
 members, priority or execution order belong at that Scheduler boundary and must
 preserve native token/KV accounting and preemption. Worker/Runner and Connector
 continue to prepare, execute and release the selected work.

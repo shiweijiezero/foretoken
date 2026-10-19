@@ -11,6 +11,46 @@ import torch
 from vllm.v1.worker.gpu.spec_decode.speculator import BaseSpeculator
 
 
+class DraftContext:
+    """Own a contiguous confirmed feature history across native Draft turns and KV replay."""
+
+    def __init__(self):
+        self.tensor = None
+        self.end = 0
+
+    def append(self, start, rows):
+        """Copy a completed transfer once; its caller fences the source artifact's last use."""
+        if start != self.end or rows.shape[0] == 0:
+            raise ValueError(
+                "Target features must extend the retained continuous prefix"
+            )
+        end = start + rows.shape[0]
+        previous = self.tensor
+        if previous is not None and (
+            previous.shape[1:] != rows.shape[1:] or previous.dtype != rows.dtype
+        ):
+            raise ValueError("Target feature layout changed within a Draft session")
+        if previous is None or previous.shape[0] < end:
+            self.tensor = torch.empty(
+                (1 << (end - 1).bit_length(), *rows.shape[1:]),
+                dtype=rows.dtype,
+                device=rows.device,
+            )
+            if previous is not None:
+                self.tensor[:start].copy_(previous[:start])
+        self.tensor[start:end].copy_(rows)
+        self.end = end
+
+    def read(self, start, count):
+        """Return scheduled feature rows, including old rows needed after native KV eviction."""
+        if start < 0 or start + count > self.end:
+            raise ValueError(
+                f"native Draft feature interval [{start}, {start + count}) "
+                f"exceeds confirmed prefix [0, {self.end})"
+            )
+        return self.tensor[start : start + count]
+
+
 class TargetContext(BaseSpeculator):
     """Retain computed features without loading or executing a Target-local drafter."""
 
@@ -75,8 +115,8 @@ class TargetContext(BaseSpeculator):
             input_batch.num_reqs, self.budget, dtype=torch.int64, device=self.device
         )
 
-    def snapshot(self, request_id, computed_tokens):
-        """Copy a paused request's confirmed prefix for one independently owned export."""
+    def snapshot(self, request_id, start_token, computed_tokens):
+        """Copy only the missing confirmed interval into an independently owned export."""
         chunks = self.requests[request_id]
         end = 0
         pieces = []
@@ -89,7 +129,9 @@ class TargetContext(BaseSpeculator):
             if count < tensor.shape[0]:
                 tensor = tensor[:count].clone()
                 chunks[index] = (start, tensor)
-            pieces.append(tensor[:count])
+            left = max(start_token - start, 0)
+            if left < count:
+                pieces.append(tensor[left:count])
             end += count
         if end != computed_tokens:
             raise RuntimeError("Target context does not cover the confirmed prefix")
@@ -200,18 +242,11 @@ class SharedTargetLoader:
             batch = runner.context_batch
             rows = []
             for index, req_id in enumerate(batch.req_ids):
-                artifact_id = runner.context_requests[req_id][0]
-                artifact = runner.external_speculation_io.artifacts[artifact_id]
+                context_id = runner.context_requests[req_id][0]
                 start = int(batch.num_computed_tokens_np[index])
                 count = int(batch.num_scheduled_tokens[index])
-                rows.append(artifact.buffer.tensor[start : start + count])
+                rows.append(runner.context_prefixes[context_id].read(start, count))
             features = torch.cat(rows, dim=0)
-            for req_id in batch.req_ids:
-                artifact = runner.external_speculation_io.artifacts[
-                    runner.context_requests[req_id][0]
-                ]
-                artifact.event = torch.cuda.Event()
-                artifact.event.record(torch.cuda.current_stream(runner.device))
             hidden = features[:, 0]
             if runner.use_aux_hidden_state_outputs:
                 return hidden, list(features[:, 1:].unbind(dim=1))

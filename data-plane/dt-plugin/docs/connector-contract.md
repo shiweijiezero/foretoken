@@ -53,6 +53,11 @@ The descriptor identifies storage, not an inference acceptance decision.
 Target allocates its own destination device storage and checks layout. The
 frontend never reads tensor contents or serializes probabilities as JSON.
 
+Features are transferred as contiguous confirmed intervals. The Draft session
+retains the received prefix; after its first read, only newly confirmed rows cross
+the link. Received transfer buffers are fenced and recycled after append, while
+session features remain until native abort and operation cleanup complete.
+
 ## Peer control and transfer ownership
 
 Each role has one `RoleCommunication` owner and HTTP connection pool, shared by
@@ -74,6 +79,13 @@ drain follows; the role lifespan closes the pool before shutting down the engine
 A failed or uncertain transfer keeps the existing quarantine/process-exit boundary.
 The pool adds no request capacity limit: existing admission remains the owner,
 and active session streams cannot exhaust a separate connection quota.
+
+Preparation telemetry reuses these same operations. Source claim/ACK replies
+carry local Worker RPC phase totals; the receiver combines them with receive/poll,
+allocation, prior-use fencing and backend-read wall times. Feature export, append
+and receiver release remain distinct. These nested durations are retained in the
+round's transfer breakdown and do not change ownership or add RPCs/fences. See
+[observation boundaries](role-protocol.md#observations).
 
 ## Worker and engine responsibilities
 

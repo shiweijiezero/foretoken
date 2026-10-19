@@ -7,14 +7,17 @@ import asyncio
 from contextlib import aclosing
 from dataclasses import dataclass
 from functools import wraps
+from typing import Any
 
 from anyio import CancelScope
+from vllm.engine.protocol import StreamingInput
 from vllm.exceptions import VLLMClientError
+from vllm.outputs import STREAM_FINISHED
 from vllm.sampling_params import RequestOutputKind
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core import EngineCore, EngineCoreProc
 
-from .scheduler import ExternalScheduler
+from .scheduler import DraftScheduler, ExternalScheduler
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,14 @@ class ExternalDraftRequest:
     generation: int
 
 
+@dataclass
+class _DraftStream:
+    """Keep native streaming input and output under one Draft session's abort owner."""
+
+    inputs: asyncio.Queue
+    collector: Any = None
+
+
 class ExternalAsyncLLM(AsyncLLM):
     """Expose DT tickets without changing vLLM's cross-process output schema."""
 
@@ -32,6 +43,68 @@ class ExternalAsyncLLM(AsyncLLM):
         super().__init__(*args, **kwargs)
         self._external_request_ids: dict[str, str] = {}
         self._external_admissions: dict[str, asyncio.Task] = {}
+        self._draft_streams: dict[str, _DraftStream] = {}
+
+    async def _add_request(self, request, *args, **kwargs):
+        """Join each native streaming-input send even when its input task is cancelled."""
+        if not request.resumable:
+            return await super()._add_request(request, *args, **kwargs)
+        previous = self.output_processor.request_states.get(request.request_id)
+        if previous is not None:
+            if previous.input_chunk_queue is not None:
+                raise ValueError("Draft output turn has not completed")
+            # Input carries the full confirmed prefix for native KV reconciliation.
+            # Rebuild only the output turn state, rather than appending that full
+            # prefix and unconfirmed candidates to a growing detokenizer history.
+            self.output_processor._finish_request(previous)
+        task = asyncio.create_task(super()._add_request(request, *args, **kwargs))
+        try:
+            return await asyncio.shield(task)
+        finally:
+            with CancelScope(shield=True):
+                await asyncio.shield(task)
+
+    async def propose(self, request_id, prompt, params, priority):
+        """Execute one turn of a retained native Draft request; abort closes all turns."""
+        stream = self._draft_streams.get(request_id)
+        if stream is None:
+            inputs = asyncio.Queue()
+
+            async def chunks():
+                """Feed native streaming input only after Target confirms the next turn."""
+                while True:
+                    yield await inputs.get()
+
+            stream = _DraftStream(inputs)
+            self._draft_streams[request_id] = stream
+            stream.inputs.put_nowait(
+                StreamingInput(prompt=prompt, sampling_params=params)
+            )
+            await self.add_request(request_id, chunks(), params, priority=priority)
+        else:
+            stream.inputs.put_nowait(
+                StreamingInput(prompt=prompt, sampling_params=params)
+            )
+        tokens = []
+        while True:
+            # Native input streaming keeps finished=false between turns. The
+            # per-turn finish reason is the proposal boundary, not session close.
+            output = stream.collector.get_nowait() or await stream.collector.get()
+            if output is STREAM_FINISHED:
+                raise RuntimeError("Draft session closed during proposal")
+            result = output.outputs[0]
+            if result.finish_reason == "abort":
+                raise RuntimeError("Draft session aborted during proposal")
+            tokens.extend(result.token_ids)
+            if result.finish_reason is not None:
+                output.outputs[0].token_ids = tokens
+                output.dt_observation = await self.engine_core.call_utility_async(
+                    "dt_take_observation",
+                    self._external_request_ids[request_id],
+                    len(tokens),
+                    True,
+                )
+                return output
 
     async def add_request(self, request_id, prompt, params, *args, **kwargs):
         """Own native admission through preprocessing; abort must join before fencing execution."""
@@ -42,6 +115,9 @@ class ExternalAsyncLLM(AsyncLLM):
                 request_id, prompt, params, *args, **kwargs
             )
             self._external_request_ids[request_id] = collector.request_id
+            stream = self._draft_streams.get(request_id)
+            if stream is not None:
+                stream.collector = collector
             return collector
 
         task = asyncio.create_task(admit())
@@ -131,10 +207,35 @@ class ExternalAsyncLLM(AsyncLLM):
                     # The generating caller still receives this input rejection.
                     # Continue native abort/fencing; cleanup failures must propagate.
                     pass
+            stream = self._draft_streams.get(request_id)
+            if stream is not None and stream.collector is not None:
+                collector = stream.collector
+                input_task = collector._input_stream_task
+                collector.close()
+                if input_task is not None:
+                    try:
+                        await asyncio.shield(input_task)
+                    except asyncio.CancelledError:
+                        if not input_task.cancelled():
+                            raise
             await super().abort(request_id, internal)
             # Both messages use the same EngineCore socket and ordered input queue.
             # Native abort alone returns after sending, before the scheduler handles it.
             await self.collective_rpc("dt_wait_execution")
+            if stream is not None and stream.collector is not None:
+                # The input task may have been cancelled before its first chunk
+                # reached OutputProcessor, in which case native abort has no
+                # request to notify. Always unblock this session's reader.
+                stream.collector.put(STREAM_FINISHED)
+
+    async def forget_draft(self, request_id):
+        """Close a fenced Draft stream after the service has joined its proposal operation."""
+        self._draft_streams.pop(request_id, None)
+        internal_id = self._external_request_ids.pop(request_id, None)
+        if internal_id is not None and not self.errored:
+            await self.engine_core.call_utility_async(
+                "dt_forget_observation", internal_id
+            )
 
     async def workload(self):
         """Read native ready/waiting queues and KV capacity for online placement."""
@@ -153,10 +254,14 @@ class ExternalAsyncLLM(AsyncLLM):
             "dt_export_kv", ticket.request_id, ticket.generation, artifact_id
         )
 
-    async def export_context(self, ticket, artifact_id):
+    async def export_context(self, ticket, artifact_id, start_token):
         """Snapshot the hidden-state prefix belonging to an outstanding Target ticket."""
         return await self.engine_core.call_utility_async(
-            "dt_export_context", ticket.request_id, ticket.generation, artifact_id
+            "dt_export_context",
+            ticket.request_id,
+            ticket.generation,
+            artifact_id,
+            start_token,
         )
 
     async def submit_external_draft_batch(
@@ -196,7 +301,7 @@ def install_engine_patches() -> None:
             == "draft"
         ):
             self.check_for_draft_tokens = False
-        if isinstance(self.scheduler, ExternalScheduler):
+        if isinstance(self.scheduler, (DraftScheduler, ExternalScheduler)):
             # Plugins can load during EngineCore construction. Set this before
             # the busy loop steps rather than wrapping an already-entered init.
             self.check_for_draft_tokens = False
@@ -253,7 +358,7 @@ def install_engine_patches() -> None:
             "layout": layout,
         }
 
-    def export_context(self, request_id, generation, artifact_id):
+    def export_context(self, request_id, generation, artifact_id, start_token):
         """Resolve confirmed positions on the scheduler thread before copying features."""
         request = self.scheduler.requests.get(request_id)
         if (
@@ -264,10 +369,17 @@ def install_engine_patches() -> None:
         ):
             return None
         computed = request.num_tokens - 1
+        if not 0 <= start_token < computed:
+            raise ValueError("context delta must extend a confirmed feature prefix")
         self.model_executor.collective_rpc(
-            "dt_snapshot_context", args=(artifact_id, request_id, computed)
+            "dt_snapshot_context", args=(artifact_id, request_id, start_token, computed)
         )
-        return {"artifact_id": artifact_id, "token_ids": list(request.all_token_ids)}
+        return {
+            "artifact_id": artifact_id,
+            "token_ids": list(request.all_token_ids),
+            "start_token": start_token,
+            "end_token": computed,
+        }
 
     EngineCore.dt_workload = workload
     EngineCore.dt_request_kv = request_kv

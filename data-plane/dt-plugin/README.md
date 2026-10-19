@@ -62,7 +62,7 @@ curl http://127.0.0.1:19100/status
 
 `/status` should report the expected model and role, `accepting: true`, and
 `candidate_format: "token_ids_log_probs"`, `tensor_transports: ["zmq"]` and
-`protocol_version: 9` when no RDMA or GPU peer path is available. Both selected roles must advertise the
+`protocol_version: 10` when no RDMA or GPU peer path is available. Both selected roles must advertise the
 same format. Start the frontend using their HTTP endpoints; the role services
 are internal APIs and do not expose public OpenAI endpoints or authentication.
 
@@ -70,6 +70,9 @@ Each role uses one GPU worker, eager execution and synchronous local
 scheduling. Requests waiting for remote proposals do not block other requests.
 Target KV preemption preserves the confirmed prefix and in-flight Draft round;
 recovery rebuilds KV before verifying those candidates without confirming an extra token.
+Draft sessions retain private native KV between rounds and reconcile the tail
+with Target confirmation. Draft currently requires full-attention models without
+recurrent state or sliding-window attention; its mutable tail is excluded from APC.
 The role accepts native vLLM model, memory and batching options.
 Target `--draft-tokens` selects the default candidates per round (3). Target
 `--max-candidate-tokens` sets its startup engine capacity; when omitted it uses
@@ -81,7 +84,7 @@ to the remaining output length.
 Ordinary autoregressive Drafts have no configured candidate-count limit: they
 execute the count requested by Target, subject to native context and resource
 limits. Both options are Target-only. Update frontend and both roles together;
-protocol v9 advertises initialized tensor paths for binding-time selection, alongside
+protocol v10 advertises initialized tensor paths for binding-time selection, alongside
 separate round policy/capacity.
 `--port` changes the HTTP port (default 19100). Select different GPUs and ports
 when roles share a host. Their HTTP endpoints must be reachable from the frontend
@@ -91,10 +94,9 @@ The launcher preserves vLLM's native `VLLM_BATCH_INVARIANT` default (disabled).
 For strict greedy token-ID comparisons, explicitly set
 `VLLM_BATCH_INVARIANT=1` for both DT roles and the Target-only baseline. This mode
 requires compatible model and attention backends. NVIDIA requires compute
-capability 8.0 or newer. The pinned MetaX source build includes a smaller native
-GEMM tile for its 64 KiB shared-memory limit and persistent kernels for native
-PyTorch linear calls, without CUDA-only BLAS controls. BF16 Qwen3-4B verification was checked
-with budgets 1 and 3. Without batch invariance, changing batch shape can alter the
+capability 8.0 or newer. The pinned MetaX source build selects native Triton
+attention in this mode; explicitly selecting FlashAttention with batch invariance
+is rejected. Without batch invariance, changing batch shape can alter the
 logit ordering and greedy output. A token-ID mismatch remains a failed comparison;
 close logits alone do not establish correctness. See the
 [validation boundary](docs/mrv2-integration.md#greedy-validation).
@@ -242,11 +244,20 @@ add `--trust-remote-code` to both role commands for its configuration class, and
 SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":3}'
 ```
 
-Neural drafting supports greedy and random sampling and chunked prefill. Target
-prefix caching is disabled; EAGLE/MTP also disable Draft prefix caching. Each
-round transfers the complete computed feature prefix, increasing the cost of long
-contexts. Supported model variants and restrictions are listed in the
+Neural drafting supports greedy and random sampling and chunked prefill. Draft
+sessions retain private native KV across rounds; rejection discards the invalid
+tail before the next turn. Neural Target APC is disabled to retain complete features. The first feature
+transfer contains the necessary prefix; subsequent transfers contain only newly
+confirmed rows. Retained features also serve native Draft KV recomputation after
+preemption and are released with the session. Supported model variants and restrictions are listed in the
 [integration contract](docs/mrv2-integration.md#neural-draft-context).
+
+The existing Frontend `/metrics` and `foretoken::dt` round traces expose tensor
+preparation phases: claim, receive/poll, allocation, destination fencing, backend
+read, ACK and staging. Feature totals also include export and receiver-buffer
+release. Local Worker RPCs separate dispatch/queue, method and return wall time;
+these are not GPU timings. See [observation boundaries](docs/role-protocol.md#observations)
+when diagnosing preparation that takes longer than the data read.
 
 ## Stop and scope
 

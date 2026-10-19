@@ -52,7 +52,7 @@ preparation. Requests borrow the connection-owned proof; cancellation closes the
 without cancelling shared probes. Prefill
 still waits for successful preparation. `committed` contains
 confirmed token/text deltas, nullable next version, native observations, transfer
-measurements and the Target-owned round record. Protocol v9 identifies the actual
+measurements and the Target-owned round record. Protocol v10 identifies the actual
 RDMA transport incarnation and uses connection-owned proof endpoints. It retains nullable
 `round.admitted` for ticket admission and `round.context_transfer` for the
 Target-to-Draft feature read; `round.transfer` retains proposal-read measurements. Keep the stream open for session
@@ -73,7 +73,7 @@ token acceptance. Native workload snapshots are observations, not adapter credit
 
 ## Candidate policy and capacity
 
-Protocol v9 advertises two distinct nullable length fields, separately from tensor transport:
+Protocol v10 advertises two distinct nullable length fields, separately from tensor transport:
 
 | Role | `default_draft_tokens` | `max_candidate_tokens` |
 | --- | --- | --- |
@@ -138,8 +138,9 @@ after explicit refusal proves nonacceptance. Other HTTP or transport errors are 
    Target step. Duplicate, stale and already-consumed tickets return false.
 5. Read the next Target commit. If nonterminal, call Draft
    `POST /sessions/{id}/commit` with `base_version`, the new `version`, and the
-   exact confirmed `token_ids` delta, then repeat from step 3. Draft discards
-   guesses implicitly by using only the confirmed prefix in its next request.
+   exact confirmed `token_ids` delta, then repeat from step 3. Each version permits
+   one proposal; repeats return HTTP 409. Draft retains one native request and
+   reconciles its KV with that confirmed prefix before the next input turn.
 6. On termination or failure, close both response streams. Explicit
    `DELETE /sessions/{id}` is also idempotent. Closing the Draft stream aborts
    any active proposal; closing a proposal response alone is not the session's
@@ -162,15 +163,20 @@ checkpoint paths must identify the same immutable weights. Selected roles must a
 current Target. Independent token-only Draft models ignore this field.
 
 Draft calls Target `POST /sessions/{id}/context` with the same `version` and
-selected `tensor_transport`. Target checks that path against its capabilities and
+selected `tensor_transport`, plus `start_token` identifying the end of the
+Draft's retained continuous feature prefix. Target checks that path against its capabilities and
 any coordinated binding. Target
 validates the paused engine ticket and returns `artifact_id`, the complete confirmed
-`token_ids`, and `profile`. The artifact contains a dense
-`[computed_tokens, feature_layers, hidden_size]` tensor in the Target model dtype;
+`token_ids`, `profile`, `start_token` and `end_token`. The artifact contains a dense
+`[end_token - start_token, feature_layers, hidden_size]` tensor in the Target model dtype;
 the first layer is the final hidden state and subsequent layers are native auxiliary
 outputs. The computed prefix excludes the final anchor token. Draft checks the
 profile, prefix and dimensions, then uses the existing claim/read/ACK endpoints.
-The proposal owns the received features until native execution finishes or is aborted.
+The Draft Worker appends the completed delta to session-owned features before
+releasing the transfer buffer. Its cursor advances only after that append; duplicate
+or noncontiguous intervals are rejected. Features survive KV eviction and are
+released after session abort and started operations have joined. Protocol v10
+requires both roles and the frontend to be upgraded together.
 Context transfer completes outside the Target compute loop, allowing other requests
 to execute while this request waits for Draft.
 If the context is closed or consumed before Draft admission, Draft returns HTTP 409
@@ -228,10 +234,11 @@ sessions does not prove transfer storage is released. There is no
 transparent session migration or replay after a process restart.
 
 A waiting Target stays in vLLM's request state but is not scheduled for model
-execution. Ready requests can continue to batch. The Draft implementation uses
-ordinary per-round requests. Independent drafts, DFlash and DSpark can reuse native prefix
-caches; EAGLE/MTP disable Draft prefix caching because their KV depends on shifted
-tokens. The implementation does not promise optimal Draft KV reuse.
+execution. Ready requests can continue to batch. Draft turns retain private native
+KV under one streaming-input request. The native Scheduler can preempt parked
+Drafts; only the next confirmed input resumes them. Reuse respects confirmed
+features and shifted anchor inputs, and Draft APC is disabled to keep mutable
+proposal tails private. Draft requires full-attention KV without recurrent state.
 
 ## Transport and extension boundary
 
@@ -346,12 +353,56 @@ These intervals overlap and must not be added. In particular, remote wait starts
 in the preceding output interval. Unavailable measurements are null. Engine measurements are retained only until the owning generator consumes
 the output or closes; they are not an engine-side history store.
 
+Transfer observations additionally carry optional `breakdown`. Existing
+`read_seconds` and `prepare_seconds` retain their boundaries: feature prepare
+starts after the export reply and ends before receiver-buffer release. Use
+`breakdown.total_seconds` for the receiving preparation path including those
+feature-only phases. Proposal production/publication and later native ticket
+admission are outside this interval.
+
+| Breakdown | Boundary |
+| --- | --- |
+| `export_seconds` | Feature export HTTP request through response; null for proposals/checkpoints. |
+| `claim_seconds`, `validation_seconds` | Claim HTTP request and descriptor decoding; then local layout/prefix validation. |
+| `receive_seconds` | First receive RPC through observing ready, including start/poll RPCs and role polling waits. |
+| `receive_poll_seconds` | Actual elapsed time in role polling sleeps, including event-loop scheduling delay. |
+| `io_queue_seconds` | Worker submits the background receive through I/O coroutine entry. |
+| `buffer_seconds`, `buffer_reused` | Pool lookup and any tensor allocation/registration; reuse means a registered transport-pool hit. |
+| `read_fence_seconds` | Destination prior-use fence, including host thread scheduling. |
+| `transport_read_seconds` | Backend read, including its connection setup, polling and host staging where applicable. |
+| `ack_seconds` | Release/ACK HTTP round trip, including source cleanup. |
+| `stage_rpc` | Target proposal binding or Draft feature-prefix append. |
+| `release_seconds` | Draft receiver-buffer release after feature append; null on other paths. |
+
+`claim_rpc`, `receive_rpc`, `ack_rpc` and `stage_rpc` contain `calls` plus
+`dispatch_seconds`, `worker_seconds`, and `return_seconds`. These partition the
+local role-to-Worker round trips: send through Worker entry (EngineCore/IPC queue
+and dispatch), synchronous method execution, then response through caller
+resumption. The sum covers all calls in that phase, not an average. Claim and ACK
+RPCs are measured on the source role; receive and staging on the destination.
+Only clocks on the same host are subtracted; cross-host clock synchronization is
+not required. These measurements target the supported local single-Worker role.
+Missing source RPC observations remain null.
+
+No extra RPC round trip, GPU synchronization, transfer probe or retry is introduced for these
+measurements. Worker method wall time is not GPU execution time. A background
+read overlaps its receive/poll RPCs; parent and child durations must not be added.
+Failures can lack a completed round record and retain the existing cleanup owner.
+Role logs associate completed preparation with artifact, session/frontier/work;
+round records retain request, round and native physical-batch association.
+
 The existing frontend `/metrics` endpoint exports `foretoken_dt_rounds_total`,
 `foretoken_dt_tokens_total`, `foretoken_dt_stage_seconds` histograms, and
 `foretoken_dt_transfer_bytes_total`. These are process-level aggregates.
 Labels contain the logical model name, phase, outcome and stage. Request IDs, round numbers and
 endpoints remain in `foretoken::dt` traces and returned records. `accepted / verified`
 is the sampler acceptance rate; `committed` also includes Target-generated tokens.
+Breakdown stages also use `foretoken_dt_stage_seconds`: `transfer_*` for
+proposal/checkpoint reads and `context_*` for feature reads. Suffixes are `total`,
+`export`, `claim`, `validation`, `receive`, `poll`, `io_queue`, `buffer`,
+`read_fence`, `backend_read`, `ack`, `release`, plus
+`{claim,receive,ack,stage}_{dispatch,worker,return}`. Labels come from a fixed
+mapping; RPC counts and buffer-reuse flags remain in round records and traces.
 Metrics cover received round observations; failed streams can have incomplete
 token/transfer totals.
 
@@ -380,8 +431,8 @@ refreshes; use `collected_at_unix_ms` when judging its freshness.
 
 `GET /sessions/{id}/kv` reports native residency for a live Target session. A
 session with no current engine allocation reports `kv: null`. Draft sessions
-between proposals have no live engine request, although cached prefix pages may
-remain. The diagnostic caller owns the session's location and confirmed tokens.
+between proposals retain a native request and its private pages unless preempted;
+retained features remain available for replay. The diagnostic caller owns the session's location and confirmed tokens.
 
 A KV observation contains context length, computed-token frontier and allocated
 blocks/bytes per cache group from native page tables and configured page sizes.

@@ -167,6 +167,143 @@ pub fn record_draft_target_round(model: &str, observation: &DraftTargetRoundObse
             .seconds
             .get_or_create(&labels(prepare))
             .observe(transfer.prepare_seconds);
+        let Some(detail) = &transfer.breakdown else {
+            continue;
+        };
+        // Parent durations contain their nested phases. These histograms locate
+        // waits; adding them would double-count asynchronous reads and RPCs.
+        for (proposal_label, context_label, value) in [
+            (
+                "transfer_total",
+                "context_total",
+                Some(detail.total_seconds),
+            ),
+            ("transfer_export", "context_export", detail.export_seconds),
+            (
+                "transfer_claim",
+                "context_claim",
+                Some(detail.claim_seconds),
+            ),
+            (
+                "transfer_validation",
+                "context_validation",
+                Some(detail.validation_seconds),
+            ),
+            (
+                "transfer_receive",
+                "context_receive",
+                Some(detail.receive_seconds),
+            ),
+            (
+                "transfer_poll",
+                "context_poll",
+                Some(detail.receive_poll_seconds),
+            ),
+            (
+                "transfer_io_queue",
+                "context_io_queue",
+                Some(detail.io_queue_seconds),
+            ),
+            (
+                "transfer_buffer",
+                "context_buffer",
+                Some(detail.buffer_seconds),
+            ),
+            (
+                "transfer_read_fence",
+                "context_read_fence",
+                Some(detail.read_fence_seconds),
+            ),
+            (
+                "transfer_backend_read",
+                "context_backend_read",
+                Some(detail.transport_read_seconds),
+            ),
+            ("transfer_ack", "context_ack", Some(detail.ack_seconds)),
+            (
+                "transfer_release",
+                "context_release",
+                detail.release_seconds,
+            ),
+        ] {
+            if let Some(value) = value {
+                let name = if stage == "transfer" {
+                    proposal_label
+                } else {
+                    context_label
+                };
+                METRICS.seconds.get_or_create(&labels(name)).observe(value);
+            }
+        }
+        for (rpc, proposal_labels, context_labels) in [
+            (
+                detail.claim_rpc.as_ref(),
+                [
+                    "transfer_claim_dispatch",
+                    "transfer_claim_worker",
+                    "transfer_claim_return",
+                ],
+                [
+                    "context_claim_dispatch",
+                    "context_claim_worker",
+                    "context_claim_return",
+                ],
+            ),
+            (
+                Some(&detail.receive_rpc),
+                [
+                    "transfer_receive_dispatch",
+                    "transfer_receive_worker",
+                    "transfer_receive_return",
+                ],
+                [
+                    "context_receive_dispatch",
+                    "context_receive_worker",
+                    "context_receive_return",
+                ],
+            ),
+            (
+                detail.ack_rpc.as_ref(),
+                [
+                    "transfer_ack_dispatch",
+                    "transfer_ack_worker",
+                    "transfer_ack_return",
+                ],
+                [
+                    "context_ack_dispatch",
+                    "context_ack_worker",
+                    "context_ack_return",
+                ],
+            ),
+            (
+                detail.stage_rpc.as_ref(),
+                [
+                    "transfer_stage_dispatch",
+                    "transfer_stage_worker",
+                    "transfer_stage_return",
+                ],
+                [
+                    "context_stage_dispatch",
+                    "context_stage_worker",
+                    "context_stage_return",
+                ],
+            ),
+        ] {
+            if let Some(rpc) = rpc {
+                let names = if stage == "transfer" {
+                    proposal_labels
+                } else {
+                    context_labels
+                };
+                for (name, value) in names.into_iter().zip([
+                    rpc.dispatch_seconds,
+                    rpc.worker_seconds,
+                    rpc.return_seconds,
+                ]) {
+                    METRICS.seconds.get_or_create(&labels(name)).observe(value);
+                }
+            }
+        }
     }
     tracing::info!(target: "foretoken::dt", request_id = %observation.request_id,
         round = observation.round, observation = ?observation, "DT round");

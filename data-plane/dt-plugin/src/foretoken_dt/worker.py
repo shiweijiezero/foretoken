@@ -41,6 +41,8 @@ class _Artifact:
     claimed: bool = False
     read_seconds: float | None = None
     transport: str | None = None
+    read_timing: dict | None = None
+    read_enqueued_at: float | None = None
 
 
 class _WorkerIO:
@@ -241,7 +243,12 @@ class _WorkerIO:
             artifact.event.record(torch.cuda.current_stream(self.device))
 
     def _acquire_buffer(
-        self, transport: str, shape: tuple[int, ...], dtype=torch.float32
+        self,
+        transport: str,
+        shape: tuple[int, ...],
+        dtype=torch.float32,
+        *,
+        timing: dict | None = None,
     ) -> TensorBuffer:
         """Borrow reusable device capacity on the transport loop, retaining RDMA keys when used."""
         if len(shape) == 3:
@@ -249,6 +256,8 @@ class _WorkerIO:
             # retained registrations by context size rather than its square.
             shape = (1 << (shape[0] - 1).bit_length(), *shape[1:])
         idle = self.idle_buffers.setdefault((transport, shape, dtype), [])
+        if timing is not None:
+            timing["buffer_reused"] = bool(idle)
         if idle:
             return idle.pop()
         tensor = torch.empty(shape, dtype=dtype, device=self.device)
@@ -293,17 +302,22 @@ class _WorkerIO:
 
     async def _receive(self, artifact: _Artifact) -> None:
         """Borrow local storage and await tensor readiness outside model execution."""
+        entered = time.monotonic()
         source = artifact.source
         with torch.cuda.device(self.device):
             dtype = getattr(torch, source.dtype)
+            timing = {"io_queue_seconds": entered - artifact.read_enqueued_at}
+            allocated = time.monotonic()
             artifact.buffer = self._acquire_buffer(
-                source.transport, source.shape, dtype
+                source.transport, source.shape, dtype, timing=timing
             )
+            timing["buffer_seconds"] = time.monotonic() - allocated
             event = torch.cuda.Event()
             event.record(torch.cuda.current_stream(self.device))
             started = time.monotonic()
-            await artifact.buffer.read(source, ready_event=event)
+            await artifact.buffer.read(source, ready_event=event, timing=timing)
             artifact.read_seconds = time.monotonic() - started
+            artifact.read_timing = timing
 
     async def _release(self, artifact_id: str, artifact: _Artifact) -> None:
         """Fence local use and recycle revoked or acknowledged source storage."""
@@ -332,6 +346,12 @@ class _WorkerIO:
 
 class DraftTargetWorkerExtension:
     """vLLM worker extension used by the internal role service's collective RPC."""
+
+    def dt_timed_rpc(self, method: str, args: tuple) -> dict:
+        """Measure Worker execution separately from the role's local RPC queue/IPC wait."""
+        started = time.monotonic()
+        value = getattr(self, method)(*args)
+        return {"value": value, "started": started, "finished": time.monotonic()}
 
     def dt_initialize(
         self,
@@ -375,11 +395,35 @@ class DraftTargetWorkerExtension:
         return get_kv_transfer_group().snapshot(artifact_id, block_ids)
 
     def dt_snapshot_context(
-        self, artifact_id: str, request_id: str, computed_tokens: int
+        self, artifact_id: str, request_id: str, start_token: int, computed_tokens: int
     ) -> None:
-        """Snapshot features selected by the paused Target's scheduler frontier."""
-        tensor = self.model_runner.speculator.snapshot(request_id, computed_tokens)
+        """Snapshot a confirmed interval selected by the paused Target's scheduler frontier."""
+        tensor = self.model_runner.speculator.snapshot(
+            request_id, start_token, computed_tokens
+        )
         self.dt_io.publish_tensor(artifact_id, tensor)
+
+    def dt_append_draft_context(self, session_id, artifact_id, start_token, end_token):
+        """Retain a completed delta independently of its transfer and proposal lifetimes."""
+        from .vllm.context import DraftContext
+
+        artifact = self.dt_io.artifacts[artifact_id]
+        artifact.operation.result()
+        context = self.model_runner.context_prefixes.setdefault(
+            session_id, DraftContext()
+        )
+        # Utility RPCs need not inherit MRV2's current stream. Append on the
+        # execution stream so later forward/abort fences see this copy as well.
+        with torch.cuda.stream(self.model_runner.main_stream):
+            context.append(
+                start_token, artifact.buffer.tensor[: end_token - start_token]
+            )
+            artifact.event = torch.cuda.Event()
+            artifact.event.record(self.model_runner.main_stream)
+
+    def dt_forget_draft_context(self, session_id):
+        """Release session features only after native abort and proposal cleanup have joined."""
+        self.model_runner.context_prefixes.pop(session_id, None)
 
     def dt_create_transport_probe(self, artifact_id: str) -> None:
         """Publish a connection probe through the ordinary GPU artifact owner."""
@@ -493,7 +537,11 @@ class DraftTargetWorkerExtension:
             raise ValueError("proposal vocabulary size does not match Target")
         artifact = io.artifacts.get(artifact_id)
         if artifact is None:
-            artifact = _Artifact(source=source, transport=source.transport)
+            artifact = _Artifact(
+                source=source,
+                transport=source.transport,
+                read_enqueued_at=time.monotonic(),
+            )
             io.artifacts[artifact_id] = artifact
             artifact.operation = asyncio.run_coroutine_threadsafe(
                 io._receive(artifact), io.loop
@@ -508,6 +556,7 @@ class DraftTargetWorkerExtension:
             "read_seconds": artifact.read_seconds,
             "bytes": source.nbytes,
             "transport": source.transport,
+            "worker_read": artifact.read_timing,
         }
 
     def dt_stage(self, artifact_id: str, request_id: str, generation: int) -> None:
