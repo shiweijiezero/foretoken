@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use crate::launch::LaunchPlanV1;
+use crate::runtime_transport::RuntimePorts;
 
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
@@ -17,6 +18,7 @@ pub const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,
+    pub ports: RuntimePorts,
     pub member: Option<MemberContext>,
     pub instance_admission_path: Option<PathBuf>,
     pub startup_admission_limit: Option<u32>,
@@ -48,11 +50,12 @@ impl RuntimeConfig {
     /// Reads the controller-projected launch and listen settings for model-server bootstrap.
     ///
     /// Startup receives an owned configuration; environment values are not retained after parsing.
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env(cache_port: Option<u16>) -> Result<Self, String> {
         let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
-        let listen_address = required_env(LISTEN_ENV)?
+        let listen_address: SocketAddr = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
+        let ports = RuntimePorts::resolve(&launch, listen_address.port(), cache_port)?;
         let member = if launch.node_count > 1 {
             let index = required_env("LWS_WORKER_INDEX")?
                 .parse::<usize>()
@@ -100,6 +103,7 @@ impl RuntimeConfig {
         Ok(Self {
             launch,
             listen_address,
+            ports,
             member,
             instance_admission_path,
             startup_admission_limit,

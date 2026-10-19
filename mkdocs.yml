@@ -140,6 +140,7 @@ plugins:
             Continuous integration: CI 规范
             Deployment maintenance: 部署维护
             Runtime cache: 运行时缓存
+            Runtime configuration: 运行配置职责
             Releases: 版本发布
 
 markdown_extensions:

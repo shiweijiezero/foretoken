@@ -16,7 +16,7 @@ use uuid::Uuid;
 use zeromq::SubSocket;
 use zeromq::prelude::{Socket, SocketRecv};
 
-use crate::runtime_transport::{KV_EVENT_TOPIC, kv_event_endpoint};
+use crate::runtime_transport::{KV_EVENT_TOPIC, RuntimePorts};
 
 const CAPACITY: usize = 4096;
 
@@ -608,14 +608,19 @@ impl KvEventAdapter {
     ///
     /// `ready` publishes listener readiness once. Bound sockets accept publisher reconnects;
     /// interrupted ranks remain unavailable until a valid batch starts their new epoch.
-    pub async fn serve(self: Arc<Self>, host: String, ready: tokio::sync::oneshot::Sender<bool>) {
+    pub async fn serve(
+        self: Arc<Self>,
+        host: String,
+        ports: RuntimePorts,
+        ready: tokio::sync::oneshot::Sender<bool>,
+    ) {
         use futures::StreamExt;
         let mut streams = futures::stream::FuturesUnordered::new();
         for dp_rank in 0..self.data_parallel_size {
             let mut socket = SubSocket::new();
             let mut monitor = socket.monitor();
             if socket
-                .bind(&kv_event_endpoint(&host, dp_rank))
+                .bind(&ports.kv_event_endpoint(&host, dp_rank))
                 .await
                 .is_err()
                 || socket.subscribe(KV_EVENT_TOPIC).await.is_err()

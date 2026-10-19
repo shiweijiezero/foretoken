@@ -51,6 +51,7 @@ class McclNetworkCalibration:
         self.count = options["member_count"]
         self.leader = options["leader"]
         self.port = options["port"]
+        self.probe_port = options["probe_port"]
         self.deadline = time.monotonic() + options["startup_seconds"]
         skip = "MCCL_IB_HCA" in os.environ or envs.VLLM_DISABLE_PYNCCL
         member = {
@@ -75,7 +76,7 @@ class McclNetworkCalibration:
         """Run one member's workers; the leader uses results only after every member succeeds."""
         options = {
             "leader": self.leader,
-            "port": self.port,
+            "port": self.probe_port,
             "rank_offset": sum(member["gpus"] for member in self.members[: self.index]),
             "world_size": sum(member["gpus"] for member in self.members),
             "gpu_count": self.members[self.index]["gpus"],

@@ -414,18 +414,16 @@ func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.Norm
 	}
 	output := inferencev1alpha1.NormalizedKVCache{}
 	if input.Offload != nil {
-		cpu, err := normalizeQuantity("kvCache.offload.cpuCacheSize", input.Offload.CPUCacheSize)
+		quantity, err := resource.ParseQuantity(string(input.Offload.CPUCacheSize))
 		if err != nil {
+			return nil, fmt.Errorf("kvCache.offload.cpuCacheSize must be a valid Kubernetes resource quantity")
+		}
+		output.Offload = &inferencev1alpha1.NormalizedKVOffload{
+			CPUCacheSize: quantity, Filesystem: input.Offload.Filesystem,
+		}
+		if _, err := output.Offload.Bytes(); err != nil {
 			return nil, err
 		}
-		quantity, _ := resource.ParseQuantity(string(cpu))
-		bytes, exact := quantity.AsInt64()
-		if !exact || bytes <= 0 {
-			return nil, fmt.Errorf("kvCache.offload.cpuCacheSize must be a positive integer number of bytes")
-		}
-		offload := *input.Offload
-		offload.CPUCacheSize = cpu
-		output.Offload = &offload
 	}
 	if input.MooncakeStore != nil {
 		store := *input.MooncakeStore

@@ -61,16 +61,17 @@ func (profiles Profiles) Validate() error {
 	if profiles.PD.Name != "" && profiles.PD.Protocol == "rdma" && profiles.RDMA.ResourceName == "" {
 		return errors.New("vLLM P/D with RDMA transport requires an RDMA allocation")
 	}
-	if err := validateEC(profiles.EC); err != nil {
+	if err := profiles.EC.Validate(); err != nil {
 		return err
 	}
-	if err := validatePD(profiles.PD); err != nil {
+	if err := profiles.PD.Validate(); err != nil {
 		return err
 	}
-	return validateMooncakeStore(profiles.MooncakeStore)
+	return profiles.MooncakeStore.Validate()
 }
 
-func validateEC(profile ECProfile) error {
+// Validate checks the encoder profile consumed by startup and Group resolution.
+func (profile ECProfile) Validate() error {
 	if profile.Name == "" {
 		if profile.Revision != "" || profile.SharedStorageClaim != "" {
 			return errors.New("vLLM EC settings require vllm-ec-profile-name")
@@ -83,7 +84,8 @@ func validateEC(profile ECProfile) error {
 	return nil
 }
 
-func validatePD(profile PDProfile) error {
+// Validate checks transport settings before narrowing them to the Group's runtime fields.
+func (profile PDProfile) Validate() error {
 	if profile.Name == "" {
 		if profile.Revision != "" || profile.Protocol != "" || profile.BootstrapPort != 0 || profile.AbortRequestTimeoutSeconds != 0 || profile.RDMADeviceName != "" {
 			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
@@ -96,7 +98,8 @@ func validatePD(profile PDProfile) error {
 	return nil
 }
 
-func validateMooncakeStore(profile MooncakeStoreProfile) error {
+// Validate checks the external Store binding shared by startup and Group resolution.
+func (profile MooncakeStoreProfile) Validate() error {
 	if profile.Name == "" {
 		if profile.Revision != "" || profile.ConfigMapName != "" || profile.ConfigMapKey != "" || profile.PythonHashSeed != "" {
 			return errors.New("Mooncake Store settings require vllm-mooncake-store-profile-name")

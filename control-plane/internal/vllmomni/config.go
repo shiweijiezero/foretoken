@@ -20,15 +20,10 @@ import (
 // Backend identifies the managed Omni execution adapter in resolved model contracts.
 const Backend = "vllm-omni"
 
-// EffectiveConfig supplies Omni-specific inputs to the shared ModelGroup projection.
+// EffectiveConfig contains the topology and native arguments resolved by the Omni adapter.
 type EffectiveConfig struct {
-	Model             string
-	Source            inferencev1alpha1.ModelSource
-	Revision          string
-	Tokenizer         string
-	TokenizerRevision string
-	Parallelism       inferencev1alpha1.CompiledParallelism
-	EngineArgs        inferencev1alpha1.EngineArguments
+	Parallelism inferencev1alpha1.CompiledParallelism
+	EngineArgs  inferencev1alpha1.EngineArguments
 }
 
 // LaunchPlanV1 is the controller-owned command and lifecycle contract consumed by the Omni adapter.
@@ -38,14 +33,8 @@ type LaunchPlanV1 struct {
 	Source       inferencev1alpha1.ModelSource     `json:"source"`
 	Revision     string                            `json:"revision"`
 	UpstreamPort int32                             `json:"upstreamPort"`
-	Lifecycle    LaunchLifecycle                   `json:"lifecycle"`
+	Lifecycle    runtimeconfig.LaunchLifecycle     `json:"lifecycle"`
 	EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
-}
-
-// LaunchLifecycle carries compiled startup and shutdown budgets, not generation deadlines.
-type LaunchLifecycle struct {
-	StartupSeconds int64 `json:"startupSeconds"`
-	DrainSeconds   int64 `json:"drainSeconds"`
 }
 
 // Compile validates the supported single-node Omni topology and normalizes engine arguments.
@@ -82,17 +71,7 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 			return EffectiveConfig{}, fmt.Errorf("engineArgs.%s must be 1 for the initial vLLM-Omni runtime", name)
 		}
 	}
-	tokenizer := template.Tokenizer
-	if tokenizer == "" {
-		tokenizer = template.Model
-	}
-	tokenizerRevision := template.TokenizerRevision
-	if tokenizerRevision == "" {
-		tokenizerRevision = template.ModelRevision
-	}
 	return EffectiveConfig{
-		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
-		Tokenizer: tokenizer, TokenizerRevision: tokenizerRevision,
 		Parallelism: inferencev1alpha1.CompiledParallelism{TP: gpus, PP: 1, DP: 1, PCP: 1, DCP: 1},
 		EngineArgs:  args,
 	}, nil
@@ -109,18 +88,14 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if group.Runtime.Port < 1 || group.Runtime.Port > 65533 {
 		return LaunchPlanV1{}, fmt.Errorf("vLLM-Omni model-server port must be between 1 and 65533")
 	}
-	startup, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Startup, "vLLM-Omni startup")
-	if err != nil {
-		return LaunchPlanV1{}, err
-	}
-	drain, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Drain, "vLLM-Omni drain")
+	lifecycle, err := runtimeconfig.CompileModelLifecycle(group.Timeouts)
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
 	return LaunchPlanV1{
 		Version: 1, Model: group.Artifacts.Model, Source: group.Artifacts.Source,
 		Revision: group.Artifacts.ModelRevision, UpstreamPort: group.Runtime.Port + 2,
-		Lifecycle:  LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain},
+		Lifecycle:  lifecycle,
 		EngineArgs: group.Runtime.EngineArgs.DeepCopy(),
 	}, nil
 }
