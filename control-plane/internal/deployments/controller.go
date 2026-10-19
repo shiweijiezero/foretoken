@@ -230,6 +230,12 @@ func (r *Reconciler) apply(ctx context.Context, deployment *api.InferenceDeploym
 		desired.SetUID(current.GetUID())
 		desired.SetResourceVersion(current.GetResourceVersion())
 	}
+	// Typed API responses omit GVK; SSA still requires it in the submitted document.
+	kind, err := r.GroupVersionKindFor(desired)
+	if err != nil {
+		return err
+	}
+	desired.GetObjectKind().SetGroupVersionKind(kind)
 	desired.SetManagedFields(nil)
 	return r.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-deployment-manager"), client.ForceOwnership)
 }

@@ -194,7 +194,7 @@ func (r *Reconciler) materialize(ctx context.Context, deployment *api.InferenceD
 	}
 	configuration.Data[AccessKey] = string(access)
 	if err := r.apply(ctx, deployment, configuration); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("publish deployment access: %w", err)
 	}
 
 	// Registry credentials are copied by the platform owner, never read by member CLIs.
