@@ -19,7 +19,9 @@ Edit the existing Markdown in its owning directory: CLI usage in `cli/`, optimiz
 
 The repository-root README provides the Quick Start, and `docs/README.md` remains the repository's documentation index. Guides are built directly from their original Markdown.
 
-Edit `nav` in `mkdocs.yml` to add a navigation entry, and add the corresponding Chinese label under `nav_translations`. The website's homepage layout, localized interface copy, and shared styles live in `docs/site/`.
+Edit `docs/site/.nav.yml` to add a navigation entry, and add its Chinese label under `nav_translations` in `mkdocs.yml`. Existing sections use scoped globs to include their detailed guides. Knowledge category pages are built from the knowledge index and article titles, so category links stay within the site.
+
+The website's homepage layout, localized interface copy, and shared styles live in `docs/site/`. Homepage examples use the same Material tabs, syntax highlighting, and copy controls as the guides.
 
 ## Build a static site
 

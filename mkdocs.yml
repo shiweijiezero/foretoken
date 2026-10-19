@@ -26,18 +26,23 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
-    - navigation.indexes
+    - navigation.footer
     - navigation.top
     - search.highlight
     - search.suggest
@@ -46,6 +51,7 @@ theme:
     - toc.follow
 
 plugins:
+  - awesome-nav
   - search:
       lang:
         - en
@@ -62,6 +68,12 @@ plugins:
         - locale: zh
           name: 简体中文
           build: true
+          theme:
+            palette:
+              - toggle:
+                  name: 切换到深色
+              - toggle:
+                  name: 切换到浅色
           nav_translations:
             Home: 首页
             Get started: 快速开始
@@ -71,6 +83,28 @@ plugins:
             Example tasks: 任务示例
             Research guidance: 研究方法
             Technical knowledge: 技术知识
+            Attention and recurrent state: 注意力与循环状态
+            MoE execution: MoE 执行
+            Speculative decoding: 推测解码
+            Quantization: 量化
+            Multimodal and generative models: 多模态与生成模型
+            Multiple models and adapters: 多模型与适配器
+            Kernel design: 算子设计
+            Compilation and runtime: 编译与运行时
+            Parallelism and communication: 并行与通信
+            Heterogeneous hardware: 异构硬件
+            Engine scheduling: 引擎调度
+            KV caching: KV 缓存
+            Request routing and admission: 请求路由与准入
+            Disaggregated serving: 分离式服务
+            Autoscaling and placement: 扩缩容与放置
+            Model loading and storage: 模型加载与存储
+            Host and streaming paths: 主机与流式链路
+            Measurement and simulation: 测量与模拟
+            Templates: 记录模板
+            Deployment examples: 部署示例
+            Architecture: 架构与实现
+            Code of conduct: 行为准则
             Experiment records: 实验记录与报告
             User guide: 用户指南
             Installation and deployment: 安装与部署
@@ -108,53 +142,6 @@ plugins:
             Runtime cache: 运行时缓存
             Releases: 版本发布
 
-nav:
-  - Home: index.md
-  - Get started: quickstart.md
-  - RSI:
-      - Overview: rsi-playbooks/README.md
-      - Define a task: rsi-playbooks/templates/task-template.md
-      - Example tasks: rsi-playbooks/tasks/README.md
-      - Research guidance: rsi-playbooks/guidance/meta-knowledge/README.md
-      - Technical knowledge: rsi-playbooks/guidance/knowledge/README.md
-      - Experiment records: rsi-playbooks/experiment-records.md
-  - User guide:
-      - Installation and deployment:
-          - Existing Kubernetes: docs/deployment/kubernetes.md
-          - k3d GPU cluster: docs/deployment/k3d.md
-          - kind development cluster: docs/deployment/kind.md
-          - MetaX preparation: docs/deployment/metax-platform.md
-          - MetaX model deployment: docs/deployment/metax.md
-          - Source deployment: docs/deployment/source.md
-      - Model configuration:
-          - Model sources: docs/features/model-sources.md
-          - Model storage: docs/features/model-storage.md
-          - Inference parameters: docs/features/inference-parameters.md
-          - Model recipes: examples/recipes/README.md
-      - Observability: observability/README.md
-  - Evaluation:
-      - Overview: benchmarks/README.md
-      - Performance benchmarks: benchmarks/docs/perf/README.md
-      - Quality evaluation: benchmarks/docs/eval/README.md
-      - Candidate comparison: benchmarks/docs/eval/distribution-comparison.md
-      - Profiling: benchmarks/docs/profile/README.md
-      - Workload recipes: benchmarks/docs/recipes.md
-      - W&B results: benchmarks/docs/perf/wandb.md
-  - Reference:
-      - CLI commands: cli/README.md
-      - Frontend APIs: data-plane/frontend/README.md
-      - Performance metrics: benchmarks/docs/metrics.md
-      - Helm values: https://github.com/shiweijiezero/foretoken/blob/main/deploy/charts/foretoken/values.yaml
-  - Developer guide:
-      - Contributing: CONTRIBUTING.md
-      - Documentation: docs/development/documentation.md
-      - Code style: docs/development/code-style.md
-      - Testing: docs/development/testing.md
-      - Continuous integration: docs/development/ci.md
-      - Deployment maintenance: docs/development/source-deployment.md
-      - Runtime cache: docs/development/runtime-cache.md
-      - Releases: docs/development/release.md
-
 markdown_extensions:
   - admonition
   - attr_list
@@ -171,9 +158,6 @@ markdown_extensions:
 
 extra_css:
   - assets/foretoken.css
-
-extra_javascript:
-  - assets/home.js
 
 extra:
   generator: false

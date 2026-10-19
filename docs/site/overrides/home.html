@@ -4,13 +4,13 @@
 {% extends "main.html" %}
 
 {% macro icon(name) %}
-  <span class="ft-icon" aria-hidden="true">{% include ".icons/" ~ name ~ ".svg" %}</span>
+  <span class="md-icon ft-icon" aria-hidden="true">{% include ".icons/" ~ name ~ ".svg" %}</span>
 {% endmacro %}
 
 {% block content %}
 {% set home_anchor = (page.toc | first).id %}
 {# Links stay relative to this language's homepage; shared-asset URLs use a different base. #}
-<div class="ft-landing" data-ft-home>
+<div class="ft-landing">
   <section class="ft-hero" aria-labelledby="{{ home_anchor }}">
     <div class="ft-hero-copy">
       <h1 id="{{ home_anchor }}">
@@ -18,8 +18,8 @@
       </h1>
       <p class="ft-hero-description">{{ home.description }}</p>
       <div class="ft-hero-actions" id="{% if home_locale == 'zh' %}快速开始{% else %}get-started{% endif %}">
-        <a class="ft-button ft-button-primary" href="{{ home.quickstart_href }}">{{ home.deploy }}</a>
-        <a class="ft-button ft-button-secondary" href="{{ 'rsi-playbooks/' }}">{{ home.optimize }}</a>
+        <a class="md-button md-button--primary" href="{{ home.quickstart_href }}">{{ home.deploy }}</a>
+        <a class="md-button" href="{{ 'rsi-playbooks/' }}">{{ home.optimize }}</a>
       </div>
     </div>
 
@@ -83,15 +83,15 @@
           <path class="ft-chip-detail" d="m331 266 8-4m7-4 8-4m7-4 8-4" />
         </g>
       </svg>
-      <a class="ft-scene-label ft-scene-deploy" href="{{ 'docs/deployment/source/' }}">
+      <span class="ft-scene-label ft-scene-deploy">
         {{ icon('material/cube-outline') }}<span>{{ home.scene_deploy }}</span>
-      </a>
-      <a class="ft-scene-label ft-scene-measure" href="{{ 'benchmarks/' }}">
+      </span>
+      <span class="ft-scene-label ft-scene-measure">
         {{ icon('material/chart-box-outline') }}<span>{{ home.scene_measure }}</span>
-      </a>
-      <a class="ft-scene-label ft-scene-improve" href="{{ 'rsi-playbooks/' }}">
+      </span>
+      <span class="ft-scene-label ft-scene-improve">
         {{ icon('material/refresh') }}<span>{{ home.scene_improve }}</span>
-      </a>
+      </span>
       <span class="ft-scene-caption">{{ home.scene_title }}</span>
     </div>
   </section>
@@ -108,7 +108,7 @@
       </div>
       <div>
         <p>{{ home.rsi_description }}</p>
-        <a class="ft-text-link" href="{{ home.rsi_start_href }}">{{ home.rsi_link }}{{ icon('material/arrow-top-right') }}</a>
+        <a class="ft-text-link" href="{{ home.rsi_start_href }}">{{ home.rsi_link }}{{ icon('material/arrow-right') }}</a>
       </div>
     </div>
     <div class="ft-rsi-steps">
@@ -128,31 +128,18 @@
       <p>{{ home.code_description }}</p>
     </div>
     <div class="ft-terminal">
-      <div class="ft-terminal-toolbar">
-        <div class="ft-terminal-tabs" role="tablist" aria-label="Foretoken">
-          <button id="ft-tab-deploy" type="button" role="tab" aria-selected="true" aria-controls="ft-panel-deploy" data-ft-tab>{{ home.deploy_tab }}</button>
-          <button id="ft-tab-rsi" type="button" role="tab" aria-selected="false" aria-controls="ft-panel-rsi" tabindex="-1" data-ft-tab>{{ home.rsi_tab }}</button>
-        </div>
-      </div>
-      <div id="ft-panel-deploy" role="tabpanel" aria-labelledby="ft-tab-deploy" data-ft-panel>
-        <pre><code>{{ home.deploy_code }}</code></pre>
-        <div class="ft-terminal-note"><p>{{ home.deploy_note }}</p><a href="{{ home.quickstart_href }}">{{ home.deploy_guide }}{{ icon('material/arrow-top-right') }}</a></div>
-      </div>
-      <div id="ft-panel-rsi" role="tabpanel" aria-labelledby="ft-tab-rsi" data-ft-panel hidden>
-        <pre><code>{{ home.rsi_code }}</code></pre>
-        <div class="ft-terminal-note"><p>{{ home.rsi_note }}</p><a href="{{ 'rsi-playbooks/' }}">{{ home.rsi_guide }}{{ icon('material/arrow-top-right') }}</a></div>
-      </div>
+      {{ home_examples }}
     </div>
   </section>
 
   <section class="ft-resources" id="{% if home_locale == 'zh' %}用户指南{% else %}user-guide{% endif %}">
     <h2>{{ home.resources_title }}</h2>
-    <div class="ft-resource-grid">
+    <div class="grid ft-resource-grid">
       {% for resource in home.resources %}
       <a class="ft-resource" href="{{ resource.path }}">
         {{ icon(resource.icon) }}
         <div><h3>{{ resource.title }}</h3><p>{{ resource.description }}</p></div>
-        {{ icon('material/arrow-top-right') }}
+        {{ icon('material/arrow-right') }}
       </a>
       {% endfor %}
     </div>
@@ -162,7 +149,7 @@
     <span id="{% if home_locale == 'zh' %}开发与维护-foretoken{% else %}develop-and-maintain-foretoken{% endif %}"></span>
     <span id="{% if home_locale == 'zh' %}参考{% else %}reference{% endif %}"></span>
     <p>{{ home.footer_text }}</p>
-    <a href="{{ 'CONTRIBUTING/' }}">{{ home.contribute }}{{ icon('material/arrow-top-right') }}</a>
+    <a href="{{ 'CONTRIBUTING/' }}">{{ home.contribute }}{{ icon('material/arrow-right') }}</a>
   </div>
 </div>
 {% endblock %}

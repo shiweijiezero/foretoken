@@ -19,7 +19,9 @@ make docs-serve
 
 仓库根 README 提供快速开始，`docs/README.md` 和 `docs/README_zh.md` 继续作为仓库中的文档索引。各篇指南直接使用所属目录的 Markdown 原文构建。
 
-新增导航项时，修改 `mkdocs.yml` 的 `nav`，并在 `nav_translations` 中补充中文名称。网站首页的布局、双语界面文案和通用样式位于 `docs/site/`。
+新增导航项时，修改 `docs/site/.nav.yml`，并在 `mkdocs.yml` 的 `nav_translations` 中补充中文名称。现有栏目用限定目录的通配规则纳入详细指南。知识分类页由知识索引和文章标题生成，分类链接可直接在站内浏览。
+
+网站首页的布局、双语界面文案和通用样式位于 `docs/site/`。首页示例与指南共用 Material 的标签页、语法高亮和复制功能。
 
 ## 构建静态站点
 

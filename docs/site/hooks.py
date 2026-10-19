@@ -8,6 +8,7 @@ from __future__ import annotations
 import posixpath
 import re
 import subprocess
+import textwrap
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -16,6 +17,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import yaml
 
+from markdown import Markdown
 from markdown.extensions.toc import slugify_unicode
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.livereload import LiveReloadServer
@@ -37,7 +39,7 @@ REFERENCE_LINK = re.compile(r"(^ {0,3}\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)")
 HTML_LINK = re.compile(r"((?:href|src)=[\"'])([^\"']+)")
 LANGUAGE_LINE = re.compile(
     r"^(?:English|\[English\]\([^)]*\))\s*\|\s*"
-    r"(?:简体中文|中文|\[(?:简体中文|中文)\]\([^)]*\))(?:\s*\|.*)?$"
+    r"(?:简体中文|中文|\[(?:简体中文|中文)\]\([^)]*\))(?:\s*[|·].*)?$"
     r"|^\[(?:English|简体中文|中文)\]\([^)]*\)$"
 )
 
@@ -79,16 +81,17 @@ class DocumentationTree:
             and (
                 Path(name).suffix == ".md"
                 or Path(name).suffix in ASSET_SUFFIXES
-                or PurePosixPath(name).is_relative_to("docs/site/assets") and Path(name).suffix == ".js"
             )
         }
-        self.destinations = {source: self.destination(source) for source in sources}
+        documents = {source: (ROOT / source).read_text() for source in sources if source.suffix == ".md"}
+        self.add_knowledge_indexes(documents)
+        self.destinations = {source: self.destination(source) for source in sources | documents.keys()}
+        self.destinations[PurePosixPath("docs/site/.nav.yml")] = PurePosixPath(".nav.yml")
         retained = set()
         for source, destination in self.destinations.items():
-            original = ROOT / source
             data = (
-                self.markdown(original.read_text(), source).encode()
-                if source.suffix == ".md" else original.read_bytes()
+                self.markdown(documents[source], source).encode()
+                if source.suffix == ".md" else (ROOT / source).read_bytes()
             )
             target = self.directory / destination
             retained.add(target)
@@ -100,6 +103,28 @@ class DocumentationTree:
         for target in self.directory.rglob("*"):
             if target.is_file() and target not in retained:
                 target.unlink()
+
+    def add_knowledge_indexes(self, documents: dict[PurePosixPath, str]) -> None:
+        """Make the existing knowledge directory links browsable without maintaining duplicate indexes."""
+        knowledge = PurePosixPath("rsi-playbooks/guidance/knowledge")
+        entries = tuple(documents.items())
+        for suffix in ("", "_zh"):
+            index = knowledge / f"README{suffix}.md"
+            for title, directory, description in re.findall(
+                r"^- \[([^\]]+)\]\(([^)]+/)\)[:：]\s*(.+)$",
+                documents[index], re.MULTILINE,
+            ):
+                category = knowledge / directory
+                page = category / f"README{suffix}.md"
+                if page in documents:
+                    continue
+                links = []
+                for source, content in sorted(entries):
+                    if source.parent != category or source.stem.endswith("_zh") != bool(suffix):
+                        continue
+                    heading = re.search(r"^# (.+)$", content, re.MULTILINE)[1]
+                    links.append(f"- [{heading}]({source.name})")
+                documents[page] = f"# {title}\n\n{description}\n\n" + "\n".join(links) + "\n"
 
     def link(self, value: str, source: PurePosixPath) -> str:
         """Resolve repository links to localized pages, shared assets, or source on GitHub."""
@@ -190,13 +215,19 @@ def on_serve(
 
 def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Files) -> str:
     """Select the landing-page layout and link editing to each original repository file."""
+    # Leading license comments prevent MkDocs from inferring the document's H1.
+    heading = re.search(r"^# (.+)$", markdown, re.MULTILINE)
+    if heading is not None:
+        page.meta.setdefault("title", heading[1].replace("`", ""))
     source_uri = PurePosixPath(page.file.src_uri)
     original = next((source for source, destination in _tree.destinations.items() if destination == source_uri), None)
     if original is not None:
+        if not (ROOT / original).is_file():
+            original = PurePosixPath("rsi-playbooks/guidance/knowledge") / original.name
         page.edit_url = f"{config.repo_url}/edit/main/{original}"
     if source_uri in {PurePosixPath("index.md"), PurePosixPath("index.zh.md")}:
         page.meta["template"] = "home.html"
-        page.meta["hide"] = ["navigation", "toc"]
+        page.meta["hide"] = ["navigation", "toc", "footer"]
         page.meta["search"] = {"exclude": True}
         # The custom homepage owns its sections; retain only the real title in the mobile TOC.
         return next(line for line in markdown.splitlines() if line.startswith("# "))
@@ -210,7 +241,18 @@ def on_page_context(
     if page.meta.get("template") == "home.html":
         locale = "zh" if config.theme["language"] == "zh" else "en"
         context["home_locale"] = locale
-        context["home"] = yaml.safe_load((ROOT / "docs/site/home.yml").read_text())[locale]
+        home = yaml.safe_load((ROOT / "docs/site/home.yml").read_text())[locale]
+        context["home"] = home
+        examples = []
+        for example in home["examples"]:
+            body = (
+                f"```bash\n{example['command'].rstrip()}\n```\n\n"
+                f"{example['note']}\n\n[{example['guide']}]({example['href']})\n"
+            )
+            examples.append(f'=== "{example["label"]}"\n\n' + textwrap.indent(body, "    "))
+        context["home_examples"] = Markdown(
+            extensions=config.markdown_extensions, extension_configs=config.mdx_configs
+        ).convert("\n".join(examples))
     return context
 
 
