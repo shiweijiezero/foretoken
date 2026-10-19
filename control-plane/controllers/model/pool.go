@@ -374,29 +374,11 @@ func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inf
 	if targetReady {
 		preparedRevision = template.Revision
 	}
-	servingRevisionDraining := targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision
-	ready := revisionServingReady(groups, servingRevision) && !servingRevisionDraining
+	ready := revisionServingReady(groups, servingRevision)
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
 
-	// Keep the old cohort for zero-downtime replacement while the target can
-	// schedule. If the target is explicitly unschedulable, retaining the old
-	// cohort prevents a full cluster from ever making progress; drain it so the
-	// target can acquire the same resources.
-	if targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision {
-		for index := range groups {
-			group := &groups[index]
-			if group.Spec.Revision != servingRevision {
-				continue
-			}
-			rolloutPending = true
-			if err := reconciler.retireGroup(ctx, group); err != nil {
-				return groupState{}, fmt.Errorf("delete unschedulable serving ModelGroup %q: %w", group.Name, err)
-			}
-		}
-	}
-
-	// The Pool keeps both its target cohort and the service-selected serving cohort.
-	// Other revisions are no longer reachable and can enter their normal drain finalizer.
+	// ModelService owns the serving cohort. Revisions outside its selection and
+	// this Pool's target enter the existing Group drain lifecycle.
 	for index := range groups {
 		group := &groups[index]
 		if group.Spec.Revision == template.Revision || group.Spec.Revision == servingRevision {
@@ -453,18 +435,24 @@ func groupsReady(groups map[int32]*inferencev1alpha1.ModelGroup, desired int32) 
 	return true
 }
 
+// groupsInsufficientCapacity summarizes scheduler pressure for service-level rollout.
+// Independent target failures must not spend the retained serving cohort's capacity.
 func groupsInsufficientCapacity(groups map[int32]*inferencev1alpha1.ModelGroup, desired int32) bool {
+	blocked := false
 	for ordinal := int32(0); ordinal < desired; ordinal++ {
 		group := groups[ordinal]
-		if group == nil {
-			continue
+		if group == nil || !group.DeletionTimestamp.IsZero() {
+			return false
 		}
 		condition := meta.FindStatusCondition(group.Status.Conditions, conditionSchedulingCapacity)
-		if condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "InsufficientCapacity" && condition.ObservedGeneration == group.Generation {
-			return true
+		capacityBlocked := condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "InsufficientCapacity" && condition.ObservedGeneration == group.Generation
+		failure := meta.FindStatusCondition(group.Status.Conditions, workload.ConditionTargetReady)
+		if failure != nil && failure.ObservedGeneration == group.Generation && failure.Status == metav1.ConditionFalse && !capacityBlocked {
+			return false
 		}
+		blocked = blocked || capacityBlocked
 	}
-	return false
+	return blocked
 }
 
 // revisionServingReady reports whether an active revision still has a routable Group.
@@ -559,7 +547,7 @@ func poolReadyReasonMessage(ready, capacityReady bool) (string, string) {
 	if ready {
 		return "Ready", "All requested ModelGroups are ready"
 	}
-	return "GroupsNotReady", "One or more requested ModelGroups are not ready"
+	return "GroupsNotReady", "No ready ModelGroup is selected for routing"
 }
 
 func rolloutReason(state groupState) string {
@@ -574,7 +562,7 @@ func rolloutReason(state groupState) string {
 
 func rolloutMessage(state groupState) string {
 	if state.InsufficientCapacity {
-		return "The target Group revision is Unschedulable; the serving revision is being drained"
+		return "The target Group revision is waiting for scheduling capacity"
 	}
 	if state.RolloutPending {
 		return "Requested Group capacity is converging or superseded Groups are being retired"

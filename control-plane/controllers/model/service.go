@@ -445,9 +445,9 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 	return nil
 }
 
-// replacementPoolsCapacityBlocked permits obsolete-Pool retirement only after every active
-// replacement has resolved current intent and at least one reports scheduler capacity pressure.
-// Failed or unobserved targets retain the serving topology rather than spending its capacity.
+// replacementPoolsCapacityBlocked permits cohort retirement after every active replacement
+// reflects resolved current intent and at least one reports scheduler capacity pressure.
+// Unobserved targets and independent failures retain the serving topology.
 func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools map[string]*inferencev1alpha1.ModelPool) bool {
 	blocked := false
 	for _, compiled := range compiledPools {
@@ -466,22 +466,22 @@ func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools m
 				return false
 			}
 		}
+		rollout := meta.FindStatusCondition(pool.Status.Conditions, conditionRolloutPending)
+		capacityBlocked := rollout != nil && rollout.ObservedGeneration == pool.Generation && rollout.Status == metav1.ConditionTrue && rollout.Reason == "InsufficientCapacity"
 		target := meta.FindStatusCondition(pool.Status.Conditions, workload.ConditionTargetReady)
-		if target == nil || target.ObservedGeneration != pool.Generation || target.Status == metav1.ConditionFalse {
+		if target == nil || target.ObservedGeneration != pool.Generation || target.Status == metav1.ConditionFalse && !capacityBlocked {
 			return false
 		}
-		rollout := meta.FindStatusCondition(pool.Status.Conditions, conditionRolloutPending)
-		if rollout != nil && rollout.ObservedGeneration == pool.Generation && rollout.Status == metav1.ConditionTrue && rollout.Reason == "InsufficientCapacity" {
-			blocked = true
-		}
+		blocked = blocked || capacityBlocked
 	}
 	return blocked
 }
 
-// commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
+// commitServingGeneration owns serving-cohort withdrawal and atomic replacement selection.
+// Only fully prepared compatible Pool revisions are published for frontend routing.
 func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
-	// Keep routing on the last complete cohort until every nonzero Pool has prepared a
-	// compatible revision. The final status patch is the service-level atomic commit point.
+	// Keep the last complete cohort unless scheduler capacity pressure requires its
+	// retirement. The replacement still commits only after every required Pool is ready.
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
 		return false, err
@@ -491,9 +491,37 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 		pool := &pools[index]
 		byName[pool.Spec.PoolName] = pool
 	}
+	// Read current deletion state before deciding whether an old revision can release capacity.
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
 	var groups inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
+	if err := reader.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
 		return false, fmt.Errorf("list ModelGroups for serving generation: %w", err)
+	}
+	// A prepared Pool can otherwise retain an old revision needed by a blocked sibling.
+	// Pure scale-up has no replacement revision to release and keeps its serving capacity.
+	if replacementPoolsCapacityBlocked(compiledPools, byName) {
+		for index := range pools {
+			pool := &pools[index]
+			revision := servingconfig.ServingRevision(service, pool)
+			if revision == "" || !pool.DeletionTimestamp.IsZero() {
+				continue
+			}
+			replacing := slices.ContainsFunc(groups.Items, func(group inferencev1alpha1.ModelGroup) bool {
+				return servingconfig.RoutingGroupOwnedBy(&group, pool) && group.Spec.Revision != revision
+			})
+			if !replacing {
+				continue
+			}
+			base := service.DeepCopy()
+			service.Status.ServingPoolRevisions = nil
+			if err := reconciler.Status().Patch(ctx, service, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+				return false, fmt.Errorf("withdraw ModelService serving cohort for capacity: %w", err)
+			}
+			return false, nil
+		}
 	}
 	selected := make([]inferencev1alpha1.ServingPoolRevision, 0, len(compiledPools))
 	for _, compiled := range compiledPools {
