@@ -14,11 +14,15 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
-	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"k8s.io/utils/ptr"
 )
+
+type backendDeploymentRequiredError struct{ service string }
+
+type modelCatalogProjectionError struct{ service, reason string }
 
 // projectConfiguredModels resolves model discovery and admission together, independently of capacity.
 // Missing selected artifacts exclude only their service unless its published provenance still matches.
@@ -240,14 +244,10 @@ func catalogTopology(roles []inferencev1alpha1.ModelRole) string {
 	return "aggregate"
 }
 
-type backendDeploymentRequiredError struct{ service string }
-
 // Error identifies bounded admission that cannot yet share the selected backend ledger.
 func (err *backendDeploymentRequiredError) Error() string {
 	return fmt.Sprintf("ModelService %q and its frontend must be redeployed with the same admission ledger before bounded admission can be applied", err.service)
 }
-
-type modelCatalogProjectionError struct{ service, reason string }
 
 // Error reports a service-local selected catalog identity that could not be proven.
 func (err *modelCatalogProjectionError) Error() string {

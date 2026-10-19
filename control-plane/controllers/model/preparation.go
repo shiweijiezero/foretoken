@@ -14,8 +14,8 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +25,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+)
+
+// modelPreparationFailure distinguishes a completed failed attempt from an API observation error.
+type modelPreparationFailure struct {
+	reason  string
+	message string
+}
+
+var errNoPreparationPlacement = errors.New("no eligible accelerator node for model preparation")
+
+const (
+	preparationConfigMapEnv      = "FORETOKEN_MODEL_PREPARATION_CONFIGMAP"
+	preparationNamespaceEnv      = "FORETOKEN_MODEL_PREPARATION_NAMESPACE"
+	preparationRecordEnv         = "FORETOKEN_MODEL_PREPARATION_RECORD"
+	preparationRecordDirectory   = "/etc/foretoken/model-source"
+	preparationRecordKey         = "source.json"
+	preparationPoolLabel         = "inference.foretoken.io/preparation-pool"
+	preparationSourceReadyReason = "SourcePrepared"
 )
 
 // reconcilePreparation runs source acquisition before allocating ModelGroup accelerator Pods.
@@ -94,12 +112,6 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 		return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
 	}
 	return false, nil
-}
-
-// modelPreparationFailure distinguishes a completed failed attempt from an API observation error.
-type modelPreparationFailure struct {
-	reason  string
-	message string
 }
 
 // Error retains the preparation cause for status publication and reconciliation logs.
@@ -239,8 +251,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	return job, nil
 }
 
-var errNoPreparationPlacement = errors.New("no eligible accelerator node for model preparation")
-
 // preparationNodeAffinity restricts a new CPU preparation Job to nodes that can
 // also host its serving Pod. The scheduler still decides placement and PVC binding.
 func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*corev1.NodeAffinity, error) {
@@ -290,16 +300,6 @@ func preparationNodeTaintsSupported(taints []corev1.Taint, accelerator string) b
 	}
 	return true
 }
-
-const (
-	preparationConfigMapEnv      = "FORETOKEN_MODEL_PREPARATION_CONFIGMAP"
-	preparationNamespaceEnv      = "FORETOKEN_MODEL_PREPARATION_NAMESPACE"
-	preparationRecordEnv         = "FORETOKEN_MODEL_PREPARATION_RECORD"
-	preparationRecordDirectory   = "/etc/foretoken/model-source"
-	preparationRecordKey         = "source.json"
-	preparationPoolLabel         = "inference.foretoken.io/preparation-pool"
-	preparationSourceReadyReason = "SourcePrepared"
-)
 
 func preparationSourceName(spec inferencev1alpha1.ModelGroupSpec) string {
 	return "model-source-" + spec.ModelPoolRef.UID + "-" + spec.Revision

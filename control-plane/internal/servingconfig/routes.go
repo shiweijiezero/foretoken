@@ -12,7 +12,7 @@ import (
 	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

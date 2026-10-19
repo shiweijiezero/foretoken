@@ -16,15 +16,6 @@ import (
 
 const cacheNodeNameEnv = "FORETOKEN_CACHE_NODE_NAME"
 
-// TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
-// Node identity isolates shared-filesystem clients without discarding cache on Pod replacement.
-func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
-	if cache == nil {
-		return ""
-	}
-	return path.Join(cache.MountPath, "triton", "$("+cacheNodeNameEnv+")")
-}
-
 // RuntimeCacheEnv returns vLLM model and compilation cache environment for one ModelGroup.
 func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tritonCacheDirectory string) []corev1.EnvVar {
 	root := "/tmp/foretoken-runtime-cache"
@@ -57,4 +48,13 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tr
 		env = append(env, corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/triton"})
 	}
 	return env
+}
+
+// TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
+// Node identity isolates shared-filesystem clients without discarding cache on Pod replacement.
+func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
+	if cache == nil {
+		return ""
+	}
+	return path.Join(cache.MountPath, "triton", "$("+cacheNodeNameEnv+")")
 }

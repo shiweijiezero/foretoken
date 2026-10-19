@@ -20,115 +20,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// modelPoolReplicaState counts actual Groups only. Requested capacity is assigned by the
-// caller, then any not-yet-materialized requested ordinals are recorded as Pending.
-func modelPoolReplicaState(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) core.ReplicaState {
-	var replicaState core.ReplicaState
-	if pool == nil {
-		return replicaState
-	}
-	for index := range groups {
-		group := &groups[index]
-		if !servingconfig.ModelGroupOwnedBy(group, pool) {
-			continue
-		}
-		addGroupLifecycle(&replicaState, group)
-		if group.Spec.Revision == servingconfig.ServingRevision(service, pool) && servingconfig.RoutingGroupReady(group) {
-			replicaState.RoutableReplicas++
-		}
-	}
-	return replicaState
-}
-
-func addGroupLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1.ModelGroup) {
-	if group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && servingconfig.RoutingGroupReady(group) {
-		replicaState.ReadyReplicas++
-		return
-	}
-	addLifecycle(replicaState, group)
-}
-
-func addLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1.ModelGroup) {
-	if !group.DeletionTimestamp.IsZero() {
-		if meta.IsStatusConditionTrue(group.Status.Conditions, conditionDrained) {
-			replicaState.TerminatingReplicas++
-		} else {
-			replicaState.DrainingReplicas++
-		}
-		replicaState.Transitioning = true
-		return
-	}
-	switch group.Status.Phase {
-	case inferencev1alpha1.ModelGroupPhaseProvisioning:
-		replicaState.ProvisioningReplicas++
-	case inferencev1alpha1.ModelGroupPhaseFailed:
-		replicaState.FailedReplicas++
-	case inferencev1alpha1.ModelGroupPhaseDraining:
-		replicaState.DrainingReplicas++
-	case inferencev1alpha1.ModelGroupPhaseTerminating:
-		replicaState.TerminatingReplicas++
-	default:
-		// Empty phase is deliberately Pending; desired capacity never implies readiness.
-		replicaState.PendingReplicas++
-	}
-	replicaState.Transitioning = true
-}
-
-func finalizeReplicaState(replicaState *core.ReplicaState) {
-	observed := replicaState.ReadyReplicas + replicaState.PendingReplicas + replicaState.ProvisioningReplicas + replicaState.DrainingReplicas + replicaState.TerminatingReplicas + replicaState.FailedReplicas
-	if observed < replicaState.RequestedReplicas {
-		replicaState.PendingReplicas += replicaState.RequestedReplicas - observed
-		replicaState.Transitioning = true
-	}
-}
-
 type modelScalingConfig struct {
 	Autoscaler      *autoscaling.Autoscaler
 	Limits          core.ReplicaLimits
 	PollingInterval time.Duration
 	MetricsMaxAge   time.Duration
-}
-
-// scalingConfig builds the autoscaler, replica bounds, and metrics freshness for one ModelService; absent autoscaling selects fixed capacity.
-func (reconciler *ServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
-	config := service.Spec.Autoscaling
-	if config == nil {
-		return modelScalingConfig{Autoscaler: autoscaling.Manual(), Limits: core.ReplicaLimits{MaxReplicas: maxDesiredReplicas}}, nil
-	}
-	if config.MinReplicas < 1 || config.MaxReplicas < config.MinReplicas {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling group bounds are invalid")
-	}
-	if config.Decision.Algorithm == "" || config.Decision.Algorithm == "manual" {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling decision.algorithm must select an automatic policy; omit autoscaling for fixed capacity")
-	}
-	selected, err := autoscaling.New(autoscaling.Configuration{
-		Decision:   algorithmConfiguration(&config.Decision),
-		Trigger:    algorithmConfiguration(config.Trigger),
-		Adjustment: algorithmConfiguration(config.Adjustment),
-		History:    reconciler.autoscalingRecommendationHistory(),
-	})
-	if err != nil {
-		return modelScalingConfig{}, err
-	}
-	interval := selected.PollingInterval()
-	return modelScalingConfig{
-		Autoscaler:      selected,
-		Limits:          core.ReplicaLimits{MinReplicas: config.MinReplicas, MaxReplicas: config.MaxReplicas},
-		PollingInterval: interval,
-		MetricsMaxAge:   3 * interval,
-	}, nil
-}
-
-// algorithmConfiguration converts one API stage configuration to the runtime form without interpreting its parameters.
-func algorithmConfiguration(config *inferencev1alpha1.ModelAutoscalingAlgorithmConfig) autoscaling.AlgorithmConfiguration {
-	if config == nil {
-		return autoscaling.AlgorithmConfiguration{}
-	}
-	result := autoscaling.AlgorithmConfiguration{Algorithm: config.Algorithm}
-	if config.Parameters != nil {
-		result.Parameters = config.Parameters.Raw
-	}
-	return result
 }
 
 // applyScaling evaluates autoscaling targets and returns compiled pools with applied capacity.
@@ -274,6 +170,110 @@ func (reconciler *ServiceReconciler) applyScaling(ctx context.Context, service *
 		resolved[index].DesiredGroups = desired
 	}
 	return resolved, statuses, nil
+}
+
+// scalingConfig builds the autoscaler, replica bounds, and metrics freshness for one ModelService; absent autoscaling selects fixed capacity.
+func (reconciler *ServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
+	config := service.Spec.Autoscaling
+	if config == nil {
+		return modelScalingConfig{Autoscaler: autoscaling.Manual(), Limits: core.ReplicaLimits{MaxReplicas: maxDesiredReplicas}}, nil
+	}
+	if config.MinReplicas < 1 || config.MaxReplicas < config.MinReplicas {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling group bounds are invalid")
+	}
+	if config.Decision.Algorithm == "" || config.Decision.Algorithm == "manual" {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling decision.algorithm must select an automatic policy; omit autoscaling for fixed capacity")
+	}
+	selected, err := autoscaling.New(autoscaling.Configuration{
+		Decision:   algorithmConfiguration(&config.Decision),
+		Trigger:    algorithmConfiguration(config.Trigger),
+		Adjustment: algorithmConfiguration(config.Adjustment),
+		History:    reconciler.autoscalingRecommendationHistory(),
+	})
+	if err != nil {
+		return modelScalingConfig{}, err
+	}
+	interval := selected.PollingInterval()
+	return modelScalingConfig{
+		Autoscaler:      selected,
+		Limits:          core.ReplicaLimits{MinReplicas: config.MinReplicas, MaxReplicas: config.MaxReplicas},
+		PollingInterval: interval,
+		MetricsMaxAge:   3 * interval,
+	}, nil
+}
+
+// modelPoolReplicaState counts actual Groups only. Requested capacity is assigned by the
+// caller, then any not-yet-materialized requested ordinals are recorded as Pending.
+func modelPoolReplicaState(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) core.ReplicaState {
+	var replicaState core.ReplicaState
+	if pool == nil {
+		return replicaState
+	}
+	for index := range groups {
+		group := &groups[index]
+		if !servingconfig.ModelGroupOwnedBy(group, pool) {
+			continue
+		}
+		addGroupLifecycle(&replicaState, group)
+		if group.Spec.Revision == servingconfig.ServingRevision(service, pool) && servingconfig.RoutingGroupReady(group) {
+			replicaState.RoutableReplicas++
+		}
+	}
+	return replicaState
+}
+
+func addGroupLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1.ModelGroup) {
+	if group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && servingconfig.RoutingGroupReady(group) {
+		replicaState.ReadyReplicas++
+		return
+	}
+	addLifecycle(replicaState, group)
+}
+
+func addLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1.ModelGroup) {
+	if !group.DeletionTimestamp.IsZero() {
+		if meta.IsStatusConditionTrue(group.Status.Conditions, conditionDrained) {
+			replicaState.TerminatingReplicas++
+		} else {
+			replicaState.DrainingReplicas++
+		}
+		replicaState.Transitioning = true
+		return
+	}
+	switch group.Status.Phase {
+	case inferencev1alpha1.ModelGroupPhaseProvisioning:
+		replicaState.ProvisioningReplicas++
+	case inferencev1alpha1.ModelGroupPhaseFailed:
+		replicaState.FailedReplicas++
+	case inferencev1alpha1.ModelGroupPhaseDraining:
+		replicaState.DrainingReplicas++
+	case inferencev1alpha1.ModelGroupPhaseTerminating:
+		replicaState.TerminatingReplicas++
+	default:
+		// Empty phase is deliberately Pending; desired capacity never implies readiness.
+		replicaState.PendingReplicas++
+	}
+	replicaState.Transitioning = true
+}
+
+func finalizeReplicaState(replicaState *core.ReplicaState) {
+	observed := replicaState.ReadyReplicas + replicaState.PendingReplicas + replicaState.ProvisioningReplicas + replicaState.DrainingReplicas + replicaState.TerminatingReplicas + replicaState.FailedReplicas
+	if observed < replicaState.RequestedReplicas {
+		replicaState.PendingReplicas += replicaState.RequestedReplicas - observed
+		replicaState.Transitioning = true
+	}
+}
+
+// algorithmConfiguration converts one API stage configuration to the runtime form without interpreting its parameters.
+func algorithmConfiguration(config *inferencev1alpha1.ModelAutoscalingAlgorithmConfig) autoscaling.AlgorithmConfiguration {
+	if config == nil {
+		return autoscaling.AlgorithmConfiguration{}
+	}
+	result := autoscaling.AlgorithmConfiguration{Algorithm: config.Algorithm}
+	if config.Parameters != nil {
+		result.Parameters = config.Parameters.Raw
+	}
+	return result
 }
 
 // scalingSnapshot builds one replica and metrics input for the autoscaling pipeline.

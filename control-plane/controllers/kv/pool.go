@@ -28,12 +28,9 @@ const kvPoolFinalizer = "inference.foretoken.io/kvpool-protection"
 
 type PoolReconciler struct{ client.Client }
 
-// SetupWithManager registers KVPool reconciliation and KVGroup ownership watches.
-func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.KVPool{}).
-		Owns(&inferencev1alpha1.KVGroup{}).
-		Complete(reconciler)
+type kvGroupState struct {
+	materialized, ready, converged bool
+	reason, message                string
 }
 
 // Reconcile converges a KVPool into its requested immutable KVGroup revision.
@@ -73,11 +70,6 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		phase = inferencev1alpha1.KVPoolPhasePending
 	}
 	return ctrl.Result{}, reconciler.updateStatus(ctx, pool, phase, groups.materialized, groups.ready, groups.reason, groups.message)
-}
-
-type kvGroupState struct {
-	materialized, ready, converged bool
-	reason, message                string
 }
 
 // reconcileGroups observes compatible instances before converging deletion and creation; write errors retain observed availability.
@@ -290,4 +282,12 @@ func (reconciler *PoolReconciler) updateStatus(ctx context.Context, pool *infere
 		return nil
 	}
 	return reconciler.Status().Patch(ctx, pool, client.MergeFrom(base))
+}
+
+// SetupWithManager registers KVPool reconciliation and KVGroup ownership watches.
+func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVPool{}).
+		Owns(&inferencev1alpha1.KVGroup{}).
+		Complete(reconciler)
 }

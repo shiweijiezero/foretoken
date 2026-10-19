@@ -48,6 +48,8 @@ type LaunchLifecycle struct {
 	DrainSeconds   int64 `json:"drainSeconds"`
 }
 
+var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
 // Compile validates the supported single-node Omni topology and normalizes engine arguments.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
 	if template.NodeCount != 1 || template.MemberCount != 1 {
@@ -130,8 +132,6 @@ func (plan LaunchPlanV1) JSON() (string, error) {
 	data, err := json.Marshal(plan)
 	return string(data), err
 }
-
-var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alpha1.EngineArguments, error) {
 	args := make(inferencev1alpha1.EngineArguments, len(input)+4)

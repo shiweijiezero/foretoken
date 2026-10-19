@@ -43,38 +43,12 @@ type instanceAdmissionConfiguration struct {
 	MaxConcurrentRequests *uint32 `json:"max_concurrent_requests"`
 }
 
-func instanceAdmissionConfigMapName(poolUID string) string {
-	return "instance-admission-" + poolUID
-}
-
-func groupUsesLiveInstanceAdmission(group *inferencev1alpha1.ModelGroup) bool {
-	return group.Spec.Runtime.Backend == "vllm" && group.Spec.Runtime.InstanceAdmissionProtocol == inferencev1alpha1.InstanceAdmissionFileProtocol
-}
-
-func instanceAdmissionLimit(config *inferencev1alpha1.InstanceAdmissionConfig) *uint32 {
-	if config == nil {
-		return nil
-	}
-	limit := config.MaxConcurrentRequests
-	return &limit
-}
-
-// readInstanceAdmissionConfiguration validates the publisher's complete persisted contract.
-func readInstanceAdmissionConfiguration(data string) (instanceAdmissionConfiguration, error) {
-	var config instanceAdmissionConfiguration
-	decoder := json.NewDecoder(bytes.NewBufferString(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
-		return config, err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(data), &fields); err != nil {
-		return config, err
-	}
-	if config.Version == 0 || fields["max_concurrent_requests"] == nil || config.MaxConcurrentRequests != nil && *config.MaxConcurrentRequests == 0 {
-		return config, fmt.Errorf("instance admission requires a positive version and a positive or null max_concurrent_requests")
-	}
-	return config, nil
+type instanceAdmissionDiagnostics struct {
+	ActiveGeneration      *uint64 `json:"active_generation"`
+	TargetGeneration      *uint64 `json:"target_generation"`
+	ConfigurationError    *string `json:"configuration_error"`
+	MaxConcurrentRequests *uint32 `json:"max_concurrent_requests"`
+	Accepting             bool    `json:"accepting"`
 }
 
 // reconcileInstanceAdmission is the sole publisher of live instance limits.
@@ -181,47 +155,9 @@ func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context
 	return nil
 }
 
-// poolsForInstancePod refreshes newly created ingress Pods through their existing Group owner.
-func (reconciler *PoolReconciler) poolsForInstancePod(ctx context.Context, object client.Object) []reconcile.Request {
-	if object.GetLabels()[workload.ModelGroupLabel] == "" {
-		return nil
-	}
-	reader := reconciler.APIReader
-	if reader == nil {
-		reader = reconciler.Client
-	}
-	pod := object.(*corev1.Pod)
-	group, err := workload.ModelGroupForPod(ctx, reader, pod)
-	if err != nil || !groupUsesLiveInstanceAdmission(group) || !labels.SelectorFromSet(workload.ModelGroupServiceSelector(group)).Matches(labels.Set(pod.Labels)) {
-		return nil
-	}
-	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}}}
-}
-
-// modelServicesForInstanceConfiguration observes publications through their verified Pool owner.
-func (reconciler *ServiceReconciler) modelServicesForInstanceConfiguration(ctx context.Context, object client.Object) []reconcile.Request {
-	owner := metav1.GetControllerOf(object)
-	if owner == nil || owner.APIVersion != inferencev1alpha1.GroupVersion.String() || owner.Kind != "ModelPool" {
-		return nil
-	}
-	pool := new(inferencev1alpha1.ModelPool)
-	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: object.GetNamespace(), Name: owner.Name}, pool); err != nil || !metav1.IsControlledBy(object, pool) || object.GetName() != instanceAdmissionConfigMapName(string(pool.UID)) {
-		return nil
-	}
-	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}}}
-}
-
-type instanceAdmissionDiagnostics struct {
-	ActiveGeneration      *uint64 `json:"active_generation"`
-	TargetGeneration      *uint64 `json:"target_generation"`
-	ConfigurationError    *string `json:"configuration_error"`
-	MaxConcurrentRequests *uint32 `json:"max_concurrent_requests"`
-	Accepting             bool    `json:"accepting"`
-}
-
 // instanceAdmissionApplied observes every requested ingress of the current serving generation.
 // Desired live limits must match the materialized Pool and its owned publication before probing;
-// commitServingGeneration owns structural template consistency.
+// reconcileServingCohort owns structural template consistency.
 func (reconciler *ServiceReconciler) instanceAdmissionApplied(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pending := func() (bool, string, string, error) {
 		return false, "ConfigurationPending", "Waiting for model instances to apply instance admission configuration", nil
@@ -329,6 +265,40 @@ func (reconciler *ServiceReconciler) instanceAdmissionApplied(ctx context.Contex
 	return true, "Ready", "Model instances have applied instance admission configuration", nil
 }
 
+func instanceAdmissionConfigMapName(poolUID string) string {
+	return "instance-admission-" + poolUID
+}
+
+func groupUsesLiveInstanceAdmission(group *inferencev1alpha1.ModelGroup) bool {
+	return group.Spec.Runtime.Backend == "vllm" && group.Spec.Runtime.InstanceAdmissionProtocol == inferencev1alpha1.InstanceAdmissionFileProtocol
+}
+
+func instanceAdmissionLimit(config *inferencev1alpha1.InstanceAdmissionConfig) *uint32 {
+	if config == nil {
+		return nil
+	}
+	limit := config.MaxConcurrentRequests
+	return &limit
+}
+
+// readInstanceAdmissionConfiguration validates the publisher's complete persisted contract.
+func readInstanceAdmissionConfiguration(data string) (instanceAdmissionConfiguration, error) {
+	var config instanceAdmissionConfiguration
+	decoder := json.NewDecoder(bytes.NewBufferString(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return config, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &fields); err != nil {
+		return config, err
+	}
+	if config.Version == 0 || fields["max_concurrent_requests"] == nil || config.MaxConcurrentRequests != nil && *config.MaxConcurrentRequests == 0 {
+		return config, fmt.Errorf("instance admission requires a positive version and a positive or null max_concurrent_requests")
+	}
+	return config, nil
+}
+
 // readInstanceAdmissionDiagnostics reads the configuration active at one Group ingress.
 func readInstanceAdmissionDiagnostics(ctx context.Context, endpoint string) (instanceAdmissionDiagnostics, error) {
 	var diagnostics instanceAdmissionDiagnostics
@@ -348,4 +318,34 @@ func readInstanceAdmissionDiagnostics(ctx context.Context, endpoint string) (ins
 		return diagnostics, fmt.Errorf("decode instance admission response: %w", err)
 	}
 	return diagnostics, nil
+}
+
+// poolsForInstancePod refreshes newly created ingress Pods through their existing Group owner.
+func (reconciler *PoolReconciler) poolsForInstancePod(ctx context.Context, object client.Object) []reconcile.Request {
+	if object.GetLabels()[workload.ModelGroupLabel] == "" {
+		return nil
+	}
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	pod := object.(*corev1.Pod)
+	group, err := workload.ModelGroupForPod(ctx, reader, pod)
+	if err != nil || !groupUsesLiveInstanceAdmission(group) || !labels.SelectorFromSet(workload.ModelGroupServiceSelector(group)).Matches(labels.Set(pod.Labels)) {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}}}
+}
+
+// modelServicesForInstanceConfiguration observes publications through their verified Pool owner.
+func (reconciler *ServiceReconciler) modelServicesForInstanceConfiguration(ctx context.Context, object client.Object) []reconcile.Request {
+	owner := metav1.GetControllerOf(object)
+	if owner == nil || owner.APIVersion != inferencev1alpha1.GroupVersion.String() || owner.Kind != "ModelPool" {
+		return nil
+	}
+	pool := new(inferencev1alpha1.ModelPool)
+	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: object.GetNamespace(), Name: owner.Name}, pool); err != nil || !metav1.IsControlledBy(object, pool) || object.GetName() != instanceAdmissionConfigMapName(string(pool.UID)) {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}}}
 }

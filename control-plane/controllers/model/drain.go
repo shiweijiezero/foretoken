@@ -46,38 +46,6 @@ type modelServerTelemetry struct {
 	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
 }
 
-// validateVersion accepts telemetry schemas whose admission and load fields are compatible.
-func (telemetry modelServerTelemetry) validateVersion() error {
-	if telemetry.Version != 2 && telemetry.Version != 3 {
-		return fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
-	}
-	return nil
-}
-
-// closeModelAdmission closes model-server admission and returns its current drain telemetry.
-func closeModelAdmission(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/internal/admission/close", nil)
-	if err != nil {
-		return modelServerTelemetry{}, err
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return modelServerTelemetry{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return modelServerTelemetry{}, fmt.Errorf("admission close returned HTTP %d", response.StatusCode)
-	}
-	var telemetry modelServerTelemetry
-	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
-		return modelServerTelemetry{}, fmt.Errorf("decode admission close response: %w", err)
-	}
-	if err := telemetry.validateVersion(); err != nil {
-		return modelServerTelemetry{}, err
-	}
-	return telemetry, nil
-}
-
 // reconcileDelete coordinates admission closure, route withdrawal, and bounded request drain before deletion.
 func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *inferencev1alpha1.ModelGroup) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(group, modelGroupDrainFinalizer) {
@@ -186,6 +154,38 @@ func (reconciler *GroupReconciler) reconcileDelete(ctx context.Context, group *i
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// validateVersion accepts telemetry schemas whose admission and load fields are compatible.
+func (telemetry modelServerTelemetry) validateVersion() error {
+	if telemetry.Version != 2 && telemetry.Version != 3 {
+		return fmt.Errorf("unsupported model-server telemetry version %d", telemetry.Version)
+	}
+	return nil
+}
+
+// closeModelAdmission closes model-server admission and returns its current drain telemetry.
+func closeModelAdmission(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/internal/admission/close", nil)
+	if err != nil {
+		return modelServerTelemetry{}, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return modelServerTelemetry{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return modelServerTelemetry{}, fmt.Errorf("admission close returned HTTP %d", response.StatusCode)
+	}
+	var telemetry modelServerTelemetry
+	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
+		return modelServerTelemetry{}, fmt.Errorf("decode admission close response: %w", err)
+	}
+	if err := telemetry.validateVersion(); err != nil {
+		return modelServerTelemetry{}, err
+	}
+	return telemetry, nil
 }
 
 // groupWorkloads reads the Group's preparation and serving owners before retirement.
