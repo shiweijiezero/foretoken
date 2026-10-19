@@ -16,16 +16,14 @@ Name the components that may change, or explicitly leave the scope open to the w
 
 List the models, workloads, and metrics for comparison. State which conditions must remain the same across approaches and link the configurations and reference measurements.
 
-## Current coordination
+## Iteration overview
 
-Provide the shared experiment directory's host and absolute path, then link each candidate's or research question's document under `../workspace/`. Those documents locate the approach, plan, code and results for other members; follow the [document collaboration guidance](../experiment-records.md#share-documents-and-code).
+Provide the shared experiment directory's host and absolute path. Give each approach or research question a short summary and link its `../iterations/<name>/notes/iteration.md`; that note links the complete proposals, plans and analyses. Follow the [document collaboration guide](../experiment-records.md#share-documents-and-code).
 
-Link existing task records for owners and dependencies. Without task tools, use one row per candidate or independent research task:
+| Approach or question | Summary | Iteration notes |
+| --- | --- | --- |
 
-| Question and document | Owner | Next action, resources and job/result links | Status and dependencies |
-| --- | --- | --- | --- |
-
-State the original deadline and any reserved quiet measurement window.
+Link existing task records for owners, next actions, resources and dependencies. Without task tools, record those arrangements here. State the original deadline and any reserved quiet measurement window.
 
 ## Findings
 

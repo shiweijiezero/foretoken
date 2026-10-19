@@ -47,11 +47,12 @@ For example, when logged in to W&B, replace the recipe's output options with:
 
 ```text
 results/decode/parallelism/
-├── notes/experiment.md
-├── workspace/
-│   └── tp2/plan.md             # Example of an agent-written proposal and plan
+├── notes/experiment.md        # Overview across iterations
 └── iterations/tp2/
-    ├── notes/iteration.md
+    ├── notes/
+    │   ├── iteration.md       # Summaries, document links and decisions
+    │   ├── plan.md            # Example: full proposal and execution plan
+    │   └── analysis.md        # Example: detailed result analysis
     └── runs/perf-000001/
         ├── generated/
         │   └── context.json
@@ -67,15 +68,17 @@ Records are saved on the machine running the evaluation. Relative paths start fr
 
 ### Share documents and code
 
-Store substantial proposals, plans and analyses in `<output-dir>/workspace/`. For example, a Worker can maintain `workspace/tp2/plan.md` with the approach, implementation and validation plan, and current result, linking the iteration notes and original runs rather than copying them. Keep planned work distinct from measured findings.
+Store each approach's complete proposals, plans and analyses in `<output-dir>/iterations/<name>/notes/`. For example, `plan.md` explains the problem and evidence, the proposed approach and alternatives, key trade-offs, and the implementation and validation plan; `analysis.md` explains the measured results. Members can begin these documents before measurement and reuse the same name with `--iteration` when running experiments.
+
+Use a summary table in `iteration.md` to introduce each topic and link its full document. Keep dated reviews and decisions below the table. The experiment-level `notes/experiment.md` links these iteration notes and summarizes goals and findings across iterations.
 
 The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the overview.
 
-Code stays in its assigned checkout or worktree. The candidate document names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
+Code stays in its assigned checkout or worktree. The proposal names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
 
-Use `notes/experiment.md` as the reading entry point for each question's or candidate's documents, code and results. Members browse one another's material directly as needed. Each document has one writer; substantial reviews or alternative proposals go in their authors' documents. After updating a file, send relevant members a short finding, its path or section, and any action needed; full plans, diffs and logs stay in files.
+Exchange summaries together with the complete document paths. Members read the files and discuss the proposal, evidence, alternatives and validation plan, especially at the first exchange or when the approach changes. Record decisions and open questions in the notes. Members can browse one another's documents and code as needed; each document has one writer, with substantial reviews or alternative proposals saved in their authors' files.
 
-Agents create and organize `workspace/` as needed; `tp2/plan.md` is only an example. Research sources, scripts, preparation logs, reviews and cleanup records belong here too. Benchmark commands do not create this directory. Keep reports, experiment notes and run artifacts in their existing locations. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
+Supporting research, scripts, preparation logs and cleanup records also belong under the iteration's `notes/`, organized as needed. Filenames such as `plan.md` and `analysis.md` are examples. Benchmark commands create missing overview and iteration notes without replacing existing content; members maintain the additional files. Keep original run artifacts under `runs/`. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Analyze results
 
@@ -98,7 +101,8 @@ Keep execution evidence, the history of judgments, and the current summary disti
 | Record | How it changes |
 | --- | --- |
 | Completed run artifacts | Preserve the original commands, metrics, responses, and logs. Later analysis links to them. In-progress files remain owned by their runner. |
-| `iterations/<name>/notes/iteration.md` | The assigned Experimenter appends run interpretations, independent reviews, decisions, and corrections, with timestamps, sources, and evidence links. |
+| `iterations/<name>/notes/iteration.md` | The assigned Experimenter maintains the summary and document index, and appends run findings, independent reviews, decisions, and corrections with timestamps, sources, and evidence links. |
+| Other files under `iterations/<name>/notes/` | Each author maintains the full proposal, plan, analysis or review linked from the iteration notes. |
 | `notes/experiment.md` | The designated writer updates the current approach, open questions and disagreements, and resource arrangements, linking the relevant iteration entries and decisions. |
 
 Attribute analysis, reviews, and decisions to their authors. Each decision states the action and its scope. When correcting a conclusion or changing a decision, link the earlier entry and new evidence so readers can follow how the understanding changed.
