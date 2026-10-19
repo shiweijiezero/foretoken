@@ -20,33 +20,18 @@ use prometheus_client::registry::Registry;
 
 use super::{AdmissionConfig, AdmissionError};
 
-#[derive(Clone)]
-struct HttpObservation {
-    deadline_elapsed: Arc<AtomicBool>,
-}
-
-tokio::task_local! {
-    static HTTP_OBSERVATION: HttpObservation;
-}
-
-/// Runs HTTP admission and its handlers with a shared observation-only deadline cause.
-pub async fn observe_http<T>(work: impl Future<Output = T>) -> T {
-    HTTP_OBSERVATION
-        .scope(
-            HttpObservation {
-                deadline_elapsed: Arc::new(AtomicBool::new(false)),
-            },
-            work,
-        )
-        .await
-}
-
-/// Records the framework's deadline before it cancels nested admission futures.
-pub fn mark_request_deadline() {
-    let _ = HTTP_OBSERVATION.try_with(|observation| {
-        observation.deadline_elapsed.store(true, Ordering::Relaxed);
-    });
-}
+const RESULTS: [&str; 10] = [
+    "dispatched",
+    "prepared",
+    "capacity_rejected",
+    "queue_timeout",
+    "deadline_exceeded",
+    "invalid_request",
+    "closed",
+    "store_unavailable",
+    "dispatch_failed",
+    "cancelled",
+];
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct ModelLabels {
@@ -72,19 +57,6 @@ struct ResultLabels {
     result: &'static str,
 }
 
-const RESULTS: [&str; 10] = [
-    "dispatched",
-    "prepared",
-    "capacity_rejected",
-    "queue_timeout",
-    "deadline_exceeded",
-    "invalid_request",
-    "closed",
-    "store_unavailable",
-    "dispatch_failed",
-    "cancelled",
-];
-
 struct AdmissionMetrics {
     registry: Registry,
     // Publication owns series lifetime. The lock also excludes late events during retirement.
@@ -100,6 +72,57 @@ struct AdmissionMetrics {
     enqueued: Family<CallLabels, Counter>,
     results: Family<ResultLabels, Counter>,
     wait: Family<ResultLabels, Histogram, fn() -> Histogram>,
+}
+
+struct AttemptState {
+    labels: CallLabels,
+    deadline: tokio::time::Instant,
+    deadline_elapsed: Option<Arc<AtomicBool>>,
+    waiting_since: Option<Instant>,
+    finished: bool,
+}
+
+/// Shares one request's terminal observation between its caller and resource owner.
+/// Callers retain a clone before transferring permits to non-cancelable preparation;
+/// recording a result does not release resources or wait for their cleanup.
+#[derive(Clone)]
+pub struct AdmissionAttempt(Arc<Mutex<AttemptState>>);
+
+#[derive(Clone)]
+struct HttpObservation {
+    deadline_elapsed: Arc<AtomicBool>,
+}
+
+static METRICS: LazyLock<AdmissionMetrics> = LazyLock::new(AdmissionMetrics::new);
+
+tokio::task_local! {
+    static HTTP_OBSERVATION: HttpObservation;
+}
+
+/// Runs HTTP admission and its handlers with a shared observation-only deadline cause.
+pub async fn observe_http<T>(work: impl Future<Output = T>) -> T {
+    HTTP_OBSERVATION
+        .scope(
+            HttpObservation {
+                deadline_elapsed: Arc::new(AtomicBool::new(false)),
+            },
+            work,
+        )
+        .await
+}
+
+/// Records the framework's deadline before it cancels nested admission futures.
+pub fn mark_request_deadline() {
+    let _ = HTTP_OBSERVATION.try_with(|observation| {
+        observation.deadline_elapsed.store(true, Ordering::Relaxed);
+    });
+}
+
+/// Encodes admission metrics for the frontend's combined OpenMetrics response.
+pub fn render_metrics() -> Result<String, fmt::Error> {
+    let mut output = String::new();
+    encode(&mut output, &METRICS.registry)?;
+    Ok(output)
 }
 
 fn wait_histogram() -> Histogram {
@@ -312,20 +335,6 @@ pub(crate) fn observe_ledger(
     }
 }
 
-/// Shares one request's terminal observation between its caller and resource owner.
-/// Callers retain a clone before transferring permits to non-cancelable preparation;
-/// recording a result does not release resources or wait for their cleanup.
-#[derive(Clone)]
-pub struct AdmissionAttempt(Arc<Mutex<AttemptState>>);
-
-struct AttemptState {
-    labels: CallLabels,
-    deadline: tokio::time::Instant,
-    deadline_elapsed: Option<Arc<AtomicBool>>,
-    waiting_since: Option<Instant>,
-    finished: bool,
-}
-
 impl AdmissionAttempt {
     /// Starts admission before validation or enqueue; HTTP scope determines the call origin.
     pub fn work(model: &str, deadline: tokio::time::Instant) -> Self {
@@ -474,13 +483,4 @@ impl Drop for AttemptState {
             self.cancelled();
         }
     }
-}
-
-static METRICS: LazyLock<AdmissionMetrics> = LazyLock::new(AdmissionMetrics::new);
-
-/// Encodes admission metrics for the frontend's combined OpenMetrics response.
-pub fn render_metrics() -> Result<String, fmt::Error> {
-    let mut output = String::new();
-    encode(&mut output, &METRICS.registry)?;
-    Ok(output)
 }

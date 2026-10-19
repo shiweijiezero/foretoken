@@ -68,39 +68,12 @@ type ServiceReconciler struct {
 	recommendationHistory     *core.RecommendationHistory
 }
 
-func (reconciler *ServiceReconciler) autoscalingRecommendationHistory() *core.RecommendationHistory {
-	reconciler.recommendationHistoryOnce.Do(func() {
-		reconciler.recommendationHistory = core.NewRecommendationHistory()
-	})
-	return reconciler.recommendationHistory
-}
-
-// SetupWithManager registers the ModelService controller and its owned resources.
-func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	reconciler.APIReader = manager.GetAPIReader()
-	builder := ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.ModelService{}).
-		Owns(&inferencev1alpha1.ModelPool{}).
-		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForInstanceConfiguration)).
-		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForGroup)).
-		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
-		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
-		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
-	if reconciler.CacheProfile.ClaimName != "" {
-		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
-			if object.GetName() != reconciler.CacheProfile.ClaimName {
-				return nil
-			}
-			return reconciler.modelServicesInNamespace(ctx, object)
-		}))
-	}
-	if reconciler.Alerts != nil && reconciler.Alerts.WatchRules {
-		builder = builder.Owns(&monitoringv1.PrometheusRule{})
-	}
-	if err := builder.Complete(reconciler); err != nil {
-		return err
-	}
-	return crmetrics.Registry.Register(newAutoscalingCollector(manager.GetCache()))
+type modelServiceState struct {
+	compiled    metav1.Condition
+	pools       metav1.Condition
+	target      metav1.Condition
+	ready       metav1.Condition
+	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
 }
 
 // Reconcile materializes stable ModelPools and aggregates their serving readiness.
@@ -198,9 +171,7 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 	}
 	if !cacheReady {
 		ready, reason, message, readinessErr := reconciler.serviceReadiness(ctx, service, compiledPools)
-		if ready && service.Status.ServingGeneration == service.Generation {
-			ready, reason, message, readinessErr = reconciler.instanceAdmissionApplied(ctx, service, compiledPools)
-		} else if ready {
+		if ready && service.Status.ServingGeneration != service.Generation {
 			reason, message = "ServingPreviousGeneration", "The previous complete ModelService generation remains ready while runtime cache storage is preparing"
 		}
 		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
@@ -223,7 +194,8 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 		}
 	}
 
-	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
+	desiredPools, err := reconciler.reconcilePools(ctx, service, compiledPools)
+	if err != nil {
 		var deploymentRequired *instanceAdmissionDeploymentRequiredError
 		if errors.As(err, &deploymentRequired) {
 			return ctrl.Result{}, reconciler.rejectTarget(ctx, service, modelServiceState{
@@ -240,18 +212,12 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 		})
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
-	if _, err := reconciler.commitServingGeneration(ctx, service, compiledPools); err != nil {
+	if err := reconciler.reconcileServingCohort(ctx, service, desiredPools); err != nil {
 		return ctrl.Result{}, err
 	}
-	ready, readyReason, readyMessage, err := reconciler.serviceReadiness(ctx, service, compiledPools)
+	ready, readyReason, readyMessage, err := reconciler.serviceReadiness(ctx, service, desiredPools)
 	if err != nil {
 		return ctrl.Result{}, err
-	}
-	if ready && service.Status.ServingGeneration == service.Generation {
-		ready, readyReason, readyMessage, err = reconciler.instanceAdmissionApplied(ctx, service, compiledPools)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if ready && service.Status.ServingGeneration == service.Generation {
 		ready, readyReason, readyMessage, err = servingconfig.ModelConfigurationApplied(ctx, reconciler.Client, reconciler.APIReader, service)
@@ -259,7 +225,7 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 			return ctrl.Result{}, err
 		}
 	}
-	target, err := reconciler.targetReadiness(ctx, service, compiledPools)
+	target, err := reconciler.targetReadiness(ctx, service, desiredPools)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -311,7 +277,7 @@ func (reconciler *ServiceReconciler) retirePoolCapacity(ctx context.Context, ser
 // reconcileStoppedService withdraws the serving cohort and waits for Group-owned execution to end.
 // Application selections remain available for a later resume without preparing new runtimes.
 func (reconciler *ServiceReconciler) reconcileStoppedService(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, autoscaling []inferencev1alpha1.AutoscalingTargetStatus) (ctrl.Result, error) {
-	if _, err := reconciler.commitServingGeneration(ctx, service, compiledPools); err != nil {
+	if err := reconciler.reconcileServingCohort(ctx, service, compiledPools); err != nil {
 		return ctrl.Result{}, err
 	}
 	pools, err := reconciler.ownedPools(ctx, service)
@@ -354,7 +320,7 @@ func (reconciler *ServiceReconciler) reconcileStoppedService(ctx context.Context
 // rejectTarget publishes a configuration rejection without withdrawing a still-serving cohort.
 func (reconciler *ServiceReconciler) rejectTarget(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
 	if len(service.Status.ServingPoolRevisions) > 0 {
-		ready, reason, message, err := reconciler.serviceReadiness(ctx, service, nil)
+		ready, reason, message, err := reconciler.servingCohortReadiness(ctx, service, nil)
 		if err != nil {
 			return err
 		}
@@ -363,28 +329,29 @@ func (reconciler *ServiceReconciler) rejectTarget(ctx context.Context, service *
 	return reconciler.updateStatus(ctx, service, state)
 }
 
-// reconcilePools converges compiled ModelPool contracts and retains service-selected serving pools.
-func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
+// reconcilePools applies Pool contracts and returns the selected targets used to observe and commit serving state.
+func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) ([]compiler.ModelPool, error) {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	byPoolName := make(map[string]*inferencev1alpha1.ModelPool, len(owned))
 	for index := range owned {
 		pool := &owned[index]
 		if previous := byPoolName[pool.Spec.PoolName]; previous != nil {
-			return fmt.Errorf("ModelService owns duplicate ModelPools for poolName %q", pool.Spec.PoolName)
+			return nil, fmt.Errorf("ModelService owns duplicate ModelPools for poolName %q", pool.Spec.PoolName)
 		}
 		byPoolName[pool.Spec.PoolName] = pool
 	}
 
-	if err := reconciler.selectPoolApplications(ctx, service, compiledPools, byPoolName); err != nil {
-		return err
+	desiredPools, err := reconciler.selectPoolApplications(ctx, service, compiledPools, byPoolName)
+	if err != nil {
+		return nil, err
 	}
 
-	capacityBlocked := replacementPoolsCapacityBlocked(compiledPools, byPoolName)
-	desired := make(map[string]struct{}, len(compiledPools))
-	for _, compiled := range compiledPools {
+	capacityBlocked := replacementPoolsCapacityBlocked(desiredPools, byPoolName)
+	desired := make(map[string]struct{}, len(desiredPools))
+	for _, compiled := range desiredPools {
 		desired[compiled.Name] = struct{}{}
 		pool := byPoolName[compiled.Name]
 		if pool == nil {
@@ -415,16 +382,16 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 			pool.Spec.MaxInputTokens = ptr.To(*compiled.MaxInputTokens)
 		}
 		if err := controllerutil.SetControllerReference(service, pool, reconciler.Scheme()); err != nil {
-			return fmt.Errorf("set ModelPool %q owner: %w", compiled.Name, err)
+			return nil, fmt.Errorf("set ModelPool %q owner: %w", compiled.Name, err)
 		}
 
 		if created {
 			if err := reconciler.Create(ctx, pool); err != nil {
-				return fmt.Errorf("create ModelPool %q: %w", compiled.Name, err)
+				return nil, fmt.Errorf("create ModelPool %q: %w", compiled.Name, err)
 			}
 		} else if !apiequality.Semantic.DeepEqual(before.Spec, pool.Spec) || !reflect.DeepEqual(before.OwnerReferences, pool.OwnerReferences) {
 			if err := reconciler.Update(ctx, pool); err != nil {
-				return fmt.Errorf("update ModelPool %q: %w", compiled.Name, err)
+				return nil, fmt.Errorf("update ModelPool %q: %w", compiled.Name, err)
 			}
 		}
 	}
@@ -440,10 +407,10 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 			continue
 		}
 		if err := reconciler.retirePool(ctx, pool); err != nil {
-			return fmt.Errorf("delete stale ModelPool %q: %w", pool.Name, err)
+			return nil, fmt.Errorf("delete stale ModelPool %q: %w", pool.Name, err)
 		}
 	}
-	return nil
+	return desiredPools, nil
 }
 
 // replacementPoolsCapacityBlocked permits obsolete-Pool retirement only after every active
@@ -479,13 +446,13 @@ func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools m
 	return blocked
 }
 
-// commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
-func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
+// reconcileServingCohort atomically selects fully prepared Pool revisions for frontend routing.
+func (reconciler *ServiceReconciler) reconcileServingCohort(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
 	// Keep routing on the last complete cohort until every nonzero Pool has prepared a
 	// compatible revision. The final status patch is the service-level atomic commit point.
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
-		return false, err
+		return err
 	}
 	byName := make(map[string]*inferencev1alpha1.ModelPool, len(pools))
 	for index := range pools {
@@ -494,19 +461,19 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 	}
 	var groups inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
-		return false, fmt.Errorf("list ModelGroups for serving generation: %w", err)
+		return fmt.Errorf("list ModelGroups for serving generation: %w", err)
 	}
 	selected := make([]inferencev1alpha1.ServingPoolRevision, 0, len(compiledPools))
 	for _, compiled := range compiledPools {
 		pool := byName[compiled.Name]
 		if compiled.DesiredGroups == 0 {
 			if pool != nil && !modelPoolStopped(pool) {
-				return false, nil
+				return nil
 			}
 			continue
 		}
 		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !apiequality.Semantic.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
-			return false, nil
+			return nil
 		}
 		selected = append(selected, inferencev1alpha1.ServingPoolRevision{PoolName: pool.Spec.PoolName, PoolUID: string(pool.UID), Revision: pool.Status.PreparedRevision})
 	}
@@ -523,14 +490,14 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 		switch {
 		case servingconfig.PoolsHaveEPD(servicePools) || servingconfig.ServiceDeclaresEPD(candidate):
 			if !servingconfig.PoolsContainCompleteEPD(servicePools) {
-				return false, nil
+				return nil
 			}
 			if _, _, err := servingconfig.ProjectServiceEPDComponents(candidate, servicePools, groups.Items); err != nil {
-				return false, err
+				return err
 			}
 		case servingconfig.PoolsHavePD(servicePools):
 			if _, _, err := servingconfig.ProjectServicePDComponents(candidate, servicePools, groups.Items); err != nil {
-				return false, err
+				return err
 			}
 		default:
 			routes := make([]servingconfig.Group, 0)
@@ -544,20 +511,20 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 				}
 			}
 			if err := servingconfig.ValidateRoutingIdentities(nil, routes, nil, nil); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
 	if service.Status.ServingGeneration == service.Generation && slices.Equal(service.Status.ServingPoolRevisions, selected) {
-		return true, nil
+		return nil
 	}
 	base := service.DeepCopy()
 	service.Status.ServingGeneration = service.Generation
 	service.Status.ServingPoolRevisions = selected
 	if err := reconciler.Status().Patch(ctx, service, client.MergeFrom(base)); err != nil {
-		return false, fmt.Errorf("commit ModelService serving generation: %w", err)
+		return fmt.Errorf("commit ModelService serving generation: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // targetReadiness observes current requested execution independently of the serving cohort.
@@ -593,8 +560,17 @@ func (reconciler *ServiceReconciler) targetReadiness(ctx context.Context, servic
 	return state, nil
 }
 
-// serviceReadiness verifies that the selected serving generation remains routable.
+// serviceReadiness observes selected instances and confirms live admission settings for the current intent.
 func (reconciler *ServiceReconciler) serviceReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
+	ready, reason, message, err := reconciler.servingCohortReadiness(ctx, service, compiledPools)
+	if err != nil || !ready || service.Status.ServingGeneration != service.Generation {
+		return ready, reason, message, err
+	}
+	return reconciler.instanceAdmissionApplied(ctx, service, compiledPools)
+}
+
+// servingCohortReadiness checks the selected execution independently of pending configuration changes.
+func (reconciler *ServiceReconciler) servingCohortReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
 		return false, "PoolsNotReady", "ModelPools are not ready", err
@@ -753,14 +729,6 @@ func (reconciler *ServiceReconciler) ownedPools(ctx context.Context, service *in
 	return owned, nil
 }
 
-type modelServiceState struct {
-	compiled    metav1.Condition
-	pools       metav1.Condition
-	target      metav1.Condition
-	ready       metav1.Condition
-	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
-}
-
 // updateStatus publishes compilation, pool, readiness, and autoscaling results for the ModelService.
 func (reconciler *ServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
 	base := service.DeepCopy()
@@ -822,6 +790,41 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 		}
 	}
 	return nil
+}
+
+func (reconciler *ServiceReconciler) autoscalingRecommendationHistory() *core.RecommendationHistory {
+	reconciler.recommendationHistoryOnce.Do(func() {
+		reconciler.recommendationHistory = core.NewRecommendationHistory()
+	})
+	return reconciler.recommendationHistory
+}
+
+// SetupWithManager registers the ModelService controller and its owned resources.
+func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
+	builder := ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.ModelService{}).
+		Owns(&inferencev1alpha1.ModelPool{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForInstanceConfiguration)).
+		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForGroup)).
+		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
+		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
+	if reconciler.CacheProfile.ClaimName != "" {
+		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			if object.GetName() != reconciler.CacheProfile.ClaimName {
+				return nil
+			}
+			return reconciler.modelServicesInNamespace(ctx, object)
+		}))
+	}
+	if reconciler.Alerts != nil && reconciler.Alerts.WatchRules {
+		builder = builder.Owns(&monitoringv1.PrometheusRule{})
+	}
+	if err := builder.Complete(reconciler); err != nil {
+		return err
+	}
+	return crmetrics.Registry.Register(newAutoscalingCollector(manager.GetCache()))
 }
 
 // modelServicesForGroup refreshes alert scope when an execution group is created or removed.

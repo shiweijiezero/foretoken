@@ -43,6 +43,99 @@ class ResourceProgress:
         return self.message or self.reason
 
 
+def show_status(command: StatusCommand) -> None:
+    """Print CLI-selected service state, retaining log readers only for the observation lifetime."""
+    kubectl = Kubectl()
+    namespace = kubectl.current_namespace()
+    instance = None
+    if command.target is not None:
+        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
+        instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
+        instance.uid = deployment.uid
+
+    def selected_progress() -> tuple[ResourceProgress, ...]:
+        """Read a selected instance or list only instances visible in the current namespace."""
+        if instance is not None:
+            return _instance_progress(instance)
+        return tuple(
+            resource_progress(resource_ref(value), value)
+            for value in kubectl.list_resources((DEPLOYMENT_RESOURCE,), namespace)
+        )
+
+    if not command.watch:
+        progress = selected_progress()
+        _print_status(progress)
+        with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+            startup.poll((item.resource for item in progress), 0.0, follow_logs=False)
+        return
+
+    started = time.monotonic()
+    previous: dict[ResourceRef, tuple[str, str, str]] = {}
+    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        while True:
+            progress = selected_progress()
+            elapsed = time.monotonic() - started
+            for item in progress:
+                signature = (item.state, item.reason, item.message)
+                if previous.get(item.resource) != signature:
+                    report_progress(elapsed, item)
+                    previous[item.resource] = signature
+            startup.poll((item.resource for item in progress), elapsed)
+            time.sleep(2)
+
+
+def wait_for_resources(
+    resources: tuple[ResourceRef, ...],
+    kubectl: Kubectl,
+    timeout: str,
+    *,
+    report: Callable[[float, ResourceProgress], None] | None = None,
+    observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
+    expected_revisions: dict[ResourceRef, str] | None = None,
+) -> tuple[ResourceProgress, ...]:
+    """Wait until every service reaches its requested running or stopped state."""
+    started = time.monotonic()
+    previous: dict[ResourceRef, tuple[str, str, str]] = {}
+    latest: tuple[ResourceProgress, ...] = ()
+    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
+        observation_error = None
+        while time.monotonic() < deadline:
+            try:
+                latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
+            except DeploymentError as error:
+                if time.monotonic() < deadline:
+                    raise
+                observation_error = error
+                break
+            elapsed = time.monotonic() - started
+            if report is not None:
+                for progress in latest:
+                    signature = (progress.state, progress.reason, progress.message)
+                    if previous.get(progress.resource) != signature:
+                        report(elapsed, progress)
+                        previous[progress.resource] = signature
+            if all(progress.converged for progress in latest):
+                return latest
+            if any(progress.state == "Failed" for progress in latest):
+                failed = next(progress for progress in latest if progress.state == "Failed")
+                raise DeploymentError(
+                    f"{failed.resource.display_name} failed: {failed.detail or failed.reason}"
+                )
+            if observe is not None:
+                observe(resources, elapsed, max(0.0, deadline - time.monotonic()))
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+        pending = "; ".join(
+            f"{item.resource.display_name}: {item.detail or item.state}"
+            for item in latest if not item.converged
+        ) or "no service status was observed"
+        if observation_error is not None:
+            pending += f"\nLast observation: {observation_error}"
+        raise DeploymentError(
+            f"serving readiness wait expired after {time.monotonic() - started:.1f}s "
+            f"(budget {timeout}): {pending}"
+        ) from observation_error
+
+
 def resource_progress(
     resource: ResourceRef, value: dict[str, Any], *, expected_revision: str | None = None
 ) -> ResourceProgress:
@@ -219,58 +312,6 @@ def read_progress(
         raise DeploymentError("kubectl omitted a selected Foretoken service") from exc
 
 
-def wait_for_resources(
-    resources: tuple[ResourceRef, ...],
-    kubectl: Kubectl,
-    timeout: str,
-    *,
-    report: Callable[[float, ResourceProgress], None] | None = None,
-    observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
-    expected_revisions: dict[ResourceRef, str] | None = None,
-) -> tuple[ResourceProgress, ...]:
-    """Wait until every service reaches its requested running or stopped state."""
-    started = time.monotonic()
-    previous: dict[ResourceRef, tuple[str, str, str]] = {}
-    latest: tuple[ResourceProgress, ...] = ()
-    with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
-        observation_error = None
-        while time.monotonic() < deadline:
-            try:
-                latest = read_progress(resources, kubectl, expected_revisions=expected_revisions)
-            except DeploymentError as error:
-                if time.monotonic() < deadline:
-                    raise
-                observation_error = error
-                break
-            elapsed = time.monotonic() - started
-            if report is not None:
-                for progress in latest:
-                    signature = (progress.state, progress.reason, progress.message)
-                    if previous.get(progress.resource) != signature:
-                        report(elapsed, progress)
-                        previous[progress.resource] = signature
-            if all(progress.converged for progress in latest):
-                return latest
-            if any(progress.state == "Failed" for progress in latest):
-                failed = next(progress for progress in latest if progress.state == "Failed")
-                raise DeploymentError(
-                    f"{failed.resource.display_name} failed: {failed.detail or failed.reason}"
-                )
-            if observe is not None:
-                observe(resources, elapsed, max(0.0, deadline - time.monotonic()))
-            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
-        pending = "; ".join(
-            f"{item.resource.display_name}: {item.detail or item.state}"
-            for item in latest if not item.converged
-        ) or "no service status was observed"
-        if observation_error is not None:
-            pending += f"\nLast observation: {observation_error}"
-        raise DeploymentError(
-            f"serving readiness wait expired after {time.monotonic() - started:.1f}s "
-            f"(budget {timeout}): {pending}"
-        ) from observation_error
-
-
 def report_progress(elapsed: float, progress: ResourceProgress) -> None:
     """Print a changed service state for deployment waits and status watches."""
     suffix = f" — {progress.detail}" if progress.detail else ""
@@ -296,44 +337,3 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
             f"{item.resource.display_name:<{resource_width}}  "
             f"{item.state:<{state_width}}  {item.detail}"
         )
-
-
-def show_status(command: StatusCommand) -> None:
-    """Print CLI-selected service state, retaining log readers only for the observation lifetime."""
-    kubectl = Kubectl()
-    namespace = kubectl.current_namespace()
-    instance = None
-    if command.target is not None:
-        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
-        instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
-        instance.uid = deployment.uid
-
-    def selected_progress() -> tuple[ResourceProgress, ...]:
-        """Read a selected instance or list only instances visible in the current namespace."""
-        if instance is not None:
-            return _instance_progress(instance)
-        return tuple(
-            resource_progress(resource_ref(value), value)
-            for value in kubectl.list_resources((DEPLOYMENT_RESOURCE,), namespace)
-        )
-
-    if not command.watch:
-        progress = selected_progress()
-        _print_status(progress)
-        with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
-            startup.poll((item.resource for item in progress), 0.0, follow_logs=False)
-        return
-
-    started = time.monotonic()
-    previous: dict[ResourceRef, tuple[str, str, str]] = {}
-    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
-        while True:
-            progress = selected_progress()
-            elapsed = time.monotonic() - started
-            for item in progress:
-                signature = (item.state, item.reason, item.message)
-                if previous.get(item.resource) != signature:
-                    report_progress(elapsed, item)
-                    previous[item.resource] = signature
-            startup.poll((item.resource for item in progress), elapsed)
-            time.sleep(2)

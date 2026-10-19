@@ -23,6 +23,13 @@ use crate::runtime::{
 };
 use crate::video_task::VideoTaskClient;
 
+/// The common timing origin captured before protocol conversion or completion fan-out.
+#[derive(Clone, Copy)]
+pub(crate) struct RequestTiming {
+    pub(crate) started_at: Instant,
+    arrival_time: Option<f64>,
+}
+
 /// Immutable frontend services shared by inference and diagnostic handlers.
 #[derive(Clone)]
 pub(crate) struct ApiState {
@@ -31,6 +38,14 @@ pub(crate) struct ApiState {
     pub video_tasks: Option<Arc<VideoTaskClient>>,
     pub store: Option<Arc<crate::store::ApiStore>>,
     pub response_tasks: Arc<ResponseTasks>,
+}
+
+/// Combines client endpoints without adding another state, middleware, or execution lifecycle.
+pub(crate) fn router() -> Router<ApiState> {
+    openai::router()
+        .merge(conversations::router())
+        .merge(messages::router())
+        .merge(responses::router())
 }
 
 impl RequestSnapshot {
@@ -83,13 +98,6 @@ impl RequestSnapshot {
     }
 }
 
-/// The common timing origin captured before protocol conversion or completion fan-out.
-#[derive(Clone, Copy)]
-pub(crate) struct RequestTiming {
-    pub(crate) started_at: Instant,
-    arrival_time: Option<f64>,
-}
-
 impl RequestTiming {
     pub(crate) fn now() -> Self {
         Self {
@@ -97,14 +105,6 @@ impl RequestTiming {
             arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
         }
     }
-}
-
-/// Combines client endpoints without adding another state, middleware, or execution lifecycle.
-pub(crate) fn router() -> Router<ApiState> {
-    openai::router()
-        .merge(conversations::router())
-        .merge(messages::router())
-        .merge(responses::router())
 }
 
 /// Maps intake errors through the same protocol adapters as generation failures.

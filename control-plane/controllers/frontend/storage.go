@@ -20,24 +20,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// frontendsForClaim refreshes consumers when a borrowed cache or video claim changes identity.
-func (reconciler *Reconciler) frontendsForClaim(ctx context.Context, object client.Object) []reconcile.Request {
-	var frontends inferencev1alpha1.FrontendServiceList
-	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "list frontends for storage claim")
-		return nil
-	}
-	requests := make([]reconcile.Request, 0, len(frontends.Items))
-	for index := range frontends.Items {
-		frontend := &frontends.Items[index]
-		video := frontend.Spec.VideoTasks
-		if object.GetName() == reconciler.CacheProfile.ClaimName || video != nil && video.ClaimName == object.GetName() {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
-		}
-	}
-	return requests
-}
-
 // servingCacheReady lets frontends share a cache only after a serving workload has bound it.
 // Every selected cohort must use that cache before the frontend changes its mount.
 func (reconciler *Reconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, services []inferencev1alpha1.ModelService) (bool, error) {
@@ -108,4 +90,22 @@ func (reconciler *Reconciler) placeFrontendCache(ctx context.Context, namespace 
 		}
 	}
 	return nil
+}
+
+// frontendsForClaim refreshes consumers when a borrowed cache or video claim changes identity.
+func (reconciler *Reconciler) frontendsForClaim(ctx context.Context, object client.Object) []reconcile.Request {
+	var frontends inferencev1alpha1.FrontendServiceList
+	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list frontends for storage claim")
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(frontends.Items))
+	for index := range frontends.Items {
+		frontend := &frontends.Items[index]
+		video := frontend.Spec.VideoTasks
+		if object.GetName() == reconciler.CacheProfile.ClaimName || video != nil && video.ClaimName == object.GetName() {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(frontend)})
+		}
+	}
+	return requests
 }

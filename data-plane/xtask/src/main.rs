@@ -22,6 +22,31 @@ struct WorkspaceMetadata {
     vllm_patches: Vec<PathBuf>,
 }
 
+#[derive(Debug)]
+struct MetadataValues {
+    vllm_source: String,
+    vllm_patch_catalog: String,
+}
+
+#[derive(Deserialize)]
+struct CatalogPatch {
+    path: PathBuf,
+    #[serde(default)]
+    rust: bool,
+}
+
+// Source preparation reads only the catalog fields owned by the pinned Rust checkout.
+#[derive(Deserialize)]
+struct PatchCatalog {
+    patches: Vec<CatalogPatch>,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+struct PreparedPatch {
+    path: PathBuf,
+    contents: String,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("foretoken-xtask: {error}");
@@ -95,19 +120,6 @@ fn workspace_metadata() -> Result<WorkspaceMetadata, String> {
     })
 }
 
-// Source preparation reads only the catalog fields owned by the pinned Rust checkout.
-#[derive(Deserialize)]
-struct PatchCatalog {
-    patches: Vec<CatalogPatch>,
-}
-
-#[derive(Deserialize)]
-struct CatalogPatch {
-    path: PathBuf,
-    #[serde(default)]
-    rust: bool,
-}
-
 /// Read the two repository paths from Cargo workspace metadata.
 fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
     let mut in_section = false;
@@ -139,12 +151,6 @@ fn metadata_values(manifest: &str) -> Result<MetadataValues, String> {
     })
 }
 
-#[derive(Debug)]
-struct MetadataValues {
-    vllm_source: String,
-    vllm_patch_catalog: String,
-}
-
 fn parse_string(value: &str) -> Result<String, String> {
     let value = value.trim().trim_end_matches(',');
     let value = value
@@ -152,12 +158,6 @@ fn parse_string(value: &str) -> Result<String, String> {
         .and_then(|value| value.strip_suffix('"'))
         .ok_or_else(|| format!("expected quoted metadata value, got {value:?}"))?;
     Ok(value.to_owned())
-}
-
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
-struct PreparedPatch {
-    path: PathBuf,
-    contents: String,
 }
 
 /// Prepare the complete selected stack privately before updating Cargo's source tree.

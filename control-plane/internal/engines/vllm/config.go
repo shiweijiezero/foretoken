@@ -89,6 +89,8 @@ const (
 	kvMultiConnector    = "multiConnector"
 )
 
+var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
 // Compile resolves native engine options and topology from the normalized template.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
 	var effective EffectiveConfig
@@ -330,8 +332,6 @@ func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) erro
 	}
 	return nil
 }
-
-var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 // compileEngineArgs resolves native choices against the Pool's actual execution contract.
 // Unclaimed options remain engine-owned; the Rust adapter renders the resulting map.

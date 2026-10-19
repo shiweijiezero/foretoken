@@ -20,6 +20,12 @@ pub(crate) struct RuntimeConfig {
     pub(crate) drain: Duration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KvIndexKeyError {
+    ReadFailed,
+    InvalidLength,
+}
+
 impl RuntimeConfig {
     /// Loads process initialization settings; live request rules come from the serving snapshot.
     pub(crate) fn from_env() -> Result<Self, String> {
@@ -45,12 +51,6 @@ impl RuntimeConfig {
 
 fn required_env(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("{name} must be set by the frontend controller"))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KvIndexKeyError {
-    ReadFailed,
-    InvalidLength,
 }
 
 /// Loads the optional KV-index credential for runtime-builder startup.

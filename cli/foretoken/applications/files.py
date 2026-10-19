@@ -33,134 +33,6 @@ _SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
 _SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
 
-def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
-    """Read retained application identities from service state and workload projections."""
-    references: set[str] = set()
-    for obj in objects:
-        spec = obj.get("spec", {})
-        if obj.get("kind") == "InferenceDeployment" and spec.get("controllerSourceRevision"):
-            references.add(spec["controllerSourceRevision"])
-        if obj.get("kind") == "ConfigMap" and "controller-selection.json" in obj.get("data", {}):
-            selection = json.loads(obj["data"]["controller-selection.json"])
-            references.update(application_references([selection["template"]["controller"]]))
-        template = spec.get("template", {})
-        metadata = obj["metadata"]
-        template_metadata = template.get("metadata", {})
-        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
-            values = json.loads(obj["data"]["deploymentValues"])
-            references.update(filter(None, (
-                values["controller"]["applicationURL"],
-                values["frontend"]["applicationURL"],
-                values["runtime"]["vllm"]["applicationURL"],
-            )))
-        references.update(
-            selection["applicationURL"]
-            for selection in obj.get("status", {}).get("poolApplications", {}).values()
-            if selection.get("applicationURL")
-        )
-        references.update(
-            filter(
-                None,
-                (
-                    metadata.get("annotations", {}).get(SOURCE_REVISION),
-                    template_metadata.get("annotations", {}).get(SOURCE_REVISION),
-                    metadata.get("annotations", {}).get(
-                        "inference.foretoken.io/application-url"
-                    ),
-                    template_metadata.get("annotations", {}).get(
-                        "inference.foretoken.io/application-url"
-                    ),
-                    template.get("sourceRevision"),
-                    template.get("application", {}).get("applicationURL"),
-                    spec.get("runtime", {}).get("applicationURL"),
-                    obj.get("status", {}).get("application", {}).get("applicationURL"),
-                    spec.get("runtime", {}).get("sourceRevision"),
-                    obj.get("status", {}).get("plan", {}).get("workerApplicationURL"),
-                ),
-            )
-        )
-        # Platform defaults remain consumers even before a model service uses them.
-        for container in template.get("spec", spec).get("containers", []):
-            for argument in container.get("args", []):
-                for prefix in (
-                    "--frontend-application-url=",
-                    "--model-server-application-url=",
-                    "--video-worker-application-url=",
-                ):
-                    if argument.startswith(prefix):
-                        references.add(argument.removeprefix(prefix))
-    return references
-
-
-def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
-    """Read current service selections and present workloads, including terminating consumers."""
-    available = kubectl.api_resource_names("inference.foretoken.io")
-    kinds = tuple(
-        kind
-        for kind in (
-            "inferencedeployments",
-            "modelservices",
-            "frontendservices",
-            "modelpools",
-            "modelgroups",
-            "videotasks",
-        )
-        if kind + ".inference.foretoken.io" in available
-    )
-    # A failed reference read cancels sibling queries before their executor joins.
-    # The caller may defer collection, so this observation has its own failure scope.
-    parent = CommandExecution.current()
-    execution = CommandExecution(parent.control_timeout if parent is not None else None)
-    try:
-        if parent is not None:
-            parent.register(execution.cancel)
-        with ThreadPoolExecutor() as queries, execution:
-            pending = [queries.submit(copy_context().run, execution.run_stage, kubectl.list_all_resources, kinds)] if kinds else []
-            pending.extend(queries.submit(
-                copy_context().run, execution.run_stage, kubectl.list_all_resources, ("configmaps",),
-                label_selector=selector,
-            ) for selector in (
-                "foretoken.io/platform=configuration",
-                "app.kubernetes.io/component=deployment-controller",
-            ))
-            pending.extend(
-                queries.submit(
-                    copy_context().run, execution.run_stage, kubectl.list_all_resources,
-                    ("pods", "jobs", "replicasets", "deployments"),
-                    label_selector=label,
-                )
-                for label in (
-                    "app.kubernetes.io/name=foretoken-control-plane",
-                    "inference.foretoken.io/model-group",
-                    "inference.foretoken.io/frontend-service",
-                    "inference.foretoken.io/model-preparation-group",
-                    "foretoken.io/application-files=consumer",
-                    _SOURCE_CONSUMER_LABEL + "=true",
-                )
-            )
-            return [obj for future in pending for obj in future.result()]
-    finally:
-        if parent is not None:
-            parent.unregister(execution.cancel)
-
-
-def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
-    """Stop abandoned writers before their workstation reuses its compiler output."""
-    kubectl.run(
-        [
-            "delete",
-            "jobs",
-            "--all-namespaces",
-            "--selector",
-            f"foretoken.io/application-files=publisher,{_BINDING_LABEL}={binding}",
-            "--ignore-not-found",
-            "--cascade=foreground",
-            "--wait=true",
-            "--timeout=" + timeout,
-        ]
-    )
-
-
 class ApplicationFiles:
     """Resolve the installed file origin without taking ownership of model storage."""
 
@@ -183,139 +55,6 @@ class ApplicationFiles:
         self.endpoint = data["endpoint"]
         self.client_image = data["clientImage"]
         self.mount = data["storageMount"]
-
-    def _manifest_path(self, application_url: str) -> str | None:
-        prefix = self.endpoint.rstrip("/") + "/"
-        if not application_url.startswith(prefix):
-            return None
-        relative = application_url.removeprefix(prefix).rstrip("/")
-        return (
-            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/"
-            + quote(relative, safe="/")
-            + "/manifest.json"
-        )
-
-    def read_manifest(self, application_url: str) -> dict[str, Any] | None:
-        """Read one immutable publication manifest, returning None only when it is absent."""
-        path = self._manifest_path(application_url)
-        if path is None:
-            return None
-        raw = self.kubectl.get_raw_if_not_found(path, "5s")
-        if raw is None:
-            return None
-        try:
-            manifest = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise DeploymentError(
-                "application manifest returned invalid JSON"
-            ) from error
-        if not isinstance(manifest, dict):
-            raise DeploymentError("application manifest must be an object")
-        files = manifest.get("files")
-        if not isinstance(files, list) or any(
-            not isinstance(entry, dict)
-            or not isinstance(entry.get("path"), str)
-            or not PurePosixPath(entry["path"]).parts
-            or PurePosixPath(entry["path"]).is_absolute()
-            or ".." in PurePosixPath(entry["path"]).parts
-            or isinstance(entry.get("mode"), bool)
-            or not isinstance(entry.get("mode"), int)
-            or entry["mode"] < 0
-            or entry["mode"] > 0o777
-            or isinstance(entry.get("size"), bool)
-            or not isinstance(entry.get("size"), int)
-            or entry["size"] < 0
-            for entry in files
-        ):
-            raise DeploymentError("application manifest has invalid file entries")
-        return manifest
-
-    def read_sources(self, application_url: str) -> dict[str, Any] | None:
-        """Read retained build provenance for a current or retired application without publishing."""
-        manifest = self.read_manifest(application_url)
-        if manifest is None:
-            prefix = self.endpoint.rstrip("/") + "/"
-            if not application_url.startswith(prefix):
-                return None
-            relative = PurePosixPath(unquote(application_url.removeprefix(prefix).rstrip("/")))
-            if len(relative.parts) != 2 or relative.is_absolute() or ".." in relative.parts:
-                return None
-            path = (
-                f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
-                + quote(relative.as_posix(), safe="/") + ".json"
-            )
-            raw = self.kubectl.get_raw_if_not_found(path, "5s")
-            if raw is None:
-                return None
-            try:
-                manifest = json.loads(raw)
-            except json.JSONDecodeError as error:
-                raise DeploymentError("source evidence manifest returned invalid JSON") from error
-            if not isinstance(manifest, dict):
-                raise DeploymentError("source evidence manifest must be an object")
-        sources = manifest.get("sources")
-        if sources is None:
-            return None
-        if not isinstance(sources, dict):
-            raise DeploymentError("application source provenance must be an object")
-        if "parts" in sources:
-            if not isinstance(sources["parts"], dict):
-                raise DeploymentError("application source parts must be an object")
-            for part in sources["parts"].values():
-                if part is None:
-                    continue
-                if not isinstance(part, dict):
-                    raise DeploymentError("application source part must be an object or null")
-                if "archive" in part and (not isinstance(part["archive"], str) or not part["archive"]):
-                    raise DeploymentError("application source archive must be a nonempty URL")
-        return sources
-
-    def download_source_archive(self, archive_url: str, directory: Path, *, timeout: str) -> Path:
-        """Copy source evidence from this origin into a caller-owned directory without extracting it."""
-        prefix = self.endpoint.rstrip("/") + "/sources/"
-        if not archive_url.startswith(prefix):
-            raise DeploymentError("source archive is outside the installed application origin")
-        relative = PurePosixPath(unquote(archive_url.removeprefix(prefix)))
-        if (
-            not relative.parts or relative.is_absolute() or ".." in relative.parts
-            or any(character in relative.as_posix() for character in ("\\", "\u0000"))
-        ):
-            raise DeploymentError("source archive has an invalid relative path")
-        path = (
-            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
-            + quote(relative.as_posix(), safe="/")
-        )
-        destination = directory.joinpath(*relative.parts)
-        self.kubectl.download_raw(path, destination, timeout)
-        return destination
-
-    def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
-        """Retain source environments selected by instance or service intent before materialization."""
-        references = set()
-        for obj in objects:
-            if obj.get("kind") == "InferenceDeployment":
-                component = "control-plane"
-                revision = obj.get("spec", {}).get("controllerSourceRevision")
-            else:
-                component = SERVICE_COMPONENTS.get(obj.get("kind"))
-                revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
-            if component is None or not revision:
-                continue
-            if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
-                raise DeploymentError("source revision must be a single directory segment")
-            references.add(self.reference(component, revision))
-        images = set()
-        for reference in sorted(references):
-            manifest = self.read_manifest(reference)
-            if manifest is None:
-                raise DeploymentError(f"selected application manifest is unavailable: {reference}")
-            if "image" not in manifest:
-                continue
-            image = manifest["image"]
-            if not isinstance(image, str) or not image.strip():
-                raise DeploymentError("application manifest image must be a nonempty string")
-            images.add(image)
-        return images
 
     def prepare(self, timeout: str) -> None:
         """Wait for the file origin and select its volume's current publisher node."""
@@ -487,6 +226,139 @@ class ApplicationFiles:
                         "application release operation expired before Helm selection"
                     )
             yield
+
+    def _manifest_path(self, application_url: str) -> str | None:
+        prefix = self.endpoint.rstrip("/") + "/"
+        if not application_url.startswith(prefix):
+            return None
+        relative = application_url.removeprefix(prefix).rstrip("/")
+        return (
+            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/"
+            + quote(relative, safe="/")
+            + "/manifest.json"
+        )
+
+    def read_manifest(self, application_url: str) -> dict[str, Any] | None:
+        """Read one immutable publication manifest, returning None only when it is absent."""
+        path = self._manifest_path(application_url)
+        if path is None:
+            return None
+        raw = self.kubectl.get_raw_if_not_found(path, "5s")
+        if raw is None:
+            return None
+        try:
+            manifest = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise DeploymentError(
+                "application manifest returned invalid JSON"
+            ) from error
+        if not isinstance(manifest, dict):
+            raise DeploymentError("application manifest must be an object")
+        files = manifest.get("files")
+        if not isinstance(files, list) or any(
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("path"), str)
+            or not PurePosixPath(entry["path"]).parts
+            or PurePosixPath(entry["path"]).is_absolute()
+            or ".." in PurePosixPath(entry["path"]).parts
+            or isinstance(entry.get("mode"), bool)
+            or not isinstance(entry.get("mode"), int)
+            or entry["mode"] < 0
+            or entry["mode"] > 0o777
+            or isinstance(entry.get("size"), bool)
+            or not isinstance(entry.get("size"), int)
+            or entry["size"] < 0
+            for entry in files
+        ):
+            raise DeploymentError("application manifest has invalid file entries")
+        return manifest
+
+    def read_sources(self, application_url: str) -> dict[str, Any] | None:
+        """Read retained build provenance for a current or retired application without publishing."""
+        manifest = self.read_manifest(application_url)
+        if manifest is None:
+            prefix = self.endpoint.rstrip("/") + "/"
+            if not application_url.startswith(prefix):
+                return None
+            relative = PurePosixPath(unquote(application_url.removeprefix(prefix).rstrip("/")))
+            if len(relative.parts) != 2 or relative.is_absolute() or ".." in relative.parts:
+                return None
+            path = (
+                f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+                + quote(relative.as_posix(), safe="/") + ".json"
+            )
+            raw = self.kubectl.get_raw_if_not_found(path, "5s")
+            if raw is None:
+                return None
+            try:
+                manifest = json.loads(raw)
+            except json.JSONDecodeError as error:
+                raise DeploymentError("source evidence manifest returned invalid JSON") from error
+            if not isinstance(manifest, dict):
+                raise DeploymentError("source evidence manifest must be an object")
+        sources = manifest.get("sources")
+        if sources is None:
+            return None
+        if not isinstance(sources, dict):
+            raise DeploymentError("application source provenance must be an object")
+        if "parts" in sources:
+            if not isinstance(sources["parts"], dict):
+                raise DeploymentError("application source parts must be an object")
+            for part in sources["parts"].values():
+                if part is None:
+                    continue
+                if not isinstance(part, dict):
+                    raise DeploymentError("application source part must be an object or null")
+                if "archive" in part and (not isinstance(part["archive"], str) or not part["archive"]):
+                    raise DeploymentError("application source archive must be a nonempty URL")
+        return sources
+
+    def download_source_archive(self, archive_url: str, directory: Path, *, timeout: str) -> Path:
+        """Copy source evidence from this origin into a caller-owned directory without extracting it."""
+        prefix = self.endpoint.rstrip("/") + "/sources/"
+        if not archive_url.startswith(prefix):
+            raise DeploymentError("source archive is outside the installed application origin")
+        relative = PurePosixPath(unquote(archive_url.removeprefix(prefix)))
+        if (
+            not relative.parts or relative.is_absolute() or ".." in relative.parts
+            or any(character in relative.as_posix() for character in ("\\", "\u0000"))
+        ):
+            raise DeploymentError("source archive has an invalid relative path")
+        path = (
+            f"/api/v1/namespaces/{self.namespace}/services/http:{self.name}:http/proxy/sources/"
+            + quote(relative.as_posix(), safe="/")
+        )
+        destination = directory.joinpath(*relative.parts)
+        self.kubectl.download_raw(path, destination, timeout)
+        return destination
+
+    def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
+        """Retain source environments selected by instance or service intent before materialization."""
+        references = set()
+        for obj in objects:
+            if obj.get("kind") == "InferenceDeployment":
+                component = "control-plane"
+                revision = obj.get("spec", {}).get("controllerSourceRevision")
+            else:
+                component = SERVICE_COMPONENTS.get(obj.get("kind"))
+                revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            if component is None or not revision:
+                continue
+            if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):
+                raise DeploymentError("source revision must be a single directory segment")
+            references.add(self.reference(component, revision))
+        images = set()
+        for reference in sorted(references):
+            manifest = self.read_manifest(reference)
+            if manifest is None:
+                raise DeploymentError(f"selected application manifest is unavailable: {reference}")
+            if "image" not in manifest:
+                continue
+            image = manifest["image"]
+            if not isinstance(image, str) or not image.strip():
+                raise DeploymentError("application manifest image must be a nonempty string")
+            images.add(image)
+        return images
 
     @staticmethod
     def _retained_versions(references: set[str] | None) -> list[str] | None:
@@ -848,3 +720,131 @@ class ApplicationFiles:
         raise DeploymentError(
             f"application publication {self.namespace}/{name} exceeded its publication deadline"
         )
+
+
+def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
+    """Read retained application identities from service state and workload projections."""
+    references: set[str] = set()
+    for obj in objects:
+        spec = obj.get("spec", {})
+        if obj.get("kind") == "InferenceDeployment" and spec.get("controllerSourceRevision"):
+            references.add(spec["controllerSourceRevision"])
+        if obj.get("kind") == "ConfigMap" and "controller-selection.json" in obj.get("data", {}):
+            selection = json.loads(obj["data"]["controller-selection.json"])
+            references.update(application_references([selection["template"]["controller"]]))
+        template = spec.get("template", {})
+        metadata = obj["metadata"]
+        template_metadata = template.get("metadata", {})
+        if metadata.get("labels", {}).get("foretoken.io/platform") == "configuration":
+            values = json.loads(obj["data"]["deploymentValues"])
+            references.update(filter(None, (
+                values["controller"]["applicationURL"],
+                values["frontend"]["applicationURL"],
+                values["runtime"]["vllm"]["applicationURL"],
+            )))
+        references.update(
+            selection["applicationURL"]
+            for selection in obj.get("status", {}).get("poolApplications", {}).values()
+            if selection.get("applicationURL")
+        )
+        references.update(
+            filter(
+                None,
+                (
+                    metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    template_metadata.get("annotations", {}).get(SOURCE_REVISION),
+                    metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template_metadata.get("annotations", {}).get(
+                        "inference.foretoken.io/application-url"
+                    ),
+                    template.get("sourceRevision"),
+                    template.get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("applicationURL"),
+                    obj.get("status", {}).get("application", {}).get("applicationURL"),
+                    spec.get("runtime", {}).get("sourceRevision"),
+                    obj.get("status", {}).get("plan", {}).get("workerApplicationURL"),
+                ),
+            )
+        )
+        # Platform defaults remain consumers even before a model service uses them.
+        for container in template.get("spec", spec).get("containers", []):
+            for argument in container.get("args", []):
+                for prefix in (
+                    "--frontend-application-url=",
+                    "--model-server-application-url=",
+                    "--video-worker-application-url=",
+                ):
+                    if argument.startswith(prefix):
+                        references.add(argument.removeprefix(prefix))
+    return references
+
+
+def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
+    """Read current service selections and present workloads, including terminating consumers."""
+    available = kubectl.api_resource_names("inference.foretoken.io")
+    kinds = tuple(
+        kind
+        for kind in (
+            "inferencedeployments",
+            "modelservices",
+            "frontendservices",
+            "modelpools",
+            "modelgroups",
+            "videotasks",
+        )
+        if kind + ".inference.foretoken.io" in available
+    )
+    # A failed reference read cancels sibling queries before their executor joins.
+    # The caller may defer collection, so this observation has its own failure scope.
+    parent = CommandExecution.current()
+    execution = CommandExecution(parent.control_timeout if parent is not None else None)
+    try:
+        if parent is not None:
+            parent.register(execution.cancel)
+        with ThreadPoolExecutor() as queries, execution:
+            pending = [queries.submit(copy_context().run, execution.run_stage, kubectl.list_all_resources, kinds)] if kinds else []
+            pending.extend(queries.submit(
+                copy_context().run, execution.run_stage, kubectl.list_all_resources, ("configmaps",),
+                label_selector=selector,
+            ) for selector in (
+                "foretoken.io/platform=configuration",
+                "app.kubernetes.io/component=deployment-controller",
+            ))
+            pending.extend(
+                queries.submit(
+                    copy_context().run, execution.run_stage, kubectl.list_all_resources,
+                    ("pods", "jobs", "replicasets", "deployments"),
+                    label_selector=label,
+                )
+                for label in (
+                    "app.kubernetes.io/name=foretoken-control-plane",
+                    "inference.foretoken.io/model-group",
+                    "inference.foretoken.io/frontend-service",
+                    "inference.foretoken.io/model-preparation-group",
+                    "foretoken.io/application-files=consumer",
+                    _SOURCE_CONSUMER_LABEL + "=true",
+                )
+            )
+            return [obj for future in pending for obj in future.result()]
+    finally:
+        if parent is not None:
+            parent.unregister(execution.cancel)
+
+
+def remove_application_jobs(kubectl: Kubectl, binding: str, timeout: str) -> None:
+    """Stop abandoned writers before their workstation reuses its compiler output."""
+    kubectl.run(
+        [
+            "delete",
+            "jobs",
+            "--all-namespaces",
+            "--selector",
+            f"foretoken.io/application-files=publisher,{_BINDING_LABEL}={binding}",
+            "--ignore-not-found",
+            "--cascade=foreground",
+            "--wait=true",
+            "--timeout=" + timeout,
+        ]
+    )

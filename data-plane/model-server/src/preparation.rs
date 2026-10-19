@@ -40,6 +40,223 @@ pub struct PreparationStorage<'a> {
     pub environment: &'a [(String, String)],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResolvedArtifacts {
+    version: u8,
+    pub(crate) artifacts: ModelArtifacts,
+    pub(crate) model_revision: String,
+    pub(crate) tokenizer_revision: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolvedRevisions {
+    model_revision: String,
+    tokenizer_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedArtifacts {
+    source: ResolvedArtifacts,
+    pub model: PathBuf,
+    pub tokenizer: PathBuf,
+    model_files: Vec<String>,
+    tokenizer_files: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DownloadedArtifacts {
+    model: PathBuf,
+    tokenizer: PathBuf,
+    model_files: Vec<String>,
+    tokenizer_files: Vec<String>,
+}
+
+/// Freezes source revisions for a controller-owned resolve-only Job without downloading weights.
+pub async fn resolve(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
+    let name = std::env::var(SOURCE_CONFIG_MAP_ENV).map_err(io::Error::other)?;
+    let model_root = foretoken_artifacts::model_cache_root().unwrap_or_else(std::env::temp_dir);
+    let state_root =
+        foretoken_artifacts::preparation_root().unwrap_or_else(|| model_root.join("prepared"));
+    let storage = PreparationStorage {
+        model_root: &model_root,
+        state_root: &state_root,
+        reusable_roots: None,
+        environment: &[],
+    };
+    publish_source(artifacts, python, &storage, &name, None).await?;
+    Ok(())
+}
+
+/// Runs a controller-owned download Job, including cache observation and signal shutdown.
+/// Both inference-engine entrypoints use this lifecycle before allocating accelerator workloads.
+pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
+    let model_root = foretoken_artifacts::model_cache_root().ok_or_else(|| {
+        io::Error::other("FORETOKEN_MODEL_CACHE_ROOT must be set for model preparation")
+    })?;
+    let state_root = foretoken_artifacts::preparation_root().ok_or_else(|| {
+        io::Error::other("FORETOKEN_MODEL_PREPARATION_ROOT must be set for model preparation")
+    })?;
+    let storage = PreparationStorage {
+        model_root: &model_root,
+        state_root: &state_root,
+        reusable_roots: None,
+        environment: &[],
+    };
+    let scope = std::env::var(PREPARATION_SCOPE_ENV).map_err(io::Error::other)?;
+    let shutdown = Arc::new(Notify::new());
+    let mut observer =
+        if let Some(cache) = runtime_cache::Config::from_env().map_err(io::Error::other)? {
+            let listener = TcpListener::bind(("0.0.0.0", cache.observation_port())).await?;
+            Some(tokio::spawn(runtime_cache::serve(
+                listener,
+                cache,
+                shutdown.clone(),
+            )))
+        } else {
+            None
+        };
+    let result = tokio::select! {
+        result = prepare(artifacts, python, &storage, &scope, false) => result.map(|_| ()),
+        reason = runtime_cache::wait_for_server(&mut observer) => {
+            observer.take();
+            Err(io::Error::other(reason))
+        },
+        signal = crate::shutdown_signal() => signal.and_then(|()| {
+            Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled"))
+        }),
+    };
+    shutdown.notify_one();
+    if let Some(observer) = observer {
+        observer.await.map_err(io::Error::other)??;
+    }
+    result
+}
+
+/// Publishes fixed provider versions and materializes files under a namespace-private acquisition lock.
+/// Serving processes consume the mounted source record; paths remain a disposable index.
+/// `require_publication` prevents a restart from choosing a new moving source revision.
+pub async fn prepare(
+    artifacts: &ModelArtifacts,
+    python: &str,
+    storage: &PreparationStorage<'_>,
+    scope: &str,
+    require_publication: bool,
+) -> io::Result<PreparedArtifacts> {
+    // Registration precedes cache use under the same lock that excludes collection.
+    // Serving processes remain protected by their durable source record after this stage returns.
+    let cache_lock = lock_model_cache(storage.model_root, false).await?;
+    let identity = model_cache_identity(&cache_lock)?;
+    let directory = foretoken_artifacts::preparation_directory(storage.state_root, scope)?;
+    let mut published_cache = None;
+    let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
+        published_cache = Some(identity.clone());
+        Some(publish_source(artifacts, python, storage, &name, Some(&identity)).await?)
+    } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
+        let path = Path::new(&path);
+        published_cache = match fs::read_to_string(path.with_file_name(CACHE_ROOT_KEY)) {
+            Ok(value) => Some(value),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if storage.reusable_roots.is_none()
+            && published_cache
+                .as_ref()
+                .is_some_and(|expected| *expected != identity)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "mounted model source publication belongs to another cache directory",
+            ));
+        }
+        Some(read_source(path, artifacts)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "mounted model source publication is missing",
+            )
+        })?)
+    } else {
+        read_source(&directory.join(SOURCE_KEY), artifacts)?
+    };
+    if let Some(source) = &source {
+        // Compile-cache write failure does not invalidate readable model snapshots.
+        // An inaccessible persistent path index is optional; acquisition uses the fixed publication.
+        if let Some((model_root, state_root)) = storage.reusable_roots {
+            let same_cache = published_cache.as_ref().is_none_or(|expected| {
+                rustix::fs::open(
+                    model_root.join(CACHE_LOCK),
+                    rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW,
+                    rustix::fs::Mode::empty(),
+                )
+                .map(File::from)
+                .map_err(io::Error::from)
+                .and_then(|file| model_cache_identity(&file))
+                .is_ok_and(|actual| actual == *expected)
+            });
+            let reusable = foretoken_artifacts::preparation_directory(state_root, scope)?;
+            if same_cache && let Ok(Some(result)) = load_result(&reusable, source) {
+                return Ok(result);
+            }
+        }
+        if let Some(result) = load_result(&directory, source)? {
+            return Ok(result);
+        }
+    } else if require_publication {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "published model source revisions are missing",
+        ));
+    }
+    fs::create_dir_all(&directory)?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(directory.join("prepare.lock"))?;
+    let _lock = tokio::task::spawn_blocking(move || {
+        lock.lock()?;
+        Ok::<_, io::Error>(lock)
+    })
+    .await
+    .map_err(io::Error::other)??;
+    let source = match source {
+        Some(source) => source,
+        None => match read_source(&directory.join(SOURCE_KEY), artifacts)? {
+            Some(source) => source,
+            None => {
+                let source = resolve_revisions(artifacts, python, storage).await?;
+                publish_json(&directory, SOURCE_KEY, &source)?;
+                source
+            }
+        },
+    };
+    if let Some(result) = load_result(&directory, &source)? {
+        return Ok(result);
+    }
+    let mut command = provider_command(artifacts, python, storage)?;
+    command
+        .env("FORETOKEN_PREPARE_ACTION", "download")
+        .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
+        .env(
+            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
+            &source.tokenizer_revision,
+        );
+    let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
+    let result = PreparedArtifacts {
+        source,
+        model: downloaded.model,
+        tokenizer: downloaded.tokenizer,
+        model_files: downloaded.model_files,
+        tokenizer_files: downloaded.tokenizer_files,
+    };
+    publish_json(&directory, "result.json", &result)?;
+    Ok(result)
+}
+
 /// Coordinates source publication and provider writes with shared-cache collection.
 /// The lock inode outlives individual entries; cancellable acquisition does not strand blocking threads.
 pub(crate) async fn lock_model_cache(root: &Path, exclusive: bool) -> io::Result<File> {
@@ -95,41 +312,6 @@ pub(crate) fn model_cache_identity(mut lock: &File) -> io::Result<String> {
     lock.rewind()?;
     lock.read_exact(&mut identity)?;
     Ok(uuid::Uuid::from_bytes(identity).to_string())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ResolvedArtifacts {
-    version: u8,
-    pub(crate) artifacts: ModelArtifacts,
-    pub(crate) model_revision: String,
-    pub(crate) tokenizer_revision: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedRevisions {
-    model_revision: String,
-    tokenizer_revision: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparedArtifacts {
-    source: ResolvedArtifacts,
-    pub model: PathBuf,
-    pub tokenizer: PathBuf,
-    model_files: Vec<String>,
-    tokenizer_files: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DownloadedArtifacts {
-    model: PathBuf,
-    tokenizer: PathBuf,
-    model_files: Vec<String>,
-    tokenizer_files: Vec<String>,
 }
 
 impl PreparedArtifacts {
@@ -388,188 +570,6 @@ async fn publish_source(
         response.error_for_status().map_err(io::Error::other)?;
         return Ok(source);
     }
-}
-
-/// Freezes source revisions for a controller-owned resolve-only Job without downloading weights.
-pub async fn resolve(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
-    let name = std::env::var(SOURCE_CONFIG_MAP_ENV).map_err(io::Error::other)?;
-    let model_root = foretoken_artifacts::model_cache_root().unwrap_or_else(std::env::temp_dir);
-    let state_root =
-        foretoken_artifacts::preparation_root().unwrap_or_else(|| model_root.join("prepared"));
-    let storage = PreparationStorage {
-        model_root: &model_root,
-        state_root: &state_root,
-        reusable_roots: None,
-        environment: &[],
-    };
-    publish_source(artifacts, python, &storage, &name, None).await?;
-    Ok(())
-}
-
-/// Runs a controller-owned download Job, including cache observation and signal shutdown.
-/// Both inference-engine entrypoints use this lifecycle before allocating accelerator workloads.
-pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result<()> {
-    let model_root = foretoken_artifacts::model_cache_root().ok_or_else(|| {
-        io::Error::other("FORETOKEN_MODEL_CACHE_ROOT must be set for model preparation")
-    })?;
-    let state_root = foretoken_artifacts::preparation_root().ok_or_else(|| {
-        io::Error::other("FORETOKEN_MODEL_PREPARATION_ROOT must be set for model preparation")
-    })?;
-    let storage = PreparationStorage {
-        model_root: &model_root,
-        state_root: &state_root,
-        reusable_roots: None,
-        environment: &[],
-    };
-    let scope = std::env::var(PREPARATION_SCOPE_ENV).map_err(io::Error::other)?;
-    let shutdown = Arc::new(Notify::new());
-    let mut observer =
-        if let Some(cache) = runtime_cache::Config::from_env().map_err(io::Error::other)? {
-            let listener = TcpListener::bind(("0.0.0.0", cache.observation_port())).await?;
-            Some(tokio::spawn(runtime_cache::serve(
-                listener,
-                cache,
-                shutdown.clone(),
-            )))
-        } else {
-            None
-        };
-    let result = tokio::select! {
-        result = prepare(artifacts, python, &storage, &scope, false) => result.map(|_| ()),
-        reason = runtime_cache::wait_for_server(&mut observer) => {
-            observer.take();
-            Err(io::Error::other(reason))
-        },
-        signal = crate::shutdown_signal() => signal.and_then(|()| {
-            Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled"))
-        }),
-    };
-    shutdown.notify_one();
-    if let Some(observer) = observer {
-        observer.await.map_err(io::Error::other)??;
-    }
-    result
-}
-
-/// Publishes fixed provider versions and materializes files under a namespace-private acquisition lock.
-/// Serving processes consume the mounted source record; paths remain a disposable index.
-/// `require_publication` prevents a restart from choosing a new moving source revision.
-pub async fn prepare(
-    artifacts: &ModelArtifacts,
-    python: &str,
-    storage: &PreparationStorage<'_>,
-    scope: &str,
-    require_publication: bool,
-) -> io::Result<PreparedArtifacts> {
-    // Registration precedes cache use under the same lock that excludes collection.
-    // Serving processes remain protected by their durable source record after this stage returns.
-    let cache_lock = lock_model_cache(storage.model_root, false).await?;
-    let identity = model_cache_identity(&cache_lock)?;
-    let directory = foretoken_artifacts::preparation_directory(storage.state_root, scope)?;
-    let mut published_cache = None;
-    let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
-        published_cache = Some(identity.clone());
-        Some(publish_source(artifacts, python, storage, &name, Some(&identity)).await?)
-    } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
-        let path = Path::new(&path);
-        published_cache = match fs::read_to_string(path.with_file_name(CACHE_ROOT_KEY)) {
-            Ok(value) => Some(value),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
-        };
-        if storage.reusable_roots.is_none()
-            && published_cache
-                .as_ref()
-                .is_some_and(|expected| *expected != identity)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "mounted model source publication belongs to another cache directory",
-            ));
-        }
-        Some(read_source(path, artifacts)?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "mounted model source publication is missing",
-            )
-        })?)
-    } else {
-        read_source(&directory.join(SOURCE_KEY), artifacts)?
-    };
-    if let Some(source) = &source {
-        // Compile-cache write failure does not invalidate readable model snapshots.
-        // An inaccessible persistent path index is optional; acquisition uses the fixed publication.
-        if let Some((model_root, state_root)) = storage.reusable_roots {
-            let same_cache = published_cache.as_ref().is_none_or(|expected| {
-                rustix::fs::open(
-                    model_root.join(CACHE_LOCK),
-                    rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW,
-                    rustix::fs::Mode::empty(),
-                )
-                .map(File::from)
-                .map_err(io::Error::from)
-                .and_then(|file| model_cache_identity(&file))
-                .is_ok_and(|actual| actual == *expected)
-            });
-            let reusable = foretoken_artifacts::preparation_directory(state_root, scope)?;
-            if same_cache && let Ok(Some(result)) = load_result(&reusable, source) {
-                return Ok(result);
-            }
-        }
-        if let Some(result) = load_result(&directory, source)? {
-            return Ok(result);
-        }
-    } else if require_publication {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "published model source revisions are missing",
-        ));
-    }
-    fs::create_dir_all(&directory)?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(directory.join("prepare.lock"))?;
-    let _lock = tokio::task::spawn_blocking(move || {
-        lock.lock()?;
-        Ok::<_, io::Error>(lock)
-    })
-    .await
-    .map_err(io::Error::other)??;
-    let source = match source {
-        Some(source) => source,
-        None => match read_source(&directory.join(SOURCE_KEY), artifacts)? {
-            Some(source) => source,
-            None => {
-                let source = resolve_revisions(artifacts, python, storage).await?;
-                publish_json(&directory, SOURCE_KEY, &source)?;
-                source
-            }
-        },
-    };
-    if let Some(result) = load_result(&directory, &source)? {
-        return Ok(result);
-    }
-    let mut command = provider_command(artifacts, python, storage)?;
-    command
-        .env("FORETOKEN_PREPARE_ACTION", "download")
-        .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
-        .env(
-            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
-            &source.tokenizer_revision,
-        );
-    let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
-    let result = PreparedArtifacts {
-        source,
-        model: downloaded.model,
-        tokenizer: downloaded.tokenizer,
-        model_files: downloaded.model_files,
-        tokenizer_files: downloaded.tokenizer_files,
-    };
-    publish_json(&directory, "result.json", &result)?;
-    Ok(result)
 }
 
 fn publish_json(directory: &Path, name: &str, value: &impl Serialize) -> io::Result<()> {

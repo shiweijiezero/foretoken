@@ -18,10 +18,27 @@ type Step struct {
 
 const stepName = "step"
 
-// Name identifies the stabilized fixed-step adjustment algorithm for registry consumers.
-func (Step) Name() string { return stepName }
-
 var stepDescriptor = core.AdjustmentDescriptor{Name: stepName, Factory: NewStep}
+
+// NewStep decodes stabilization windows and binds the controller-owned history for the registry.
+func NewStep(parameters json.RawMessage, history *core.RecommendationHistory) (core.AdjustmentAlgorithm, error) {
+	up, down := "0s", "300s"
+	if err := core.DecodeParameters(parameters, map[string]any{
+		"scaleUpStabilizationWindow":   &up,
+		"scaleDownStabilizationWindow": &down,
+	}); err != nil {
+		return nil, err
+	}
+	upWindow, err := time.ParseDuration(up)
+	if err != nil || upWindow < 0 {
+		return nil, fmt.Errorf("autoscaling step scaleUpStabilizationWindow must be a non-negative duration")
+	}
+	downWindow, err := time.ParseDuration(down)
+	if err != nil || downWindow < 0 {
+		return nil, fmt.Errorf("autoscaling step scaleDownStabilizationWindow must be a non-negative duration")
+	}
+	return Step{scaleUpWindow: upWindow, scaleDownWindow: downWindow, history: history}, nil
+}
 
 // Adjust applies directional stabilization, replica bounds, and a one-replica step per evaluation.
 func (step Step) Adjust(input core.AdjustmentInput) (core.ReplicaAdjustment, error) {
@@ -67,6 +84,9 @@ func (step Step) Adjust(input core.AdjustmentInput) (core.ReplicaAdjustment, err
 	return core.ReplicaAdjustment{Replicas: desired, Reason: reason, Message: message}, nil
 }
 
+// Name identifies the stabilized fixed-step adjustment algorithm for registry consumers.
+func (Step) Name() string { return stepName }
+
 func clip(value, minimum, maximum int32) int32 {
 	if value < minimum {
 		return minimum
@@ -75,24 +95,4 @@ func clip(value, minimum, maximum int32) int32 {
 		return maximum
 	}
 	return value
-}
-
-// NewStep decodes stabilization windows and binds the controller-owned history for the registry.
-func NewStep(parameters json.RawMessage, history *core.RecommendationHistory) (core.AdjustmentAlgorithm, error) {
-	up, down := "0s", "300s"
-	if err := core.DecodeParameters(parameters, map[string]any{
-		"scaleUpStabilizationWindow":   &up,
-		"scaleDownStabilizationWindow": &down,
-	}); err != nil {
-		return nil, err
-	}
-	upWindow, err := time.ParseDuration(up)
-	if err != nil || upWindow < 0 {
-		return nil, fmt.Errorf("autoscaling step scaleUpStabilizationWindow must be a non-negative duration")
-	}
-	downWindow, err := time.ParseDuration(down)
-	if err != nil || downWindow < 0 {
-		return nil, fmt.Errorf("autoscaling step scaleDownStabilizationWindow must be a non-negative duration")
-	}
-	return Step{scaleUpWindow: upWindow, scaleDownWindow: downWindow, history: history}, nil
 }

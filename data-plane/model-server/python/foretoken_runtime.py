@@ -20,6 +20,12 @@ class PrefixLookupServer:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
+    def close(self) -> None:
+        """Stops the worker thread and releases its socket context."""
+        self._stopping.set()
+        self._thread.join()
+        self._context.term()
+
     def _serve(self) -> None:
         with self._context.socket(zmq.REP) as socket:
             socket.setsockopt(zmq.LINGER, 0)
@@ -28,12 +34,6 @@ class PrefixLookupServer:
                 if not socket.poll(100):
                     continue
                 socket.send_json(self._lookup(socket.recv_json()))
-
-    def close(self) -> None:
-        """Stops the worker thread and releases its socket context."""
-        self._stopping.set()
-        self._thread.join()
-        self._context.term()
 
 
 def offset_tcp_endpoint(endpoint: str, offset: int) -> str:

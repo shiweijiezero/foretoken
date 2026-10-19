@@ -97,6 +97,28 @@ class DeploymentSubmission:
         self.created: dict[ResourceRef, dict[str, Any]] = {}
         self._scope: dict[str, Any] | None = None
 
+    def begin(self) -> None:
+        """Claim instance intent without allowing cleanup to interleave with the takeover."""
+        self._prepare_instance()
+        with self.mutation.hold():
+            self._begin()
+
+    def apply(self, rendered: str, *, patch_services: bool = False) -> None:
+        """Submit configuration or suspension without interleaving temporary retirement."""
+        self._prepare_instance()
+        with self.mutation.hold():
+            self._begin()
+            self._submit(rendered, patch_services=patch_services)
+
+    def check(self) -> None:
+        """Confirm instance ownership and every expected service before further writes or observation."""
+        if not self.owns_instance():
+            raise DeploymentError(
+                f"DeploymentSuperseded: instance {self.instance.name!r} was changed by another operation"
+            )
+        for ref in self.expected:
+            self._current(ref)
+
     def _prepare_instance(self) -> None:
         """Bind all submitted resources to one root before claiming its operation."""
         if self._scope is not None:
@@ -105,12 +127,6 @@ class DeploymentSubmission:
             self.created[ResourceRef("InferenceDeployment", self.instance.name, self.namespace)] = self.instance.resource
         self.mutation.uid = self.instance.uid
         self.deployment = self.instance.bind(self.deployment)
-
-    def begin(self) -> None:
-        """Claim instance intent without allowing cleanup to interleave with the takeover."""
-        self._prepare_instance()
-        with self.mutation.hold():
-            self._begin()
 
     def _begin(self) -> None:
         """Advance submitted intent on the instance record under its mutation lock."""
@@ -178,13 +194,6 @@ class DeploymentSubmission:
             == self.operation
         )
 
-    def apply(self, rendered: str, *, patch_services: bool = False) -> None:
-        """Submit configuration or suspension without interleaving temporary retirement."""
-        self._prepare_instance()
-        with self.mutation.hold():
-            self._begin()
-            self._submit(rendered, patch_services=patch_services)
-
     def _submit(self, rendered: str, *, patch_services: bool) -> None:
         """Record actual creations while applying service and dependency intent under one lock."""
         services = []
@@ -235,15 +244,6 @@ class DeploymentSubmission:
             self._apply_service(ref, value)
             if not suspended:
                 self._apply_service(ref, value, patch=True)
-
-    def check(self) -> None:
-        """Confirm instance ownership and every expected service before further writes or observation."""
-        if not self.owns_instance():
-            raise DeploymentError(
-                f"DeploymentSuperseded: instance {self.instance.name!r} was changed by another operation"
-            )
-        for ref in self.expected:
-            self._current(ref)
 
     def _current(self, ref: ResourceRef) -> dict[str, Any] | None:
         """Read current service intent and reject operations superseded during preparation."""

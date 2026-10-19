@@ -14,6 +14,8 @@ import numpy as np
 
 from benchmarks.results.itl import ITLSummary, combine_itl_summaries
 
+_SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p90_|p95_|p99_)?(latency|ttft|tpot|itl)$")
+
 
 @dataclass(frozen=True)
 class RequestMeasurement:
@@ -139,9 +141,6 @@ def normalized_generation_throughput(
         "generation_tokens_per_second_per_user": per_user,
         "generation_tokens_per_second_per_gpu": per_gpu,
     }
-
-
-_SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p90_|p95_|p99_)?(latency|ttft|tpot|itl)$")
 
 
 def request_slo_results(

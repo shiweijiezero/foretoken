@@ -35,16 +35,6 @@ pub struct QueuedTarget {
     pub target_id: String,
 }
 
-impl From<&ScalingTarget> for QueuedTarget {
-    fn from(target: &ScalingTarget) -> Self {
-        Self {
-            service_uid: target.service_uid.clone(),
-            target_kind: "Pool".to_owned(),
-            target_id: target.uid.clone(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AutoscalingTargetTelemetry {
     #[serde(flatten)]
@@ -73,20 +63,21 @@ struct QueueCounts {
 }
 
 static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, QueueCounts>>> = OnceLock::new();
-fn queued() -> &'static Mutex<BTreeMap<QueuedTarget, QueueCounts>> {
-    QUEUED.get_or_init(|| Mutex::new(BTreeMap::new()))
-}
-fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
-    queued()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// RAII ownership of one request waiting for admission to a fixed target set.
 pub struct QueueGuard {
     targets: Vec<QueuedTarget>,
     stage: QueueStage,
 }
+impl From<&ScalingTarget> for QueuedTarget {
+    fn from(target: &ScalingTarget) -> Self {
+        Self {
+            service_uid: target.service_uid.clone(),
+            target_kind: "Pool".to_owned(),
+            target_id: target.uid.clone(),
+        }
+    }
+}
+
 impl QueueGuard {
     /// Attributes a request waiting for its model runtime to become ready.
     pub fn runtime_preparation(targets: &RouteTargetSet) -> Self {
@@ -172,6 +163,52 @@ pub async fn scrape_with_kv_index(
     render(Some((state, reason, sources_healthy, sources_total)))
 }
 
+/// Records one non-metrics HTTP response start after its handler returns a response.
+///
+/// For SSE endpoints, Axum returns before the body stream finishes, so the duration histogram
+/// measures response-start latency. Complete generation latency remains owned by the model-server
+/// request metrics and is exposed through `vllm:e2e_request_latency_seconds`.
+pub async fn track_http_metrics(request: Request, next: Next) -> Response {
+    let method = request.method().as_str().to_owned();
+    let handler = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| "none".to_owned(), |path| path.as_str().to_owned());
+    let excluded = EXCLUDED_HANDLERS.contains(&handler.as_str());
+    let started_at = Instant::now();
+    let response = next.run(request).await;
+    if excluded {
+        return response;
+    }
+    let response_start_latency = started_at.elapsed().as_secs_f64();
+    let metrics = &METRICS.api_server;
+    metrics
+        .http_requests
+        .get_or_create(&HttpRequestLabels {
+            method: method.clone(),
+            status: status_group(response.status().as_u16()),
+            handler: handler.clone(),
+        })
+        .inc();
+    metrics
+        .http_request_duration_seconds
+        .get_or_create(&HttpHandlerLabels { method, handler })
+        .observe(response_start_latency);
+    metrics
+        .http_request_duration_highr_seconds
+        .observe(response_start_latency);
+    response
+}
+
+fn queued() -> &'static Mutex<BTreeMap<QueuedTarget, QueueCounts>> {
+    QUEUED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
+    queued()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 // Combines upstream, Router, admission, and optional KV-index families under one OpenMetrics EOF marker.
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
     match (
@@ -223,42 +260,6 @@ fn escape_label(value: &str) -> String {
         .replace('"', "\\\"")
 }
 
-/// Records one non-metrics HTTP response start after its handler returns a response.
-///
-/// For SSE endpoints, Axum returns before the body stream finishes, so the duration histogram
-/// measures response-start latency. Complete generation latency remains owned by the model-server
-/// request metrics and is exposed through `vllm:e2e_request_latency_seconds`.
-pub async fn track_http_metrics(request: Request, next: Next) -> Response {
-    let method = request.method().as_str().to_owned();
-    let handler = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or_else(|| "none".to_owned(), |path| path.as_str().to_owned());
-    let excluded = EXCLUDED_HANDLERS.contains(&handler.as_str());
-    let started_at = Instant::now();
-    let response = next.run(request).await;
-    if excluded {
-        return response;
-    }
-    let response_start_latency = started_at.elapsed().as_secs_f64();
-    let metrics = &METRICS.api_server;
-    metrics
-        .http_requests
-        .get_or_create(&HttpRequestLabels {
-            method: method.clone(),
-            status: status_group(response.status().as_u16()),
-            handler: handler.clone(),
-        })
-        .inc();
-    metrics
-        .http_request_duration_seconds
-        .get_or_create(&HttpHandlerLabels { method, handler })
-        .observe(response_start_latency);
-    metrics
-        .http_request_duration_highr_seconds
-        .observe(response_start_latency);
-    response
-}
 fn status_group(status: u16) -> &'static str {
     match status / 100 {
         1 => "1xx",

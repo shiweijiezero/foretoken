@@ -19,23 +19,6 @@ const (
 	cacheNodeNameEnv  = "FORETOKEN_CACHE_NODE_NAME"
 )
 
-// runtimeCacheDirectory preserves the cache layout of the selected executable.
-func runtimeCacheDirectory(root, namespace, deploymentUID string, preparationVersion int32) string {
-	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
-		return path.Join(root, "runtime", namespace)
-	}
-	return runtimeconfig.DeploymentCacheDirectory(root, deploymentUID)
-}
-
-// TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
-// Deployment and node identity preserve instance caches across Pod replacement without sharing writers.
-func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding, preparationVersion int32) string {
-	if cache == nil {
-		return ""
-	}
-	return path.Join(runtimeCacheDirectory(cache.MountPath, "$("+cacheNamespaceEnv+")", "$("+runtimeconfig.DeploymentUIDEnv+")", preparationVersion), "triton", "$("+cacheNodeNameEnv+")")
-}
-
 // RuntimeCacheEnv projects cache paths supported by the selected model-server application.
 // Native and v1 applications retain their earlier storage outside managed shared-cache collection.
 func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, deploymentUID, tritonCacheDirectory string, preparationVersion int32) []corev1.EnvVar {
@@ -88,4 +71,21 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, de
 		env = append(env, corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/triton"})
 	}
 	return env
+}
+
+// TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
+// Deployment and node identity preserve instance caches across Pod replacement without sharing writers.
+func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding, preparationVersion int32) string {
+	if cache == nil {
+		return ""
+	}
+	return path.Join(runtimeCacheDirectory(cache.MountPath, "$("+cacheNamespaceEnv+")", "$("+runtimeconfig.DeploymentUIDEnv+")", preparationVersion), "triton", "$("+cacheNodeNameEnv+")")
+}
+
+// runtimeCacheDirectory preserves the cache layout of the selected executable.
+func runtimeCacheDirectory(root, namespace, deploymentUID string, preparationVersion int32) string {
+	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
+		return path.Join(root, "runtime", namespace)
+	}
+	return runtimeconfig.DeploymentCacheDirectory(root, deploymentUID)
 }

@@ -37,6 +37,18 @@ pub(super) struct ResponseMeta {
     pub tool_names: ToolNames,
 }
 
+/// Accumulates content blocks across consecutive input items belonging to one
+/// assistant turn, flushing at turn boundaries.
+///
+/// Merging rules mirror `_construct_message_from_response_item` in the Python
+/// frontend: a text item starts a new assistant turn when the pending turn
+/// already has visible text, a reasoning item starts a new turn when the
+/// pending turn already has reasoning, and function calls always merge.
+#[derive(Default)]
+struct AssistantTurn {
+    blocks: Vec<AssistantContentBlock>,
+}
+
 /// Lower one validated protocol request into the shared chat pipeline.
 pub(super) fn prepare_responses_request(
     request: ResponsesRequest,
@@ -610,18 +622,6 @@ fn convert_content_parts(
             Ok(ChatContent::Parts(converted))
         }
     }
-}
-
-/// Accumulates content blocks across consecutive input items belonging to one
-/// assistant turn, flushing at turn boundaries.
-///
-/// Merging rules mirror `_construct_message_from_response_item` in the Python
-/// frontend: a text item starts a new assistant turn when the pending turn
-/// already has visible text, a reasoning item starts a new turn when the
-/// pending turn already has reasoning, and function calls always merge.
-#[derive(Default)]
-struct AssistantTurn {
-    blocks: Vec<AssistantContentBlock>,
 }
 
 impl AssistantTurn {

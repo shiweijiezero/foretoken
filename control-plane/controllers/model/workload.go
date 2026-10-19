@@ -17,10 +17,10 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
-	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,42 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
-
-// groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
-func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfig.ApplicationFiles) string {
-	if group.Spec.Runtime.ApplicationURL != "" {
-		return group.Spec.Runtime.ApplicationURL
-	}
-	return files.Ref("model-server", group.Spec.Runtime.SourceRevision)
-}
-
-// reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
-func (reconciler *GroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return nil, fmt.Errorf("set Deployment owner: %w", err)
-	}
-	current := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
-		if !metav1.IsControlledBy(current, group) {
-			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
-		}
-		if group.Spec.Runtime.PreparationVersion == 0 {
-			return current, nil
-		}
-	} else if !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("get Deployment: %w", err)
-	}
-	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
-		return nil, err
-	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
-		return nil, fmt.Errorf("apply Deployment: %w", err)
-	}
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
-		return nil, fmt.Errorf("get applied Deployment: %w", err)
-	}
-	return current, nil
-}
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
 func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, files runtimeconfig.ApplicationFiles) (*appsv1.Deployment, error) {
@@ -317,6 +281,42 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
+}
+
+// groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
+func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfig.ApplicationFiles) string {
+	if group.Spec.Runtime.ApplicationURL != "" {
+		return group.Spec.Runtime.ApplicationURL
+	}
+	return files.Ref("model-server", group.Spec.Runtime.SourceRevision)
+}
+
+// reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
+func (reconciler *GroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
+	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
+		return nil, fmt.Errorf("set Deployment owner: %w", err)
+	}
+	current := new(appsv1.Deployment)
+	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+		if !metav1.IsControlledBy(current, group) {
+			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
+		}
+		if group.Spec.Runtime.PreparationVersion == 0 {
+			return current, nil
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("get Deployment: %w", err)
+	}
+	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
+		return nil, err
+	}
+	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
+		return nil, fmt.Errorf("apply Deployment: %w", err)
+	}
+	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
+		return nil, fmt.Errorf("get applied Deployment: %w", err)
+	}
+	return current, nil
 }
 
 // configureModelEnvironment appends ordered model variables after platform configuration.

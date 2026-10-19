@@ -190,6 +190,164 @@ class EditableDeployment:
         with local_candidates(self.directory):
             self._prepare(timeout)
 
+    def apply(
+        self, deployment: ForetokenDeployment, timeout: str
+    ) -> ForetokenDeployment:
+        """Publish selected applications before submitting service and model-storage intent."""
+        objects = copy.deepcopy(deployment.objects)
+        pending: set[str] = {"control-plane"}
+        services = []
+        for obj in objects:
+            component = SERVICE_COMPONENTS.get(obj.get("kind"))
+            if component is None or not str(obj.get("apiVersion") or "").startswith(
+                "inference.foretoken.io/"
+            ):
+                continue
+            # Retain pending bundles until the service requests execution.
+            if not service_requires_execution(obj):
+                continue
+            metadata = obj["metadata"]
+            annotations = metadata.setdefault("annotations", {})
+            annotations.pop(SOURCE_REVISION, None)
+            bundle = self.state["bundles"].get(
+                component, self.state["build"].get("applications", {}).get(component)
+            )
+            namespace = metadata.get("namespace") or deployment.namespace or "default"
+            if component == "model-server" and obj["spec"].get("backend") != "vllm":
+                # Alternate backends keep their own platform image/profile, rather
+                # than receiving the standard vLLM application's environment.
+                continue
+            current = self.kubectl.get_if_exists(
+                obj["kind"], metadata["name"], namespace
+            )
+            active = (
+                (current or {})
+                .get("metadata", {})
+                .get("annotations", {})
+                .get(SOURCE_REVISION, "")
+            )
+            if bundle is not None and active != bundle["revision"]:
+                pending.add(component)
+            services.append((obj, component, namespace, current, active))
+        if pending:
+            self._publish_applications(pending, timeout)
+
+        # Publication can reuse an earlier version. Select workloads only after the
+        # publisher has committed the actual application references.
+        for obj, component, namespace, current, active in services:
+            metadata = obj["metadata"]
+            bundle = self.state["bundles"].get(
+                component, self.state["build"].get("applications", {}).get(component)
+            )
+            revision = bundle["revision"] if bundle is not None else ""
+            writers = (
+                self._ready_containers(namespace, component, metadata["name"], revision)
+                if current is not None
+                else []
+            )
+            ready = bool(writers)
+            if component == "frontend":
+                ready = ready and len(writers) == obj["spec"].get("replicas", 1)
+            # Platform image changes do not advance Service generation; old Ready status
+            # must not make a deployment finish before the selected runtime is serving.
+            if active != revision or not ready:
+                self.selected[(obj["kind"], namespace, metadata["name"])] = revision
+            if bundle is not None:
+                metadata["annotations"][SOURCE_REVISION] = revision
+        return deployment.with_objects(objects)
+
+    @property
+    def controller_source_revision(self) -> str:
+        """Return the actual completed controller publication selected after prepare and apply."""
+        bundle = self.state["bundles"].get("control-plane")
+        if bundle is None:
+            bundle = self.state["build"]["applications"]["control-plane"]
+        return bundle["revision"]
+
+    def verify(
+        self,
+        deployment: ForetokenDeployment,
+        deadline: float,
+        *,
+        observe: Callable[[], None] | None = None,
+    ) -> None:
+        """Observe code and routing activation within DeploymentLifecycle's readiness deadline."""
+        routes: dict[str, set[str]] = {}
+        consumers = dict(self.selected)
+        # Unchanged frontend code still needs to consume a new backend cohort.
+        if any(kind == "ModelService" for kind, _, _ in self.selected):
+            frontend = self.kubectl.get("frontendservice", deployment.frontend, deployment.namespace)
+            metadata = frontend["metadata"]
+            if not metadata.get("deletionTimestamp") and service_requires_execution(frontend):
+                consumers.setdefault(
+                    ("FrontendService", deployment.namespace, deployment.frontend),
+                    metadata.get("annotations", {}).get(SOURCE_REVISION, ""),
+                )
+        # Verify committed backend code first, then the routing consumers of that cohort.
+        selected = sorted(
+            consumers.items(), key=lambda item: item[0][0] == "FrontendService"
+        )
+        for (kind, namespace, service), revision in selected:
+            component = SERVICE_COMPONENTS[kind]
+            code_changed = (kind, namespace, service) in self.selected
+            if component == "frontend" and code_changed:
+                self.kubectl.rollout_status(
+                    ResourceRef("Deployment", service, namespace),
+                    f"{max(1, int(deadline - time.monotonic()))}s",
+                )
+            while True:
+                if observe is not None:
+                    observe()
+                writers = self._ready_containers(
+                    namespace, component, service, revision
+                )
+                if writers and (
+                    component != "frontend"
+                    or self._frontend_routes_ready(
+                        namespace,
+                        service,
+                        writers,
+                        routes.get(namespace, set()),
+                        deadline,
+                    )
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    raise DeploymentError(
+                        f"timed out waiting for {namespace}/{service} to activate source {revision}"
+                    )
+                time.sleep(min(2, max(0.0, deadline - time.monotonic())))
+            if component == "model-server":
+                routes.setdefault(namespace, set()).update(
+                    route for _, _, _, route in writers
+                )
+            if not code_changed:
+                continue
+            for pod, container, directory, _ in writers:
+                expected = (
+                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}"
+                    if directory
+                    else ""
+                )
+                output = self.kubectl.run(
+                    [
+                        "exec",
+                        "-n",
+                        namespace,
+                        pod,
+                        "-c",
+                        container,
+                        "--",
+                        "sh",
+                        "-c",
+                        'grep -z "^FORETOKEN_ACTIVE_SOURCE_DIRECTORY=" /proc/1/environ; status=$?; test "$status" -le 1',
+                    ]
+                ).stdout.strip("\x00\n")
+                if output != expected:
+                    raise DeploymentError(
+                        f"{namespace}/{pod} did not activate source {revision}"
+                    )
+
     def _prepare(self, timeout: str) -> None:
         """Compare this checkout's inputs and prepare its runtime application or environment update."""
         if self.environment_changed or not self.state.get("build") or self.state["build"]["arguments"].get(
@@ -347,80 +505,6 @@ class EditableDeployment:
         self.build_arguments = dict(self.state["build"]["arguments"])
         self.mooncake_version = self.build_arguments.get("MOONCAKE_VERSION", "") if self.recipe["buildMetaXRuntime"] else None
         self.environment_changed = False
-
-    def apply(
-        self, deployment: ForetokenDeployment, timeout: str
-    ) -> ForetokenDeployment:
-        """Publish selected applications before submitting service and model-storage intent."""
-        objects = copy.deepcopy(deployment.objects)
-        pending: set[str] = {"control-plane"}
-        services = []
-        for obj in objects:
-            component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            if component is None or not str(obj.get("apiVersion") or "").startswith(
-                "inference.foretoken.io/"
-            ):
-                continue
-            # Retain pending bundles until the service requests execution.
-            if not service_requires_execution(obj):
-                continue
-            metadata = obj["metadata"]
-            annotations = metadata.setdefault("annotations", {})
-            annotations.pop(SOURCE_REVISION, None)
-            bundle = self.state["bundles"].get(
-                component, self.state["build"].get("applications", {}).get(component)
-            )
-            namespace = metadata.get("namespace") or deployment.namespace or "default"
-            if component == "model-server" and obj["spec"].get("backend") != "vllm":
-                # Alternate backends keep their own platform image/profile, rather
-                # than receiving the standard vLLM application's environment.
-                continue
-            current = self.kubectl.get_if_exists(
-                obj["kind"], metadata["name"], namespace
-            )
-            active = (
-                (current or {})
-                .get("metadata", {})
-                .get("annotations", {})
-                .get(SOURCE_REVISION, "")
-            )
-            if bundle is not None and active != bundle["revision"]:
-                pending.add(component)
-            services.append((obj, component, namespace, current, active))
-        if pending:
-            self._publish_applications(pending, timeout)
-
-        # Publication can reuse an earlier version. Select workloads only after the
-        # publisher has committed the actual application references.
-        for obj, component, namespace, current, active in services:
-            metadata = obj["metadata"]
-            bundle = self.state["bundles"].get(
-                component, self.state["build"].get("applications", {}).get(component)
-            )
-            revision = bundle["revision"] if bundle is not None else ""
-            writers = (
-                self._ready_containers(namespace, component, metadata["name"], revision)
-                if current is not None
-                else []
-            )
-            ready = bool(writers)
-            if component == "frontend":
-                ready = ready and len(writers) == obj["spec"].get("replicas", 1)
-            # Platform image changes do not advance Service generation; old Ready status
-            # must not make a deployment finish before the selected runtime is serving.
-            if active != revision or not ready:
-                self.selected[(obj["kind"], namespace, metadata["name"])] = revision
-            if bundle is not None:
-                metadata["annotations"][SOURCE_REVISION] = revision
-        return deployment.with_objects(objects)
-
-    @property
-    def controller_source_revision(self) -> str:
-        """Return the actual completed controller publication selected after prepare and apply."""
-        bundle = self.state["bundles"].get("control-plane")
-        if bundle is None:
-            bundle = self.state["build"]["applications"]["control-plane"]
-        return bundle["revision"]
 
     def _publish_applications(self, components: set[str], timeout: str) -> None:
         """Publish selected components once, independently of their model namespaces and caches."""
@@ -815,87 +899,3 @@ class EditableDeployment:
             if endpoint.get("conditions", {}).get("ready") is True
         }
         return bool(pods) and {pod["metadata"]["uid"] for pod in pods} <= endpoints
-
-    def verify(
-        self,
-        deployment: ForetokenDeployment,
-        deadline: float,
-        *,
-        observe: Callable[[], None] | None = None,
-    ) -> None:
-        """Observe code and routing activation within DeploymentLifecycle's readiness deadline."""
-        routes: dict[str, set[str]] = {}
-        consumers = dict(self.selected)
-        # Unchanged frontend code still needs to consume a new backend cohort.
-        if any(kind == "ModelService" for kind, _, _ in self.selected):
-            frontend = self.kubectl.get("frontendservice", deployment.frontend, deployment.namespace)
-            metadata = frontend["metadata"]
-            if not metadata.get("deletionTimestamp") and service_requires_execution(frontend):
-                consumers.setdefault(
-                    ("FrontendService", deployment.namespace, deployment.frontend),
-                    metadata.get("annotations", {}).get(SOURCE_REVISION, ""),
-                )
-        # Verify committed backend code first, then the routing consumers of that cohort.
-        selected = sorted(
-            consumers.items(), key=lambda item: item[0][0] == "FrontendService"
-        )
-        for (kind, namespace, service), revision in selected:
-            component = SERVICE_COMPONENTS[kind]
-            code_changed = (kind, namespace, service) in self.selected
-            if component == "frontend" and code_changed:
-                self.kubectl.rollout_status(
-                    ResourceRef("Deployment", service, namespace),
-                    f"{max(1, int(deadline - time.monotonic()))}s",
-                )
-            while True:
-                if observe is not None:
-                    observe()
-                writers = self._ready_containers(
-                    namespace, component, service, revision
-                )
-                if writers and (
-                    component != "frontend"
-                    or self._frontend_routes_ready(
-                        namespace,
-                        service,
-                        writers,
-                        routes.get(namespace, set()),
-                        deadline,
-                    )
-                ):
-                    break
-                if time.monotonic() >= deadline:
-                    raise DeploymentError(
-                        f"timed out waiting for {namespace}/{service} to activate source {revision}"
-                    )
-                time.sleep(min(2, max(0.0, deadline - time.monotonic())))
-            if component == "model-server":
-                routes.setdefault(namespace, set()).update(
-                    route for _, _, _, route in writers
-                )
-            if not code_changed:
-                continue
-            for pod, container, directory, _ in writers:
-                expected = (
-                    f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}"
-                    if directory
-                    else ""
-                )
-                output = self.kubectl.run(
-                    [
-                        "exec",
-                        "-n",
-                        namespace,
-                        pod,
-                        "-c",
-                        container,
-                        "--",
-                        "sh",
-                        "-c",
-                        'grep -z "^FORETOKEN_ACTIVE_SOURCE_DIRECTORY=" /proc/1/environ; status=$?; test "$status" -le 1',
-                    ]
-                ).stdout.strip("\x00\n")
-                if output != expected:
-                    raise DeploymentError(
-                        f"{namespace}/{pod} did not activate source {revision}"
-                    )

@@ -12,18 +12,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RouteTargetId(String);
-impl RouteTargetId {
-    /// Creates a stable route target identity from its serialized value.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// Returns the serialized route target identity.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
 /// Control-plane resource kind used for autoscaling attribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -49,20 +37,6 @@ pub struct ScalingTarget {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RouteTargetSet(Vec<ScalingTarget>);
-impl RouteTargetSet {
-    /// Creates a deterministically ordered set of scaling targets.
-    pub fn new(mut targets: Vec<ScalingTarget>) -> Self {
-        targets.sort();
-        targets.dedup();
-        Self(targets)
-    }
-
-    /// Returns the affected scaling targets in deterministic order.
-    pub fn targets(&self) -> &[ScalingTarget] {
-        &self.0
-    }
-}
-
 /// Static route record projected for one routable ModelGroup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteTarget {
@@ -91,4 +65,30 @@ pub struct RouteTarget {
     pub pipeline_scope_id: Option<String>,
     /// Number of data-parallel replicas selectable for this route target.
     pub data_parallel_size: u32,
+}
+
+impl RouteTargetId {
+    /// Creates a stable route target identity from its serialized value.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Returns the serialized route target identity.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl RouteTargetSet {
+    /// Creates a deterministically ordered set of scaling targets.
+    pub fn new(mut targets: Vec<ScalingTarget>) -> Self {
+        targets.sort();
+        targets.dedup();
+        Self(targets)
+    }
+
+    /// Returns the affected scaling targets in deterministic order.
+    pub fn targets(&self) -> &[ScalingTarget] {
+        &self.0
+    }
 }

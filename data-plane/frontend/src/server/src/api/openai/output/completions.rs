@@ -83,114 +83,6 @@ struct CompletionStreamResponse {
     prompt_token_ids: Option<Vec<Vec<u32>>>,
 }
 
-fn logprob_token_name(
-    entry: &foretoken_text::DecodedTokenLogprob,
-    return_as_token_id: bool,
-) -> String {
-    if return_as_token_id {
-        format!("token_id:{}", entry.token_id)
-    } else {
-        entry.token.clone()
-    }
-}
-
-fn completion_logprobs(
-    token_ids: &[u32],
-    logprobs: Option<DecodedLogprobs>,
-    initial_text_offset: usize,
-    return_as_token_id: bool,
-) -> Option<CompletionLogprobs> {
-    let logprobs = logprobs?;
-    let mut text_offset = Vec::with_capacity(token_ids.len());
-    let mut token_logprobs = Vec::with_capacity(token_ids.len());
-    let mut tokens = Vec::with_capacity(token_ids.len());
-    let mut top_logprobs = Vec::with_capacity(token_ids.len());
-    let mut offset = initial_text_offset;
-
-    for (token_id, position) in token_ids.iter().copied().zip(logprobs.positions) {
-        let selected_entry = selected_logprob(&position, token_id);
-        let selected = selected_entry.map(|entry| {
-            (
-                logprob_token_name(entry, return_as_token_id),
-                entry.logprob.max(-9999.0),
-            )
-        });
-        let token = selected.as_ref().map_or_else(
-            || format!("token_id:{token_id}"),
-            |(token, _)| token.clone(),
-        );
-        let top = position
-            .entries
-            .iter()
-            .map(|entry| {
-                (
-                    logprob_token_name(entry, return_as_token_id),
-                    entry.logprob.max(-9999.0),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        text_offset.push(offset);
-        offset += selected_entry.map_or_else(
-            || token.chars().count(),
-            |entry| entry.token.chars().count(),
-        );
-        token_logprobs.push(selected.map(|(_, logprob)| logprob));
-        tokens.push(token);
-        top_logprobs.push(Some(top));
-    }
-
-    Some(CompletionLogprobs {
-        text_offset,
-        token_logprobs,
-        tokens,
-        top_logprobs,
-    })
-}
-
-/// Encode echoed prompt positions, preserving the unscored first token as null.
-fn completion_prompt_logprobs(
-    token_ids: &[u32],
-    prompt: DecodedPromptLogprobs,
-    tokenizer: &foretoken_tokenizer::DynTokenizer,
-    return_as_token_id: bool,
-) -> Result<CompletionLogprobs, GenerationError> {
-    // Echo retains an initial BOS marker even when generation skips special tokens.
-    let first_token = tokenizer
-        .decode(&[prompt.first_token_id], false)
-        .map_err(|_| GenerationError::Internal)?;
-    let mut logprobs = completion_logprobs(
-        &token_ids[1..],
-        Some(DecodedLogprobs {
-            positions: prompt.scored_positions,
-        }),
-        first_token.chars().count(),
-        return_as_token_id,
-    )
-    .unwrap();
-    logprobs.text_offset.insert(0, 0);
-    logprobs.token_logprobs.insert(0, None);
-    logprobs.tokens.insert(
-        0,
-        if return_as_token_id {
-            format!("token_id:{}", prompt.first_token_id)
-        } else {
-            first_token
-        },
-    );
-    logprobs.top_logprobs.insert(0, None);
-    Ok(logprobs)
-}
-
-fn completion_finish_reason(finish_reason: &FinishReason) -> Result<&'static str, ()> {
-    match finish_reason {
-        FinishReason::Stop(_) => Ok("stop"),
-        FinishReason::Length => Ok("length"),
-        FinishReason::Abort => Ok("abort"),
-        FinishReason::Repetition(_) => Ok("repetition"),
-        FinishReason::Error => Err(()),
-    }
-}
-
 pub(crate) struct CompletionResponseOptions {
     pub n: usize,
     pub candidates_per_prompt: usize,
@@ -438,4 +330,112 @@ pub(crate) fn text_stream_many(
         yield Ok(Event::default().data("[DONE]"));
     };
     sse_response(events)
+}
+
+fn completion_logprobs(
+    token_ids: &[u32],
+    logprobs: Option<DecodedLogprobs>,
+    initial_text_offset: usize,
+    return_as_token_id: bool,
+) -> Option<CompletionLogprobs> {
+    let logprobs = logprobs?;
+    let mut text_offset = Vec::with_capacity(token_ids.len());
+    let mut token_logprobs = Vec::with_capacity(token_ids.len());
+    let mut tokens = Vec::with_capacity(token_ids.len());
+    let mut top_logprobs = Vec::with_capacity(token_ids.len());
+    let mut offset = initial_text_offset;
+
+    for (token_id, position) in token_ids.iter().copied().zip(logprobs.positions) {
+        let selected_entry = selected_logprob(&position, token_id);
+        let selected = selected_entry.map(|entry| {
+            (
+                logprob_token_name(entry, return_as_token_id),
+                entry.logprob.max(-9999.0),
+            )
+        });
+        let token = selected.as_ref().map_or_else(
+            || format!("token_id:{token_id}"),
+            |(token, _)| token.clone(),
+        );
+        let top = position
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    logprob_token_name(entry, return_as_token_id),
+                    entry.logprob.max(-9999.0),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        text_offset.push(offset);
+        offset += selected_entry.map_or_else(
+            || token.chars().count(),
+            |entry| entry.token.chars().count(),
+        );
+        token_logprobs.push(selected.map(|(_, logprob)| logprob));
+        tokens.push(token);
+        top_logprobs.push(Some(top));
+    }
+
+    Some(CompletionLogprobs {
+        text_offset,
+        token_logprobs,
+        tokens,
+        top_logprobs,
+    })
+}
+
+/// Encode echoed prompt positions, preserving the unscored first token as null.
+fn completion_prompt_logprobs(
+    token_ids: &[u32],
+    prompt: DecodedPromptLogprobs,
+    tokenizer: &foretoken_tokenizer::DynTokenizer,
+    return_as_token_id: bool,
+) -> Result<CompletionLogprobs, GenerationError> {
+    // Echo retains an initial BOS marker even when generation skips special tokens.
+    let first_token = tokenizer
+        .decode(&[prompt.first_token_id], false)
+        .map_err(|_| GenerationError::Internal)?;
+    let mut logprobs = completion_logprobs(
+        &token_ids[1..],
+        Some(DecodedLogprobs {
+            positions: prompt.scored_positions,
+        }),
+        first_token.chars().count(),
+        return_as_token_id,
+    )
+    .unwrap();
+    logprobs.text_offset.insert(0, 0);
+    logprobs.token_logprobs.insert(0, None);
+    logprobs.tokens.insert(
+        0,
+        if return_as_token_id {
+            format!("token_id:{}", prompt.first_token_id)
+        } else {
+            first_token
+        },
+    );
+    logprobs.top_logprobs.insert(0, None);
+    Ok(logprobs)
+}
+
+fn logprob_token_name(
+    entry: &foretoken_text::DecodedTokenLogprob,
+    return_as_token_id: bool,
+) -> String {
+    if return_as_token_id {
+        format!("token_id:{}", entry.token_id)
+    } else {
+        entry.token.clone()
+    }
+}
+
+fn completion_finish_reason(finish_reason: &FinishReason) -> Result<&'static str, ()> {
+    match finish_reason {
+        FinishReason::Stop(_) => Ok("stop"),
+        FinishReason::Length => Ok("length"),
+        FinishReason::Abort => Ok("abort"),
+        FinishReason::Repetition(_) => Ok("repetition"),
+        FinishReason::Error => Err(()),
+    }
 }

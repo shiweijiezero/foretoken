@@ -31,6 +31,27 @@ from benchmarks.config.benchmark import (
 )
 
 
+def parse_benchmark_arguments(
+    argv: Sequence[str] | None = None,
+) -> BenchmarkConfig:
+    """Parse performance arguments after top-level ``foretoken perf``."""
+    parser = argparse.ArgumentParser(
+        prog="foretoken perf",
+        description=(
+            "Measure HTTP latency and throughput for Foretoken and "
+            "OpenAI-compatible inference services"
+        ),
+        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    _add_benchmark_arguments(parser)
+
+    parsed_args = parser.parse_args(argv)
+    validate_profile_arguments(parser, parsed_args)
+    config = _benchmark_config(parsed_args)
+    return config
+
+
 def _default(cls: type, name: str) -> Any:
     field_info = next(item for item in fields(cls) if item.name == name)
     if field_info.default_factory is not MISSING:
@@ -600,24 +621,3 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         service_choices=service_choices,
     )
-
-
-def parse_benchmark_arguments(
-    argv: Sequence[str] | None = None,
-) -> BenchmarkConfig:
-    """Parse performance arguments after top-level ``foretoken perf``."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken perf",
-        description=(
-            "Measure HTTP latency and throughput for Foretoken and "
-            "OpenAI-compatible inference services"
-        ),
-        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    _add_benchmark_arguments(parser)
-
-    parsed_args = parser.parse_args(argv)
-    validate_profile_arguments(parser, parsed_args)
-    config = _benchmark_config(parsed_args)
-    return config

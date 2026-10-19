@@ -28,6 +28,55 @@ struct AdmissionMembers {
     backends: Vec<String>,
 }
 
+#[derive(Clone)]
+struct WaitingRequest {
+    reservation: ReservationRef,
+    caller: String,
+    role: Option<String>,
+    ready: bool,
+    reserved: bool,
+    error: Option<AdmissionError>,
+    retry_at: Instant,
+}
+
+#[derive(Default)]
+struct ModelState {
+    version: u64,
+    config: Option<AdmissionConfig>,
+    members: Arc<AdmissionMembers>,
+    applied_version: Option<u64>,
+    waiting: Vec<WaitingRequest>,
+    last_caller: BTreeMap<i32, String>,
+}
+
+/// A model's local request ordering, retained across routing and configuration generations.
+pub struct Admission {
+    model: String,
+    scope: String,
+    frontend: String,
+    ledger: Option<Arc<RequestLedger>>,
+    state: Mutex<ModelState>,
+    dispatch: tokio::sync::Mutex<()>,
+    owner_epoch: tokio::sync::OnceCell<u64>,
+    pub(crate) changed: Notify,
+}
+
+#[derive(Default)]
+struct RegistryState {
+    current: BTreeMap<String, Arc<Admission>>,
+    retired: BTreeMap<String, Weak<Admission>>,
+    membership_version: Option<u64>,
+    closed: bool,
+}
+
+/// Owns model queues for one frontend process; the ledger owns cross-replica capacity.
+pub struct AdmissionRegistry {
+    state: Mutex<RegistryState>,
+    scope: String,
+    frontend: String,
+    ledger: Option<Arc<RequestLedger>>,
+}
+
 impl PreparedAdmissions {
     /// Validates every model before the runtime commits the serving publication.
     pub fn new(
@@ -46,22 +95,6 @@ impl PreparedAdmissions {
             }),
         })
     }
-}
-
-#[derive(Default)]
-struct RegistryState {
-    current: BTreeMap<String, Arc<Admission>>,
-    retired: BTreeMap<String, Weak<Admission>>,
-    membership_version: Option<u64>,
-    closed: bool,
-}
-
-/// Owns model queues for one frontend process; the ledger owns cross-replica capacity.
-pub struct AdmissionRegistry {
-    state: Mutex<RegistryState>,
-    scope: String,
-    frontend: String,
-    ledger: Option<Arc<RequestLedger>>,
 }
 
 impl AdmissionRegistry {
@@ -238,40 +271,66 @@ impl AdmissionRegistry {
     }
 }
 
-#[derive(Clone)]
-struct WaitingRequest {
-    reservation: ReservationRef,
-    caller: String,
-    role: Option<String>,
-    ready: bool,
-    reserved: bool,
-    error: Option<AdmissionError>,
-    retry_at: Instant,
-}
-
-#[derive(Default)]
-struct ModelState {
-    version: u64,
-    config: Option<AdmissionConfig>,
-    members: Arc<AdmissionMembers>,
-    applied_version: Option<u64>,
-    waiting: Vec<WaitingRequest>,
-    last_caller: BTreeMap<i32, String>,
-}
-
-/// A model's local request ordering, retained across routing and configuration generations.
-pub struct Admission {
-    model: String,
-    scope: String,
-    frontend: String,
-    ledger: Option<Arc<RequestLedger>>,
-    state: Mutex<ModelState>,
-    dispatch: tokio::sync::Mutex<()>,
-    owner_epoch: tokio::sync::OnceCell<u64>,
-    pub(crate) changed: Notify,
-}
-
 impl Admission {
+    /// Reserves waiting capacity before preprocessing, without occupying execution concurrency.
+    pub async fn enter(
+        self: &Arc<Self>,
+        request: &AdmissionRequest,
+        deadline: Instant,
+    ) -> Result<AdmissionPermit, AdmissionError> {
+        let observation = crate::telemetry::AdmissionAttempt::work(&self.model, deadline);
+        let resolved = match self.configuration() {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                observation.complete(&Err::<(), _>(error));
+                return Err(error);
+            }
+        };
+        let expires = resolved
+            .1
+            .wait_timeout()
+            .expect("published admission timeout is valid")
+            .and_then(|timeout| Instant::now().checked_add(timeout))
+            .map_or(deadline, |waiting_deadline| waiting_deadline.min(deadline));
+        let model = self.clone();
+        let request = request.clone();
+        // A canceled caller cannot abandon a store command whose result is still unknown. The
+        // detached task finishes enqueue and drops any unclaimed permit, without dispatching work.
+        let entry = tokio::spawn(async move {
+            model
+                .enter_waiting(&request, expires, deadline, resolved)
+                .await
+        });
+        let result = match tokio::time::timeout_at(expires, entry).await {
+            Ok(result) => result.expect("admission entry task must not panic"),
+            Err(_) if expires == deadline => Err(AdmissionError::DeadlineExceeded),
+            Err(_) => Err(AdmissionError::QueueTimeout),
+        };
+        let result = if Instant::now() >= expires {
+            drop(result);
+            Err(if expires == deadline {
+                AdmissionError::DeadlineExceeded
+            } else {
+                AdmissionError::QueueTimeout
+            })
+        } else {
+            result
+        };
+        match result {
+            Ok(permit) => {
+                if permit.is_reserved() {
+                    observation.begin_wait();
+                }
+                permit.observe(observation);
+                Ok(permit)
+            }
+            Err(error) => {
+                observation.complete(&Err::<(), _>(error));
+                Err(error)
+            }
+        }
+    }
+
     fn new(
         model: String,
         scope: String,
@@ -393,65 +452,6 @@ impl Admission {
             return Err(AdmissionError::Closed);
         }
         Ok(())
-    }
-
-    /// Reserves waiting capacity before preprocessing, without occupying execution concurrency.
-    pub async fn enter(
-        self: &Arc<Self>,
-        request: &AdmissionRequest,
-        deadline: Instant,
-    ) -> Result<AdmissionPermit, AdmissionError> {
-        let observation = crate::telemetry::AdmissionAttempt::work(&self.model, deadline);
-        let resolved = match self.configuration() {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                observation.complete(&Err::<(), _>(error));
-                return Err(error);
-            }
-        };
-        let expires = resolved
-            .1
-            .wait_timeout()
-            .expect("published admission timeout is valid")
-            .and_then(|timeout| Instant::now().checked_add(timeout))
-            .map_or(deadline, |waiting_deadline| waiting_deadline.min(deadline));
-        let model = self.clone();
-        let request = request.clone();
-        // A canceled caller cannot abandon a store command whose result is still unknown. The
-        // detached task finishes enqueue and drops any unclaimed permit, without dispatching work.
-        let entry = tokio::spawn(async move {
-            model
-                .enter_waiting(&request, expires, deadline, resolved)
-                .await
-        });
-        let result = match tokio::time::timeout_at(expires, entry).await {
-            Ok(result) => result.expect("admission entry task must not panic"),
-            Err(_) if expires == deadline => Err(AdmissionError::DeadlineExceeded),
-            Err(_) => Err(AdmissionError::QueueTimeout),
-        };
-        let result = if Instant::now() >= expires {
-            drop(result);
-            Err(if expires == deadline {
-                AdmissionError::DeadlineExceeded
-            } else {
-                AdmissionError::QueueTimeout
-            })
-        } else {
-            result
-        };
-        match result {
-            Ok(permit) => {
-                if permit.is_reserved() {
-                    observation.begin_wait();
-                }
-                permit.observe(observation);
-                Ok(permit)
-            }
-            Err(error) => {
-                observation.complete(&Err::<(), _>(error));
-                Err(error)
-            }
-        }
     }
 
     async fn enter_waiting(

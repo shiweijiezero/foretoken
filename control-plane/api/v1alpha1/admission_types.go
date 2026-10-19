@@ -30,6 +30,39 @@ type AdmissionConfig struct {
 	UnrecognizedFields map[string]json.RawMessage `json:"-"`
 }
 
+// CallerCapacity bounds each caller's generation units across frontend replicas.
+type CallerCapacity struct {
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxWaitingRequests uint32 `json:"maxWaitingRequests"`
+
+	// MaxConcurrentRequests includes dispatch reservations and accepted, unfinished work.
+	// +kubebuilder:validation:Format=int64
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
+}
+
+// RoleRule resolves trusted caller roles into dispatch priority, capacity, and eligible Pools.
+type RoleRule struct {
+	// +kubebuilder:validation:MinLength=1
+	Role string `json:"role"`
+
+	// Priority gives higher values earlier dispatch.
+	// +kubebuilder:validation:Minimum=-2147483648
+	// +kubebuilder:validation:Maximum=2147483647
+	Priority int32 `json:"priority"`
+
+	PerCaller CallerCapacity `json:"perCaller"`
+
+	// AllowedPools names this model's Pools; omission retains the normal candidate range.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	AllowedPools []string `json:"allowedPools,omitempty"`
+}
+
 // UnmarshalJSON retains unsupported fields so controllers reject them before selecting applications.
 func (config *AdmissionConfig) UnmarshalJSON(data []byte) error {
 	type fields AdmissionConfig
@@ -78,37 +111,4 @@ func (config *AdmissionConfig) Validate() error {
 	}
 	slices.Sort(names)
 	return fmt.Errorf("unsupported admission fields: %s", strings.Join(names, ", "))
-}
-
-// CallerCapacity bounds each caller's generation units across frontend replicas.
-type CallerCapacity struct {
-	// +kubebuilder:validation:Format=int64
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=4294967295
-	MaxWaitingRequests uint32 `json:"maxWaitingRequests"`
-
-	// MaxConcurrentRequests includes dispatch reservations and accepted, unfinished work.
-	// +kubebuilder:validation:Format=int64
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=4294967295
-	MaxConcurrentRequests uint32 `json:"maxConcurrentRequests"`
-}
-
-// RoleRule resolves trusted caller roles into dispatch priority, capacity, and eligible Pools.
-type RoleRule struct {
-	// +kubebuilder:validation:MinLength=1
-	Role string `json:"role"`
-
-	// Priority gives higher values earlier dispatch.
-	// +kubebuilder:validation:Minimum=-2147483648
-	// +kubebuilder:validation:Maximum=2147483647
-	Priority int32 `json:"priority"`
-
-	PerCaller CallerCapacity `json:"perCaller"`
-
-	// AllowedPools names this model's Pools; omission retains the normal candidate range.
-	// +optional
-	// +listType=set
-	// +kubebuilder:validation:items:MinLength=1
-	AllowedPools []string `json:"allowedPools,omitempty"`
 }

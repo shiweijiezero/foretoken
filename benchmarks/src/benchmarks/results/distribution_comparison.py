@@ -50,6 +50,17 @@ _POSITION_COLUMNS = (
 )
 
 
+_GREEDY_CANDIDATE_COLUMNS = (
+    "model", "label", "method", "weight_bits", "bits_per_weight", "model_size_gib",
+    "valid_samples", "failed_samples", "exact_matches", "exact_match_rate",
+)
+_GREEDY_SAMPLE_COLUMNS = (
+    "candidate", "window", "reference_token_ids", "candidate_token_ids",
+    "reference_text", "candidate_text", "reference_finish_reason", "candidate_finish_reason",
+    "reference_length", "candidate_length", "error", "exact_sequence_match", "first_divergence", "mismatch_count",
+)
+
+
 def _columns(protocol: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Add exactly the top-k overlap columns requested by the scoring protocol."""
     top_k = tuple(protocol["top_k"])
@@ -216,17 +227,6 @@ def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, An
         publisher=publish_distribution_comparison_wandb,
     )
     return [sinks[0], DistributionComparisonArtifactSink(directory), *sinks[1:]]
-
-
-_GREEDY_CANDIDATE_COLUMNS = (
-    "model", "label", "method", "weight_bits", "bits_per_weight", "model_size_gib",
-    "valid_samples", "failed_samples", "exact_matches", "exact_match_rate",
-)
-_GREEDY_SAMPLE_COLUMNS = (
-    "candidate", "window", "reference_token_ids", "candidate_token_ids",
-    "reference_text", "candidate_text", "reference_finish_reason", "candidate_finish_reason",
-    "reference_length", "candidate_length", "error", "exact_sequence_match", "first_divergence", "mismatch_count",
-)
 
 
 class GreedyComparisonArtifactSink:

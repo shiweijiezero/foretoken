@@ -29,6 +29,78 @@ class LogConfig:
     image_pull_secrets: tuple[str, ...] = ()
 
 
+class LogCollectionLifecycle:
+    """Install, update, and remove only CLI-owned log services, retaining stored logs."""
+
+    def __init__(self, helm: Helm) -> None:
+        self._helm = helm
+        self.loki = helm.loki_release()
+        self.collector = helm.log_collector_release()
+
+    def plan(self, config: LogConfig) -> tuple[tuple[str, str, str], ...]:
+        """Validate release ownership and describe the requested collection change."""
+        actions = []
+        for release, needed, name in (
+            (self.loki, config.enabled and not config.endpoint, "Loki"),
+            (self.collector, config.enabled, "Log collector"),
+        ):
+            exists = self._helm.release_exists(release)
+            if exists and needed and not self._helm.is_cli_managed(release):
+                raise DeploymentError(
+                    f"Helm release {release.display_name} is not managed by foretoken; "
+                    "use its existing Helm lifecycle"
+                )
+            if needed:
+                action = "Upgrade" if exists else "Install"
+            else:
+                action = "Preserve" if exists else "Skip"
+            if release == self.collector and exists and not needed:
+                action = "Remove" if self._helm.is_cleanup_managed(release) else "Preserve"
+            detail = release.display_name
+            if release == self.loki and config.endpoint:
+                action, detail = "Reuse", config.endpoint
+            actions.append((name, action, detail))
+        return tuple(actions)
+
+    def install(self, config: LogConfig, timeout: str) -> tuple[str, str]:
+        """Return Grafana's URL and the managed StatefulSet selected for volume expansion."""
+        endpoint = config.endpoint.rstrip("/") or (
+            f"http://{self.loki.name}.{self.loki.namespace}.svc:3100"
+        )
+        if not config.enabled:
+            if self._helm.release_exists(self.collector) and self._helm.is_cleanup_managed(self.collector):
+                self._helm.uninstall(self.collector, timeout)
+            storage_exists = (
+                self._helm.release_exists(self.loki)
+                and self._helm.is_cleanup_managed(self.loki)
+            )
+            if not config.endpoint and not storage_exists:
+                return "", ""
+        else:
+            if not config.endpoint:
+                self._helm.install_loki(self.loki, loki_values(config), timeout)
+            self._helm.install_log_collector(
+                self.collector, collector_values(endpoint, self.collector, config.image_pull_secrets), timeout
+            )
+        statefulset = (
+            self._helm.loki_statefulset(self.loki).name
+            if config.max_size and not config.endpoint else ""
+        )
+        return endpoint, statefulset
+
+    def managed_releases(self) -> tuple[ReleaseRef, ...]:
+        """Return managed releases in shutdown order, collector before storage."""
+        return tuple(
+            release for release in (self.collector, self.loki)
+            if self._helm.release_exists(release) and self._helm.is_cleanup_managed(release)
+        )
+
+    def uninstall(self, releases: tuple[ReleaseRef, ...], timeout: str) -> None:
+        """Stop collection and storage, retaining node checkpoints and Loki claims."""
+        for release in releases:
+            self._helm.uninstall(release, timeout)
+
+
 def log_config_from_values(values: tuple[dict[str, Any], ...]) -> LogConfig:
     """Read explicit log settings in Helm precedence order; omitted fields keep defaults."""
     resolved: dict[str, Any] = {}
@@ -206,75 +278,3 @@ def collector_values(
 """,
         },
     }
-
-
-class LogCollectionLifecycle:
-    """Install, update, and remove only CLI-owned log services, retaining stored logs."""
-
-    def __init__(self, helm: Helm) -> None:
-        self._helm = helm
-        self.loki = helm.loki_release()
-        self.collector = helm.log_collector_release()
-
-    def plan(self, config: LogConfig) -> tuple[tuple[str, str, str], ...]:
-        """Validate release ownership and describe the requested collection change."""
-        actions = []
-        for release, needed, name in (
-            (self.loki, config.enabled and not config.endpoint, "Loki"),
-            (self.collector, config.enabled, "Log collector"),
-        ):
-            exists = self._helm.release_exists(release)
-            if exists and needed and not self._helm.is_cli_managed(release):
-                raise DeploymentError(
-                    f"Helm release {release.display_name} is not managed by foretoken; "
-                    "use its existing Helm lifecycle"
-                )
-            if needed:
-                action = "Upgrade" if exists else "Install"
-            else:
-                action = "Preserve" if exists else "Skip"
-            if release == self.collector and exists and not needed:
-                action = "Remove" if self._helm.is_cleanup_managed(release) else "Preserve"
-            detail = release.display_name
-            if release == self.loki and config.endpoint:
-                action, detail = "Reuse", config.endpoint
-            actions.append((name, action, detail))
-        return tuple(actions)
-
-    def install(self, config: LogConfig, timeout: str) -> tuple[str, str]:
-        """Return Grafana's URL and the managed StatefulSet selected for volume expansion."""
-        endpoint = config.endpoint.rstrip("/") or (
-            f"http://{self.loki.name}.{self.loki.namespace}.svc:3100"
-        )
-        if not config.enabled:
-            if self._helm.release_exists(self.collector) and self._helm.is_cleanup_managed(self.collector):
-                self._helm.uninstall(self.collector, timeout)
-            storage_exists = (
-                self._helm.release_exists(self.loki)
-                and self._helm.is_cleanup_managed(self.loki)
-            )
-            if not config.endpoint and not storage_exists:
-                return "", ""
-        else:
-            if not config.endpoint:
-                self._helm.install_loki(self.loki, loki_values(config), timeout)
-            self._helm.install_log_collector(
-                self.collector, collector_values(endpoint, self.collector, config.image_pull_secrets), timeout
-            )
-        statefulset = (
-            self._helm.loki_statefulset(self.loki).name
-            if config.max_size and not config.endpoint else ""
-        )
-        return endpoint, statefulset
-
-    def managed_releases(self) -> tuple[ReleaseRef, ...]:
-        """Return managed releases in shutdown order, collector before storage."""
-        return tuple(
-            release for release in (self.collector, self.loki)
-            if self._helm.release_exists(release) and self._helm.is_cleanup_managed(release)
-        )
-
-    def uninstall(self, releases: tuple[ReleaseRef, ...], timeout: str) -> None:
-        """Stop collection and storage, retaining node checkpoints and Loki claims."""
-        for release in releases:
-            self._helm.uninstall(release, timeout)

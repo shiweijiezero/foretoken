@@ -80,25 +80,10 @@ type managementHTTPError struct {
 	status int
 }
 
-func (err *managementHTTPError) Error() string {
-	return fmt.Sprintf("endpoint returned HTTP %d", err.status)
-}
-
 type GroupReconciler struct {
 	client.Client
 	HTTPClient            *http.Client
 	ControlPlaneNamespace string
-}
-
-// SetupWithManager registers KVGroup reconciliation for its owned client infrastructure.
-func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.KVGroup{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.PersistentVolumeClaim{}).
-		Owns(&networkingv1.NetworkPolicy{}).
-		Complete(reconciler)
 }
 
 // Reconcile materializes one KVGroup client workload and publishes its readiness.
@@ -513,6 +498,10 @@ func (reconciler *GroupReconciler) checkStorageRegistration(ctx context.Context,
 	return true, kvGroupCondition{ready: true, reason: "Registered", message: "Mooncake client registration and memory segments match Master"}
 }
 
+func (err *managementHTTPError) Error() string {
+	return fmt.Sprintf("endpoint returned HTTP %d", err.status)
+}
+
 // readProviderJSON reads registration state from a bounded client or Master request.
 func (reconciler *GroupReconciler) readProviderJSON(ctx context.Context, endpoint string, target any) error {
 	if reconciler.HTTPClient == nil {
@@ -580,4 +569,15 @@ func clientPodMessage(ready bool) string {
 		return "Mooncake client Pod is Kubernetes-ready and reachable through its Service"
 	}
 	return "Mooncake client Pod is not Kubernetes-ready"
+}
+
+// SetupWithManager registers KVGroup reconciliation for its owned client infrastructure.
+func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVGroup{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Complete(reconciler)
 }

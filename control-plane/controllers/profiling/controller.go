@@ -66,13 +66,6 @@ type profileObservation struct {
 	Capture           *profileRecord `json:"capture"`
 }
 
-// SetupWithManager registers the existing manager as the sole capture coordinator.
-func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
-	r.APIReader = manager.GetAPIReader()
-	r.HTTPClient = &http.Client{Timeout: 5 * time.Second}
-	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.ProfileRun{}).Complete(r)
-}
-
 // Reconcile persists recovery state before starting work, then observes the same runtime identities.
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	run := new(inferencev1alpha1.ProfileRun)
@@ -588,4 +581,11 @@ func (r *Reconciler) removeProfileFinalizer(ctx context.Context, run *inferencev
 	base := run.DeepCopy()
 	controllerutil.RemoveFinalizer(run, profileFinalizer)
 	return r.Patch(ctx, run, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+// SetupWithManager registers the existing manager as the sole capture coordinator.
+func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
+	r.APIReader = manager.GetAPIReader()
+	r.HTTPClient = &http.Client{Timeout: 5 * time.Second}
+	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.ProfileRun{}).Complete(r)
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Owns model source acquisition, placement, and retained preparation records.
+// Owns model preparation Jobs, placement, and failure reporting.
 
 package model
 
@@ -15,9 +15,9 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
-	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +27,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+// modelPreparationFailure distinguishes a completed failed attempt from an API observation error.
+type modelPreparationFailure struct {
+	reason  string
+	message string
+}
+
+var errNoPreparationPlacement = errors.New("no eligible accelerator node for model preparation")
 
 // reconcilePreparation runs source acquisition before allocating ModelGroup accelerator Pods.
 func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) (bool, error) {
@@ -95,12 +103,6 @@ func (reconciler *GroupReconciler) reconcilePreparation(ctx context.Context, gro
 		return false, errors.Join(failure, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(failure)))
 	}
 	return false, nil
-}
-
-// modelPreparationFailure distinguishes a completed failed attempt from an API observation error.
-type modelPreparationFailure struct {
-	reason  string
-	message string
 }
 
 // Error retains the preparation cause for status publication and reconciliation logs.
@@ -248,8 +250,6 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	runtimeconfig.ConfigurePodStorage(&job.Spec.Template.Spec, files.Image, access.Identity, access)
 	return job, nil
 }
-
-var errNoPreparationPlacement = errors.New("no eligible accelerator node for model preparation")
 
 // preparationNodeAffinity restricts a new CPU preparation Job to nodes that can
 // also host its serving Pod. The scheduler still decides placement and PVC binding.

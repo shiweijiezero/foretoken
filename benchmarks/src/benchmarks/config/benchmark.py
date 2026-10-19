@@ -13,43 +13,6 @@ from typing import Any
 OutputTokenLimit = int | list[int]
 
 
-def parse_duration_seconds(value: str | float) -> float:
-    """Convert CLI and sweep time values to seconds; unitless values are seconds."""
-    if not isinstance(value, str):
-        return float(value)
-    match = re.fullmatch(
-        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(ms|s|min|m|h|d)?",
-        value.strip(),
-    )
-    if match is None:
-        raise ValueError(
-            "expected a time value such as 30s, 8min or 1h; units: ms, s, m, min, h, d"
-        )
-    number, unit = match.groups()
-    scale = {None: 1, "ms": 0.001, "s": 1, "m": 60, "min": 60, "h": 3600, "d": 86400}
-    return float(number) * scale[unit]
-
-
-def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
-    """Normalize a fixed CLI max-tokens value or range into the internal representation."""
-    if isinstance(value, int):
-        if value < 0:
-            raise ValueError(f"max-tokens must be >= 0, got {value}")
-        return value
-    if len(value) == 1:
-        return normalize_output_token_limit(value[0])
-    if len(value) != 2:
-        raise ValueError(
-            f"--max-tokens accepts 1 or 2 values [min max], got {value}"
-        )
-    minimum, maximum = value
-    if minimum > maximum:
-        raise ValueError(f"max-tokens range min must be <= max, got {value}")
-    if minimum < 0:
-        raise ValueError(f"max-tokens range values must be >= 0, got {value}")
-    return value
-
-
 @dataclass
 class ModelServiceSource:
     """Select a Kustomize instance or URL; ``name`` labels a benchmark comparison method."""
@@ -641,3 +604,40 @@ class BenchmarkConfig:
                 if self.profile is not None else None
             ),
         }
+
+
+def parse_duration_seconds(value: str | float) -> float:
+    """Convert CLI and sweep time values to seconds; unitless values are seconds."""
+    if not isinstance(value, str):
+        return float(value)
+    match = re.fullmatch(
+        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(ms|s|min|m|h|d)?",
+        value.strip(),
+    )
+    if match is None:
+        raise ValueError(
+            "expected a time value such as 30s, 8min or 1h; units: ms, s, m, min, h, d"
+        )
+    number, unit = match.groups()
+    scale = {None: 1, "ms": 0.001, "s": 1, "m": 60, "min": 60, "h": 3600, "d": 86400}
+    return float(number) * scale[unit]
+
+
+def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
+    """Normalize a fixed CLI max-tokens value or range into the internal representation."""
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError(f"max-tokens must be >= 0, got {value}")
+        return value
+    if len(value) == 1:
+        return normalize_output_token_limit(value[0])
+    if len(value) != 2:
+        raise ValueError(
+            f"--max-tokens accepts 1 or 2 values [min max], got {value}"
+        )
+    minimum, maximum = value
+    if minimum > maximum:
+        raise ValueError(f"max-tokens range min must be <= max, got {value}")
+    if minimum < 0:
+        raise ValueError(f"max-tokens range values must be >= 0, got {value}")
+    return value

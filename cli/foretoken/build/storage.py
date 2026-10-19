@@ -40,6 +40,237 @@ _NAMESPACED_KINDS = (
 _CLUSTER_KINDS = ("storageclasses", "clusterroles", "clusterrolebindings")
 
 
+def build_configuration(
+    root: Path, values: Sequence[dict[str, Any]], image_registry: str
+) -> dict[str, str]:
+    """Resolve compiler storage and image choices from the chart's authoritative defaults."""
+    defaults = yaml.safe_load(
+        (root / "deploy/charts/foretoken/values.yaml").read_text()
+    )
+    configuration = dict(defaults["development"]["build"])
+    explicit_image = False
+    for value in values:
+        overrides = (value.get("development") or {}).get("build") or {}
+        explicit_image = explicit_image or "image" in overrides
+        configuration.update(overrides)
+    if image_registry and not explicit_image:
+        configuration["image"] = (
+            image_registry.rstrip("/") + "/" + configuration["image"].split("/", 1)[1]
+        )
+    return configuration
+
+
+def prepare_build_storage(
+    kubectl: Kubectl,
+    namespace: str,
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]],
+    pull_secrets: tuple[str, ...],
+    timeout: str,
+) -> None:
+    """Prepare node-local execution storage for installation, preserving artifact storage intent."""
+    automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
+    image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
+    ensure_build_storage(
+        kubectl, namespace, image_tools_image(arguments, registry_mirrors),
+        image, pull_secrets, timeout,
+    )
+
+
+def ensure_build_storage(
+    kubectl: Kubectl,
+    namespace: str,
+    tools_image: str,
+    provisioner_image: str,
+    pull_secrets: tuple[str, ...],
+    timeout: str,
+) -> str:
+    """Prepare shared source storage before builds and return its non-default StorageClass.
+
+    The source installation owns this dependency across checkout bindings and
+    supplies its selected images and namespace-local pull secrets.
+    """
+    resources = _resources(namespace, tools_image, provisioner_image, pull_secrets, _node_paths(kubectl))
+    for document in resources:
+        ref = resource_ref(document)
+        existing = kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
+        if (
+            existing is not None
+            and existing["metadata"].get("labels", {}).get(_OWNER_LABEL) != namespace
+        ):
+            raise DeploymentError(
+                f"cannot prepare source storage: {ref.display_name} already exists outside this installation"
+            )
+    if not kubectl.exists("namespace", namespace):
+        kubectl.apply(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Namespace",
+                    "metadata": {"name": namespace},
+                }
+            )
+        )
+    deployment = next(document for document in resources if document["kind"] == "Deployment")
+    kubectl.apply(yaml.safe_dump_all((document for document in resources if document is not deployment), sort_keys=False))
+    configuration = kubectl.get("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
+    # Start with the current path selection before any new claim can be provisioned.
+    deployment["spec"]["template"]["metadata"]["annotations"] = {
+        "inference.foretoken.io/source-build-config-revision": configuration["metadata"]["resourceVersion"],
+    }
+    kubectl.apply(yaml.safe_dump(deployment, sort_keys=False))
+    kubectl.rollout_status(resource_ref(deployment), timeout)
+    return SOURCE_BUILD_STORAGE_CLASS
+
+
+def ensure_build_volumes(
+    kubectl: Kubectl,
+    namespace: str,
+    name: str,
+    configuration: dict[str, str],
+    *,
+    binding: str,
+    timeout: str,
+    record_identity: Callable[[dict[str, Any]], None],
+    recorded_caches: Sequence[dict[str, Any]] = (),
+    owner: dict[str, str] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare artifact and optional local execution PVCs for source build callers.
+
+    The source state owner records each UID before another PVC is created, so a
+    failed pair remains recoverable. Default local storage uses a single volume;
+    explicitly selected artifact storage receives a separate local execution PVC.
+    """
+    artifact = _ensure_build_cache(
+        kubectl, namespace, name, configuration,
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if artifact is not None:
+        record_identity(artifact)
+    # An omitted override preserves an existing volume's class, including NFS.
+    current = kubectl.get("pvc", name, namespace)
+    if current["spec"].get("storageClassName", "") in ("", SOURCE_BUILD_STORAGE_CLASS):
+        return artifact, None
+    if artifact is None:
+        raise DeploymentError(
+            f"cannot prepare execution storage: artifact PVC {namespace}/{name} has no proven source binding"
+        )
+    if artifact.get("legacy"):
+        metadata = current["metadata"]
+        labels = metadata.get("labels", {})
+        if metadata["uid"] != artifact["uid"] or labels.get(SOURCE_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
+            raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
+        updated = json.loads(kubectl.run([
+            "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
+                {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
+                {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
+                {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
+            ]),
+        ]).stdout)["metadata"]
+        artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
+        artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
+        record_identity(artifact)
+    execution_name = "foretoken-execution-" + artifact["uid"][:20]
+    execution = _ensure_build_cache(
+        kubectl, namespace, execution_name,
+        {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
+        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
+    )
+    if execution is None:
+        raise DeploymentError(
+            f"execution PVC {namespace}/{execution_name} has no proven source binding"
+        )
+    record_identity(execution)
+    return artifact, execution
+
+
+def managed_build_storage_resources(
+    kubectl: Kubectl, namespace: str
+) -> tuple[dict[str, Any], ...]:
+    """Discover owned storage resources, including a bootstrap without workstation state."""
+    selector = f"{_OWNER_LABEL}={namespace}"
+    return (
+        *kubectl.list_resources(_NAMESPACED_KINDS, namespace, label_selector=selector),
+        *kubectl.list_cluster_resources(_CLUSTER_KINDS, label_selector=selector),
+    )
+
+
+def remove_build_storage(
+    kubectl: Kubectl, namespace: str, timeout: str
+) -> tuple[str, str]:
+    """Remove owned provisioning resources after all compiler volumes finish teardown.
+
+    Uninstall calls this after releasing builders and their PVCs. Live claims or
+    retained volumes preserve the provisioner; a failed teardown leaves it running.
+    The platform namespace and unrelated storage resources are never removed.
+    """
+    selector = f"{_OWNER_LABEL}={namespace}"
+    owned = managed_build_storage_resources(kubectl, namespace)
+    if not owned:
+        return "Preserve", "no managed source storage provisioner"
+    deadline = time.monotonic() + timeout_seconds(timeout)
+    # Keep the controller and helper permissions until Delete-policy PVs disappear.
+    while True:
+        classes = {
+            storage_class["metadata"]["name"]
+            for storage_class in kubectl.list_cluster_resources(("storageclasses",))
+            if storage_class.get("provisioner") == SOURCE_BUILD_PROVISIONER
+        }
+        classes.add(SOURCE_BUILD_STORAGE_CLASS)
+        claims = [
+            claim
+            for claim in kubectl.list_all_resources(("persistentvolumeclaims",))
+            if claim["spec"].get("storageClassName") in classes
+        ]
+        active = [
+            claim for claim in claims if not claim["metadata"].get("deletionTimestamp")
+        ]
+        if active:
+            return "Preserve", "source storage still has PVC consumers"
+        volumes = [
+            volume
+            for volume in kubectl.list_cluster_resources(("persistentvolumes",))
+            if volume["spec"].get("storageClassName") in classes
+            or volume["metadata"]
+            .get("annotations", {})
+            .get("pv.kubernetes.io/provisioned-by")
+            == SOURCE_BUILD_PROVISIONER
+        ]
+        if any(
+            volume["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
+            for volume in volumes
+        ):
+            return "Preserve", "retained source volumes still need the provisioner"
+        if not claims and not volumes:
+            break
+        if time.monotonic() >= deadline:
+            raise DeploymentError(
+                "source storage volume teardown did not finish within " + timeout
+            )
+        time.sleep(1)
+    if classes - {SOURCE_BUILD_STORAGE_CLASS}:
+        return "Preserve", "another StorageClass uses the source provisioner"
+    # Label selection is evaluated by the server, so an unowned replacement is untouched.
+    for kinds, scope in (
+        (_CLUSTER_KINDS, []),
+        (_NAMESPACED_KINDS, ["--namespace", namespace]),
+    ):
+        kubectl.run(
+            [
+                "delete",
+                ",".join(kinds),
+                *scope,
+                "--selector",
+                selector,
+                "--ignore-not-found",
+                "--wait=true",
+                "--timeout=" + timeout,
+            ]
+        )
+    return "Removed", SOURCE_BUILD_STORAGE_CLASS
+
+
 def _node_paths(kubectl: Kubectl) -> list[dict[str, Any]]:
     """Reuse upstream local-volume roots, including persistent mounts inside kind and k3d nodes."""
     classes = sorted(
@@ -332,52 +563,6 @@ rm -rf "$VOL_DIR"
     return resources
 
 
-def ensure_build_storage(
-    kubectl: Kubectl,
-    namespace: str,
-    tools_image: str,
-    provisioner_image: str,
-    pull_secrets: tuple[str, ...],
-    timeout: str,
-) -> str:
-    """Prepare shared source storage before builds and return its non-default StorageClass.
-
-    The source installation owns this dependency across checkout bindings and
-    supplies its selected images and namespace-local pull secrets.
-    """
-    resources = _resources(namespace, tools_image, provisioner_image, pull_secrets, _node_paths(kubectl))
-    for document in resources:
-        ref = resource_ref(document)
-        existing = kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-        if (
-            existing is not None
-            and existing["metadata"].get("labels", {}).get(_OWNER_LABEL) != namespace
-        ):
-            raise DeploymentError(
-                f"cannot prepare source storage: {ref.display_name} already exists outside this installation"
-            )
-    if not kubectl.exists("namespace", namespace):
-        kubectl.apply(
-            yaml.safe_dump(
-                {
-                    "apiVersion": "v1",
-                    "kind": "Namespace",
-                    "metadata": {"name": namespace},
-                }
-            )
-        )
-    deployment = next(document for document in resources if document["kind"] == "Deployment")
-    kubectl.apply(yaml.safe_dump_all((document for document in resources if document is not deployment), sort_keys=False))
-    configuration = kubectl.get("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
-    # Start with the current path selection before any new claim can be provisioned.
-    deployment["spec"]["template"]["metadata"]["annotations"] = {
-        "inference.foretoken.io/source-build-config-revision": configuration["metadata"]["resourceVersion"],
-    }
-    kubectl.apply(yaml.safe_dump(deployment, sort_keys=False))
-    kubectl.rollout_status(resource_ref(deployment), timeout)
-    return SOURCE_BUILD_STORAGE_CLASS
-
-
 def superseded_build_volume(kubectl: Kubectl, claim: dict[str, Any]) -> dict[str, Any] | None:
     """Find a managed compiler volume whose old node directory is no longer selected.
 
@@ -406,130 +591,6 @@ def superseded_build_volume(kubectl: Kubectl, claim: dict[str, Any]) -> dict[str
     if volume["spec"].get("persistentVolumeReclaimPolicy") != "Delete":
         raise DeploymentError(f"compiler volume {volume['metadata']['name']} needs a local-storage update but its reclaim policy is Retain")
     return volume
-
-
-def managed_build_storage_resources(
-    kubectl: Kubectl, namespace: str
-) -> tuple[dict[str, Any], ...]:
-    """Discover owned storage resources, including a bootstrap without workstation state."""
-    selector = f"{_OWNER_LABEL}={namespace}"
-    return (
-        *kubectl.list_resources(_NAMESPACED_KINDS, namespace, label_selector=selector),
-        *kubectl.list_cluster_resources(_CLUSTER_KINDS, label_selector=selector),
-    )
-
-
-def remove_build_storage(
-    kubectl: Kubectl, namespace: str, timeout: str
-) -> tuple[str, str]:
-    """Remove owned provisioning resources after all compiler volumes finish teardown.
-
-    Uninstall calls this after releasing builders and their PVCs. Live claims or
-    retained volumes preserve the provisioner; a failed teardown leaves it running.
-    The platform namespace and unrelated storage resources are never removed.
-    """
-    selector = f"{_OWNER_LABEL}={namespace}"
-    owned = managed_build_storage_resources(kubectl, namespace)
-    if not owned:
-        return "Preserve", "no managed source storage provisioner"
-    deadline = time.monotonic() + timeout_seconds(timeout)
-    # Keep the controller and helper permissions until Delete-policy PVs disappear.
-    while True:
-        classes = {
-            storage_class["metadata"]["name"]
-            for storage_class in kubectl.list_cluster_resources(("storageclasses",))
-            if storage_class.get("provisioner") == SOURCE_BUILD_PROVISIONER
-        }
-        classes.add(SOURCE_BUILD_STORAGE_CLASS)
-        claims = [
-            claim
-            for claim in kubectl.list_all_resources(("persistentvolumeclaims",))
-            if claim["spec"].get("storageClassName") in classes
-        ]
-        active = [
-            claim for claim in claims if not claim["metadata"].get("deletionTimestamp")
-        ]
-        if active:
-            return "Preserve", "source storage still has PVC consumers"
-        volumes = [
-            volume
-            for volume in kubectl.list_cluster_resources(("persistentvolumes",))
-            if volume["spec"].get("storageClassName") in classes
-            or volume["metadata"]
-            .get("annotations", {})
-            .get("pv.kubernetes.io/provisioned-by")
-            == SOURCE_BUILD_PROVISIONER
-        ]
-        if any(
-            volume["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
-            for volume in volumes
-        ):
-            return "Preserve", "retained source volumes still need the provisioner"
-        if not claims and not volumes:
-            break
-        if time.monotonic() >= deadline:
-            raise DeploymentError(
-                "source storage volume teardown did not finish within " + timeout
-            )
-        time.sleep(1)
-    if classes - {SOURCE_BUILD_STORAGE_CLASS}:
-        return "Preserve", "another StorageClass uses the source provisioner"
-    # Label selection is evaluated by the server, so an unowned replacement is untouched.
-    for kinds, scope in (
-        (_CLUSTER_KINDS, []),
-        (_NAMESPACED_KINDS, ["--namespace", namespace]),
-    ):
-        kubectl.run(
-            [
-                "delete",
-                ",".join(kinds),
-                *scope,
-                "--selector",
-                selector,
-                "--ignore-not-found",
-                "--wait=true",
-                "--timeout=" + timeout,
-            ]
-        )
-    return "Removed", SOURCE_BUILD_STORAGE_CLASS
-
-
-def build_configuration(
-    root: Path, values: Sequence[dict[str, Any]], image_registry: str
-) -> dict[str, str]:
-    """Resolve compiler storage and image choices from the chart's authoritative defaults."""
-    defaults = yaml.safe_load(
-        (root / "deploy/charts/foretoken/values.yaml").read_text()
-    )
-    configuration = dict(defaults["development"]["build"])
-    explicit_image = False
-    for value in values:
-        overrides = (value.get("development") or {}).get("build") or {}
-        explicit_image = explicit_image or "image" in overrides
-        configuration.update(overrides)
-    if image_registry and not explicit_image:
-        configuration["image"] = (
-            image_registry.rstrip("/") + "/" + configuration["image"].split("/", 1)[1]
-        )
-    return configuration
-
-
-def prepare_build_storage(
-    kubectl: Kubectl,
-    namespace: str,
-    arguments: dict[str, str],
-    registry_mirrors: dict[str, list[str]],
-    pull_secrets: tuple[str, ...],
-    timeout: str,
-) -> None:
-    """Prepare node-local execution storage for installation, preserving artifact storage intent."""
-    automatic = registry_mirrors.get("docker.io", ["docker.io"])[0]
-    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
-    image = registry + "/" + SOURCE_BUILD_PROVISIONER_IMAGE.split("/", 1)[1]
-    ensure_build_storage(
-        kubectl, namespace, image_tools_image(arguments, registry_mirrors),
-        image, pull_secrets, timeout,
-    )
 
 
 def _ensure_build_cache(
@@ -661,67 +722,6 @@ def _ensure_build_cache(
     )
     metadata = json.loads(created.stdout)["metadata"]
     return {"namespace": namespace, "name": name, "uid": metadata["uid"], "binding": binding}
-
-
-def ensure_build_volumes(
-    kubectl: Kubectl,
-    namespace: str,
-    name: str,
-    configuration: dict[str, str],
-    *,
-    binding: str,
-    timeout: str,
-    record_identity: Callable[[dict[str, Any]], None],
-    recorded_caches: Sequence[dict[str, Any]] = (),
-    owner: dict[str, str] | None = None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Prepare artifact and optional local execution PVCs for source build callers.
-
-    The source state owner records each UID before another PVC is created, so a
-    failed pair remains recoverable. Default local storage uses a single volume;
-    explicitly selected artifact storage receives a separate local execution PVC.
-    """
-    artifact = _ensure_build_cache(
-        kubectl, namespace, name, configuration,
-        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
-    )
-    if artifact is not None:
-        record_identity(artifact)
-    # An omitted override preserves an existing volume's class, including NFS.
-    current = kubectl.get("pvc", name, namespace)
-    if current["spec"].get("storageClassName", "") in ("", SOURCE_BUILD_STORAGE_CLASS):
-        return artifact, None
-    if artifact is None:
-        raise DeploymentError(
-            f"cannot prepare execution storage: artifact PVC {namespace}/{name} has no proven source binding"
-        )
-    if artifact.get("legacy"):
-        metadata = current["metadata"]
-        labels = metadata.get("labels", {})
-        if metadata["uid"] != artifact["uid"] or labels.get(SOURCE_BUILD_CACHE_LABEL) != "true" or labels.get(SOURCE_BUILD_BINDING_LABEL) not in (None, binding):
-            raise DeploymentError(f"artifact PVC {namespace}/{name} changed during ownership transfer")
-        updated = json.loads(kubectl.run([
-            "patch", "pvc", name, "-n", namespace, "--type=json", "-o", "json", "-p", json.dumps([
-                {"op": "test", "path": "/metadata/uid", "value": artifact["uid"]},
-                {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
-                {"op": "add", "path": "/metadata/labels/" + SOURCE_BUILD_BINDING_LABEL.replace("/", "~1"), "value": binding},
-            ]),
-        ]).stdout)["metadata"]
-        artifact = {key: updated[key] for key in ("namespace", "name", "uid")}
-        artifact["binding"] = updated["labels"][SOURCE_BUILD_BINDING_LABEL]
-        record_identity(artifact)
-    execution_name = "foretoken-execution-" + artifact["uid"][:20]
-    execution = _ensure_build_cache(
-        kubectl, namespace, execution_name,
-        {**configuration, "storageClassName": SOURCE_BUILD_STORAGE_CLASS},
-        binding=binding, timeout=timeout, recorded_caches=recorded_caches, owner=owner,
-    )
-    if execution is None:
-        raise DeploymentError(
-            f"execution PVC {namespace}/{execution_name} has no proven source binding"
-        )
-    record_identity(execution)
-    return artifact, execution
 
 
 def local_build_nodes(

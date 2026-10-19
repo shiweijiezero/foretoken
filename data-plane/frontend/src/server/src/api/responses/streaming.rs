@@ -35,6 +35,44 @@ pub(crate) struct ResponseStreamEvent {
     payload: Map<String, Value>,
 }
 
+/// The currently streamed assistant output item.
+enum OpenItem {
+    Reasoning {
+        item_id: String,
+        text: String,
+    },
+    Message {
+        item_id: String,
+        text: String,
+    },
+    FunctionCall {
+        item_id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+        saw_delta: bool,
+    },
+}
+
+/// State machine that maps one `vllm-chat` event stream onto Responses API
+/// SSE events.
+///
+/// Items open lazily on the first non-empty delta so empty blocks never
+/// appear in the stream, matching the Python state machine. Item IDs assigned
+/// here are matched back onto the final response's output items in
+/// [`Self::final_output_items`] so streamed events and the terminal payload
+/// agree about IDs.
+pub(crate) struct OutputItemStreamer {
+    /// Index of the next output item.
+    output_index: u32,
+    /// The currently open output item, if any.
+    current: Option<OpenItem>,
+    /// Whether reasoning items appear in both streamed and collected output.
+    include_reasoning: bool,
+    /// Finalized items are the authority for the terminal response payload.
+    completed_items: Vec<ResponseOutputItem>,
+}
+
 impl ResponseStreamEvent {
     /// Return the wire event type (used for the SSE `event:` line).
     pub(crate) fn event_type(&self) -> &'static str {
@@ -65,44 +103,6 @@ pub(crate) fn response_lifecycle_event(
         event_type,
         payload: Map::from_iter([("response".to_string(), response)]),
     }
-}
-
-/// State machine that maps one `vllm-chat` event stream onto Responses API
-/// SSE events.
-///
-/// Items open lazily on the first non-empty delta so empty blocks never
-/// appear in the stream, matching the Python state machine. Item IDs assigned
-/// here are matched back onto the final response's output items in
-/// [`Self::final_output_items`] so streamed events and the terminal payload
-/// agree about IDs.
-pub(crate) struct OutputItemStreamer {
-    /// Index of the next output item.
-    output_index: u32,
-    /// The currently open output item, if any.
-    current: Option<OpenItem>,
-    /// Whether reasoning items appear in both streamed and collected output.
-    include_reasoning: bool,
-    /// Finalized items are the authority for the terminal response payload.
-    completed_items: Vec<ResponseOutputItem>,
-}
-
-/// The currently streamed assistant output item.
-enum OpenItem {
-    Reasoning {
-        item_id: String,
-        text: String,
-    },
-    Message {
-        item_id: String,
-        text: String,
-    },
-    FunctionCall {
-        item_id: String,
-        call_id: String,
-        name: String,
-        arguments: String,
-        saw_delta: bool,
-    },
 }
 
 impl OutputItemStreamer {

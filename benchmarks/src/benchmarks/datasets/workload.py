@@ -106,6 +106,44 @@ class HttpWorkload:
         )
         self._prepare_conversations()
 
+    def episodes(self, *, warmup: bool = False) -> Iterator[RequestEpisode]:
+        """Prepare request occurrences without consuming another phase's inputs or RNG."""
+        remaining = (
+            self.benchmark.load.warmup_requests if warmup else self.request_count
+        )
+        for index, task in enumerate(self._tasks(warmup=warmup)):
+            if remaining is not None and remaining <= 0:
+                break
+            # Resolve each episode's lengths before it enters concurrent execution.
+            rng = random.Random(self.dataset.random_seed + index)
+            conversation = (
+                self.benchmark.is_multi_turn and task.prompt_token_ids is None
+            )
+            script = (
+                self.scripts[task.id] if conversation else [(task.messages(), None)]
+            )
+            if remaining is not None:
+                script = script[:remaining]
+                remaining -= len(script)
+            turns = tuple(
+                RequestTurn(
+                    self.builder.prepare(
+                        task,
+                        messages,
+                        rng,
+                        reference_length=self.reference_lengths.get((task.id, turn)),
+                    ),
+                    answer,
+                )
+                for turn, (messages, answer) in enumerate(script)
+            )
+            event = (
+                self.trace_events[index % len(self.trace_events)]
+                if self.trace_events is not None
+                else None
+            )
+            yield RequestEpisode(task, turns, conversation, event)
+
     def _prepare_conversations(self) -> None:
         """Resolve scripts and reference output lengths once, outside all measurement clocks."""
         if not self.benchmark.is_multi_turn:
@@ -177,44 +215,6 @@ class HttpWorkload:
         if warmup or self.request_count is None:
             return itertools.cycle(self.tasks)
         return iter(self.tasks)
-
-    def episodes(self, *, warmup: bool = False) -> Iterator[RequestEpisode]:
-        """Prepare request occurrences without consuming another phase's inputs or RNG."""
-        remaining = (
-            self.benchmark.load.warmup_requests if warmup else self.request_count
-        )
-        for index, task in enumerate(self._tasks(warmup=warmup)):
-            if remaining is not None and remaining <= 0:
-                break
-            # Resolve each episode's lengths before it enters concurrent execution.
-            rng = random.Random(self.dataset.random_seed + index)
-            conversation = (
-                self.benchmark.is_multi_turn and task.prompt_token_ids is None
-            )
-            script = (
-                self.scripts[task.id] if conversation else [(task.messages(), None)]
-            )
-            if remaining is not None:
-                script = script[:remaining]
-                remaining -= len(script)
-            turns = tuple(
-                RequestTurn(
-                    self.builder.prepare(
-                        task,
-                        messages,
-                        rng,
-                        reference_length=self.reference_lengths.get((task.id, turn)),
-                    ),
-                    answer,
-                )
-                for turn, (messages, answer) in enumerate(script)
-            )
-            event = (
-                self.trace_events[index % len(self.trace_events)]
-                if self.trace_events is not None
-                else None
-            )
-            yield RequestEpisode(task, turns, conversation, event)
 
 
 def load_multi_dataset_tasks(benchmark: BenchmarkConfig) -> dict[str, list[Task]]:

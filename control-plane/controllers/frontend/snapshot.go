@@ -23,6 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
+
 // reconcileServingSnapshot publishes routing, settings, and membership at one version boundary.
 // It reports whether all protocol views were published; preserved configuration still refreshes membership.
 func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (bool, error) {
@@ -236,8 +238,6 @@ func servingSnapshotForProtocol(snapshot servingconfig.Snapshot, protocol uint32
 	}
 	return snapshot
 }
-
-var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
 
 // admissionOnlyServingSnapshot excludes routes whose cache policy an admission-only application cannot enforce.
 // Catalog provenance and ledger inputs stay identical to the current protocol's publication.

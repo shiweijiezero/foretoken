@@ -78,6 +78,31 @@ class ForetokenDeployment:
         ]
 
 
+def load_deployment(path_value: str, kubectl: Kubectl, *, name: str | None = None) -> ForetokenDeployment:
+    """Render instance-scoped intent in the current namespace without owning Namespace resources."""
+    path = deployment_path(path_value)
+    namespace = kubectl.current_namespace()
+    rendered = kubectl.kustomize(path)
+    try:
+        objects = [document for document in yaml.safe_load_all(rendered) if document is not None]
+    except yaml.YAMLError as error:
+        raise DeploymentError(f"deployment rendered invalid YAML: {error}") from error
+    retained = []
+    for document in objects:
+        if not isinstance(document, dict):
+            raise DeploymentError("deployment rendered a value that is not a Kubernetes object")
+        if document.get("kind") == "Namespace":
+            continue
+        if document.get("kind") == DEPLOYMENT_KIND and document.get("apiVersion", "").startswith("inference.foretoken.io/"):
+            raise DeploymentError("InferenceDeployment is managed by foretoken deploy; declare its service resources instead")
+        if document.get("apiVersion", "").startswith("inference.foretoken.io/"):
+            document.setdefault("metadata", {})["namespace"] = namespace
+        retained.append(document)
+    deployment = parse_deployment(path, yaml.safe_dump_all(retained, sort_keys=False), name=name)
+    validate_instance_name(deployment.name)
+    return project_deployment(deployment, kubectl, prefix=deployment.name + "-")
+
+
 def service_requires_execution(service: dict[str, Any]) -> bool:
     """Tell deployment preparation whether a model or frontend needs running instances."""
     spec = service.get("spec") or {}
@@ -306,28 +331,3 @@ def validate_instance_name(name: str) -> str:
             "starting with a letter and ending with a letter or digit"
         )
     return name
-
-
-def load_deployment(path_value: str, kubectl: Kubectl, *, name: str | None = None) -> ForetokenDeployment:
-    """Render instance-scoped intent in the current namespace without owning Namespace resources."""
-    path = deployment_path(path_value)
-    namespace = kubectl.current_namespace()
-    rendered = kubectl.kustomize(path)
-    try:
-        objects = [document for document in yaml.safe_load_all(rendered) if document is not None]
-    except yaml.YAMLError as error:
-        raise DeploymentError(f"deployment rendered invalid YAML: {error}") from error
-    retained = []
-    for document in objects:
-        if not isinstance(document, dict):
-            raise DeploymentError("deployment rendered a value that is not a Kubernetes object")
-        if document.get("kind") == "Namespace":
-            continue
-        if document.get("kind") == DEPLOYMENT_KIND and document.get("apiVersion", "").startswith("inference.foretoken.io/"):
-            raise DeploymentError("InferenceDeployment is managed by foretoken deploy; declare its service resources instead")
-        if document.get("apiVersion", "").startswith("inference.foretoken.io/"):
-            document.setdefault("metadata", {})["namespace"] = namespace
-        retained.append(document)
-    deployment = parse_deployment(path, yaml.safe_dump_all(retained, sort_keys=False), name=name)
-    validate_instance_name(deployment.name)
-    return project_deployment(deployment, kubectl, prefix=deployment.name + "-")

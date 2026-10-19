@@ -27,11 +27,22 @@ func (snapshot Snapshot) SameConfiguration(other Snapshot) bool {
 }
 
 func equalScalingModel(left, right Model) bool {
-	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID && left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) && reflect.DeepEqual(left.RouterPipeline, right.RouterPipeline) && left.Topology == right.Topology && slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) && slices.Equal(left.Capabilities, right.Capabilities) && slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []ScalingTarget) bool { return slices.Equal(left, right) })
+	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID &&
+		left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision &&
+		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
+		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&
+		reflect.DeepEqual(left.RouterPipeline, right.RouterPipeline) && left.Topology == right.Topology &&
+		slices.Equal(left.SelectedPoolRevisions, right.SelectedPoolRevisions) &&
+		slices.Equal(left.Capabilities, right.Capabilities) &&
+		slices.EqualFunc(left.AdmissionTargetSets, right.AdmissionTargetSets, func(left, right []ScalingTarget) bool { return slices.Equal(left, right) })
 }
 
 func equalRoutingGroup(left, right Group) bool {
-	return left.RouteTargetID == right.RouteTargetID && left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName && MatchingRoutingIdentity(left, right) && ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) && left.Endpoint == right.Endpoint && left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope && left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
+	return left.RouteTargetID == right.RouteTargetID &&
+		left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName &&
+		MatchingRoutingIdentity(left, right) && ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) &&
+		left.Endpoint == right.Endpoint && left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&
+		left.DataParallelSize == right.DataParallelSize && slices.Equal(left.Capabilities, right.Capabilities)
 }
 
 func equalRoutingPDComponent(left, right PDComponent) bool {
@@ -50,7 +61,9 @@ func equalRoutingPDComponent(left, right PDComponent) bool {
 }
 
 func equalRoutingPDPipelineScope(left, right PDPipelineScope) bool {
-	return left.PipelineScopeID == right.PipelineScopeID && slices.Equal(left.PrefillRouteTargetIDs, right.PrefillRouteTargetIDs) && slices.Equal(left.DecodeRouteTargetIDs, right.DecodeRouteTargetIDs)
+	return left.PipelineScopeID == right.PipelineScopeID &&
+		slices.Equal(left.PrefillRouteTargetIDs, right.PrefillRouteTargetIDs) &&
+		slices.Equal(left.DecodeRouteTargetIDs, right.DecodeRouteTargetIDs)
 }
 
 func equalRoutingEPDComponent(left, right EPDComponent) bool {
@@ -66,5 +79,8 @@ func equalRoutingEPDComponent(left, right EPDComponent) bool {
 }
 
 func equalRoutingEPDPipelineScope(left, right EPDPipelineScope) bool {
-	return left.PipelineScopeID == right.PipelineScopeID && slices.Equal(left.EncoderRouteTargetIDs, right.EncoderRouteTargetIDs) && slices.Equal(left.PrefillRouteTargetIDs, right.PrefillRouteTargetIDs) && slices.Equal(left.DecodeRouteTargetIDs, right.DecodeRouteTargetIDs)
+	return left.PipelineScopeID == right.PipelineScopeID &&
+		slices.Equal(left.EncoderRouteTargetIDs, right.EncoderRouteTargetIDs) &&
+		slices.Equal(left.PrefillRouteTargetIDs, right.PrefillRouteTargetIDs) &&
+		slices.Equal(left.DecodeRouteTargetIDs, right.DecodeRouteTargetIDs)
 }

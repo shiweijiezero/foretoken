@@ -57,20 +57,18 @@ type kvServiceStatus struct {
 	binding        *inferencev1alpha1.KVServiceBinding
 }
 
-// SetupWithManager registers KVService reconciliation for master infrastructure and KVPools.
-func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if reconciler.HTTPClient == nil {
-		reconciler.HTTPClient = &http.Client{Timeout: 2 * time.Second}
-	}
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.KVService{}).
-		Owns(&inferencev1alpha1.KVPool{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&appsv1.StatefulSet{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Owns(&corev1.PersistentVolumeClaim{}).
-		Complete(reconciler)
+type mooncakeMasterHealth struct {
+	Status        string  `json:"status"`
+	Role          string  `json:"role"`
+	HAState       string  `json:"ha_state"`
+	ServiceReady  bool    `json:"service_ready"`
+	LeaderAddress *string `json:"leader_address,omitempty"`
+	ViewVersion   *uint64 `json:"view_version,omitempty"`
+}
+
+type haMasterMember struct {
+	pod    *corev1.Pod
+	health mooncakeMasterHealth
 }
 
 // Reconcile materializes KVService infrastructure and publishes its dependency readiness.
@@ -518,20 +516,6 @@ func (reconciler *ServiceReconciler) infrastructureReady(ctx context.Context, se
 	return haMasterCohortReady(members), nil
 }
 
-type mooncakeMasterHealth struct {
-	Status        string  `json:"status"`
-	Role          string  `json:"role"`
-	HAState       string  `json:"ha_state"`
-	ServiceReady  bool    `json:"service_ready"`
-	LeaderAddress *string `json:"leader_address,omitempty"`
-	ViewVersion   *uint64 `json:"view_version,omitempty"`
-}
-
-type haMasterMember struct {
-	pod    *corev1.Pod
-	health mooncakeMasterHealth
-}
-
 // observeHAMasterMembers reads each native admin endpoint without deriving a second leader state.
 func (reconciler *ServiceReconciler) observeHAMasterMembers(ctx context.Context, service *inferencev1alpha1.KVService) ([]haMasterMember, error) {
 	masterName, _, _, _ := kvMasterNames(service)
@@ -808,4 +792,20 @@ func (reconciler *ServiceReconciler) hasConsumers(ctx context.Context, service *
 		}
 	}
 	return false, nil
+}
+
+// SetupWithManager registers KVService reconciliation for master infrastructure and KVPools.
+func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if reconciler.HTTPClient == nil {
+		reconciler.HTTPClient = &http.Client{Timeout: 2 * time.Second}
+	}
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVService{}).
+		Owns(&inferencev1alpha1.KVPool{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Complete(reconciler)
 }

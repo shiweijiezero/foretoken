@@ -43,43 +43,12 @@ class GatewayControllerPlan:
         return self.action == "Remove"
 
 
-def _effective_gateway_config(
-    command: InstallCommand,
-    stored: PlatformGatewayConfig,
-) -> PlatformGatewayConfig:
-    """Resolve Gateway mode from explicit input or stored release values."""
-    if command.frontend_mode is None:
-        return stored
-    create = command.frontend_mode == "gateway" and not command.gateway_name
-    controller_name = stored.controller_name if stored.create else ""
-    return PlatformGatewayConfig(
-        command.frontend_mode,
-        create,
-        controller_name,
-        command.gateway_name,
-        command.gateway_namespace,
-        command.gateway_section_name,
-    )
-
-
 class GatewayControllerLifecycle:
     """Own Envoy Gateway discovery, installation, readiness, and cleanup."""
 
     def __init__(self, helm: Helm, kubectl: Kubectl) -> None:
         self._helm = helm
         self._kubectl = kubectl
-
-    def _managed_release(self, *, include_legacy: bool = False) -> ReleaseRef | None:
-        """Return one managed Envoy Gateway release, when present."""
-        releases = self._helm.managed_envoy_gateway_releases(
-            include_legacy=include_legacy
-        )
-        if len(releases) > 1:
-            names = ", ".join(release.display_name for release in releases)
-            raise DeploymentError(
-                f"multiple CLI-managed Envoy Gateway releases exist: {names}"
-            )
-        return releases[0] if releases else None
 
     def resolve_install(
         self,
@@ -355,3 +324,34 @@ class GatewayControllerLifecycle:
             return "Preserve", ", ".join(user.display_name for user in remaining)
         helm.uninstall(plan.release, timeout)
         return "Removed", plan.release.display_name
+
+    def _managed_release(self, *, include_legacy: bool = False) -> ReleaseRef | None:
+        """Return one managed Envoy Gateway release, when present."""
+        releases = self._helm.managed_envoy_gateway_releases(
+            include_legacy=include_legacy
+        )
+        if len(releases) > 1:
+            names = ", ".join(release.display_name for release in releases)
+            raise DeploymentError(
+                f"multiple CLI-managed Envoy Gateway releases exist: {names}"
+            )
+        return releases[0] if releases else None
+
+
+def _effective_gateway_config(
+    command: InstallCommand,
+    stored: PlatformGatewayConfig,
+) -> PlatformGatewayConfig:
+    """Resolve Gateway mode from explicit input or stored release values."""
+    if command.frontend_mode is None:
+        return stored
+    create = command.frontend_mode == "gateway" and not command.gateway_name
+    controller_name = stored.controller_name if stored.create else ""
+    return PlatformGatewayConfig(
+        command.frontend_mode,
+        create,
+        controller_name,
+        command.gateway_name,
+        command.gateway_namespace,
+        command.gateway_section_name,
+    )
