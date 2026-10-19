@@ -37,5 +37,7 @@ pub struct AdmissionRequest {
     pub caller: CallerIdentity,
     /// Includes all generated candidates, including those used only for best-of selection.
     pub units: u32,
+    /// Tracks execution in the ledger even when no admission limits are configured.
+    pub track_execution: bool,
     pub received_at: Instant,
 }

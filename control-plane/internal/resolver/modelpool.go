@@ -10,17 +10,15 @@ import (
 	"fmt"
 	"slices"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-// MooncakePDProfile contains opaque platform-owned Mooncake P/D profile identity and settings.
 // MooncakeStoreProfile contains opaque platform-owned external Store settings.
 type MooncakeStoreProfile struct {
 	Name           string
@@ -30,6 +28,7 @@ type MooncakeStoreProfile struct {
 	PythonHashSeed string
 }
 
+// MooncakePDProfile contains platform-owned Mooncake transfer identity and settings.
 type MooncakePDProfile struct {
 	Name                       string
 	Revision                   string
@@ -53,8 +52,7 @@ type RuntimeProfile struct {
 	Image              string
 	OmniImage          string
 	NsightImage        string
-	AdmissionStore     *inferencev1alpha1.AdmissionStoreConnection
-	ModelExpress       bool
+	AdmissionStore     *inferencev1alpha1.RedisConnection
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -64,17 +62,6 @@ type RuntimeProfile struct {
 	RDMA               *inferencev1alpha1.RDMAAllocation
 	EC                 *ECProfile
 	MooncakeStore      *MooncakeStoreProfile
-}
-
-// StaticModelPoolResolver resolves every Pool with one platform runtime profile.
-// Alternative resolvers may select profiles from the Pool template.
-type StaticModelPoolResolver struct {
-	RuntimeProfile RuntimeProfile
-}
-
-// Resolve applies the resolver runtime profile to one normalized ModelPool template.
-func (resolver StaticModelPoolResolver) Resolve(template inferencev1alpha1.NormalizedPoolTemplate) (ModelGroupTemplate, error) {
-	return ResolveModelPool(template, resolver.RuntimeProfile)
 }
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
@@ -179,26 +166,20 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
-	// Fixed-weight cohorts share upstream ModelExpress sources. DP may reuse world ranks,
-	// while EPLB mutates expert placement after loading; both retain native file loading.
+	// DP can reuse world ranks and EPLB changes expert placement after loading;
+	// these cohorts retain native file loading.
 	loader, explicitLoader := effective.EngineArgs["load-format"]
 	var loaderName string
 	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
-	modelExpress := ((profile.ModelExpress && !explicitLoader) || requestedModelExpress) && profile.RDMA != nil && profile.DeviceResourceName == "nvidia.com/gpu" &&
+	shareableWeights := profile.DeviceResourceName == "nvidia.com/gpu" &&
 		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
 		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
-	if modelExpress {
-		if effective.EngineArgs == nil {
-			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
-		}
-		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
-	}
 	rdmaRequired := effective.RequiresRDMA()
 	if rdmaRequired && profile.RDMA == nil {
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.SpeculationRole != "" || modelExpress || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if template.SpeculationRole != "" || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || (requestedModelExpress && shareableWeights) {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -206,6 +187,15 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
+	}
+	// Automatic weight sharing reuses allocated devices rather than introducing
+	// a hard RDMA scheduling requirement for an otherwise runnable model.
+	if shareableWeights && rdma != nil && (!explicitLoader || requestedModelExpress) &&
+		runtimeconfig.ValidateModelExpressPorts(profile.ModelServerPort, template.Resources.Requests.GPU.Count, pdRuntime) == nil {
+		if effective.EngineArgs == nil {
+			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
+		}
+		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
 	}
 	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
 		if profile.DeviceResourceName != "metax-tech.com/gpu" {
@@ -295,7 +285,7 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
-	var admissionStore *inferencev1alpha1.AdmissionStoreConnection
+	var admissionStore *inferencev1alpha1.RedisConnection
 	var instanceAdmissionProtocol uint32
 	if template.Application != nil {
 		applicationURL = template.Application.ApplicationURL

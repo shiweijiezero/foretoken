@@ -58,6 +58,19 @@ func EncoderCacheDirectory(ec *api.ModelGroupECRuntimeConfig) string {
 	return path.Join(ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision))
 }
 
+// ModelServiceReferencesKV identifies model consumers for dependency watches and KVService cleanup.
+func ModelServiceReferencesKV(service *api.ModelService, name string) bool {
+	if store := service.Spec.KVCache; store != nil && store.MooncakeStore != nil && store.MooncakeStore.KVServiceRef != nil && store.MooncakeStore.KVServiceRef.Name == name {
+		return true
+	}
+	for _, pool := range service.Spec.ModelPools {
+		if store := pool.KVCache; store != nil && store.MooncakeStore != nil && store.MooncakeStore.KVServiceRef != nil && store.MooncakeStore.KVServiceRef.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ModelDirectory returns the stable model area of a workload's persistent data root.
 // Model providers keep their own cache layouts beneath this directory.
 func ModelDirectory(dataRoot string) string {

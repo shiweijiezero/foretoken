@@ -154,6 +154,26 @@ type FrontendServiceSpec struct {
 	VideoTasks *VideoTaskStorage `json:"videoTasks,omitempty"`
 }
 
+// ResponseStoreConfig pins the shared API cache connection and retention selected for a frontend.
+type ResponseStoreConfig struct {
+	RedisConnection `json:",inline"`
+
+	// +kubebuilder:validation:Minimum=1
+	RetentionSeconds int64 `json:"retentionSeconds"`
+
+	// +kubebuilder:validation:Minimum=1
+	ReplayRetentionSeconds int64 `json:"replayRetentionSeconds"`
+}
+
+// FrontendApplicationSelection retains frontend storage with the selected executable application.
+type FrontendApplicationSelection struct {
+	ApplicationSelection `json:",inline"`
+
+	// ResponseStore retains the selected connection and retention across workload recovery.
+	// +optional
+	ResponseStore *ResponseStoreConfig `json:"responseStore,omitempty"`
+}
+
 // FrontendServiceStatus defines the observed state of a frontend service.
 type FrontendServiceStatus struct {
 	// ServingConfigVersion is the configuration protocol of the selected frontend application.
@@ -162,7 +182,7 @@ type FrontendServiceStatus struct {
 
 	// Application retains the selected frontend environment and files across workload recovery.
 	// +optional
-	Application *ApplicationSelection `json:"application,omitempty"`
+	Application *FrontendApplicationSelection `json:"application,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:Minimum=0

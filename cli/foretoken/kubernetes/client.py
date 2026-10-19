@@ -80,8 +80,9 @@ class Kubectl:
         input_text: str | None = None,
         timeout: float | None = None,
         output: BinaryIO | None = None,
+        check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        """Execute kubectl within an optional caller-owned timeout and preserve diagnostics."""
+        """Run kubectl within its deadline; callers may handle completed command failures."""
         command = self.command(args)
         timeout = self._timeout(timeout)
         completed = run_command(
@@ -93,7 +94,7 @@ class Kubectl:
             stderr=subprocess.PIPE,
             timeout=timeout,
         )
-        if completed.returncode:
+        if completed.returncode and check:
             detail = (
                 completed.stderr.strip() or (completed.stdout or "").strip()
                 or f"exit status {completed.returncode}"

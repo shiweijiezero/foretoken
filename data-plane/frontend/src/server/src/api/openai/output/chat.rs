@@ -9,12 +9,16 @@ use std::time::Duration;
 use axum::Json;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
-use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
+use foretoken_chat::{
+    AssistantBlockKind, AssistantMessage, AssistantMessageExt as _, ChatEvent, FinishReason,
+};
 use foretoken_text::DecodedLogprobs;
 use futures::StreamExt;
 use serde::Serialize;
+use serde_json::{Value, json};
 
 use super::super::openai_error;
+use super::super::stored::ChatArchive;
 use super::{
     OpenAiStopReason, ResponseMetadata, Usage, openai_stop_reason, selected_logprob,
     stream_backend_error,
@@ -22,12 +26,12 @@ use super::{
 use crate::api::stream::{chat_events, sse_response};
 use crate::runtime::{GeneratedChat, GenerationError};
 
-#[derive(Serialize)]
+#[derive(Clone, Default, Serialize)]
 struct ChatLogprobs {
     content: Vec<ChatLogprobContent>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ChatLogprobContent {
     token: String,
     logprob: f32,
@@ -35,7 +39,7 @@ struct ChatLogprobContent {
     top_logprobs: Vec<ChatLogprob>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ChatLogprob {
     token: String,
     logprob: f32,
@@ -124,7 +128,7 @@ struct ChatChoice {
     message: ChatMessage,
     #[serde(skip_serializing_if = "Option::is_none")]
     logprobs: Option<ChatLogprobs>,
-    finish_reason: String,
+    finish_reason: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<OpenAiStopReason>,
 }
@@ -136,6 +140,8 @@ struct ChatResponse {
     object: &'static str,
     choices: Vec<ChatChoice>,
     usage: Usage,
+    #[serde(rename = "metadata")]
+    custom_metadata: Value,
 }
 
 fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option<ChatLogprobs> {
@@ -185,26 +191,76 @@ fn chat_finish_reason(
     }
 }
 
-/// Converts one routed chat stream into the OpenAI SSE response consumed by HTTP clients.
-///
-/// The chat handler returns this response immediately; its event stream owns backend output until
-/// terminal completion, client disconnect, or the configured idle timeout.
+/// Assembles the canonical public completion from parser-owned final output for both response modes.
+fn build_chat_response(
+    metadata: ResponseMetadata,
+    message: &AssistantMessage,
+    usage: vllm_llm::TokenUsage,
+    finish_reason: &FinishReason,
+    include_reasoning: bool,
+    logprobs: Option<ChatLogprobs>,
+    custom_metadata: Value,
+) -> Result<ChatResponse, GenerationError> {
+    let tool_calls = message
+        .tool_calls()
+        .map(|call| ToolCall {
+            id: call.id.clone(),
+            kind: "function",
+            function: FunctionCall {
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let finish = chat_finish_reason(finish_reason, !tool_calls.is_empty())
+        .map_err(|_| GenerationError::RequestFailed)?;
+    let content = message.text();
+    Ok(ChatResponse {
+        metadata,
+        object: "chat.completion",
+        choices: vec![ChatChoice {
+            index: 0,
+            message: ChatMessage {
+                role: "assistant",
+                // OpenAI represents a tool-only assistant turn with content: null.
+                content: (!content.is_empty()).then_some(content),
+                reasoning: include_reasoning.then(|| message.reasoning()).flatten(),
+                tool_calls,
+            },
+            logprobs,
+            finish_reason: finish,
+            stop_reason: openai_stop_reason(finish_reason),
+        }],
+        usage: Usage::from_counts(
+            usage.prompt_token_count,
+            usage.output_token_count,
+            usage.cached_token_count,
+        ),
+        custom_metadata,
+    })
+}
+
+/// Streams parser events directly to OpenAI SSE, committing requested archives before terminal output.
+/// Dropping the HTTP stream retains the existing backend cancellation ownership.
 pub(crate) fn chat_stream_with_options(
     generated: GeneratedChat,
     idle: Duration,
     include_usage: bool,
+    custom_metadata: Value,
+    archive: Option<ChatArchive>,
 ) -> Response {
     let metadata = ResponseMetadata::from_generated(&generated.generated);
+    let custom_metadata = archive
+        .as_ref()
+        .map_or(custom_metadata, |archive| archive.metadata.clone());
     let (include_reasoning, stream) = match chat_events(generated, idle) {
         Ok(stream) => stream,
         Err(_) => return openai_error(GenerationError::RequestFailed),
     };
     let events = async_stream::stream! {
         let mut stream = Box::pin(stream);
-        let mut saw_tool_calls = false;
+        let mut collected_logprobs: Option<ChatLogprobs> = None;
         while let Some(event) = stream.next().await {
-            let mut finished = false;
-            let mut terminal_usage = None;
             let data = match event {
                 Ok(ChatEvent::Start { .. }) => Some(ChatStreamResponse {
                     metadata: metadata.clone(),
@@ -243,29 +299,26 @@ pub(crate) fn chat_stream_with_options(
                     usage: None,
                 }),
                 Ok(ChatEvent::BlockDelta { kind: AssistantBlockKind::Reasoning, .. }) => None,
-                Ok(ChatEvent::ToolCallStart { index, id, name }) => {
-                    saw_tool_calls = true;
-                    Some(ChatStreamResponse {
-                        metadata: metadata.clone(),
-                        object: "chat.completion.chunk",
-                        choices: vec![ChatStreamChoice {
-                            index: 0,
-                            delta: ChatDelta {
-                                tool_calls: Some(vec![ToolCallDelta {
-                                    index,
-                                    id: Some(id),
-                                    kind: Some("function"),
-                                    function: Some(FunctionCallDelta { name: Some(name), arguments: None }),
-                                }]),
-                                ..Default::default()
-                            },
-                            logprobs: None,
-                            finish_reason: None,
-                            stop_reason: None,
-                        }],
-                        usage: None,
-                    })
-                }
+                Ok(ChatEvent::ToolCallStart { index, id, name }) => Some(ChatStreamResponse {
+                    metadata: metadata.clone(),
+                    object: "chat.completion.chunk",
+                    choices: vec![ChatStreamChoice {
+                        index: 0,
+                        delta: ChatDelta {
+                            tool_calls: Some(vec![ToolCallDelta {
+                                index,
+                                id: Some(id),
+                                kind: Some("function"),
+                                function: Some(FunctionCallDelta { name: Some(name), arguments: None }),
+                            }]),
+                            ..Default::default()
+                        },
+                        logprobs: None,
+                        finish_reason: None,
+                        stop_reason: None,
+                    }],
+                    usage: None,
+                }),
                 Ok(ChatEvent::ToolCallArgumentsDelta { index, delta }) => Some(ChatStreamResponse {
                     metadata: metadata.clone(),
                     object: "chat.completion.chunk",
@@ -286,103 +339,121 @@ pub(crate) fn chat_stream_with_options(
                     }],
                     usage: None,
                 }),
-                Ok(ChatEvent::LogprobsDelta { logprobs, token_ids }) => chat_logprobs(&token_ids, logprobs).map(|logprobs| ChatStreamResponse {
-                    metadata: metadata.clone(),
-                    object: "chat.completion.chunk",
-                    choices: vec![ChatStreamChoice {
-                        index: 0,
-                        delta: ChatDelta::default(),
-                        logprobs: Some(logprobs),
-                        finish_reason: None,
-                        stop_reason: None,
-                    }],
-                    usage: None,
-                }),
-                Ok(ChatEvent::Done {
-                    usage,
-                    finish_reason,
-                    ..
-                }) => {
-                    let Ok(openai_finish_reason) = chat_finish_reason(&finish_reason, saw_tool_calls) else {
-                        yield Ok::<_, Infallible>(Event::default().json_data(stream_backend_error()).unwrap());
-                        break;
-                    };
-                    if include_usage {
-                        terminal_usage = Some(Usage::from_counts(
-                            usage.prompt_token_count,
-                            usage.output_token_count,
-                            usage.cached_token_count,
-                        ));
+                Ok(ChatEvent::LogprobsDelta { logprobs, token_ids }) => {
+                    let logprobs = chat_logprobs(&token_ids, logprobs);
+                    if archive.is_some() && let Some(delta) = &logprobs {
+                        collected_logprobs.get_or_insert_with(ChatLogprobs::default)
+                            .content.extend(delta.content.clone());
                     }
-                    finished = true;
-                    Some(ChatStreamResponse {
+                    logprobs.map(|logprobs| ChatStreamResponse {
+                        metadata: metadata.clone(),
+                        object: "chat.completion.chunk",
+                        choices: vec![ChatStreamChoice {
+                            index: 0,
+                            delta: ChatDelta::default(),
+                            logprobs: Some(logprobs),
+                            finish_reason: None,
+                            stop_reason: None,
+                        }],
+                        usage: None,
+                    })
+                }
+                Ok(ChatEvent::Done { message, usage, finish_reason, .. }) => {
+                    let response = match build_chat_response(
+                        metadata.clone(), &message, usage, &finish_reason,
+                        include_reasoning, collected_logprobs, custom_metadata,
+                    ) {
+                        Ok(response) => response,
+                        Err(_) => {
+                            drop(stream);
+                            yield Ok::<_, Infallible>(Event::default().json_data(stream_backend_error()).unwrap());
+                            return;
+                        }
+                    };
+                    // Backend completion precedes storage and any terminal yield to a slow reader.
+                    drop(stream);
+                    if let Some(archive) = &archive {
+                        let body = serde_json::to_value(&response).expect("chat response serialization");
+                        if let Err(error) = archive.save(&body).await {
+                            yield Ok::<_, Infallible>(Event::default().json_data(json!({"error": {
+                                "message": error.to_string(), "type": "server_error", "code": "storage_error",
+                            }})).unwrap());
+                            return;
+                        }
+                    }
+                    let choice = response.choices.into_iter().next().expect("one chat choice");
+                    yield Ok::<_, Infallible>(Event::default().json_data(ChatStreamResponse {
                         metadata: metadata.clone(),
                         object: "chat.completion.chunk",
                         choices: vec![ChatStreamChoice {
                             index: 0,
                             delta: ChatDelta::default(),
                             logprobs: None,
-                            finish_reason: Some(openai_finish_reason),
-                            stop_reason: openai_stop_reason(&finish_reason),
+                            finish_reason: Some(choice.finish_reason),
+                            stop_reason: choice.stop_reason,
                         }],
                         usage: None,
-                    })
+                    }).unwrap());
+                    if include_usage {
+                        yield Ok(Event::default().json_data(ChatStreamResponse {
+                            metadata: metadata.clone(),
+                            object: "chat.completion.chunk",
+                            choices: Vec::new(),
+                            usage: Some(response.usage),
+                        }).unwrap());
+                    }
+                    yield Ok(Event::default().data("[DONE]"));
+                    return;
                 }
                 Ok(ChatEvent::BlockStart { .. }
                     | ChatEvent::BlockDelta { kind: AssistantBlockKind::ToolCall, .. }
                     | ChatEvent::BlockEnd { .. }
                     | ChatEvent::ToolCallEnd { .. }) => None,
                 Err(_) => {
-                    yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                    break;
+                    drop(stream);
+                    yield Ok::<_, Infallible>(Event::default().json_data(stream_backend_error()).unwrap());
+                    return;
                 }
             };
             if let Some(data) = data {
                 yield Ok::<_, Infallible>(Event::default().json_data(data).unwrap());
             }
-            if finished {
-                if let Some(usage) = terminal_usage {
-                    yield Ok(Event::default().json_data(ChatStreamResponse {
-                        metadata: metadata.clone(),
-                        object: "chat.completion.chunk",
-                        choices: Vec::new(),
-                        usage: Some(usage),
-                    }).unwrap());
-                }
-                break;
-            }
         }
-        yield Ok(Event::default().data("[DONE]"));
+        drop(stream);
+        yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
     };
     sse_response(events)
 }
 
-/// Collects one routed chat stream into the OpenAI JSON response used for non-streaming requests.
-///
-/// The chat handler awaits this response through terminal output or idle timeout; any stream error
-/// becomes the same typed HTTP error used for failures before collection.
-pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> Response {
+/// Collects parser output into the same canonical completion used by stream archives.
+/// Requested storage commits before JSON success; failures retain their typed HTTP status.
+pub(crate) async fn chat_collected(
+    generated: GeneratedChat,
+    idle: Duration,
+    custom_metadata: Value,
+    archive: Option<ChatArchive>,
+) -> Response {
     let metadata = ResponseMetadata::from_generated(&generated.generated);
+    let custom_metadata = archive
+        .as_ref()
+        .map_or(custom_metadata, |archive| archive.metadata.clone());
     let (include_reasoning, stream) = match chat_events(generated, idle) {
         Ok(stream) => stream,
         Err(_) => return openai_error(GenerationError::RequestFailed),
     };
     let mut stream = Box::pin(stream);
-    let mut token_ids = Vec::new();
-    let mut collected_logprobs: Option<DecodedLogprobs> = None;
+    let mut collected_logprobs: Option<ChatLogprobs> = None;
     while let Some(event) = stream.next().await {
         match event {
             Ok(ChatEvent::LogprobsDelta {
                 logprobs,
-                token_ids: delta_token_ids,
+                token_ids,
             }) => {
-                token_ids.extend(delta_token_ids);
-                if let Some(delta_logprobs) = logprobs {
-                    if let Some(logprobs) = collected_logprobs.as_mut() {
-                        logprobs.positions.extend(delta_logprobs.positions);
-                    } else {
-                        collected_logprobs = Some(delta_logprobs);
-                    }
+                if let Some(delta) = chat_logprobs(&token_ids, logprobs) {
+                    collected_logprobs
+                        .get_or_insert_with(ChatLogprobs::default)
+                        .content
+                        .extend(delta.content);
                 }
             }
             Ok(ChatEvent::Done {
@@ -391,45 +462,27 @@ pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> 
                 finish_reason,
                 ..
             }) => {
-                let tool_calls = message
-                    .tool_calls()
-                    .map(|call| ToolCall {
-                        id: call.id.clone(),
-                        kind: "function",
-                        function: FunctionCall {
-                            name: call.name.clone(),
-                            arguments: call.arguments.clone(),
-                        },
-                    })
-                    .collect::<Vec<_>>();
-                let Ok(openai_finish_reason) =
-                    chat_finish_reason(&finish_reason, !tool_calls.is_empty())
-                else {
-                    return openai_error(GenerationError::RequestFailed);
-                };
-                return Json(ChatResponse {
+                let response = match build_chat_response(
                     metadata,
-                    object: "chat.completion",
-                    choices: vec![ChatChoice {
-                        index: 0,
-                        message: ChatMessage {
-                            role: "assistant",
-                            // OpenAI represents a tool-only assistant turn with content: null.
-                            content: (!message.text().is_empty()).then(|| message.text()),
-                            reasoning: include_reasoning.then(|| message.reasoning()).flatten(),
-                            tool_calls,
-                        },
-                        logprobs: chat_logprobs(&token_ids, collected_logprobs),
-                        finish_reason: openai_finish_reason.to_owned(),
-                        stop_reason: openai_stop_reason(&finish_reason),
-                    }],
-                    usage: Usage::from_counts(
-                        usage.prompt_token_count,
-                        usage.output_token_count,
-                        usage.cached_token_count,
-                    ),
-                })
-                .into_response();
+                    &message,
+                    usage,
+                    &finish_reason,
+                    include_reasoning,
+                    collected_logprobs,
+                    custom_metadata,
+                ) {
+                    Ok(response) => response,
+                    Err(error) => return openai_error(error),
+                };
+                drop(stream);
+                if let Some(archive) = &archive {
+                    let body =
+                        serde_json::to_value(&response).expect("chat response serialization");
+                    if let Err(error) = archive.save(&body).await {
+                        return crate::api::store_error(error);
+                    }
+                }
+                return Json(response).into_response();
             }
             Ok(_) => {}
             Err(_) => return openai_error(GenerationError::RequestFailed),

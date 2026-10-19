@@ -27,6 +27,10 @@
 {{- if .Values.admissionStore.externalURLSecret.name }}
 {{- $_ := set $admission "externalURL" "" }}
 {{- end }}
+{{- $responseStore := dict "externalURL" (include "foretoken.responseStoreURL" .) "externalURLSecret" .Values.responseStore.externalURLSecret "retention" .Values.responseStore.retention "replayRetention" .Values.responseStore.replayRetention }}
+{{- if .Values.responseStore.externalURLSecret.name }}
+{{- $_ := set $responseStore "externalURL" "" }}
+{{- end }}
 {{- $values := dict
     "scope" "deployment"
     "global" (dict "imageRegistry" "")
@@ -39,6 +43,7 @@
     "workload" .Values.workload
     "resources" .Values.resources
     "admissionStore" $admission
+    "responseStore" $responseStore
     "modelDistribution" .Values.modelDistribution
     "rdma" (dict "managed" false "resourceName" (include "foretoken.rdmaResourceName" .) "resourceCount" .Values.rdma.resourceCount)
     "applicationFiles" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "clientImage" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage)) "releaseURL" "")

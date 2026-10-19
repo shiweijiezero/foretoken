@@ -19,10 +19,21 @@ imagePullSecrets: []
 
 # Shared durable admission ledger; an external endpoint replaces the managed Valkey instance.
 admissionStore:
-  image: docker.io/valkey/valkey:8.1.10-alpine
+  image: docker.io/valkey/valkey:8.1.10-alpine # Shared Valkey image for the ledger and API cache.
   storageClass: "" # Uses the cluster's default StorageClass.
   storageSize: 1Gi
   externalURL: "" # Credential-free redis:// or rediss:// URL.
+  # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
+  externalURLSecret:
+    name: ""
+    key: url
+
+# Shared in-memory API cache, separate from the durable admission ledger.
+responseStore:
+  retention: 30d
+  replayRetention: 10m
+  # External Valkey/Redis must be a dedicated instance with maxmemory-policy noeviction.
+  externalURL: "" # Credential-free redis:// or rediss:// URL; empty prepares managed Valkey.
   # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
   externalURLSecret:
     name: ""
@@ -68,19 +79,9 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
-# Optional peer distribution for model files and loaded weights.
+# Installer-resolved model download endpoint; workloads choose usable optimizations automatically.
 modelDistribution:
-  # Requires a compatible CUDA runtime and allocated RDMA devices.
-  modelexpress:
-    enabled: false
-  dragonfly:
-    enabled: false
-    # Leave empty to let foretoken install manage the Dragonfly release.
-    existingRelease:
-      name: ""
-      namespace: ""
-    # Resolved from the installed daemon by foretoken install; also supports direct Helm use.
-    socketPath: /var/run/dragonfly/dfdaemon.sock
+  proxyURL: ""
 
 # Unused node-network IP addresses for services when the cluster assigns none.
 # Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.

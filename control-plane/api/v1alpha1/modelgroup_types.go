@@ -189,19 +189,6 @@ type ModelGroupKVRuntimeConfig struct {
 	MooncakeStore *ModelGroupMooncakeStoreRuntime `json:"mooncakeStore,omitempty"`
 }
 
-// AdmissionStoreConnection selects the platform ledger without exposing credential values.
-// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.urlSecretRef)",message="exactly one admission store URL or Secret reference is required"
-type AdmissionStoreConnection struct {
-	// URL is a credential-free Redis-compatible endpoint.
-	// +optional
-	// +kubebuilder:validation:Pattern="^rediss?://[^@]+$"
-	URL string `json:"url,omitempty"`
-
-	// URLSecretRef contains the full connection URL in a namespace-local Secret.
-	// +optional
-	URLSecretRef *corev1.SecretKeySelector `json:"urlSecretRef,omitempty"`
-}
-
 // InstanceAdmissionFileProtocol selects the live-file configuration interface of a model application.
 const InstanceAdmissionFileProtocol uint32 = 1
 
@@ -259,7 +246,7 @@ type ModelGroupRuntime struct {
 
 	// AdmissionStore pins the shared ledger selected by the platform for this cohort.
 	// +optional
-	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	AdmissionStore *RedisConnection `json:"admissionStore,omitempty"`
 
 	// TritonCacheDirectory is the initial worker cache path; Kubernetes expands its node reference.
 	// +optional

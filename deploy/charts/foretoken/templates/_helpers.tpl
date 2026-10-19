@@ -53,6 +53,28 @@
 {{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.admissionStoreName" .) .Release.Namespace) .Values.admissionStore.externalURL -}}
 {{- end }}
 
+{{- define "foretoken.responseStoreName" -}}
+{{- include "foretoken.compactName" (printf "%s-response-store" .Release.Name) -}}
+{{- end }}
+
+{{/* Selected applications keep their managed cache when new deployments use an external default. */}}
+{{- define "foretoken.responseStoreManaged" -}}
+{{- $workload := lookup "apps/v1" "Deployment" .Release.Namespace (include "foretoken.responseStoreName" .) -}}
+{{- $metadata := get $workload "metadata" | default dict -}}
+{{- $annotations := get $metadata "annotations" | default dict -}}
+{{- $labels := get $metadata "labels" | default dict -}}
+{{- $owned := and (eq (get $labels "app.kubernetes.io/managed-by") .Release.Service) (eq (get $annotations "meta.helm.sh/release-name") .Release.Name) (eq (get $annotations "meta.helm.sh/release-namespace") .Release.Namespace) -}}
+{{- if or $owned (not (or .Values.responseStore.externalURL .Values.responseStore.externalURLSecret.name)) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.responseStoreURL" -}}
+{{- default (printf "redis://%s.%s.svc:6379" (include "foretoken.responseStoreName" .) .Release.Namespace) .Values.responseStore.externalURL -}}
+{{- end }}
+
 {{- define "foretoken.clusterName" -}}
 {{- include "foretoken.compactName" (printf "%s-%s-control-plane" .Release.Namespace .Release.Name) -}}
 {{- end }}
@@ -221,11 +243,13 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{- define "foretoken.validateValues" -}}
-{{- if and .Values.admissionStore.externalURL .Values.admissionStore.externalURLSecret.name -}}
-{{- fail "admissionStore.externalURL and externalURLSecret are mutually exclusive" -}}
+{{- range $name, $connection := dict "admissionStore" .Values.admissionStore "responseStore" .Values.responseStore -}}
+{{- if and $connection.externalURL $connection.externalURLSecret.name -}}
+{{- fail (printf "%s.externalURL and externalURLSecret are mutually exclusive" $name) -}}
 {{- end -}}
-{{- if contains "@" .Values.admissionStore.externalURL -}}
-{{- fail "admission store credentials require admissionStore.externalURLSecret" -}}
+{{- if contains "@" $connection.externalURL -}}
+{{- fail (printf "%s credentials require externalURLSecret" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- if and .Values.rdma.managed .Values.rdma.resourceName -}}
 {{- fail "rdma.managed and an external rdma.resourceName are mutually exclusive" -}}

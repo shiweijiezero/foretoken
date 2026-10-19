@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admission = Arc::new(foretoken_admission::AdmissionRegistry::new(
         config.frontend_uid,
         config.pod_uid,
-        ledger,
+        ledger.clone(),
     ));
     let builder = Arc::new(RuntimeBuilder::new(kv_credential, logging));
     let generation = Arc::new(RuntimeGeneration::new(admission));
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
-    let app = router(generation.clone(), models)?;
+    let (app, response_tasks) = router(generation.clone(), models, ledger)?;
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let server_shutdown = shutdown.clone();
     let mut server = Box::pin(
@@ -87,9 +87,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // to finish within the process drain budget, independently of live request settings.
     generation.close_admission();
     shutdown.notify_waiters();
-    match tokio::time::timeout(config.drain, server.as_mut()).await {
+    let drained = tokio::time::timeout(config.drain, async {
+        let (served, ()) = tokio::join!(server.as_mut(), response_tasks.drain());
+        served
+    })
+    .await;
+    match drained {
         Ok(result) => result?,
-        Err(_) => tracing::warn!("frontend requests did not drain before the shutdown deadline"),
+        Err(_) => {
+            response_tasks.cancel();
+            tracing::warn!("frontend requests did not drain before the shutdown deadline");
+        }
     }
     Ok(())
 }

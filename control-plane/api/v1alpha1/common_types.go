@@ -5,7 +5,10 @@
 
 package v1alpha1
 
-import apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+import (
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+)
 
 // StorageIdentity is the non-root filesystem identity shared by a volume's consumers.
 // Controllers resolve it before publishing workloads or persistent execution plans.
@@ -17,6 +20,19 @@ type StorageIdentity struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=4294967294
 	GID int64 `json:"gid"`
+}
+
+// RedisConnection selects a Redis-compatible endpoint without exposing credential values.
+// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.urlSecretRef)",message="exactly one Redis URL or Secret reference is required"
+type RedisConnection struct {
+	// URL is a credential-free Redis-compatible endpoint.
+	// +optional
+	// +kubebuilder:validation:Pattern="^rediss?://[^@]+$"
+	URL string `json:"url,omitempty"`
+
+	// URLSecretRef contains the full connection URL in a namespace-local Secret.
+	// +optional
+	URLSecretRef *corev1.SecretKeySelector `json:"urlSecretRef,omitempty"`
 }
 
 // ResourceQuantity is a non-negative Kubernetes resource quantity.

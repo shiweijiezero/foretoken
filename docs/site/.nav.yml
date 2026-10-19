@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Explicit sections keep every guide in context; globs cover their existing detail pages.
+nav:
+  - Home: index.md
+  - Get started: quickstart.md
+  - RSI:
+      - Overview: rsi-playbooks/README.md
+      - Define a task: rsi-playbooks/templates/task-template.md
+      - Example tasks:
+          - rsi-playbooks/tasks/README.md
+          - rsi-playbooks/tasks/*.md
+      - Research guidance:
+          - rsi-playbooks/guidance/README.md
+          - rsi-playbooks/guidance/meta-knowledge/README.md
+          - rsi-playbooks/guidance/meta-knowledge/*.md
+      - Technical knowledge:
+          - rsi-playbooks/guidance/knowledge/README.md
+          - Attention and recurrent state:
+              - rsi-playbooks/guidance/knowledge/attention-state/README.md
+              - rsi-playbooks/guidance/knowledge/attention-state/*.md
+          - MoE execution:
+              - rsi-playbooks/guidance/knowledge/moe-execution/README.md
+              - rsi-playbooks/guidance/knowledge/moe-execution/*.md
+          - Speculative decoding:
+              - rsi-playbooks/guidance/knowledge/speculative-decoding/README.md
+              - rsi-playbooks/guidance/knowledge/speculative-decoding/*.md
+          - Quantization:
+              - rsi-playbooks/guidance/knowledge/quantization/README.md
+              - rsi-playbooks/guidance/knowledge/quantization/*.md
+          - Multimodal and generative models:
+              - rsi-playbooks/guidance/knowledge/multimodal-generation/README.md
+              - rsi-playbooks/guidance/knowledge/multimodal-generation/*.md
+          - Multiple models and adapters:
+              - rsi-playbooks/guidance/knowledge/multi-model-adapters/README.md
+              - rsi-playbooks/guidance/knowledge/multi-model-adapters/*.md
+          - Kernel design:
+              - rsi-playbooks/guidance/knowledge/kernel-design/README.md
+              - rsi-playbooks/guidance/knowledge/kernel-design/*.md
+          - Compilation and runtime:
+              - rsi-playbooks/guidance/knowledge/compiler-runtime/README.md
+              - rsi-playbooks/guidance/knowledge/compiler-runtime/*.md
+          - Parallelism and communication:
+              - rsi-playbooks/guidance/knowledge/parallelism-communication/README.md
+              - rsi-playbooks/guidance/knowledge/parallelism-communication/*.md
+          - Heterogeneous hardware:
+              - rsi-playbooks/guidance/knowledge/heterogeneous-hardware/README.md
+              - rsi-playbooks/guidance/knowledge/heterogeneous-hardware/*.md
+          - Engine scheduling:
+              - rsi-playbooks/guidance/knowledge/engine-scheduling/README.md
+              - rsi-playbooks/guidance/knowledge/engine-scheduling/*.md
+          - KV caching:
+              - rsi-playbooks/guidance/knowledge/kv-cache/README.md
+              - rsi-playbooks/guidance/knowledge/kv-cache/*.md
+          - Request routing and admission:
+              - rsi-playbooks/guidance/knowledge/routing-admission/README.md
+              - rsi-playbooks/guidance/knowledge/routing-admission/*.md
+          - Disaggregated serving:
+              - rsi-playbooks/guidance/knowledge/disaggregated-serving/README.md
+              - rsi-playbooks/guidance/knowledge/disaggregated-serving/*.md
+          - Autoscaling and placement:
+              - rsi-playbooks/guidance/knowledge/autoscaling-placement/README.md
+              - rsi-playbooks/guidance/knowledge/autoscaling-placement/*.md
+          - Model loading and storage:
+              - rsi-playbooks/guidance/knowledge/model-loading-storage/README.md
+              - rsi-playbooks/guidance/knowledge/model-loading-storage/*.md
+          - Host and streaming paths:
+              - rsi-playbooks/guidance/knowledge/host-streaming/README.md
+              - rsi-playbooks/guidance/knowledge/host-streaming/*.md
+          - Measurement and simulation:
+              - rsi-playbooks/guidance/knowledge/measurement-simulation/README.md
+              - rsi-playbooks/guidance/knowledge/measurement-simulation/*.md
+      - Experiment records: rsi-playbooks/experiment-records.md
+      - Templates:
+          - rsi-playbooks/templates/README.md
+          - rsi-playbooks/templates/*.md
+  - User guide:
+      - Installation and deployment:
+          - Existing Kubernetes: docs/deployment/kubernetes.md
+          - k3d GPU cluster: docs/deployment/k3d.md
+          - kind development cluster: docs/deployment/kind.md
+          - MetaX preparation: docs/deployment/metax-platform.md
+          - MetaX model deployment: docs/deployment/metax.md
+          - Source deployment: docs/deployment/source.md
+      - Model configuration:
+          - Model sources: docs/features/model-sources.md
+          - Model storage: docs/features/model-storage.md
+          - Inference parameters: docs/features/inference-parameters.md
+      - Deployment examples:
+          - examples/quickstart/*/README*.md
+          - examples/feature/*/README*.md
+      - Model recipes:
+          - examples/recipes/README.md
+          - examples/recipes/*/*/README*.md
+      - Observability:
+          - observability/README.md
+          - observability/runbooks/*.md
+          - observability/integrations/*/README*.md
+  - Evaluation:
+      - Overview: benchmarks/README.md
+      - Performance benchmarks:
+          - benchmarks/docs/perf/README.md
+          - benchmarks/docs/perf/*.md
+      - Quality evaluation:
+          - benchmarks/docs/eval/README.md
+          - benchmarks/docs/eval/*.md
+      - Profiling:
+          - benchmarks/docs/profile/README.md
+          - examples/feature/profile/nsight/README.md
+      - Workload recipes: benchmarks/docs/recipes.md
+  - Reference:
+      - CLI commands: cli/README.md
+      - Frontend APIs: data-plane/frontend/README.md
+      - Performance metrics: benchmarks/docs/metrics.md
+      - Helm values: https://github.com/shiweijiezero/foretoken/blob/main/deploy/charts/foretoken/values.yaml
+  - Developer guide:
+      - Contributing: CONTRIBUTING.md
+      - Documentation: docs/development/documentation.md
+      - Code style: docs/development/code-style.md
+      - Testing: docs/development/testing.md
+      - Continuous integration: docs/development/ci.md
+      - Deployment maintenance: docs/development/source-deployment.md
+      - Runtime cache: docs/development/runtime-cache.md
+      - Architecture:
+          - data-plane/README.md
+          - data-plane/frontend/src/*/README*.md
+          - control-plane/internal/autoscaling/README.md
+          - data-plane/patches/vllm/README.md
+      - Releases:
+          - docs/development/release.md
+          - docs/development/release-template.md
+      - Code of conduct: CODE_OF_CONDUCT.md

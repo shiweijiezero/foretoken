@@ -68,6 +68,22 @@ workload:
 
 Install with `--values deploy/platform-values.yaml` when using the authenticated registry.
 
+### Assign external service addresses
+
+If the cluster already provides LoadBalancer addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+Apply it with the same installation settings:
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
+```
+
 ## 3. Deploy and update code
 
 The Quick Start uses the repository's `data/` directory on local k3d. On a remote cluster, Foretoken automatically provisions a dynamic PVC for this relative directory, so the example YAML does not need to change. Multi-node clusters use `ReadWriteMany`; a single-node cluster uses `ReadWriteOnce` automatically. Set `initialSize`, `storageClassName`, `accessMode`, or `maxSize` in `cache.yaml` when the cluster needs a different storage policy.
