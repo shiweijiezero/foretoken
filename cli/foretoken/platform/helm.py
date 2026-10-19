@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-try:
-    from yaml import CSafeLoader as _SafeLoader
-except ImportError:
-    from yaml import SafeLoader as _SafeLoader
-
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import ApplicationFiles, application_references
 from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.kubernetes.documents import (
+    decode_resources,
+    encode_resource,
+    encode_resources,
+)
 from foretoken.network_sources import (
     select_github_download,
     select_platform_image_sources,
@@ -187,7 +187,7 @@ class Helm(HelmClient):
                 ]
             )
         input_text = (
-            yaml.safe_dump(stored_values) if stored_values is not None else None
+            json.dumps(stored_values) if stored_values is not None else None
         )
         overrides = stored_values or {}
         for value in load_platform_values(values):
@@ -297,7 +297,7 @@ class Helm(HelmClient):
                 prepared, ("loki.image",), release=release, overrides=values
             )
             args.extend(["--reset-values", "--values", "-"])
-            self.run(args, input_text=yaml.safe_dump(values))
+            self.run(args, input_text=json.dumps(values))
 
     def loki_statefulset(self, release: ReleaseRef) -> ResourceRef:
         """Read the installed log store identity for control-plane volume expansion."""
@@ -332,7 +332,7 @@ class Helm(HelmClient):
                     prepared, {"image.repository": "docker.io/fluent/fluent-bit"}
                 )
                 for document in self._render_chart(
-                    args, input_text=yaml.safe_dump(values)
+                    args, input_text=json.dumps(values)
                 ):
                     if document["kind"] == "DaemonSet":
                         image = document["spec"]["template"]["spec"]["containers"][0][
@@ -347,7 +347,7 @@ class Helm(HelmClient):
                         self._set_chart_defaults(
                             prepared, {"image.repository": repository, "image.tag": tag}
                         )
-            self.run(args, input_text=yaml.safe_dump(values))
+            self.run(args, input_text=json.dumps(values))
 
     def _managed_chart_resource(
         self,
@@ -364,7 +364,7 @@ class Helm(HelmClient):
         try:
             resources = [
                 item
-                for item in yaml.load_all(rendered, Loader=_SafeLoader)
+                for item in decode_resources(rendered)
                 if isinstance(item, dict)
                 and item.get("apiVersion") == api_version
                 and item.get("kind") == kind
@@ -444,7 +444,7 @@ class Helm(HelmClient):
             )
             args.extend(["--reset-values", "--values", "-"])
             self._finish_upgrade(args, timeout)
-            self.run(args, input_text=yaml.safe_dump(values))
+            self.run(args, input_text=json.dumps(values))
 
     def dragonfly_release(self) -> ReleaseRef:
         """Return the optional file-distribution release owned by platform installation."""
@@ -528,7 +528,7 @@ class Helm(HelmClient):
                 overrides=values,
             )
             args.extend(["--reset-values", "--values", "-", f"--timeout={timeout}"])
-            completed = self._execute([self._helm, *args], input_text=yaml.safe_dump(values))
+            completed = self._execute([self._helm, *args], input_text=json.dumps(values))
             if execution := CommandExecution.current():
                 execution.check()
             if completed.returncode:
@@ -815,21 +815,24 @@ class Helm(HelmClient):
         self._set_chart_defaults(Path(args[3]), updates)
 
     def prepare_source_origin(
-        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str,
-        *, download_proxy_url: str,
+        self, root: Path, values: tuple[str, ...], timeout: str,
+        *, stored_values: dict[str, Any] | None, download_proxy_url: str,
     ) -> ApplicationFiles:
         """Prepare chart-owned storage and return its ready source-build publisher location."""
         release = self.platform_release()
         args = self._upgrade_install_args(
             release, str(root / "deploy/charts/foretoken")
         )
-        merged: dict[str, Any] = {}
-        for value in values:
+        merged = stored_values or {}
+        for value in load_platform_values(values):
             merged = _merge_values(merged, value)
+        input_text = json.dumps(stored_values) if stored_values is not None else None
+        if stored_values is not None:
+            args.extend(["--values", "-"])
+        for path in values:
+            args.extend(["--values", path])
         args.extend(
             [
-                "--values",
-                "-",
                 "--set",
                 "development.enabled=true",
                 "--set-string",
@@ -839,7 +842,6 @@ class Helm(HelmClient):
             ]
         )
         self._add_download_proxy(args, download_proxy_url)
-        input_text = yaml.safe_dump(merged)
         with self._prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
             self._set_platform_image_sources(args, merged, True, input_text)
@@ -890,7 +892,7 @@ class Helm(HelmClient):
         # Check every existing resource before writing; create and resourceVersion
         # preconditions prevent taking over a concurrently replaced object.
         for operation, document in operations:
-            kubectl.run([operation, "-f", "-"], input_text=yaml.safe_dump(document))
+            kubectl.run([operation, "-f", "-"], input_text=encode_resource(document))
         origin = ApplicationFiles(kubectl, release.namespace)
         origin.prepare(timeout)
         configuration = next(
@@ -923,11 +925,7 @@ class Helm(HelmClient):
                     release.namespace,
                 ]
             ).stdout
-            references = application_references(
-                document
-                for document in yaml.load_all(manifest, Loader=_SafeLoader)
-                if document is not None
-            )
+            references = application_references(decode_resources(manifest))
             prefix = origin.endpoint.rstrip("/") + "/"
             return {
                 component: revision
@@ -998,7 +996,7 @@ class Helm(HelmClient):
                         "--timeout=" + timeout,
                     ]
                 )
-        kubectl.delete(yaml.safe_dump_all(resources), timeout)
+        kubectl.delete(encode_resources(resources), timeout)
 
     def stop_platform_tasks(self, kubectl: Kubectl, timeout: str) -> None:
         """Stop native maintenance and failed bootstrap jobs before retiring their shared files and storage."""
@@ -1284,13 +1282,7 @@ class Helm(HelmClient):
                     str(item["revision"]),
                 ]
             ).stdout
-            references.update(
-                extract(
-                    document
-                    for document in yaml.load_all(manifest, Loader=_SafeLoader)
-                    if document is not None
-                )
-            )
+            references.update(extract(decode_resources(manifest)))
         return references
 
     def install_metallb(
@@ -1329,7 +1321,7 @@ class Helm(HelmClient):
             )
             args.extend(["--reset-values", "--values", "-"])
             self._finish_upgrade(args, timeout)
-            self.run(args, input_text=yaml.safe_dump(values))
+            self.run(args, input_text=json.dumps(values))
 
     @staticmethod
     def _envoy_gateway_images(documents: tuple[dict[str, Any], ...]) -> dict[str, str]:
@@ -1375,7 +1367,7 @@ class Helm(HelmClient):
             ]
         )
         values = self._stored_chart_values(release)
-        input_text = yaml.safe_dump(values)
+        input_text = json.dumps(values)
         args.extend(["--reset-values", "--values", "-"])
         with self._prepared_chart(
             self._config.envoy_gateway.source, self._config.envoy_gateway.version
@@ -1524,7 +1516,7 @@ class Helm(HelmClient):
             args[3] = str(chart)
             # Retain CPU quota and throttled-time counters in the upstream defaults.
             # Explicit administrator relabelings still override this list through Helm.
-            defaults = yaml.safe_load((chart / "values.yaml").read_text())
+            defaults = json.loads(self.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
             rules = defaults["kubelet"]["serviceMonitor"]["cAdvisorMetricRelabelings"]
             for rule in rules:
                 if rule.get("sourceLabels") != ["__name__"] or rule.get("action") != "drop":
@@ -1564,7 +1556,7 @@ class Helm(HelmClient):
                     "prometheus-node-exporter.image",
                 ),
             )
-            self.run(args, input_text=yaml.safe_dump(values))
+            self.run(args, input_text=json.dumps(values))
 
     def install_dcgm_exporter(
         self,
@@ -1638,7 +1630,7 @@ class Helm(HelmClient):
             self._set_chart_image_sources(
                 chart, ("image",), release=release, overrides=stored
             )
-            self.run(args, input_text=yaml.safe_dump(stored) if reuse_values else None)
+            self.run(args, input_text=json.dumps(stored) if reuse_values else None)
 
     def _chart_source(self, source: str, version: str | None) -> str:
         """Resolve a managed chart source without overriding explicit registry choices."""
@@ -1691,14 +1683,14 @@ class Helm(HelmClient):
         self, chart: Path, subcharts: tuple[str, ...]
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """Read native image defaults and app versions without interpreting templates."""
-        values = yaml.safe_load((chart / "values.yaml").read_text())
+        values = json.loads(self.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
         metadata = yaml.safe_load((chart / "Chart.yaml").read_text())
         versions = {"": str(metadata["appVersion"])}
         for name in subcharts:
             dependency = chart / "charts" / name
             if not dependency.is_dir():
                 (dependency,) = (chart / "charts").glob(f"{name}-*.tgz")
-            child = yaml.safe_load(self.run(["show", "values", str(dependency)]).stdout)
+            child = json.loads(self.run(["show", "values", str(dependency), "--jsonpath", "{@}"]).stdout)
             child_metadata = yaml.safe_load(
                 self.run(["show", "chart", str(dependency)]).stdout
             )
@@ -1706,20 +1698,19 @@ class Helm(HelmClient):
             versions[name] = str(child_metadata["appVersion"])
         return values, versions
 
-    @staticmethod
-    def _set_chart_defaults(chart: Path, updates: dict[str, Any]) -> None:
+    def _set_chart_defaults(self, chart: Path, updates: dict[str, Any]) -> None:
         """Keep automatic settings in chart defaults rather than stored user values."""
         if not updates:
             return
         path = chart / "values.yaml"
-        values = yaml.safe_load(path.read_text())
+        values = json.loads(self.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
         for name, value in updates.items():
             target = values
             *parents, key = name.split(".")
             for parent in parents:
                 target = target.setdefault(parent, {})
             target[key] = value
-        path.write_text(yaml.safe_dump(values))
+        path.write_text(json.dumps(values))
 
     def _set_chart_image_sources(
         self,
@@ -1798,11 +1789,7 @@ class Helm(HelmClient):
             }:
                 command.extend([value, args[index + 1]])
         rendered = self.run(command, input_text=input_text).stdout
-        return tuple(
-            document
-            for document in yaml.load_all(rendered, Loader=_SafeLoader)
-            if document is not None
-        )
+        return tuple(decode_resources(rendered))
 
     def _installed_chart_manifest(
         self, release: ReleaseRef
@@ -1813,11 +1800,7 @@ class Helm(HelmClient):
         manifest = self.run(
             ["get", "manifest", release.name, "--namespace", release.namespace]
         ).stdout
-        return tuple(
-            document
-            for document in yaml.load_all(manifest, Loader=_SafeLoader)
-            if document is not None
-        )
+        return tuple(decode_resources(manifest))
 
     def _installed_chart_images(self, release: ReleaseRef) -> set[str]:
         """Read prior images from native workloads and Prometheus Operator resources."""

@@ -21,6 +21,7 @@ from foretoken.build.node_images import (
 )
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, resource_ref, timeout_seconds
+from foretoken.kubernetes.documents import encode_resources
 
 SOURCE_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 SOURCE_BUILD_UID = 65531
@@ -104,7 +105,7 @@ def ensure_build_storage(
             )
     if not kubectl.exists("namespace", namespace):
         kubectl.apply(
-            yaml.safe_dump(
+            json.dumps(
                 {
                     "apiVersion": "v1",
                     "kind": "Namespace",
@@ -113,13 +114,13 @@ def ensure_build_storage(
             )
         )
     deployment = next(document for document in resources if document["kind"] == "Deployment")
-    kubectl.apply(yaml.safe_dump_all((document for document in resources if document is not deployment), sort_keys=False))
+    kubectl.apply(encode_resources(document for document in resources if document is not deployment))
     configuration = kubectl.get("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
     # Start with the current path selection before any new claim can be provisioned.
     deployment["spec"]["template"]["metadata"]["annotations"] = {
         "inference.foretoken.io/source-build-config-revision": configuration["metadata"]["resourceVersion"],
     }
-    kubectl.apply(yaml.safe_dump(deployment, sort_keys=False))
+    kubectl.apply(json.dumps(deployment))
     kubectl.rollout_status(resource_ref(deployment), timeout)
     return SOURCE_BUILD_STORAGE_CLASS
 
@@ -452,7 +453,7 @@ chmod "$VOL_PERM" "$VOL_DIR"
 set -eu
 rm -rf "$VOL_DIR"
 """,
-                "helperPod.yaml": yaml.safe_dump(helper, sort_keys=False),
+                "helperPod.yaml": json.dumps(helper),
             },
         },
         {
@@ -703,7 +704,7 @@ def _ensure_build_cache(
     }
     created = kubectl.run(
         ["create", "-f", "-", "-o", "json"],
-        input_text=yaml.safe_dump(
+        input_text=json.dumps(
             {
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",

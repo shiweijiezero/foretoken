@@ -11,8 +11,6 @@ from contextlib import ExitStack
 from dataclasses import replace
 from typing import Any
 
-import yaml
-
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
 from foretoken.build.state import release_source_deployment, source_operation
@@ -33,6 +31,7 @@ from foretoken.kubernetes.client import (
     resource_ref,
     timeout_seconds,
 )
+from foretoken.kubernetes.documents import encode_resources
 from foretoken.kubernetes.mutation import DeploymentMutation
 from foretoken.working_directory import resolve_runtime_directory
 
@@ -90,7 +89,7 @@ class DeploymentLifecycle:
         runtime_required = len(stopping) != len(services)
         # Suspension takes effect before source compilation and does not select a new executable.
         if stopping:
-            submission.apply(yaml.safe_dump_all(stopping, sort_keys=False))
+            submission.apply(encode_resources(stopping))
 
         source = None
         with ExitStack() as locks:

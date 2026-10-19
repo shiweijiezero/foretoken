@@ -22,8 +22,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Self
 
-import yaml
-
 from foretoken.build.artifacts import prepare_artifact_volume
 from foretoken.build.node_images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -542,14 +540,14 @@ fi
         try:
             self.cancellation.check()
             created = self.kubectl.run(
-                ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
+                ["create", "-f", "-", "-o", "json"], input_text=json.dumps(pod)
             )
             self.cancellation.check()
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
             if self.credentials:
                 self.kubectl.run(
                     ["create", "-f", "-"],
-                    input_text=yaml.safe_dump(
+                    input_text=json.dumps(
                         {
                             "apiVersion": "v1",
                             "kind": "Secret",

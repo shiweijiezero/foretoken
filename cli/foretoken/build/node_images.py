@@ -12,8 +12,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import yaml
-
 from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -349,7 +347,7 @@ def node_image_store(
             "volumes": volumes,
         },
     }
-    kubectl.run(["create", "-f", "-"], input_text=yaml.safe_dump(pod))
+    kubectl.run(["create", "-f", "-"], input_text=json.dumps(pod))
     try:
         kubectl.run(
             [

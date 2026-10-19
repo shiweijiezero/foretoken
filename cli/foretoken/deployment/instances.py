@@ -13,8 +13,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from foretoken.deployment.manifest import (
     DEPLOYMENT_API_VERSION,
     DEPLOYMENT_KIND,
@@ -30,6 +28,7 @@ from foretoken.kubernetes.client import (
     KubernetesVersionConflictError,
     timeout_seconds,
 )
+from foretoken.kubernetes.documents import encode_resources
 
 DEPLOYMENT_RESOURCE = "inferencedeployments.inference.foretoken.io"
 
@@ -256,7 +255,7 @@ class DeploymentInstance:
                     raise DeploymentError(f"{document['kind']}/{metadata['name']} already has another controller owner")
             metadata["ownerReferences"] = [reference for reference in references if reference.get("uid") != self.uid] + [dict(owner)]
         # Membership changes only metadata, including reference-only objects from an interrupted retirement.
-        return replace(bound, objects=objects, rendered=yaml.safe_dump_all(objects, sort_keys=False))
+        return replace(bound, objects=objects, rendered=encode_resources(objects))
 
     def deployment(self, *, allow_missing: bool = False, missing_instance_ok: bool = False) -> ForetokenDeployment:
         """Recover actual intent, or an unbound identity for retrying deletion of an absent instance."""
@@ -305,7 +304,7 @@ class DeploymentInstance:
         if not frontend and not allow_missing:
             raise DeploymentError(f"deployment instance {self.name!r} has no declared frontend")
         return ForetokenDeployment(
-            path=None, rendered=yaml.safe_dump_all(objects, sort_keys=False), namespace=self.namespace,
+            path=None, rendered=encode_resources(objects), namespace=self.namespace,
             frontend=frontend, hostname=hostname, models=models, runtime_caches=tuple(caches),
             objects=tuple(objects), name=self.name, uid=self.uid,
         )

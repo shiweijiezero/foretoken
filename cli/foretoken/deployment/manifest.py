@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import tempfile
 from collections.abc import Iterable
@@ -17,6 +18,7 @@ import yaml
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.kubernetes.documents import decode_resources, encode_resources
 
 DEPLOYMENT_API_VERSION = "inference.foretoken.io/v1alpha1"
 DEPLOYMENT_KIND = "InferenceDeployment"
@@ -62,7 +64,7 @@ class ForetokenDeployment:
     def with_objects(self, objects: Iterable[dict[str, Any]]) -> ForetokenDeployment:
         """Reindex changed typed intent without changing its source path or instance identity."""
         return parse_deployment(
-            self.path, yaml.safe_dump_all(objects, sort_keys=False), name=self.name, uid=self.uid,
+            self.path, encode_resources(objects), name=self.name, uid=self.uid,
         )
 
     def resource_references(self) -> list[dict[str, str]]:
@@ -84,7 +86,7 @@ def load_deployment(path_value: str, kubectl: Kubectl, *, name: str | None = Non
     namespace = kubectl.current_namespace()
     rendered = kubectl.kustomize(path)
     try:
-        objects = [document for document in yaml.safe_load_all(rendered) if document is not None]
+        objects = list(decode_resources(rendered))
     except yaml.YAMLError as error:
         raise DeploymentError(f"deployment rendered invalid YAML: {error}") from error
     retained = []
@@ -98,7 +100,7 @@ def load_deployment(path_value: str, kubectl: Kubectl, *, name: str | None = Non
         if document.get("apiVersion", "").startswith("inference.foretoken.io/"):
             document.setdefault("metadata", {})["namespace"] = namespace
         retained.append(document)
-    deployment = parse_deployment(path, yaml.safe_dump_all(retained, sort_keys=False), name=name)
+    deployment = parse_deployment(path, encode_resources(retained), name=name)
     validate_instance_name(deployment.name)
     return project_deployment(deployment, kubectl, prefix=deployment.name + "-")
 
@@ -134,7 +136,7 @@ def parse_deployment(
     """Index rendered service intent while retaining its deployment instance identity."""
     instance_name = name
     try:
-        documents = [item for item in yaml.safe_load_all(rendered) if item is not None]
+        documents = list(decode_resources(rendered))
     except yaml.YAMLError as exc:
         raise DeploymentError(f"deployment rendered invalid YAML: {exc}") from exc
     if not documents:
@@ -307,16 +309,16 @@ def project_deployment(
         }]
     with tempfile.TemporaryDirectory(prefix="foretoken-instance-") as folder:
         root = Path(folder)
-        (root / "resources.yaml").write_text(yaml.safe_dump_all(objects, sort_keys=False))
-        (root / "kustomization.yaml").write_text(yaml.safe_dump(configuration, sort_keys=False))
+        (root / "resources.yaml").write_text(encode_resources(objects))
+        (root / "kustomization.yaml").write_text(json.dumps(configuration))
         rendered = kubectl.kustomize(root)
     if prefix:
         # The singleton frontend is the readable instance anchor; other roots retain their prefixed names.
-        projected_objects = list(yaml.safe_load_all(rendered))
+        projected_objects = list(decode_resources(rendered))
         for document in projected_objects:
             if document["kind"] == "FrontendService" and document["apiVersion"].startswith("inference.foretoken.io/"):
                 document["metadata"]["name"] = deployment.name
-        rendered = yaml.safe_dump_all(projected_objects, sort_keys=False)
+        rendered = encode_resources(projected_objects)
     projected = parse_deployment(deployment.path, rendered, name=deployment.name, uid=uid or deployment.uid)
     if any(document["metadata"].get("namespace") != deployment.namespace for document in projected.objects):
         raise DeploymentError("deployment resources must belong to the current Kubernetes namespace")

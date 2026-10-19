@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass
 from importlib import resources
@@ -21,6 +22,7 @@ from foretoken.accelerators.discovery import (
 )
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
+from foretoken.kubernetes.documents import encode_resources
 from foretoken.network_sources import platform_image_reference
 
 
@@ -152,7 +154,7 @@ class MetaXExporterLifecycle:
         self.ensure_available()
         # Existing namespace metadata stays with its owner, and cleanup never deletes it.
         if not self._kubectl.exists("namespace", self.namespace):
-            self._kubectl.apply(yaml.safe_dump(self._namespace))
+            self._kubectl.apply(json.dumps(self._namespace))
         documents = deepcopy(self._workloads)
         for document in documents:
             labels = document["metadata"].setdefault("labels", {})
@@ -184,14 +186,14 @@ class MetaXExporterLifecycle:
                     self._image if self._image is not None
                     else platform_image_reference(container["image"], self._image_registry)
                 )
-        self._kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
+        self._kubectl.apply(encode_resources(documents))
         self._kubectl.rollout_status(self.daemonset, timeout)
 
     def uninstall(self, timeout: str) -> None:
         """Delete only CLI-owned exporter resources, retaining the namespace."""
         documents = tuple(doc for doc in self._existing_resources() if self._owned(doc))
         if documents:
-            self._kubectl.delete(yaml.safe_dump_all(reversed(documents)), timeout)
+            self._kubectl.delete(encode_resources(reversed(documents)), timeout)
 
     def _existing_resources(self) -> tuple[dict[str, Any], ...]:
         """Read exact identities, including before monitoring CRDs are installed."""
