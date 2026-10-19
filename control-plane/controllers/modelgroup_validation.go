@@ -10,6 +10,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
@@ -54,7 +55,7 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {
 			return fmt.Errorf("Mooncake bootstrap port conflicts with the model-server port")
 		}
-		if group.Spec.Artifacts.Cache != nil && group.Spec.PDRuntime.BootstrapPort == runtimeCacheObservationPort(group.Spec.Runtime.Port) {
+		if group.Spec.Artifacts.Cache != nil && group.Spec.PDRuntime.BootstrapPort == runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port) {
 			return fmt.Errorf("Mooncake bootstrap port conflicts with the runtime cache observation port")
 		}
 	}

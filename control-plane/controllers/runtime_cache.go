@@ -24,19 +24,12 @@ const (
 	directoryOwnerAnnotation = runtimeconfig.DirectoryOwnerAnnotation
 )
 
-func runtimeCacheObservationPort(runtimePort int32) int32 {
-	if runtimePort < 65535 {
-		return runtimePort + 1
-	}
-	return runtimePort - 1
-}
-
 // runtimeCacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
 func runtimeCacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
 		{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
-		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(runtimePort)))},
+		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeconfig.CacheObservationPort(runtimePort)))},
 	}
 }
 

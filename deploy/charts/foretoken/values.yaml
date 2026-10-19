@@ -68,19 +68,9 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
-# Optional peer distribution for model files and loaded weights.
+# Installer-resolved model download endpoint; workloads choose usable optimizations automatically.
 modelDistribution:
-  # Requires a compatible CUDA runtime and allocated RDMA devices.
-  modelexpress:
-    enabled: false
-  dragonfly:
-    enabled: false
-    # Leave empty to let foretoken install manage the Dragonfly release.
-    existingRelease:
-      name: ""
-      namespace: ""
-    # Resolved from the installed daemon by foretoken install; also supports direct Helm use.
-    socketPath: /var/run/dragonfly/dfdaemon.sock
+  proxyURL: ""
 
 # Unused node-network IP addresses for services when the cluster assigns none.
 # Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.

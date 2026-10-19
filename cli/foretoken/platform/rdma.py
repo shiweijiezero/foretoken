@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -29,24 +28,6 @@ class RDMASelection:
     managed: bool = False
     node_names: tuple[str, ...] = ()
     available: bool = False
-
-
-def migrate_stored_rdma_values(values: dict[str, Any]) -> dict[str, Any]:
-    """Move legacy allocation keys in installed Helm values to their platform owner.
-
-    Current values files use the new schema; this only translates a previous release.
-    Existing platform-level values take precedence over legacy P/D values.
-    """
-    migrated = deepcopy(values)
-    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
-    for old, new in (
-        ("rdmaResourceName", "resourceName"),
-        ("rdmaResourceCount", "resourceCount"),
-    ):
-        if old in pd:
-            value = pd.pop(old)
-            migrated.setdefault("rdma", {}).setdefault(new, value)
-    return migrated
 
 
 def shared_rdma_resources(

@@ -69,30 +69,8 @@ Diagnostic captures use the same data root and store results below `profiles/`; 
 
 ## Distribute models across nodes
 
-Dragonfly shares public model downloads between nodes. To enable it, add this to `deploy/platform-values.yaml`:
+`foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. For anonymously accessible models on the official Hugging Face and ModelScope services, preparation uses node peers when the shared download service is available. Otherwise, files come directly from the model provider. Authenticated downloads and custom model endpoints use their provider directly.
 
-```yaml
-modelDistribution:
-  dragonfly:
-    enabled: true
-```
+Compatible replicas automatically reuse loaded weights when their runtime has the required CUDA and RDMA support. When weight sharing is unavailable, they load the prepared model files.
 
-Installation prepares Dragonfly or reuses an existing installation. Models requiring authentication and custom model endpoints download directly from their provider. If several Dragonfly releases exist, select one with `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`, replacing the names with your release's values.
-
-On NVIDIA clusters with RDMA, ModelExpress can load weights from running replicas. Add this setting under the same `modelDistribution` mapping when both features are enabled:
-
-```yaml
-modelDistribution:
-  modelexpress:
-    enabled: true
-```
-
-Automatic weight transfer applies to remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged; replicas without a compatible source load the prepared files.
-
-Apply the settings with the original installation command, adding `--values deploy/platform-values.yaml`. Source installations retain `-e .`, registry settings, and any engine-source bindings. For a published platform:
-
-```bash
-foretoken install --values deploy/platform-values.yaml
-```
-
-Redeploy the affected services after changing these settings. Set the corresponding `enabled` field to `false` to disable distribution. Uninstall removes managed Dragonfly resources once no workloads use them; reused installations are retained.
+`foretoken uninstall` removes managed download services once no workloads or controllers use them; independently installed services are retained.

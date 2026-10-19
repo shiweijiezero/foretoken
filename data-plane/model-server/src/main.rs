@@ -728,20 +728,26 @@ async fn spawn_engine_attempt(
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
         return Err(EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed before version detection",
+            "EngineCore startup deadline elapsed before package inspection",
         )));
     }
-    let engine_protocol = tokio::time::timeout(
+    let (engine_protocol, model_express_available) = tokio::time::timeout(
         protocol_timeout,
-        detect_engine_protocol(&managed_engine.python, &environment),
+        inspect_engine_packages(&managed_engine.python, &environment),
     )
     .await
     .map_err(|_| {
         EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed during version detection",
+            "EngineCore startup deadline elapsed during package inspection",
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    // A missing optional loader leaves native file loading available.
+    if !model_express_available {
+        managed_engine
+            .python_args
+            .retain(|argument| argument != "--load-format=modelexpress");
+    }
     // Rust preprocessing already normalizes pixels. Newer engines otherwise normalize them twice.
     if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_31) {
         managed_engine
@@ -860,37 +866,52 @@ async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Resul
     }
 }
 
-/// Select protocol layouts from installed package metadata without loading engine plugins.
-async fn detect_engine_protocol(
+/// Inspect protocol and optional weight-loader support without importing engine plugins.
+async fn inspect_engine_packages(
     python: &str,
     environment: &[(String, String)],
-) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
+) -> Result<(EngineCoreProtocol, bool), Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .kill_on_drop(true)
         .envs(environment.iter().cloned())
         .args([
             "-c",
-            "from importlib.metadata import version; print(version('vllm'))",
+            r#"import json
+from importlib.metadata import version, PackageNotFoundError
+
+vllm_version = version("vllm")
+try:
+    version("modelexpress")
+except PackageNotFoundError:
+    model_express = False
+else:
+    model_express = True
+print(json.dumps([vllm_version, model_express]))
+"#,
         ])
         .output()
         .await?;
     if !output.status.success() {
-        return Err(format!("could not inspect vLLM version using {python}").into());
+        return Err(format!("could not inspect engine packages using {python}").into());
     }
-    let version = String::from_utf8(output.stdout)?.trim().to_owned();
+    let (version, model_express_available): (String, bool) =
+        serde_json::from_slice(&output.stdout)?;
     let mut parts = version.split('.');
     let major = parts.next().and_then(|part| part.parse::<u64>().ok());
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
-    match (major, minor) {
-        (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
-        (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
-        (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
-        (Some(0), Some(28..=31)) => Ok(EngineCoreProtocol::V0_28ToV0_31),
-        _ => Err(format!(
-            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
-        )
-        .into()),
-    }
+    let protocol = match (major, minor) {
+        (Some(0), Some(20)) => EngineCoreProtocol::V0_20,
+        (Some(0), Some(21..=25)) => EngineCoreProtocol::V0_21ToV0_25,
+        (Some(0), Some(26..=27)) => EngineCoreProtocol::V0_26ToV0_27,
+        (Some(0), Some(28..=31)) => EngineCoreProtocol::V0_28ToV0_31,
+        _ => {
+            return Err(format!(
+                "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"
+            )
+            .into());
+        }
+    };
+    Ok((protocol, model_express_available))
 }
 
 // Build the adapter only from controller-projected identity and keyed material. Startup owns the

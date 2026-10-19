@@ -13,6 +13,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,10 +24,8 @@ import (
 )
 
 const (
-	weightSourcePoolLabel           = "inference.foretoken.io/weight-source-pool"
-	weightSourceRevisionLabel       = "inference.foretoken.io/weight-source-revision"
-	weightSourceGRPCPort      int32 = 6555
-	weightSourceMetadataPort  int32 = 5555
+	weightSourcePoolLabel     = "inference.foretoken.io/weight-source-pool"
+	weightSourceRevisionLabel = "inference.foretoken.io/weight-source-revision"
 )
 
 // modelExpressSourcesEnabled selects cohorts with stable shard placement and shared prepared files.
@@ -49,23 +48,8 @@ func configureWeightSources(spec inferencev1alpha1.ModelGroupSpec, pod *corev1.P
 	if !modelExpressSourcesEnabled(spec) {
 		return nil
 	}
-	gpuCount := spec.Resources.Requests.GPU.Count
-	reservedPorts := []int32{spec.Runtime.Port, runtimeCacheObservationPort(spec.Runtime.Port)}
-	if spec.PDRuntime != nil {
-		reservedPorts = append(reservedPorts, spec.PDRuntime.BootstrapPort)
-	}
-	for _, base := range []int32{weightSourceGRPCPort, weightSourceMetadataPort} {
-		if gpuCount < 1 || int64(base)+int64(gpuCount)-1 > 65535 {
-			return fmt.Errorf("ModelExpress worker ports exceed the TCP port range")
-		}
-		for _, reserved := range reservedPorts {
-			if reserved >= base && reserved < base+gpuCount {
-				return fmt.Errorf("ModelExpress worker ports overlap runtime port %d", reserved)
-			}
-		}
-	}
-	if weightSourceMetadataPort+gpuCount > weightSourceGRPCPort {
-		return fmt.Errorf("ModelExpress metadata and worker ports overlap")
+	if err := runtimeconfig.ValidateModelExpressPorts(spec.Runtime.Port, spec.Resources.Requests.GPU.Count, spec.PDRuntime); err != nil {
+		return err
 	}
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
@@ -76,11 +60,11 @@ func configureWeightSources(spec inferencev1alpha1.ModelGroupSpec, pod *corev1.P
 	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
 		corev1.EnvVar{Name: "MX_METADATA_BACKEND", Value: "k8s-service"},
 		corev1.EnvVar{Name: "MX_P2P_METADATA", Value: "1"},
-		corev1.EnvVar{Name: "MX_K8S_SERVICE_PATTERN", Value: fmt.Sprintf("mx-%s-r{rank}:%d", spec.Revision, weightSourceGRPCPort)},
+		corev1.EnvVar{Name: "MX_K8S_SERVICE_PATTERN", Value: fmt.Sprintf("mx-%s-r{rank}:%d", spec.Revision, runtimeconfig.ModelExpressGRPCPort)},
 		corev1.EnvVar{Name: "MX_MODEL_REVISION", Value: spec.ModelPoolRef.UID + "/" + spec.Revision},
 		corev1.EnvVar{Name: "MX_WORKER_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
-		corev1.EnvVar{Name: "MX_WORKER_GRPC_PORT", Value: strconv.Itoa(int(weightSourceGRPCPort))},
-		corev1.EnvVar{Name: "MX_METADATA_PORT", Value: strconv.Itoa(int(weightSourceMetadataPort))},
+		corev1.EnvVar{Name: "MX_WORKER_GRPC_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressGRPCPort))},
+		corev1.EnvVar{Name: "MX_METADATA_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressMetadataPort))},
 		corev1.EnvVar{Name: "MX_RDMA_NIC_PIN", Value: "auto"},
 	)
 	return nil
@@ -94,7 +78,7 @@ func weightSourceIngress(spec inferencev1alpha1.ModelGroupSpec) []networkingv1.N
 	}
 	tcp := corev1.ProtocolTCP
 	ports := make([]networkingv1.NetworkPolicyPort, 0, 2)
-	for _, base := range []int32{weightSourceGRPCPort, weightSourceMetadataPort} {
+	for _, base := range []int32{runtimeconfig.ModelExpressGRPCPort, runtimeconfig.ModelExpressMetadataPort} {
 		start := intstr.FromInt32(base)
 		end := base + spec.Resources.Requests.GPU.Count - 1
 		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &start, EndPort: &end})
@@ -142,7 +126,7 @@ func (reconciler *ModelPoolReconciler) reconcileWeightSources(ctx context.Contex
 				}
 				service.Spec.Selector = selector
 				service.Spec.PublishNotReadyAddresses = false
-				service.Spec.Ports = []corev1.ServicePort{{Name: "manifest", Protocol: corev1.ProtocolTCP, Port: weightSourceGRPCPort, TargetPort: intstr.FromInt32(weightSourceGRPCPort + int32(rank%int64(perNode)))}}
+				service.Spec.Ports = []corev1.ServicePort{{Name: "manifest", Protocol: corev1.ProtocolTCP, Port: runtimeconfig.ModelExpressGRPCPort, TargetPort: intstr.FromInt32(runtimeconfig.ModelExpressGRPCPort + int32(rank%int64(perNode)))}}
 				return nil
 			})
 			if err != nil {

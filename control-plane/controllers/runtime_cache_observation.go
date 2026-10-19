@@ -14,6 +14,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -72,7 +73,7 @@ func observeGroupCache(ctx context.Context, kubeClient client.Client, group *inf
 		if !pod.DeletionTimestamp.IsZero() || pod.Status.PodIP == "" || pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
-		endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port))))
+		endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port))))
 		observation, err := readRuntimeCacheObservation(ctx, endpoint, string(pod.UID))
 		if err != nil {
 			failures = append(failures, fmt.Errorf("cache observation for Pod %s: %w", pod.Name, err))

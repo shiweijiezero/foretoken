@@ -53,7 +53,6 @@ type RuntimeProfile struct {
 	OmniImage          string
 	NsightImage        string
 	AdmissionStore     *inferencev1alpha1.AdmissionStoreConnection
-	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -173,26 +172,20 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
-	// Fixed-weight cohorts share upstream ModelExpress sources. DP may reuse world ranks,
-	// while EPLB mutates expert placement after loading; both retain native file loading.
+	// DP can reuse world ranks and EPLB changes expert placement after loading;
+	// these cohorts retain native file loading.
 	loader, explicitLoader := effective.EngineArgs["load-format"]
 	var loaderName string
 	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
-	modelExpress := ((profile.ModelExpress && !explicitLoader) || requestedModelExpress) && profile.RDMA != nil && profile.DeviceResourceName == "nvidia.com/gpu" &&
+	shareableWeights := profile.DeviceResourceName == "nvidia.com/gpu" &&
 		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
 		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
-	if modelExpress {
-		if effective.EngineArgs == nil {
-			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
-		}
-		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
-	}
 	rdmaRequired := effective.RequiresRDMA()
 	if rdmaRequired && profile.RDMA == nil {
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if modelExpress || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || (requestedModelExpress && shareableWeights) {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -200,6 +193,15 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
+	}
+	// Automatic weight sharing reuses allocated devices rather than introducing
+	// a hard RDMA scheduling requirement for an otherwise runnable model.
+	if shareableWeights && rdma != nil && (!explicitLoader || requestedModelExpress) &&
+		runtimeconfig.ValidateModelExpressPorts(profile.ModelServerPort, template.Resources.Requests.GPU.Count, pdRuntime) == nil {
+		if effective.EngineArgs == nil {
+			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
+		}
+		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
 	}
 	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
 		if profile.DeviceResourceName != "metax-tech.com/gpu" {
