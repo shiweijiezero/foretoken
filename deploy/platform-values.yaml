@@ -1,13 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Optional platform overrides. The chart defaults apply when sections remain commented.
+# Optional platform overrides. Installer and chart defaults apply unless overridden.
 # Pass this file with: foretoken install --values deploy/platform-values.yaml
-
-# Shared model downloads:
-# modelDistribution:
-#   dragonfly:
-#     enabled: true
 
 # Private image registry. Create registry-auth in foretoken-platform and in each
 # workload namespace before using these references.

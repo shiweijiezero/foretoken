@@ -3,239 +3,231 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Foretoken command-line tool
+# Foretoken CLI
 
 English | [简体中文](README_zh.md)
 
-The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend URLs, and runs benchmarks through one `foretoken` entry point.
+Use `foretoken` to manage inference deployments, check services, run benchmarks, and capture execution profiles. For a first deployment, follow the [Quick Start](../README.md#quick-start); for agent-driven inference optimization, [start an RSI task](../rsi-playbooks/README.md#start-an-optimization-task).
+
+| Task | Commands |
+| --- | --- |
+| [Environment and platform](#environment-and-platform) | `cluster create`, `cluster delete`, `install`, `uninstall` |
+| [Service deployment](#service-deployment) | `deploy`, `stop`, `delete`, `endpoint` |
+| [Status and logs](#status-and-logs) | `status` |
+| [Benchmarks and results](#benchmarks-and-results) | `perf`, `eval`, `plot` |
+| [Profiling](#profiling) | `deploy --profile`, `perf --profile`, `profile view` |
+
+`foretoken --help` lists all commands. Use a command's `--help`, such as `foretoken status --help`, for its full options.
 
 ## Before you start
 
-You need Python 3.11 or later, `kubectl`, and Helm 4.2.4 or later. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
+### Install the command-line tool
 
-## Install the command-line tool
-
-Install the published command-line tool with pip:
+With Python 3.11 or later:
 
 ```bash
 pip install foretoken
-
-# From a source checkout:
-# pip install -e .
+foretoken --version
 ```
 
-Or create and activate a virtual environment with uv:
+The deployment and local-cluster examples use repository files. Get them and run those examples from the repository root:
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install foretoken
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-Run `foretoken --version` to check the installed CLI version.
+For CLI development, use `pip install -e .` in this directory. For uv, create and activate a virtual environment with `uv venv` and `source .venv/bin/activate`, then use `uv pip install foretoken`.
 
-## Create a local cluster
+Platform installation and service deployment need `kubectl`, Helm 4.2.4 or later, and a kubeconfig for the target cluster. Benchmarking an existing URL and plotting local results do not require Kubernetes.
 
-For a local GPU cluster on a Linux host with Docker, NVIDIA Container Toolkit, and k3d installed:
+## Environment and platform
+
+### cluster create / cluster delete
+
+Create a local development cluster, or remove it when no longer needed. Skip creation when using an existing Kubernetes cluster.
 
 ```bash
-# Name the local cluster and use GPU index 0 from nvidia-smi.
-# To use two GPUs, pass --gpus 0,1.
+# GPU cluster on a Linux host; select physical GPU 0
 foretoken cluster create k3d --name foretoken-dev --gpus 0
-```
 
-For a local kind development cluster, install Docker, kind, kubectl, and Helm:
-
-```bash
+# CPU-oriented development cluster
 foretoken cluster create kind --name foretoken-dev
 ```
 
-Remove a cluster created by the CLI with:
+Creation selects the new Kubernetes context. k3d requires Docker, the NVIDIA driver and Container Toolkit, and k3d; kind requires Docker and kind. Both accept `--config` for a custom cluster configuration. Host setup is covered by the [k3d](../docs/deployment/k3d.md) and [kind](../docs/deployment/kind.md) guides.
+
+To remove the whole cluster and its workloads:
 
 ```bash
 foretoken cluster delete k3d --name foretoken-dev
-foretoken cluster delete kind --name foretoken-dev
 ```
 
-## Install the Kubernetes platform
+Use `kind` instead of `k3d` for a kind cluster. The repository's `data/` directory is retained.
 
-`foretoken install` installs or updates the shared Foretoken CRDs and dependencies in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. `foretoken deploy` creates the controller and model services in each deployment namespace.
+<a id="install-the-kubernetes-platform"></a>
+<a id="current-source"></a>
 
-Installation sets defaults for subsequent deployments; it does not restart existing controllers or services. Redeploy a service to use the updated defaults.
+### install
 
-### Default installation
-
-The default installs the published platform and selects direct access through a `LoadBalancer` Service for model deployments:
+Install or update the shared Foretoken platform. This prepares the cluster for model deployments, including monitoring and persistent logs; deploy a model with `foretoken deploy`.
 
 ```bash
+# Install the published platform
 foretoken install
-```
 
-Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs LeaderWorkerSet and the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
-
-Log collection and persistence are enabled by default. See [Observability](../observability/README.md) for configuration, log queries, dashboards, and alerts.
-
-### Gateway mode
-
-Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available:
-
-```bash
-foretoken install --frontend-mode gateway
-```
-
-With another Gateway Controller, reuse a Gateway managed by that controller:
-
-```bash
-foretoken install \
-  --frontend-mode gateway \
-  --gateway-name inference-gateway \
-  --gateway-namespace gateway-system
-```
-
-Add `--gateway-section-name LISTENER` only when more than one listener matches.
-
-### Current source
-
-The cluster needs a default StorageClass for application files. Run from the Foretoken repository root:
-
-```bash
+# Build from the current Foretoken checkout
 foretoken install -e .
 ```
 
-`foretoken deploy` then builds controller, frontend and model-server changes from your current Foretoken directory. See the examples for [running different code versions in parallel](../docs/deployment/source.md#run-candidates-in-parallel) or [deploying local vLLM and MetaX plugin code](../docs/deployment/source.md#edit-an-inference-engine).
+The cluster needs a default StorageClass, and GPU nodes need their vendor driver and device plugin. New installations use direct `LoadBalancer` access. Updated platform defaults take effect when services are redeployed.
 
-A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by the Build Pods and nodes. For an internal registry without authentication:
+Use `--frontend-mode gateway` for [Gateway access](../README.md#gateway-mode). To reuse a Gateway, also provide `--gateway-name` and `--gateway-namespace`; select a listener with `--gateway-section-name` when needed.
 
-```bash
-foretoken install -e . --registry registry.example.com:5000/foretoken
-```
+`--values` applies [Helm settings](../deploy/charts/foretoken/values.yaml), and `--oci-registry` selects the registry prefix for default images and Charts. See [Observability](../observability/README.md#platform-settings) for monitoring settings and [model storage](../docs/features/model-storage.md#distribute-models-across-nodes) for shared model distribution.
 
-If the registry requires authentication, follow the [source deployment guide](../docs/deployment/kubernetes.md) before installation.
+For source builds, standard kind and k3d contexts load images directly; other clusters require `--registry`. See [source deployment](../docs/deployment/source.md) for registry setup and deploying code changes.
 
-### Model distribution
+### uninstall
 
-To share public model downloads between nodes through Dragonfly, save this in `deploy/platform-values.yaml`:
-
-```yaml
-modelDistribution:
-  dragonfly:
-    enabled: true
-```
-
-For a published platform installation, apply the values with:
+Remove the shared platform after deleting its model deployments. The Kubernetes cluster, Foretoken CRDs, stored logs, and reused cluster components are retained.
 
 ```bash
-foretoken install --values deploy/platform-values.yaml
-```
-
-For a source installation, run `foretoken install -e . --values deploy/platform-values.yaml` from the repository root, retaining the original registry and engine-source options.
-
-Installation prepares Dragonfly or reuses an existing installation. Models that require authentication and custom model endpoints download directly from their provider. To select a particular Dragonfly Helm release, set `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`.
-
-On NVIDIA clusters with RDMA, ModelExpress can load weights from running replicas. Add this alongside `dragonfly` to enable it:
-
-```yaml
-modelDistribution:
-  modelexpress:
-    enabled: true
-```
-
-Automatic weight transfer uses remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged. Each GPU worker selects a nearby available RDMA interface; replicas without a compatible source load the prepared files.
-
-Reapply the installation command after changing either setting, then redeploy the affected services. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
-
-### Installation options
-
-Use `--values` to customize platform settings. Without an override, each installation selects public sources for default platform images and Chart downloads. Chart downloads and image pulls during source builds can fall back to the original source when an automatically selected mirror fails. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
-
-Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
-
-```yaml
-loadBalancer:
-  managedAddresses:
-    - 192.168.1.240-192.168.1.250
-```
-
-## Deploy and operate model services
-
-Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
-
-See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/features/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
-
-```bash
-foretoken deploy examples/quickstart/multi-model --timeout 20m
-```
-
-The command installs or updates the controller for the deployment namespace and applies the selected services. An unchanged deployment reuses its controller and running applications. Services in the same namespace share that controller; use separate namespaces to run independent code versions.
-
-While waiting, the command shows service status and Pod/container logs. It completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. See [service observability](../examples/feature/observability/README.md) for alert configuration.
-
-`--timeout` limits the CLI's waits for cluster operations and service readiness; the default is ten minutes. Source compilation runs separately. Each model's `spec.timeouts.startup` sets its own preparation and startup limits.
-
-If preparation fails or readiness times out, the command reports the cause and leaves the deployed services in Kubernetes. Recovery continues in the cluster; use `status` below to follow progress and inspect logs. For configuration errors, update the Kustomize files and rerun `deploy`.
-
-Inspect the same deployment without applying it:
-
-```bash
-foretoken status examples/quickstart/multi-model
-```
-
-Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
-
-```bash
-foretoken status -n foretoken-multi-model-demo
-foretoken status -n foretoken-multi-model-demo --watch
-```
-
-Resolve the public frontend URL after deployment:
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
-```
-
-For an HTTP Gateway, resolve its request `Host` separately:
-
-```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
-```
-
-`--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
-
-### Stop and resume
-
-```bash
-foretoken stop examples/quickstart/multi-model
-```
-
-Use this to release GPUs between experiments while keeping configuration, storage and build caches. The command waits for frontend and model execution to stop. Run `foretoken deploy` with the same directory to resume; model processes start and load weights again.
-
-## Measure serving performance
-
-Use `foretoken perf` to measure response latency and request or token throughput. Pass a Kustomize directory, or `--url` with `--model` for an existing endpoint. Choose a workload in [Performance examples](../benchmarks/docs/perf/README.md).
-
-## Evaluate and compare models
-
-Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
-
-## Export figures
-
-Use `--output plot` to export figures during a benchmark, or `foretoken plot RESULT_DIR [RESULT_DIR ...]` to redraw or compare saved results. See [plotting examples](../benchmarks/docs/recipes.md#plot-saved-results) for metrics, layout and output locations.
-
-Add [`--sync_wandb`](../benchmarks/docs/perf/wandb.md#resume-an-upload) to upload saved results to W&B.
-
-## Find execution bottlenecks
-
-Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU execution, then browse captures with `foretoken profile view`. Setup and commands are in [Profiling](../benchmarks/docs/profile/README.md).
-
-## Clean up
-
-Delete the deployed services and their unused build resources before uninstalling the platform:
-
-```bash
-foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 
-Deletion waits for service cleanup before removing the namespace controller. If other Foretoken resources remain in that namespace, the controller is retained. A namespace included in the Kustomize configuration is removed last, along with all its resources.
+## Service deployment
 
-Uninstall preserves CRDs, log storage, and reused cluster components. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.
+These commands take a Kustomize directory containing `kustomization.yaml` and its referenced resources. The examples use the [single-model Quick Start](../examples/quickstart/qwen3-0.6b/README.md); its resource requirements and configuration are documented there.
+
+### deploy
+
+Create, update, or resume the directory's model and frontend services, and wait for them to reach their requested state.
+
+```bash
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+```
+
+Rerun the command after configuration changes or, with a source installation, code changes. `--timeout` sets the CLI wait, not the model's startup limit. If the wait fails, services remain in the cluster; use `status` to inspect them.
+
+### stop
+
+Stop serving and release GPUs while retaining configuration, storage, and build caches. Run `deploy` on the same directory to resume.
+
+```bash
+foretoken stop examples/quickstart/qwen3-0.6b
+```
+
+### delete
+
+Delete the resources selected by the deployment directory and clean up unused build resources. If the configuration includes a Namespace, deletion also removes that namespace and all its resources.
+
+```bash
+foretoken delete examples/quickstart/qwen3-0.6b
+```
+
+Cache retention follows the [storage configuration](../docs/features/model-storage.md).
+
+### endpoint
+
+Print the public frontend URL for an API client. Use `--host` to get the request's `Host` header value, including the routing hostname for an HTTP Gateway.
+
+```bash
+# Public URL
+foretoken endpoint examples/quickstart/qwen3-0.6b
+
+# HTTP Host value
+foretoken endpoint examples/quickstart/qwen3-0.6b --host
+```
+
+The command waits for an address; use `deploy` to wait for service readiness. See [sending a request](../README.md#4-send-a-test-request) for a client example.
+
+## Status and logs
+
+### status
+
+Inspect service readiness, startup progress, and Pod/container failure messages. Select a deployment directory or a namespace:
+
+```bash
+# Services in one deployment
+foretoken status examples/quickstart/qwen3-0.6b
+
+# All model and frontend services in a namespace
+foretoken status -n foretoken-demo
+
+# Follow state changes and container logs
+foretoken status -n foretoken-demo --watch
+```
+
+`--watch` also works with a deployment directory. Ctrl+C ends the watch and leaves services running. For persistent logs, metrics, and alerts, see [Observability](../observability/README.md).
+
+## Benchmarks and results
+
+`perf` and `eval` accept a deployment directory or an existing API endpoint. For a multi-model deployment, add `--model` with the public model identifier.
+
+Benchmarks reuse existing services; run `deploy` first to measure configuration or source changes. If the deployment does not exist, they temporarily start services using the installed platform and clean up their serving workloads afterward.
+
+### perf
+
+Measure response latency, request throughput, and token throughput under a workload.
+
+```bash
+# Benchmark a Foretoken deployment
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 --output local
+
+# Benchmark an existing API; replace the URL and model with your service's values
+foretoken perf --url http://localhost:8000/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B --prompt Hello --num-prompts 20 --output local
+```
+
+URL mode takes the full request endpoint and an explicit prompt or dataset. `--output local` saves each run under `results/` without requiring a W&B account. See [performance benchmarks](../benchmarks/docs/perf/README.md) for datasets, concurrency, arrival rate, and parameter sweeps.
+
+### eval
+
+Score model answers using lm-evaluation-harness or EvalScope. This example evaluates 100 GSM8K math problems:
+
+```bash
+foretoken eval examples/quickstart/qwen3-0.6b \
+  --evaluator lm-eval --tasks gsm8k --limit 100 --output local
+```
+
+Task options follow the selected framework. See [quality evaluation](../benchmarks/docs/eval/README.md) for other tasks and EvalScope, or [distribution comparison](../benchmarks/docs/eval/distribution-comparison.md) for candidate/reference comparisons with `--reference`.
+
+### plot
+
+Generate figures from saved benchmark results without rerunning inference. To plot the results saved by the examples above:
+
+```bash
+foretoken plot results
+```
+
+Figures are written to `results/plots/`. Pass individual run directories to select or compare particular runs. See [plotting options](../benchmarks/docs/recipes.md#plot-saved-results) and [W&B result uploads](../benchmarks/docs/perf/wandb.md#resume-an-upload).
+
+## Profiling
+
+### deploy --profile / perf --profile
+
+Record a model's CPU/GPU execution timeline. `deploy --profile` captures external traffic after deployment is ready; `perf --profile` generates its own benchmark workload.
+
+```bash
+# Capture requests sent by an application or another terminal
+foretoken deploy examples/quickstart/qwen3-0.6b \
+  --profile --profile-engine pytorch --profile-duration 15s --timeout 20m
+
+# Generate traffic and capture its execution
+foretoken perf examples/quickstart/qwen3-0.6b \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --num-prompts 2 --max-tokens 128 --output local
+```
+
+Capture requires a Foretoken deployment directory, `--profile-engine`, and `--profile-duration`. Supported engines are `pytorch`, NVIDIA `nsight`, and MetaX `mctracer`. The Quick Start provides persistent capture storage; see the [profiling guide](../benchmarks/docs/profile/README.md) for tool setup.
+
+### profile view
+
+Browse captures retained in the cluster. Run on the browser's computer with a kubeconfig for that cluster:
+
+```bash
+foretoken profile view
+```
+
+Open the printed local URL. Add `-n foretoken-demo` to select one namespace. Ctrl+C closes the viewer, leaving model services and captures in place.

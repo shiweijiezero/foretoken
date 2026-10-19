@@ -15,6 +15,14 @@ import (
 
 const DirectoryOwnerAnnotation = "inference.foretoken.io/directory-owner"
 
+// CacheObservationPort selects the cache observer endpoint next to a runtime port.
+func CacheObservationPort(runtimePort int32) int32 {
+	if runtimePort < 65535 {
+		return runtimePort + 1
+	}
+	return runtimePort - 1
+}
+
 // DefaultStorageIdentity is the platform identity for new runtime-owned files.
 func DefaultStorageIdentity() api.StorageIdentity {
 	return api.StorageIdentity{UID: 1000, GID: 1000}

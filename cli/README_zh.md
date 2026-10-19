@@ -7,235 +7,227 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
+通过 `foretoken` 部署模型服务、查看运行状态、执行评测和采集性能数据。首次部署见[快速开始](../README_zh.md#快速开始)；使用 Agent 持续优化推理系统，见 [RSI 任务](../rsi-playbooks/README_zh.md#开始优化任务)。
+
+| 用途 | 命令 |
+| --- | --- |
+| [环境与平台](#环境与平台) | `cluster create`、`cluster delete`、`install`、`uninstall` |
+| [服务部署](#服务部署) | `deploy`、`stop`、`delete`、`endpoint` |
+| [状态与日志](#状态与日志) | `status` |
+| [评测与结果分析](#评测与结果分析) | `perf`、`eval`、`plot` |
+| [性能剖析](#性能剖析) | `deploy --profile`、`perf --profile`、`profile view` |
+
+`foretoken --help` 列出全部命令。查看完整选项时，在具体命令后加 `--help`，例如 `foretoken status --help`。
 
 ## 开始前
 
-需要准备 Python 3.11 或更高版本、`kubectl`，以及 Helm 4.2.4 或更高版本。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
+### 安装命令行工具
 
-## 安装命令行工具
-
-使用 pip 安装发布的命令行工具：
+使用 Python 3.11 或更高版本：
 
 ```bash
 pip install foretoken
-
-# 从源码目录安装：
-# pip install -e .
+foretoken --version
 ```
 
-或使用 uv 创建并激活虚拟环境后安装：
+部署和本地集群示例使用仓库中的配置文件。获取仓库后，从仓库根目录执行这些示例：
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install foretoken
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-运行 `foretoken --version` 查看已安装的 CLI 版本。
+开发 CLI 时，在该目录执行 `pip install -e .`。使用 uv 时，通过 `uv venv` 和 `source .venv/bin/activate` 创建并激活虚拟环境，再执行 `uv pip install foretoken`。
 
-## 创建本地集群
+安装平台和部署服务需要 `kubectl`、Helm 4.2.4 或更高版本，以及目标集群的 kubeconfig。评测已有 URL、绘制本地结果时无需 Kubernetes。
 
-在已安装 Docker、NVIDIA Container Toolkit 和 k3d 的 Linux GPU 主机上创建本地 GPU 集群：
+## 环境与平台
+
+### cluster create / cluster delete
+
+创建本地开发集群，或在不再使用时删除。已有 Kubernetes 集群可以直接使用。
 
 ```bash
-# 为本地集群命名，并使用 nvidia-smi 显示的 GPU 编号 0。
-# 若使用两张 GPU，传入 --gpus 0,1。
+# 在 Linux 主机创建 GPU 集群，选择物理 GPU 0
 foretoken cluster create k3d --name foretoken-dev --gpus 0
-```
 
-创建本地 kind 开发集群时，安装 Docker、kind、kubectl 和 Helm：
-
-```bash
+# 创建以 CPU 为主的开发集群
 foretoken cluster create kind --name foretoken-dev
 ```
 
-删除由 CLI 创建的集群：
+创建后会切换到新集群的 Kubernetes context。k3d 方式需要 Docker、NVIDIA 驱动和 Container Toolkit、k3d；kind 方式需要 Docker 和 kind。两者均可用 `--config` 指定自定义集群配置。宿主机准备见 [k3d 指南](../docs/deployment/k3d_zh.md)和 [kind 指南](../docs/deployment/kind_zh.md)。
+
+删除整个集群及其中的工作负载：
 
 ```bash
 foretoken cluster delete k3d --name foretoken-dev
-foretoken cluster delete kind --name foretoken-dev
 ```
 
-## 安装 Kubernetes 平台
+删除 kind 集群时，将 `k3d` 换为 `kind`。仓库中的 `data/` 目录会保留。
 
-`foretoken install` 在当前 Kubernetes context 中安装或更新共享的 Foretoken CRD 和依赖。平台资源使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。`foretoken deploy` 在各个部署命名空间中创建控制器和模型服务。
+<a id="安装-kubernetes-平台"></a>
+<a id="当前源码"></a>
 
-安装会设置后续部署使用的默认配置，不会重启已有控制器或服务。重新部署服务后，才会采用更新后的默认配置。
+### install
 
-### 默认安装
-
-默认安装已发布的平台，并为模型部署选择通过 `LoadBalancer` Service 直接访问的方式：
+安装或更新 Foretoken 共享平台，准备模型部署所需的基础组件、监控和持久日志。具体模型通过 `foretoken deploy` 部署。
 
 ```bash
+# 安装发布版平台
 foretoken install
-```
 
-安装会自动选择 NVIDIA 或沐曦运行时，并复用或安装 LeaderWorkerSet 控制器和 RDMA 设备插件。`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
-
-安装默认启用日志采集和持久化。配置、日志查询、看板和告警见[可观测性](../observability/README_zh.md)。
-
-### 网关模式
-
-网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway：
-
-```bash
-foretoken install --frontend-mode gateway
-```
-
-使用其他 Gateway Controller 时，应复用由该 Controller 管理的 Gateway：
-
-```bash
-foretoken install \
-  --frontend-mode gateway \
-  --gateway-name inference-gateway \
-  --gateway-namespace gateway-system
-```
-
-只有多个 listener 都符合条件时，才需要添加 `--gateway-section-name LISTENER`。
-
-### 当前源码
-
-集群需为应用文件提供默认存储类（StorageClass）。在 Foretoken 仓库根目录运行：
-
-```bash
+# 从当前 Foretoken 仓库源码构建
 foretoken install -e .
 ```
 
-`foretoken deploy` 会从当前 Foretoken 目录构建控制器、前端和模型服务的改动。并行运行不同代码版本，见[多版本部署示例](../docs/deployment/source_zh.md#并行运行候选方案)；使用本地 vLLM 或沐曦插件，见[引擎源码部署](../docs/deployment/source_zh.md#修改推理引擎)。
+集群需提供默认 StorageClass，GPU 节点需具备厂商驱动和设备插件。新安装默认通过 `LoadBalancer` 直接访问；更新后的平台默认配置在服务重新部署后生效。
 
-当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要构建 Pod 和节点都能访问的镜像仓库。使用无认证的内网仓库时：
+用 `--frontend-mode gateway` 启用[网关访问](../README_zh.md#网关模式)。复用已有 Gateway 时，同时指定 `--gateway-name` 和 `--gateway-namespace`；需要选择监听器时，再添加 `--gateway-section-name`。
 
-```bash
-foretoken install -e . --registry registry.example.com:5000/foretoken
-```
+`--values` 应用 [Helm 配置](../deploy/charts/foretoken/values.yaml)，`--oci-registry` 指定默认镜像和 Chart 的仓库前缀。监控设置见[可观测性](../observability/README_zh.md#平台设置)，节点间模型分发见[模型存储](../docs/features/model-storage_zh.md#在节点间分发模型)。
 
-如果仓库需要认证，安装前按[源码部署指南](../docs/deployment/kubernetes_zh.md)配置拉取 Secret。
+源码构建时，标准 kind、k3d context 可直接载入镜像，其他集群需指定 `--registry`；仓库设置与代码更新见[源码部署](../docs/deployment/source_zh.md)。
 
-### 模型分发
+### uninstall
 
-使用 Dragonfly 在节点间共享公开模型文件时，在 `deploy/platform-values.yaml` 中配置：
-
-```yaml
-modelDistribution:
-  dragonfly:
-    enabled: true
-```
-
-使用已发布平台时，执行：
+删除模型部署后，卸载共享平台。Kubernetes 集群、Foretoken CRD、已保存的日志和复用的集群组件会保留。
 
 ```bash
-foretoken install --values deploy/platform-values.yaml
-```
-
-源码安装从仓库根目录执行 `foretoken install -e . --values deploy/platform-values.yaml`，保留原镜像仓库和引擎源码选项。
-
-安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。要选择特定的 Dragonfly Helm release，在 `modelDistribution.dragonfly` 下设置 `existingRelease: {name: dragonfly, namespace: dragonfly-system}`。
-
-在具备 RDMA 的 NVIDIA 集群上，还可以通过 ModelExpress 从运行中的副本加载权重。在同一个 `modelDistribution` 下加入：
-
-```yaml
-modelDistribution:
-  modelexpress:
-    enabled: true
-```
-
-自动权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型；显式设置的 `load-format` 保持不变。每个 GPU worker 选择拓扑邻近的可用 RDMA 网卡，没有兼容源副本时加载已准备的文件。
-
-修改设置后重新执行上述安装命令，再部署需要更新的服务。将 `enabled` 设为 `false` 即可关闭对应能力。`foretoken uninstall` 在没有工作负载使用时移除托管的 Dragonfly，复用的安装会保留。
-
-### 安装选项
-
-需要自定义平台设置时，使用 `--values`。没有显式覆盖时，每次安装会为默认平台镜像和 Chart 下载选择公共来源。自动选中的代理失败时，Chart 下载和源码构建中的镜像拉取可回退到源站。通过 `--oci-registry` 指定仓库，values 中明确填写的镜像地址保持不变。选源在运行 CLI 的机器上执行，所选仓库也需要能从集群节点访问。
-
-模型服务通过一个集群外可访问的 IP 提供服务。k3d、k3s 和云上集群会自动分配这个 IP；用 kubeadm、RKE2 或 kubespray 搭建的集群默认没有地址分配能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
-
-```yaml
-loadBalancer:
-  managedAddresses:
-    - 192.168.1.240-192.168.1.250
-```
-
-## 部署和管理模型服务
-
-从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
-
-资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/features/model-storage_zh.md)。单模型部署使用 `examples/quickstart/qwen3-0.6b`。
-
-```bash
-foretoken deploy examples/quickstart/multi-model --timeout 20m
-```
-
-命令会安装或更新部署所在命名空间的控制器，并应用所选服务的配置。部署内容未变时，复用已有控制器和运行实例。同一命名空间中的服务共用该控制器；需要独立运行不同代码版本时，使用不同命名空间。
-
-等待期间显示服务状态和 Pod/容器日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
-
-`--timeout` 设置 CLI 等待集群操作和服务就绪的时限，默认为十分钟，源码编译单独执行。模型的准备和启动分别受模型配置中的 `spec.timeouts.startup` 约束。
-
-模型准备失败或就绪等待超时时，命令会给出原因并退出，已经部署的服务仍保留在 Kubernetes 中。集群会继续尝试恢复，可用下面的 `status` 命令跟踪进度、查看日志。若是配置错误，修改 Kustomize 文件后重新执行 `deploy`。
-
-不应用配置，直接查看同一部署的状态：
-
-```bash
-foretoken status examples/quickstart/multi-model
-```
-
-状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
-
-```bash
-foretoken status -n foretoken-multi-model-demo
-foretoken status -n foretoken-multi-model-demo --watch
-```
-
-部署后解析前端服务的公开 URL：
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
-```
-
-HTTP Gateway 模式下，单独解析请求的 `Host`：
-
-```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
-```
-
-直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
-
-### 停止与恢复
-
-```bash
-foretoken stop examples/quickstart/multi-model
-```
-
-实验暂时不用 GPU 时，可以停止服务，同时保留配置、存储和构建缓存。命令等待前端和模型实例退出；之后对同一目录执行 `foretoken deploy` 即可恢复，模型进程会重新启动并加载权重。
-
-## 性能评测：响应速度与吞吐量
-
-使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
-
-## 质量评测：回答评分与模型对比
-
-使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
-
-## 导出图表
-
-评测时用 `--output plot` 导出图表，已有结果用 `foretoken plot RESULT_DIR [RESULT_DIR ...]` 重绘或对照。指标、图宽和输出位置见[绘图示例](../benchmarks/docs/recipes_zh.md#绘制与对照结果)。
-
-添加 [`--sync_wandb`](../benchmarks/docs/perf/wandb_zh.md#恢复上传) 可将已有结果上传到 W&B。
-
-## 性能剖析：执行瓶颈
-
-在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。
-
-## 清理
-
-先删除服务及其不再使用的构建资源，再卸载平台：
-
-```bash
-foretoken delete examples/quickstart/multi-model
 foretoken uninstall
 ```
 
-删除命令会先等待服务完成清理，再移除命名空间控制器。该命名空间中仍有其他 Foretoken 资源时，控制器继续保留。Kustomize 配置中包含的命名空间及其全部资源会在最后删除。
+## 服务部署
 
-卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。
+这些命令接收包含 `kustomization.yaml` 及其引用资源的 Kustomize 目录。示例使用[单模型快速开始](../examples/quickstart/qwen3-0.6b/README_zh.md)，资源需求和配置说明见该示例。
+
+### deploy
+
+创建、更新或恢复目录中定义的模型与前端服务，并等待服务达到配置要求的状态。
+
+```bash
+foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+```
+
+修改配置后重新执行；源码安装也用同一命令部署代码改动。`--timeout` 设置 CLI 等待时间，不改变模型自身的启动时限。等待失败后，服务仍保留在集群中，可通过 `status` 查看原因。
+
+### stop
+
+停止服务、释放 GPU，保留配置、存储和构建缓存。对同一目录执行 `deploy` 即可恢复。
+
+```bash
+foretoken stop examples/quickstart/qwen3-0.6b
+```
+
+### delete
+
+删除部署目录中选择的资源，并清理不再使用的构建资源。配置包含 Namespace 时，也会删除该命名空间及其全部资源。
+
+```bash
+foretoken delete examples/quickstart/qwen3-0.6b
+```
+
+缓存是否保留取决于[存储配置](../docs/features/model-storage_zh.md)。
+
+### endpoint
+
+输出供 API 客户端使用的前端 URL。`--host` 输出请求的 `Host` 头取值，在 HTTP Gateway 模式下为路由域名。
+
+```bash
+# 公开访问 URL
+foretoken endpoint examples/quickstart/qwen3-0.6b
+
+# HTTP Host 取值
+foretoken endpoint examples/quickstart/qwen3-0.6b --host
+```
+
+该命令等待访问地址分配，服务就绪由 `deploy` 等待。客户端用法见[发送请求](../README_zh.md#4-发送测试请求)。
+
+## 状态与日志
+
+### status
+
+查看服务是否就绪、启动进度，以及 Pod/容器的失败原因。可按部署目录或命名空间选择范围：
+
+```bash
+# 查看一个部署的服务
+foretoken status examples/quickstart/qwen3-0.6b
+
+# 查看命名空间中的全部模型与前端服务
+foretoken status -n foretoken-demo
+
+# 持续跟踪状态变化和容器日志
+foretoken status -n foretoken-demo --watch
+```
+
+`--watch` 也可用于部署目录。按 Ctrl+C 结束查看，服务继续运行。持久日志、指标和告警见[可观测性指南](../observability/README_zh.md)。
+
+## 评测与结果分析
+
+`perf` 和 `eval` 接受部署目录或已有 API 地址。部署包含多个模型时，用 `--model` 指定公开模型标识。
+
+评测复用已有服务，测量配置或源码改动前先执行 `deploy`。部署不存在时，会基于已安装的平台临时启动服务，并在评测结束后回收本次创建的运行资源。
+
+### perf
+
+在指定负载下测量响应延迟、请求吞吐量和 token 吞吐量。
+
+```bash
+# 评测 Foretoken 部署
+foretoken perf examples/quickstart/qwen3-0.6b --num-prompts 20 --output local
+
+# 评测已有 API；按实际服务替换 URL 和模型标识
+foretoken perf --url http://localhost:8000/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B --prompt Hello --num-prompts 20 --output local
+```
+
+URL 方式需要完整请求地址，并显式提供提示词或数据集。`--output local` 将每次结果保存到 `results/` 下，无需 W&B 账号。数据集、并发数、请求到达速率和参数扫描见[性能评测](../benchmarks/docs/perf/README_zh.md)。
+
+### eval
+
+通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。下面评测 100 道 GSM8K 数学题：
+
+```bash
+foretoken eval examples/quickstart/qwen3-0.6b \
+  --evaluator lm-eval --tasks gsm8k --limit 100 --output local
+```
+
+任务参数沿用所选框架的语法。其他任务和 EvalScope 用法见[质量评测](../benchmarks/docs/eval/README_zh.md)；用 `--reference` 比较候选模型与参考模型，见[分布对比](../benchmarks/docs/eval/distribution-comparison_zh.md)。
+
+### plot
+
+从已保存的评测结果生成图表，无需重新运行推理。绘制前面示例保存的结果：
+
+```bash
+foretoken plot results
+```
+
+图表写入 `results/plots/`。传入具体运行目录，可选择或对比特定结果。更多用法见[绘图选项](../benchmarks/docs/recipes_zh.md#绘制与对照结果)和 [W&B 结果补传](../benchmarks/docs/perf/wandb_zh.md#恢复上传)。
+
+## 性能剖析
+
+### deploy --profile / perf --profile
+
+记录模型的 CPU/GPU 执行时间线。`deploy --profile` 在服务就绪后采集外部请求，`perf --profile` 则自行生成评测负载。
+
+```bash
+# 采集应用或另一个终端发来的请求
+foretoken deploy examples/quickstart/qwen3-0.6b \
+  --profile --profile-engine pytorch --profile-duration 15s --timeout 20m
+
+# 发送评测请求并采集执行过程
+foretoken perf examples/quickstart/qwen3-0.6b \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --num-prompts 2 --max-tokens 128 --output local
+```
+
+采集需要 Foretoken 部署目录，并同时指定 `--profile-engine` 和 `--profile-duration`。支持 `pytorch`、NVIDIA `nsight` 和沐曦 `mctracer`。快速开始示例已提供持久化采集存储，各工具的准备见[性能剖析指南](../benchmarks/docs/profile/README_zh.md)。
+
+### profile view
+
+浏览保存在集群中的采集结果。在使用浏览器的电脑上配置目标集群的 kubeconfig，然后运行：
+
+```bash
+foretoken profile view
+```
+
+打开打印的本地 URL。添加 `-n foretoken-demo` 可只查看一个命名空间。按 Ctrl+C 关闭查看器，模型服务和采集结果会保留。

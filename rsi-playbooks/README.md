@@ -1,12 +1,12 @@
-# RSI Playbooks
+# RSI Inference Optimization
 
 English | [简体中文](README_zh.md)
 
-These playbooks help agents use Foretoken to investigate and improve inference systems: change code, deploy an approach, measure its effects, and use the results to guide further work. Task files define the model, resources, budget and deliverables. The [guidance library](guidance/README.md) provides research methods and findings from earlier work.
+Recursive self-improvement (RSI) uses agents to investigate and improve inference systems: research an approach, change code or configuration, deploy it, measure its effects, and use the results to guide further work. Foretoken provides the deployment, evaluation, and profiling tools for this cycle. Task files define the model, resources, budget, and deliverables; the [guidance library](guidance/README.md) provides research methods and findings from earlier work.
 
 ## Start an optimization task
 
-Get the repository's tasks and examples:
+Install and sign in to Claude Code or Codex, then get the repository's tasks and examples:
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -59,7 +59,7 @@ See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace i
 
 The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
 
-Once workload groups are defined, the team can run them continuously through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results and continuing the research.
+Use [source deployments](../docs/deployment/source.md#run-candidates-in-parallel) to build code changes and run candidates in separate environments. Once workload groups are defined, the team can compare them through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results, and continuing the research.
 
 ## Choose evaluations
 
@@ -74,6 +74,6 @@ Inspect options with `foretoken perf --help` and `foretoken eval --help`.
 
 ## Read results
 
-The experiment report (`report.md`) compares performance across approaches, explains the findings and identifies the currently selected approach. It is updated as the experiment progresses, with links to detailed experiment records and original data.
+The experiment report (`report.md`) compares performance across approaches, explains the findings and identifies the currently selected approach. It is updated as the experiment progresses, with links to detailed experiment records and original data. The [experiment records guide](experiment-records.md) covers output options, saved files, and report maintenance.
 
 See [optimization tasks](tasks/README.md) for more tasks and the [knowledge library](guidance/knowledge/README.md) for reusable technical findings.
