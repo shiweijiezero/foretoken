@@ -59,7 +59,9 @@ impl KvPrefixIndexer for KvIndexer {
         let mut shared_queries = BTreeMap::new();
         let mut shared_targets = BTreeMap::new();
         for lookup in lookups {
-            let Ok((binding, source)) = self.route_source(lookup) else {
+            let Ok((binding, source)) =
+                self.route_source(lookup.route_target_id, lookup.data_parallel_rank)
+            else {
                 continue;
             };
             local_queries
@@ -96,8 +98,7 @@ impl KvPrefixIndexer for KvIndexer {
             return None;
         }
 
-        // Router 按兼容 P/D 流水线限定来源；调度参数不同可使两端事件 scope 不同。
-        // 一个来源 Group 的查询覆盖全部 DP ranks，响应仍按来源自身的 scope 校验。
+        // Transfer compatibility comes from Router; event scopes also include scheduler settings.
         let mut retained_queries = BTreeMap::new();
         let mut retained_targets = BTreeMap::<_, BTreeSet<_>>::new();
         for lookup in lookups {
@@ -107,7 +108,9 @@ impl KvPrefixIndexer for KvIndexer {
             {
                 continue;
             }
-            let Ok((_, receiver)) = self.route_source(lookup) else {
+            let Ok((_, receiver)) =
+                self.route_source(lookup.route_target_id, lookup.data_parallel_rank)
+            else {
                 continue;
             };
             for scope in reuse_scopes.iter().filter(|scope| {
@@ -115,11 +118,11 @@ impl KvPrefixIndexer for KvIndexer {
                     .prefill_route_target_ids
                     .contains(&lookup.route_target_id)
             }) {
-                for source_id in &scope.decode_route_target_ids {
+                for &source_id in &scope.decode_route_target_ids {
                     let Some((&data_parallel_rank, _)) = self
                         .config
                         .route_bindings
-                        .get(*source_id)
+                        .get(source_id)
                         .and_then(|binding| {
                             binding
                                 .data_parallel_rank_event_source_ids
@@ -128,23 +131,21 @@ impl KvPrefixIndexer for KvIndexer {
                     else {
                         continue;
                     };
-                    let source_lookup = KvPrefixLookup {
-                        route_target_id: source_id,
-                        data_parallel_rank,
-                        ..lookup.clone()
-                    };
-                    let Ok((binding, source)) = self.route_source(&source_lookup) else {
+                    let Ok((binding, source)) = self.route_source(source_id, data_parallel_rank)
+                    else {
                         continue;
                     };
                     if source.model_revision != receiver.model_revision {
                         continue;
                     }
                     retained_queries
-                        .entry(source_lookup.route_target_id.to_owned())
+                        .entry(source_id.to_owned())
                         .or_insert_with(|| {
+                            let mut request = lookup.to_request();
+                            request.dp_rank = data_parallel_rank;
                             (
                                 source.clone(),
-                                source_lookup.to_request(),
+                                request,
                                 binding
                                     .data_parallel_rank_event_source_ids
                                     .keys()
@@ -155,12 +156,12 @@ impl KvPrefixIndexer for KvIndexer {
                     retained_targets
                         .entry((lookup.route_target_id.to_owned(), lookup.data_parallel_rank))
                         .or_default()
-                        .insert(source_lookup.route_target_id.to_owned());
+                        .insert(source_id.to_owned());
                 }
             }
         }
 
-        // 所有观测共用既有 deadline 与有界并发，各来源卡顿不丢弃已完成的结果。
+        // Run local, shared, and retained-prefix observations within one routing budget.
         let local_queries = stream::iter(local_queries.into_iter().map(
             |(id, (source, request))| async move {
                 (
@@ -200,7 +201,7 @@ impl KvPrefixIndexer for KvIndexer {
         for lookup in lookups {
             let id = (lookup.route_target_id.to_owned(), lookup.data_parallel_rank);
             let rank = self
-                .route_source(lookup)
+                .route_source(lookup.route_target_id, lookup.data_parallel_rank)
                 .ok()
                 .and_then(|(_, source)| local_observations.get(&source.model_group_id))
                 .and_then(Option::as_ref)
@@ -254,7 +255,7 @@ impl KvPrefixIndexer for KvIndexer {
                 });
             }
 
-            // 每个长度都是完整前缀边界，远端来源只有严格扩展现有可复用范围才有收益。
+            // Prefix lengths overlap across tiers; only a longer Decode prefix improves reuse.
             let existing_tokens = matches
                 .iter()
                 .map(|hit| hit.matched_tokens)
@@ -375,7 +376,7 @@ async fn fetch_local_prefix(
     Some(response)
 }
 
-/// 校验来源的实际实例地址以及 snapshot 绑定的 Group、KV scope 和 DP ranks。
+/// Validates a retained-prefix response's endpoint URL and configured source bindings.
 async fn fetch_retained_prefix(
     client: &reqwest::Client,
     source: &KvEventSourceConfig,

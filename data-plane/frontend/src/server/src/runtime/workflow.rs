@@ -64,7 +64,7 @@ pub(crate) async fn execute_workflow(
         }
         ModelServerRole::Decode => Err(GenerationError::Internal),
     }?;
-    // 跨阶段交接已结束，connector 描述符不进入公开响应及 API 会话存储。
+    // Strip connector handoff metadata before public responses or API session storage.
     let output = stream.map(|event| {
         event.map(|mut output| {
             output.kv_transfer_params = None;

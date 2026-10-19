@@ -8,7 +8,7 @@
          return self._role
  
 +    def handle_utility_call(self, operation: str, payload: dict[str, Any], worker_rpc):
-+        """处理 scheduler 进程中的外部调用；worker_rpc 返回各 worker 的真实结果。"""
++        """Handle external scheduler calls; worker_rpc returns each worker's result."""
 +        raise NotImplementedError(f"{type(self).__name__} has no utility {operation!r}")
 +
      # ==============================
@@ -34,7 +34,7 @@
          # Background thread for handling new handshake requests.
          self._nixl_handshake_listener_t: threading.Thread | None = None
          self._stop_event = threading.Event()
-+        # 外部来源目录可在所有源 worker 保留成功后接入原子读授权。
++        # Source-directory hooks run on the existing handshake listener.
 +        self.read_lease_handler = None
 +        self.read_lease_state_handler = None
 +        self.pending_transfers: set[str] = set()
@@ -56,7 +56,7 @@
 -        # NOTE (NickLucche) This excludes request meant for P, ie heartbeats are
 -        # effectively disabled for Bidirectional KV transfer.
 -        if params is None or not params.get("do_remote_prefill"):
-+        # 领取后的反向读取同样在排队时续租；未领取的 D 缓存仍使用 idle TTL。
++        # Renew queued claimed reads; unclaimed decoder blocks keep their idle TTL.
 +        if params is None or not (
 +            params.get("do_remote_prefill") or params.get("remote_read_lease")
 +        ):
@@ -124,7 +124,7 @@
 -        """Stop heartbeating for requests whose KV transfer completed."""
 -        for req_id in connector_output.finished_recving or ():
 -            self._stop_heartbeat(req_id)
-+        """仅在全部 reader 实际停止或完成 no-READ 清理后结束原生续租。"""
++        """Stop renewal after every reader finishes its read or no-read cleanup."""
 +        worker_meta = connector_output.kv_connector_worker_meta
 +        if isinstance(worker_meta, NixlTransferWorkerMetadata):
 +            self.pending_transfers = worker_meta.pending_transfers
@@ -141,7 +141,7 @@
 +                    self._stop_heartbeat(req_id)
 +
 +    def get_pending_transfers(self) -> set[str]:
-+        """合并 worker 快照与尚未广播的传输，供 scheduler 与外部排空使用。"""
++        """Return observed and unbroadcast transfers for scheduling and draining."""
 +        pending = self.pending_transfers | self._reqs_need_recv.keys()
 +        if self.vllm_config.kv_transfer_config.kv_role == "kv_producer":
 +            pending.update(self._reqs_need_send)
@@ -189,7 +189,7 @@
          self._recving_transfers = defaultdict[ReqId, list[TransferHandle]](list)
          # Track the expiration time of requests that are waiting to be sent.
          self._reqs_to_send: dict[ReqId, float] = {}
-+        # 领取后的块仍使用 request_finished 的原生引用，不再由闲置 TTL 回收。
++        # Claimed blocks retain request_finished references beyond the idle TTL.
 +        self._claimed_send_leases: dict[ReqId, ClaimedSendLease] = {}
          # Replicated-KV PCP ranks > 0 never transfer; requests they are asked
          # to send are reported finished immediately (see get_finished).
@@ -227,26 +227,24 @@
          for req_id in done_recving:
              # clean up metadata for completed requests
              meta = self._recving_metadata.pop(req_id, None)
-@@ -2950,7 +2969,11 @@
+@@ -2950,7 +2969,10 @@
  
              # Skip KV sync and post-processing for failed requests
              if req_id in failed_recv_reqs:
 -                self._pending_recv_notifs.pop(req_id, None)
 +                if meta.remote is not None and meta.remote.read_lease is not None:
-+                    # 只有全部 handle 已停止才到达这里；失败并不等同于仍在 DMA。
 +                    self._send_pending_recv_notifs(req_id)
 +                else:
 +                    self._pending_recv_notifs.pop(req_id, None)
                  # TODO (NickLucche) handle failed transfer for HMA.
                  if not self._is_hma_required:
                      self._invalid_block_ids.put(set(meta.local_block_ids[0]))
-@@ -3023,10 +3046,17 @@
+@@ -3023,10 +3045,16 @@
  
          self._sync_device_after_direct_recv(direct_device_recving)
  
-+        # 已证实的 peer replacement 优先结束旧实例的纯确认，不能影响仍在途的 READ。
++        # Retire replaced peers before retrying completed-read confirmations.
 +        self._cleanup_replaced_remote_engines()
-+        # 只消费已经完成的后台确认；握手、授权和 DMA 尚未结束时不得发送完成。
 +        self._poll_read_lease_confirmations()
 +        for req_id in tuple(self._ready_read_lease_releases):
 +            if req_id not in done_recving:
@@ -259,12 +257,12 @@
          return KVConnectorTransferResults(
              finished_sending=done_sending,
              finished_recving=done_recving,
-@@ -3053,6 +3083,51 @@
+@@ -3053,6 +3081,51 @@
          """
          raise NotImplementedError
  
 +    def get_pending_transfers(self) -> set[str]:
-+        """观察原生实际持有的发送、接收和完成确认，不等待未领取的 D 闲置缓存。"""
++        """Return transfers to drain, excluding unclaimed decoder KV."""
 +        pending = (
 +            self._recving_metadata.keys()
 +            | self._recving_transfers.keys()
@@ -276,7 +274,7 @@
 +        return pending
 +
 +    def build_connector_worker_meta(self) -> NixlTransferWorkerMetadata:
-+        """发布待完成快照与每个 worker 仅一次的接收结束事实。"""
++        """Publish pending requests and one-shot per-worker receive completions."""
 +        finished = self._finished_receives
 +        self._finished_receives = set()
 +        return NixlTransferWorkerMetadata(
@@ -284,7 +282,7 @@
 +        )
 +
 +    def claim_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> bool:
-+        """在 worker 执行线程原子保留有效来源，供 scheduler collective RPC 使用。"""
++        """Atomically pin a valid source for scheduler collective RPC callers."""
 +        current = self._claimed_send_leases.get(req_id)
 +        if current is not None:
 +            return current.lease_id == lease_id and current.consumer_id == consumer_id
@@ -299,7 +297,7 @@
 +        return True
 +
 +    def cancel_send_lease(self, req_id: str, lease_id: str, consumer_id: str) -> None:
-+        """撤回尚未获准读取的领取；调用方必须先关闭来源读授权。"""
++        """Drop an unstarted claim after the caller has closed read authorization."""
 +        lease = self._claimed_send_leases.get(req_id)
 +        if (
 +            lease is not None
@@ -311,14 +309,14 @@
      def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
          """Reclaim expired send-side KV leases into ``done_sending``.
  
-@@ -3061,11 +3136,20 @@
+@@ -3061,11 +3134,20 @@
          entry can sit in front of already-expired ones. Scan every entry
          rather than stopping at the first still-live request.
          """
 +        now = time.perf_counter()
 +        for req_id, lease in self._claimed_send_leases.items():
 +            if now >= lease.heartbeat_expiry:
-+                # 心跳丢失不证明 READ 已停；异常交给现有监督者退役整个引擎缓冲区。
++                # Losing a heartbeat requires engine retirement, not block reuse.
 +                raise RuntimeError(
 +                    f"NIXL consumer heartbeat expired for claimed request {req_id}; "
 +                    "engine buffers require retirement"
@@ -334,7 +332,7 @@
          ]
          for req_id in expired:
              count = self.consumer_notification_counts_by_req.pop(req_id, 0)
-@@ -3091,6 +3175,9 @@
+@@ -3091,6 +3173,9 @@
          """
          new_expiry = time.perf_counter() + self._lease_extension
          for req_id in payload.split(","):
@@ -344,7 +342,7 @@
              if req_id in self._reqs_to_send:
                  old = self._reqs_to_send[req_id]
                  self._reqs_to_send[req_id] = max(old, new_expiry)
-@@ -3127,7 +3214,7 @@
+@@ -3127,7 +3212,7 @@
                          res = self.nixl_wrapper.get_xfer_telemetry(handle)
                          self.xfer_stats.record_transfer(res)
                          self.nixl_wrapper.release_xfer_handle(handle)
@@ -353,7 +351,7 @@
                          in_progress.append(handle)
                      else:
                          self._log_failure(
-@@ -3155,15 +3242,22 @@
+@@ -3155,15 +3240,22 @@
                  transfers[req_id] = in_progress
          return done_req_ids, failed_req_ids
  
@@ -362,10 +360,10 @@
 +    def _try_release_xfer_handle(
 +        self, req_id: str, handle: int, *, unsubmitted: bool = False
 +    ) -> bool:
-+        """仅在确认传输已停止后释放 handle；未提交过的 handle 不会产生 DMA。"""
++        """Release stopped or never-submitted handles; retain others for polling."""
          try:
 +            if not unsubmitted:
-+                # UCX 释放 request 不等同于取消 RMA，未知状态也不能解除来源引用。
++                # Releasing a UCX handle does not cancel an in-flight RMA.
 +                state = self.nixl_wrapper.check_xfer_state(handle)
 +                if state not in ("DONE", "ERR"):
 +                    return False
@@ -379,13 +377,13 @@
                  req_id=req_id,
                  error=e,
              )
-@@ -3197,20 +3291,85 @@
+@@ -3197,20 +3289,85 @@
          return handle is None or self._try_release_xfer_handle(req_id, handle)
  
      def _send_pending_recv_notifs(self, req_id: str) -> None:
 -        """Send notifications deferred by split DRAM/VRAM reads."""
 -        for agent_name, notif_id in self._pending_recv_notifs.pop(req_id, []):
-+        """在 worker 发送已停止读取的幂等通知，来源确认由既有 I/O executor 执行。"""
++        """Send idempotent completions after reads stop; confirm release off-thread."""
 +        meta = self._pending_read_lease_acks.get(req_id)
 +        if meta is not None:
 +            if req_id not in self._ready_read_lease_releases:
@@ -419,7 +417,7 @@
 +            self._pending_recv_notifs.pop(req_id, None)
 +
 +    def _end_read_lease_confirmation(self, req_id: str) -> None:
-+        """只清理已停止读取的本地确认；不产生来源释放或传输成功事实。"""
++        """Discard local confirmation state without declaring the source released."""
 +        self._pending_read_lease_acks.pop(req_id, None)
 +        self._pending_recv_notifs.pop(req_id, None)
 +        self._ready_read_lease_releases.pop(req_id, None)
@@ -428,7 +426,7 @@
 +            future.cancel()
 +
 +    def _query_read_lease_release(self, meta: ReqMeta) -> bool:
-+        """在已有后台 I/O 线程观察来源释放，不触碰 worker 的 GPU 与生命周期状态。"""
++        """Observe source release on the existing I/O executor."""
 +        assert meta.remote is not None
 +        path = make_zmq_path("tcp", meta.remote.host, meta.remote.port)
 +        with zmq_ctx(zmq.REQ, path) as sock:
@@ -439,7 +437,7 @@
 +            return msgspec.msgpack.decode(sock.recv()) is True
 +
 +    def _poll_read_lease_confirmations(self) -> None:
-+        """在 worker 只读取已完成的后台结果，未确认的通知仍由原生排空持有。"""
++        """Consume completed I/O results and expire local confirmation waits."""
 +        for req_id, future in tuple(self._read_lease_ack_futures.items()):
 +            if not future.done():
 +                continue
@@ -468,7 +466,7 @@
  
      def _send_heartbeats(self, metadata: NixlConnectorMetadata) -> None:
          """Send heartbeats to remote engines, extending the lease on KV blocks."""
-@@ -3610,9 +3769,11 @@
+@@ -3610,9 +3767,11 @@
          """
          return {
              meta.remote.engine_id
@@ -483,7 +481,7 @@
          }
  
      def _track_remote_engine_replacement(
-@@ -3644,12 +3805,22 @@
+@@ -3644,12 +3803,22 @@
              replaced = self._remote_agents.keys() - self._engine_by_address.values()
          if not replaced:
              return
@@ -526,7 +524,7 @@
          return results
  
 +    def build_connector_worker_meta(self) -> NixlTransferWorkerMetadata:
-+        """发布原生待完成请求快照，供 scheduler 排空完整 P/D 传输。"""
++        """Publish native transfer state for scheduler drain accounting."""
 +        assert self.connector_worker is not None
 +        return self.connector_worker.build_connector_worker_meta()
 +
@@ -558,7 +556,7 @@
  
  @dataclass
 +class ClaimedSendLease:
-+    """保留源 worker 的原生引用，并对每个消费者 reader 的完成通知去重。"""
++    """Track a source claim and deduplicate its readers' completion notifications."""
 +
 +    lease_id: str
 +    consumer_id: str
@@ -568,7 +566,7 @@
 +
 +@dataclass
 +class NixlTransferWorkerMetadata(KVConnectorWorkerMetadata):
-+    """向 scheduler 汇总仍持有发送、接收或完成确认的原生请求，维持排空。"""
++    """Aggregate pending transfers and receive completions for the scheduler."""
 +
 +    pending_transfers: set[str] = field(default_factory=set)
 +    finished_receives: dict[str, int] = field(default_factory=dict)
@@ -613,7 +611,7 @@
 -        # Stop heartbeating for aborted requests that never reached finished_recving:
 -        # normal path cleans up in update_connector_output.
 -        self._stop_heartbeat(request.request_id)
-+        # 尚未分配读取时不存在迟到 READ；否则计算结束不代表所有 reader 已停止。
++        # Allocated reads outlive generation; unallocated reads can stop renewal now.
 +        if params.get("do_remote_prefill") or (
 +            params.get("remote_read_lease")
 +            and not params.get("_remote_blocks_processed")
@@ -689,7 +687,7 @@
          return time.perf_counter() + _KV_BLOCKS_EXPIRY_SAFETY_MARGIN >= deadline
  
 +    def _begin_read_lease(self, meta: ReqMeta) -> bool:
-+        """通过既有 side-channel 在读取前验证来源保留并关闭提前撤销窗口。"""
++        """Authorize this reader before READ submission, preventing early revocation."""
 +        assert meta.remote is not None
 +        remote = meta.remote
 +        path = make_zmq_path("tcp", remote.host, remote.port)
@@ -745,7 +743,7 @@
              assert len(read_specs) == 1
  
 +        if read_lease is not None:
-+            # 每个 reader 只通知实际源 rank；纯 MLA 仍保留原生的 notify-only 分支。
++            # Notify the read plan's source ranks, including MLA notify-only peers.
 +            ranks_to_notify = {(0, spec.remote_rank) for spec in read_specs}
 +            if self.use_mla and tp_ratio < 0 and len(read_specs) == 1:
 +                ranks_to_notify.update(self._remote_agents[engine_id])
@@ -773,7 +771,7 @@
 +        self._post_read_specs(req_id, meta, read_specs)
 +
 +    def _complete_read_lease_authorizations(self) -> None:
-+        """只消费后台已完成的授权结果；GPU 提交始终留在 worker 执行线程。"""
++        """Consume completed authorizations and submit reads on the worker thread."""
 +        for req_id, (meta, read_specs, future) in tuple(
 +            self._read_lease_auth_futures.items()
 +        ):
@@ -792,14 +790,14 @@
 +                self._send_pending_recv_notifs(req_id)
 +
 +    def _post_read_specs(self, req_id: str, meta: ReqMeta, read_specs: list[ReadSpec]):
-+        """在授权完成后提交原生 read plan，保持既有拓扑与 notify-only 计数。"""
++        """Submit the authorized read plan using native topology and reader counts."""
 +        assert meta.remote is not None and self.transfer_topo is not None
 +        plan = self.tp_mappings[meta.remote.engine_id]
 +        remote_info = self.transfer_topo.get_engine_info(meta.remote.engine_id)
 +        tp_ratio = self.transfer_topo.tp_ratio(remote_info.remote_tp_size)
 +        read_lease = meta.remote.read_lease
 +        if any(meta.local_block_ids):
-+            # 授权未完成时不能提前放入空 transfer 列表，否则会被误报为接收完成。
++            # Delay tracking until authorization to avoid false receive completion.
 +            self._recving_transfers.setdefault(req_id, [])
 +
          for i, spec in enumerate(read_specs):
@@ -953,7 +951,7 @@
          )
  
 +    def kv_connector_utility(self, operation: str, payload: dict[str, Any]) -> Any:
-+        """将外部 utility 调用交给当前 connector，由它协调原生 worker。"""
++        """Dispatch external utilities to the active connector and its workers."""
 +        connector = self.scheduler.get_kv_connector()
 +        if connector is None:
 +            raise RuntimeError("KV connector is not configured")

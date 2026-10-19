@@ -25,7 +25,8 @@ pub trait RouteInventory: Send + Sync {
         None
     }
 
-    /// 返回健康刷新取得的实际 KV 传输配置；缺失时不启用跨轮来源查询。
+    /// Returns observed KV transfer settings for Decode source discovery.
+    /// Missing metadata leaves source discovery disabled.
     fn kv_transfer(
         &self,
         _route_target_id: &RouteTargetId,

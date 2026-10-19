@@ -11,11 +11,9 @@ use std::time::Duration;
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    KvConnector, KvReuseSource, PreparedTokenizer, RuntimeKvTransferMetadata,
+    KvConnector, KvReuseSource, ModelServerRole, PreparedTokenizer, RuntimeKvTransferMetadata,
     RuntimeMetadataResponse, TelemetryResponse,
 };
-
-use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTargetId, RouteTargetStats,
     RouteTargetStatsReader,
@@ -157,7 +155,7 @@ impl BackendRegistry {
             .kv_transfer
             .as_ref()
             .map(|transfer| transfer.connector);
-        // 旧 Mooncake runtime 可以缺少传输 metadata；NIXL 必须与 snapshot 完全一致。
+        // Mooncake may omit KV transfer metadata; NIXL must match discovery.
         let transport_matches = if configured_connector == Some(KvConnector::Nixl)
             || observed_connector == Some(KvConnector::Nixl)
         {
@@ -321,7 +319,7 @@ impl BackendRegistry {
         }
         models.into_iter().collect()
     }
-    /// 验证 Router 选中的 Decode 来源属于同服务、同传输 scope，保留其实际实例地址。
+    /// Returns an eligible Decode source for Prefill while preserving its instance endpoint.
     fn resolve_kv_source(
         &self,
         prefill: &RouteDecision,
@@ -430,7 +428,7 @@ impl LlmFacadeResolver for BackendRegistry {
             }
             (RouteStage::Prefill, Component::Prefill { endpoint, .. }) => {
                 let mut facade = HttpFacade::new(endpoint.clone()).ok()?;
-                // 来源可能在观测后退役；缓存未命中不影响 Prefill 的可执行性。
+                // Source retirement is a cache miss, not a Prefill failure.
                 if let Some(source) = decision
                     .kv_source
                     .as_ref()
@@ -476,7 +474,7 @@ impl RouteInventory for BackendRegistry {
     }
 
     fn kv_transfer(&self, id: &RouteTargetId) -> Option<RuntimeKvTransferMetadata> {
-        self.metadata(id)?.kv_transfer
+        self.metadata.lock().ok()?.get(id)?.kv_transfer.clone()
     }
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {

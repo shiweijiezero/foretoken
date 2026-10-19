@@ -1,40 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! 由接收执行持有的远端 KV 领取及其清理。
+//! Remote KV acquisition and cleanup owned by the receiving execution.
 
 use foretoken_model_protocol::{
     GenerateInput, KV_PREFIX_CANCEL_PATH, KV_PREFIX_CLAIM_PATH, KvPrefixCancel,
     KvPrefixCancelResult, KvPrefixClaim, KvPrefixClaimResult, KvPrefixRequest, KvReuseSource,
 };
 use tokio::runtime::Handle;
+use tokio_util::task::TaskTracker;
 use tracing::warn;
 
 use crate::backend::{BackendError, ExecutionControl};
 
-/// 在请求提交前建立清理身份，领取响应丢失时仍可撤销同一次操作。
+/// Retains a remote claim's cleanup identity even when its acquisition response is lost.
 pub(crate) struct RemoteKvRead {
-    endpoint: String,
     cancel: KvPrefixCancel,
     client: reqwest::Client,
     runtime: Handle,
-    cleanup: tokio_util::task::TaskTracker,
+    cleanup: TaskTracker,
     cancel_needed: bool,
 }
 
 impl RemoteKvRead {
-    /// 接收 model-server 为已接纳执行绑定来源，保留清理责任直到原生请求结束。
+    /// Binds an accepted execution to a source and the receiver's cleanup tracker.
     pub(crate) fn new(
         source: KvReuseSource,
         consumer_id: String,
         client: reqwest::Client,
-        cleanup: tokio_util::task::TaskTracker,
+        cleanup: TaskTracker,
     ) -> Self {
         Self {
-            endpoint: source
-                .model_server_endpoint
-                .trim_end_matches('/')
-                .to_owned(),
             cancel: KvPrefixCancel {
                 source,
                 consumer_id,
@@ -46,7 +42,7 @@ impl RemoteKvRead {
         }
     }
 
-    /// 领取并注入原生描述符，返回是否采用来源；未命中时调用方可立即清理并正常计算。
+    /// Claims and injects a native descriptor; false lets the caller proceed with ordinary Prefill.
     pub(crate) async fn prepare(
         &mut self,
         request: &mut GenerateInput,
@@ -72,9 +68,14 @@ impl RemoteKvRead {
                 multimodal: Vec::new(),
             },
         };
+        let endpoint = self
+            .cancel
+            .source
+            .model_server_endpoint
+            .trim_end_matches('/');
         let claim = self
             .client
-            .post(format!("{}{KV_PREFIX_CLAIM_PATH}", self.endpoint))
+            .post(format!("{endpoint}{KV_PREFIX_CLAIM_PATH}"))
             .json(&claim)
             .build()
             .map_err(|_| BackendError::InvalidRequest)?;
@@ -88,7 +89,7 @@ impl RemoteKvRead {
         };
         let response = match response {
             Ok(response) => response,
-            // 固定物理地址且禁止重定向；明确建连失败时请求尚未发送，没有领取需要撤销。
+            // Redirects are disabled, so a definite connection failure precedes claim delivery.
             Err(error) if error.is_connect() && !error.is_timeout() => {
                 self.cancel_needed = false;
                 return Ok(false);
@@ -138,17 +139,24 @@ impl Drop for RemoteKvRead {
         if !self.cancel_needed {
             return;
         }
-        let endpoint = self.endpoint.clone();
+        let endpoint = format!(
+            "{}{KV_PREFIX_CANCEL_PATH}",
+            self.cancel
+                .source
+                .model_server_endpoint
+                .trim_end_matches('/')
+        );
         let cancel = self.cancel.clone();
         let client = self.client.clone();
-        // 撤销响应可能丢失。保持同一领取身份直到来源确认结束；InUse 由 native 完成通知释放。
+        // Acquisition or cancellation responses may be lost. Retain the claim identity
+        // until the source confirms release; native completion resolves InUse reads.
         self.cleanup.spawn_on(
             async move {
                 let mut reported_failure = false;
                 loop {
                     let result = async {
                         client
-                            .post(format!("{endpoint}{KV_PREFIX_CANCEL_PATH}"))
+                            .post(&endpoint)
                             .json(&cancel)
                             .send()
                             .await?

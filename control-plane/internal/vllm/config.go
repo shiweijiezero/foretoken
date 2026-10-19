@@ -179,7 +179,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 		return LaunchPlanV1{}, err
 	}
 	if group.PDRuntime != nil && group.PDRuntime.Connector == inferencev1alpha1.NixlConnector {
-		if group.NodeCount != 1 || group.Parallelism.PP != 1 || group.Parallelism.PCP != 1 || group.Parallelism.DCP != 1 {
+		if !supportsNixlTopology(group) {
 			return LaunchPlanV1{}, fmt.Errorf("NIXL P/D requires single-node Groups with PP, PCP, and DCP equal to one")
 		}
 		if group.KVRuntime != nil || group.ECRuntime != nil {
@@ -339,8 +339,10 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 	if leftTP < 1 || rightTP < 1 || (leftTP%rightTP != 0 && rightTP%leftTP != 0) {
 		return false
 	}
-	if left.PDRuntime.Connector == inferencev1alpha1.NixlConnector && (leftTP != rightTP || left.NodeCount != 1 || right.NodeCount != 1 || left.Parallelism.PP != 1 || right.Parallelism.PP != 1 || left.Parallelism.PCP != 1 || right.Parallelism.PCP != 1 || left.Parallelism.DCP != 1 || right.Parallelism.DCP != 1) {
-		return false
+	if left.PDRuntime.Connector == inferencev1alpha1.NixlConnector {
+		if leftTP != rightTP || !supportsNixlTopology(left) || !supportsNixlTopology(right) {
+			return false
+		}
 	}
 	names := make(map[string]struct{}, len(left.Runtime.EngineArgs)+len(right.Runtime.EngineArgs))
 	for name := range left.Runtime.EngineArgs {
@@ -370,6 +372,14 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 		}
 	}
 	return true
+}
+
+// supportsNixlTopology keeps launch validation and peer matching on the same worker layout.
+func supportsNixlTopology(group inferencev1alpha1.ModelGroupSpec) bool {
+	return group.NodeCount == 1 &&
+		group.Parallelism.PP == 1 &&
+		group.Parallelism.PCP == 1 &&
+		group.Parallelism.DCP == 1
 }
 
 func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {

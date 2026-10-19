@@ -95,7 +95,13 @@ func validatePD(profile PDProfile) error {
 		}
 		return nil
 	}
-	if profile.Revision == "" || (profile.Connector != inferencev1alpha1.MooncakeConnector && profile.Connector != inferencev1alpha1.NixlConnector) || (profile.Protocol != "rdma" && profile.Protocol != "tcp") || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
+	if profile.Revision == "" ||
+		(profile.Connector != inferencev1alpha1.MooncakeConnector && profile.Connector != inferencev1alpha1.NixlConnector) ||
+		(profile.Protocol != "rdma" && profile.Protocol != "tcp") ||
+		profile.BootstrapPort < 1 ||
+		profile.BootstrapPort > 65535 ||
+		profile.AbortRequestTimeoutSeconds < 1 ||
+		int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
 		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil

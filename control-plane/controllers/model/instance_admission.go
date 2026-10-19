@@ -221,7 +221,7 @@ type instanceAdmissionDiagnostics struct {
 
 // instanceAdmissionApplied observes every requested ingress of the current serving generation.
 // Desired live limits must match the materialized Pool and its owned publication before probing;
-// commitServingGeneration owns structural template consistency.
+// reconcileServingCohort owns structural template consistency.
 func (reconciler *ServiceReconciler) instanceAdmissionApplied(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pending := func() (bool, string, string, error) {
 		return false, "ConfigurationPending", "Waiting for model instances to apply instance admission configuration", nil

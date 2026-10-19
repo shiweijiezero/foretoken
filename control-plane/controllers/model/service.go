@@ -239,7 +239,7 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 		})
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
-	if _, err := reconciler.commitServingGeneration(ctx, service, compiledPools); err != nil {
+	if err := reconciler.reconcileServingCohort(ctx, service, compiledPools); err != nil {
 		return ctrl.Result{}, err
 	}
 	ready, readyReason, readyMessage, err := reconciler.serviceReadiness(ctx, service, compiledPools)
@@ -310,7 +310,7 @@ func (reconciler *ServiceReconciler) retirePoolCapacity(ctx context.Context, ser
 // reconcileStoppedService withdraws the serving cohort and waits for Group-owned execution to end.
 // Application selections remain available for a later resume without preparing new runtimes.
 func (reconciler *ServiceReconciler) reconcileStoppedService(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, autoscaling []inferencev1alpha1.AutoscalingTargetStatus) (ctrl.Result, error) {
-	if _, err := reconciler.commitServingGeneration(ctx, service, compiledPools); err != nil {
+	if err := reconciler.reconcileServingCohort(ctx, service, compiledPools); err != nil {
 		return ctrl.Result{}, err
 	}
 	pools, err := reconciler.ownedPools(ctx, service)
@@ -477,14 +477,14 @@ func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools m
 	return blocked
 }
 
-// commitServingGeneration owns serving-cohort withdrawal and atomic replacement selection.
+// reconcileServingCohort owns serving-cohort withdrawal and atomic replacement selection.
 // Only fully prepared compatible Pool revisions are published for frontend routing.
-func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
+func (reconciler *ServiceReconciler) reconcileServingCohort(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
 	// Keep the last complete cohort unless scheduler capacity pressure requires its
 	// retirement. The replacement still commits only after every required Pool is ready.
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
-		return false, err
+		return err
 	}
 	byName := make(map[string]*inferencev1alpha1.ModelPool, len(pools))
 	for index := range pools {
@@ -498,7 +498,7 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 	}
 	var groups inferencev1alpha1.ModelGroupList
 	if err := reader.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
-		return false, fmt.Errorf("list ModelGroups for serving generation: %w", err)
+		return fmt.Errorf("list ModelGroups for serving generation: %w", err)
 	}
 	// A prepared Pool can otherwise retain an old revision needed by a blocked sibling.
 	// Pure scale-up has no replacement revision to release and keeps its serving capacity.
@@ -518,9 +518,9 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 			base := service.DeepCopy()
 			service.Status.ServingPoolRevisions = nil
 			if err := reconciler.Status().Patch(ctx, service, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-				return false, fmt.Errorf("withdraw ModelService serving cohort for capacity: %w", err)
+				return fmt.Errorf("withdraw ModelService serving cohort for capacity: %w", err)
 			}
-			return false, nil
+			return nil
 		}
 	}
 	selected := make([]inferencev1alpha1.ServingPoolRevision, 0, len(compiledPools))
@@ -528,12 +528,12 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 		pool := byName[compiled.Name]
 		if compiled.DesiredGroups == 0 {
 			if pool != nil && !modelPoolStopped(pool) {
-				return false, nil
+				return nil
 			}
 			continue
 		}
 		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
-			return false, nil
+			return nil
 		}
 		selected = append(selected, inferencev1alpha1.ServingPoolRevision{PoolName: pool.Spec.PoolName, PoolUID: string(pool.UID), Revision: pool.Status.PreparedRevision})
 	}
@@ -550,14 +550,14 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 		switch {
 		case servingconfig.PoolsHaveEPD(servicePools) || servingconfig.ServiceDeclaresEPD(candidate):
 			if !servingconfig.PoolsContainCompleteEPD(servicePools) {
-				return false, nil
+				return nil
 			}
 			if _, _, err := servingconfig.ProjectServiceEPDComponents(candidate, servicePools, groups.Items); err != nil {
-				return false, err
+				return err
 			}
 		case servingconfig.PoolsHavePD(servicePools):
 			if _, _, err := servingconfig.ProjectServicePDComponents(candidate, servicePools, groups.Items); err != nil {
-				return false, err
+				return err
 			}
 		default:
 			routes := make([]servingconfig.Group, 0)
@@ -571,20 +571,20 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 				}
 			}
 			if err := servingconfig.ValidateRoutingIdentities(nil, routes, nil, nil); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
 	if service.Status.ServingGeneration == service.Generation && slices.Equal(service.Status.ServingPoolRevisions, selected) {
-		return true, nil
+		return nil
 	}
 	base := service.DeepCopy()
 	service.Status.ServingGeneration = service.Generation
 	service.Status.ServingPoolRevisions = selected
 	if err := reconciler.Status().Patch(ctx, service, client.MergeFrom(base)); err != nil {
-		return false, fmt.Errorf("commit ModelService serving generation: %w", err)
+		return fmt.Errorf("commit ModelService serving generation: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // targetReadiness observes current requested execution independently of the serving cohort.

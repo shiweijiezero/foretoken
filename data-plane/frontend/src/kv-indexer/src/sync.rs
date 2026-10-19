@@ -297,16 +297,17 @@ impl KvIndexer {
     /// Resolves a routing identity and DP rank to the snapshot's exact cache source.
     fn route_source(
         &self,
-        lookup: &KvPrefixLookup<'_>,
+        route_target_id: &str,
+        data_parallel_rank: u32,
     ) -> Result<(&KvRouteBinding, &KvEventSourceConfig), KvPrefixUnavailableReason> {
         let binding = self
             .config
             .route_bindings
-            .get(lookup.route_target_id)
+            .get(route_target_id)
             .ok_or(KvPrefixUnavailableReason::MissingBinding)?;
         let source_id = binding
             .data_parallel_rank_event_source_ids
-            .get(&lookup.data_parallel_rank)
+            .get(&data_parallel_rank)
             .ok_or(KvPrefixUnavailableReason::RankMismatch)?;
         let source = self
             .config
@@ -322,10 +323,11 @@ impl KvIndexer {
         if lookup.lora_name.is_some() || !lookup.multimodal.is_empty() {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::UnsupportedRequest);
         }
-        let (binding, source) = match self.route_source(&lookup) {
-            Ok(route) => route,
-            Err(reason) => return KvPrefixQueryResult::Unavailable(reason),
-        };
+        let (binding, source) =
+            match self.route_source(lookup.route_target_id, lookup.data_parallel_rank) {
+                Ok(route) => route,
+                Err(reason) => return KvPrefixQueryResult::Unavailable(reason),
+            };
         let Some(state) = &self.state else {
             return KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::Disabled);
         };

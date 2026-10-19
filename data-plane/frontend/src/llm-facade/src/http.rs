@@ -45,8 +45,8 @@ impl HttpFacade {
         })
     }
 
-    /// Binds a registry-resolved KV source to this request's Prefill transport.
-    /// The receiving model-server owns source acquisition and native transfer cleanup.
+    /// Attaches the selected Decode source to this request's Prefill transport.
+    /// The receiving model server owns acquisition and native transfer cleanup.
     pub fn with_kv_reuse(mut self, source: KvReuseSource) -> Self {
         self.kv_reuse = Some(source);
         self

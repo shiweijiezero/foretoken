@@ -61,7 +61,7 @@ pub struct RuntimeKvTransferMetadata {
 #[serde(deny_unknown_fields)]
 pub struct KvReuseSource {
     pub route_target_id: String,
-    /// 与实例身份同时观测的物理地址，领取和撤销不再经过 Group Service。
+    /// Physical endpoint observed with this instance; claims and cancellations bypass the Group Service.
     pub model_server_endpoint: String,
     pub dp_rank: u32,
     pub instance_id: String,

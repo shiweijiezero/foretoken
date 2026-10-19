@@ -166,7 +166,7 @@ impl RuntimeHealth {
         self.process_alive.load(Ordering::Acquire) && self.client_healthy.load(Ordering::Acquire)
     }
 
-    /// 供内部 Service 判断进程是否可用；关闭接纳后仍须让控制器观察排空。
+    /// Keeps the internal Service available for drain control after new admission closes.
     pub fn ready(&self) -> bool {
         self.healthy()
     }
@@ -289,7 +289,7 @@ impl AppState {
         self
     }
 
-    /// 绑定当前进程的物理监听地址，使来源观察与后续领取、撤销指向同一个实例。
+    /// Binds prefix observations, claims, and cancellations to this process's physical endpoint.
     pub fn with_kv_source_endpoint(mut self, endpoint: String) -> Self {
         self.kv_source_endpoint = Some(endpoint);
         self
@@ -322,7 +322,7 @@ impl AppState {
     }
 }
 
-/// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
+/// Builds the internal ModelGroup API used by frontends and lifecycle controllers.
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
 pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
@@ -434,7 +434,7 @@ async fn shared_kv_prefix(
     }
 }
 
-// 来源观察与领取均经现有 API；原生引用不归 HTTP handler 持有。
+// Observations expose retained prefixes without acquiring native block ownership.
 async fn retained_kv_prefix(
     State(state): State<AppState>,
     Json(request): Json<foretoken_model_protocol::KvPrefixRequest>,
@@ -474,6 +474,7 @@ async fn retained_kv_prefix(
     }
 }
 
+// Acquires a prefix only while this source instance still accepts new reads.
 async fn claim_kv_prefix(
     State(state): State<AppState>,
     Json(request): Json<foretoken_model_protocol::KvPrefixClaim>,
@@ -499,6 +500,7 @@ async fn claim_kv_prefix(
     }
 }
 
+// Cancels existing claims during drain; native completion determines when blocks are released.
 async fn cancel_kv_prefix(
     State(state): State<AppState>,
     Json(request): Json<foretoken_model_protocol::KvPrefixCancel>,
@@ -519,7 +521,6 @@ async fn cancel_kv_prefix(
     if !state.health.process_alive.load(Ordering::Acquire) {
         return Json(KvPrefixCancelResult::Miss).into_response();
     }
-    // 关闭新接纳后仍允许清理已存在的领取，进程退役则已不存在原生引用。
     match state.backend.cancel_kv_prefix(&request).await {
         Ok(result) => Json(result).into_response(),
         Err(error) => ApiError::backend(error).into_response(),
@@ -742,7 +743,7 @@ async fn start_execution(
             finish_shared(&shared, &owner, ReservationEnd::NotSubmitted).await;
             return;
         }
-        // 取消从领取前生效；若已经进入原生提交，仍保留 future 直到获得完成所有者。
+        // Cancellation can stop preparation, but a started submission must retain its completion owner.
         let submission = {
             let generation = state.backend.generate(input, execution.clone());
             tokio::pin!(generation);
@@ -770,7 +771,7 @@ async fn start_execution(
             Ok(generation) => generation,
             Err(error) => {
                 let _ = reply.send(Err(ApiError::backend(error)));
-                let end = if !execution.submitted()
+                let end = if !execution.is_submitted()
                     || matches!(error, BackendError::InvalidRequest | BackendError::Rejected)
                 {
                     ReservationEnd::NotSubmitted
@@ -808,7 +809,7 @@ async fn start_execution(
                     }
                 },
             };
-            // 先将远端领取交给清理任务，再释放排空计数，避免监督者观察到暂时的空集合。
+            // Register remote cleanup before releasing the permit so drain cannot miss the handoff.
             drop(engine_completion);
             if result.is_err() {
                 stop_uncertain_execution(&state.health).await;
@@ -854,7 +855,7 @@ async fn start_execution(
     received.await.map_err(|_| ApiError::RequestFailed)?
 }
 
-// 同一个取消观察覆盖准备和执行阶段，保留平台 ledger 的取消语义。
+// Observes local and shared-ledger cancellation throughout preparation and execution.
 async fn execution_cancelled(
     execution: &ExecutionControl,
     shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,

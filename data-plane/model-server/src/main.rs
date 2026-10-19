@@ -237,7 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .first()
             .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
-        // Mooncake 保留旧 metadata 线格式；NIXL 发布其实际生效的传输设置。
+        // Preserve Mooncake's legacy wire format; NIXL reports its effective settings.
         kv_transfer: kv_transfer.filter(|transfer| transfer.connector == KvConnector::Nixl),
         prepared_tokenizer,
         capabilities: if config.launch.ec.enabled() {
@@ -374,13 +374,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         | Stop::Profiling(reason) => warn!(%reason),
     }
 
-    // 先关闭新接纳，HTTP 继续服务已有请求的 abort 与 KV 撤销，直到执行和传输排空。
+    // Close admission while keeping abort and KV cancellation available until executions drain.
     if let Some(profiler) = &profiler {
         profiler.handle().close();
     }
     health.set_accepting(false);
     cache_shutdown.notify_waiters();
-    // 进入退出阶段后独立服务清理请求，即使监督者正在等待引擎进程终止。
+    // Keep cleanup HTTP responsive while the supervisor waits for the engine process to stop.
     let mut server = (!matches!(&stop, Stop::Server(_))).then(|| tokio::spawn(server));
     let deadline = Instant::now() + config.launch.drain_timeout();
     // Only an active native capture requires forced profiler stop. Merely preparing
@@ -395,7 +395,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             profiler.engine_stopped("runtime terminated").await;
         }
     }
-    // 独立任务持有 utility 等待，监督者关闭 client 时仍能被唤醒并释放读锁。
+    // Poll utilities in a separate task so client shutdown can wake them and release their read locks.
     let kv_drain = tokio::spawn({
         let backend = backend.clone();
         let health = health.clone();
@@ -873,13 +873,13 @@ async fn spawn_engine_attempt(
     ))
 }
 
-// Ready 后的进程、客户端与实际 KV 配置共同交给运行监督者。
+// Transfers the ready process, client, and effective KV settings to the runtime supervisor.
 struct ConnectedEngine {
     engine: ManagedEngine,
     client: EngineCoreClient,
     prepared_tokenizer: Option<PreparedTokenizer>,
     kv_transfer: Option<RuntimeKvTransferMetadata>,
-    // adapter 即使关闭双向传输，仍拥有普通 P→D 的原生排空。
+    // The adapter still drains ordinary P/D transfers when bidirectional reuse is disabled.
     kv_connector_utility: bool,
 }
 
@@ -970,7 +970,7 @@ async fn start_engine_attempt(
     }
 }
 
-// KV 布局在引擎初始化后确定；发布 adapter 实际生效的同一份配置。
+// Cache layout is finalized during startup; publish the adapter's effective settings after readiness.
 async fn observe_kv_transfer(
     client: &EngineCoreClient,
     configured: Option<RuntimeKvTransferMetadata>,

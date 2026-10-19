@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Connector-owned request shaping and stage completion handoff.
+//! Request shaping and completion handoffs for encoder and prefill/decode stages.
 
 use foretoken_model_protocol::KvConnector;
 use futures::StreamExt;
@@ -103,12 +103,12 @@ pub async fn pd_stage_requests(
     prefill_data_parallel_rank: u32,
 ) -> Result<(GenerateRequest, DecodeHandoff), LlmFacadeError> {
     reject_client_transfer_params(&request)?;
-    let transfer_id = format!("xfer-{}", request.request_id);
     let mut prefill_params = serde_json::json!({
         "do_remote_decode": true,
         "do_remote_prefill": false,
     });
     let decode_params = if connector == KvConnector::Mooncake {
+        let transfer_id = format!("xfer-{}", request.request_id);
         let endpoint = bootstrap_endpoint.ok_or(LlmFacadeError::Configuration)?;
         let client = reqwest::Client::builder()
             .timeout(MODEL_SERVER_REQUEST_START_TIMEOUT)

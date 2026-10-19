@@ -354,8 +354,8 @@ impl LaunchPlanV1 {
         Duration::from_secs(self.lifecycle.drain_seconds)
     }
 
-    /// Prepares engine startup and its observed KV settings from the same detected version.
-    /// The supervisor owns the process configuration and publishes the returned metadata after readiness.
+    /// Builds engine startup and version-derived KV settings for the runtime supervisor.
+    /// The connector's effective settings are observed after engine readiness.
     pub fn managed_engine(
         &self,
         handshake_port: u16,
@@ -421,7 +421,7 @@ impl LaunchPlanV1 {
             ..
         } = &self.kv
         {
-            // UCX 决定 NIXL 的实际传输；保留原生 GPU 搬运，网络选择来自同一个 P/D profile。
+            // Select the profile's UCX network transport while retaining native GPU transfers.
             command.env(
                 "UCX_TLS",
                 match protocol {
@@ -549,7 +549,7 @@ impl LaunchPlanV1 {
 }
 
 impl KvPlan {
-    // v1 的原有 P/D launch plan 未带 connector 字段，其含义始终是 Mooncake。
+    // A v1 P/D plan without a connector field denotes Mooncake.
     fn legacy_connector() -> KvConnector {
         KvConnector::Mooncake
     }

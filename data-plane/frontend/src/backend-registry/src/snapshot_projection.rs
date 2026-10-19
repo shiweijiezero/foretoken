@@ -5,8 +5,9 @@
 
 use foretoken_kv_indexer::{KvEventSourceConfig, KvRouteBinding, KvRuntimeConfig};
 use foretoken_llm_facade::HttpFacade;
-use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier};
-use foretoken_model_protocol::{KvConnector, ModelServerRole};
+use foretoken_model_protocol::{
+    KvCacheLocality, KvConnector, KvPlacement, KvStorageTier, ModelServerRole,
+};
 use foretoken_router::{
     ModelRouteTable, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
 };
@@ -25,8 +26,6 @@ pub(crate) fn project_kv_runtime(
     let mut sources = BTreeMap::new();
     let mut bindings = BTreeMap::new();
 
-    // 缓存观测沿用 Group、scope 与逐 DP rank 来源绑定。
-    // NIXL Decode 的 retained-prefix 观测只保留在发起查询的请求中。
     let mut add_route = |route_target_id: &RouteTargetId,
                          endpoint: &str,
                          model_revision: &str,

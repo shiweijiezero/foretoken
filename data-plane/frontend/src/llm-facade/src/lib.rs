@@ -193,9 +193,7 @@ pub trait LlmFacadeResolver: Send + Sync {
         prefill: &RouteDecision,
     ) -> Option<foretoken_model_protocol::KvConnector>;
 
-    /// Returns the live prefill bootstrap endpoint for Mooncake P/D request construction.
-    ///
-    /// The workflow reads it immediately before starting prefill and passes it to the decode
-    /// connector; `None` prevents the workflow from admitting that staged request.
+    /// Returns the selected Prefill's bootstrap endpoint for Mooncake dispatch.
+    /// NIXL uses its producer descriptor and does not require a bootstrap endpoint.
     fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
 }

@@ -63,7 +63,7 @@ impl<'a> KvPrefixLookup<'a> {
     }
 }
 
-/// Router 已确认允许在同一传输 scope 内读取的 Prefill 与 Decode 路由。
+/// Prefill and Decode routes permitted to share retained KV for one routing request.
 #[derive(Debug)]
 pub struct KvPrefixReuseScope<'a> {
     pub prefill_route_target_ids: Vec<&'a str>,
@@ -87,8 +87,9 @@ pub enum KvPrefixUnavailableReason {
 }
 #[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
-    /// 在同步选路前准备请求内缓存事实，并在 Router 允许的范围内观察 Decode 来源。
-    /// 返回的 reader 只供当前请求使用；查询不领取原生块，事件索引也可继续使用原有 reader。
+    /// Prepares request-local cache facts and eligible Decode sources before selection.
+    /// The returned reader belongs to this request; `None` keeps the current reader.
+    /// Observation does not acquire source read leases.
     async fn prepare(
         &self,
         _lookups: &[KvPrefixLookup<'_>],

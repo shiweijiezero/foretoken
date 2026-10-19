@@ -33,7 +33,7 @@ pub struct BackendGeneration {
     pub completion: Pin<Box<dyn Future<Output = Result<(), BackendError>> + Send>>,
 }
 
-/// 将一个已接纳请求的准备、取消与原生提交串行化；API 与 backend 共用该所有者。
+/// Serializes cancellation and native submission for one API-owned execution.
 pub struct ExecutionControl {
     pub(crate) owner: String,
     phase: Mutex<ExecutionPhase>,
@@ -59,7 +59,7 @@ enum ExecutionPhase {
 }
 
 impl ExecutionControl {
-    /// 接收 abort 或断连信号；准备阶段的取消阻止后续原生提交。
+    /// Signals cancellation from abort or disconnect, preventing submission while preparing.
     pub fn cancel(&self) {
         let mut phase = self.phase.lock().expect("execution phase lock poisoned");
         if matches!(*phase, ExecutionPhase::Preparing) {
@@ -68,17 +68,17 @@ impl ExecutionControl {
         self.cancellation.cancel();
     }
 
-    /// 由接收执行等待取消，原生提交后的实际终止仍由 completion 确认。
+    /// Waits for cancellation; submitted work still requires engine-origin completion.
     pub async fn cancelled(&self) {
         self.cancellation.cancelled().await;
     }
 
-    /// 供尚未提交的等待阶段停止推进；提交后的终止仍需原生 completion。
+    /// Reports cancellation to pre-submission waiters.
     pub fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
 
-    /// 标记不可重放的原生提交起点，与准备阶段的取消共享一个原子边界。
+    /// Enters native submission atomically with respect to preparation cancellation.
     fn begin_submission(&self) -> bool {
         let mut phase = self.phase.lock().expect("execution phase lock poisoned");
         if !matches!(*phase, ExecutionPhase::Preparing) {
@@ -88,8 +88,8 @@ impl ExecutionControl {
         true
     }
 
-    /// 供 API 的错误收尾区分明确未提交与结果未知的原生执行。
-    pub fn submitted(&self) -> bool {
+    /// Lets API cleanup distinguish unsubmitted work from an uncertain native execution.
+    pub fn is_submitted(&self) -> bool {
         matches!(
             *self.phase.lock().expect("execution phase lock poisoned"),
             ExecutionPhase::Submitted
@@ -209,25 +209,25 @@ pub trait Backend: Send + Sync {
         request: &foretoken_model_protocol::KvPrefixRequest,
     ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
 
-    /// 查询各 DP scheduler 保留的 Decode 前缀，不领取或保留新的 KV。
+    /// Queries retained Decode prefixes across DP schedulers without acquiring their blocks.
     async fn retained_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
     ) -> Result<Vec<foretoken_model_protocol::KvRetainedRankPrefix>, BackendError>;
 
-    /// 在原生来源处原子领取，只有实际 worker 保留成功才返回 Granted。
+    /// Claims a source prefix, returning Granted only after its native workers retain the blocks.
     async fn claim_kv_prefix(
         &self,
         request: &foretoken_model_protocol::KvPrefixClaim,
     ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError>;
 
-    /// 撤销未开始的读取；InUse 表示原生传输仍拥有块引用。
+    /// Cancels an unstarted read; InUse leaves release to native transfer completion.
     async fn cancel_kv_prefix(
         &self,
         request: &foretoken_model_protocol::KvPrefixCancel,
     ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError>;
 
-    /// 关闭新领取并返回尚未排空的原生传输数，供进程监督退出使用。
+    /// Closes source acquisition and reports pending native transfers to the shutdown supervisor.
     async fn drain_kv_transfers(&self) -> Result<u64, BackendError>;
 
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
@@ -289,7 +289,7 @@ impl VllmBackend {
         }
     }
 
-    /// 通过已有 EngineCore utility 读取各 rank 的 connector 结果，不新建控制通道。
+    /// Calls the active connector through EngineCore and decodes each rank's utility response.
     async fn kv_utility<T: serde::de::DeserializeOwned>(
         &self,
         operation: &str,
@@ -326,13 +326,13 @@ impl VllmBackend {
         llm.shutdown().await.map_err(BackendError::from_llm)
     }
 
-    /// 监督者在计算排空后等待远端领取清理；本地引擎退役不结束这项责任。
+    /// Waits for remote claim cleanup after executions drain, including after local engine exit.
     pub async fn wait_for_kv_cleanup(&self) {
         self.kv_cleanup.close();
         self.kv_cleanup.wait().await;
     }
 
-    /// 返回退出预算到期时尚未确认的远端领取数，供监督者报告未完成的清理。
+    /// Counts unconfirmed remote claims for the supervisor's drain-timeout diagnostics.
     pub fn pending_kv_cleanup(&self) -> usize {
         self.kv_cleanup.len()
     }
@@ -494,7 +494,7 @@ impl Backend for VllmBackend {
             outputs.backend = StructuredOutputBackend::Xgrammar;
         }
         let started_at = Instant::now();
-        // 来源是可选加速提示；实例更换后配置若已不适用，仍执行普通 Prefill。
+        // A stale reuse hint must not prevent ordinary Prefill on a replacement instance.
         let source_read = if let Some(source) = request
             .kv_reuse
             .take()
@@ -654,7 +654,7 @@ impl Backend for VllmBackend {
                 }),
             )
             .await?;
-        // 重启或 rank 变化使旧来源失效；该请求继续普通 Prefill。
+        // A replaced instance or DP rank invalidates the hint and falls back to ordinary Prefill.
         Ok(results
             .into_iter()
             .find(|result| {

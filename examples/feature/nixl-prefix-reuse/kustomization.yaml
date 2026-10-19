@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# 复用 Quick Start 的缓存和前端，将计算拆成各使用一张 GPU 的 P/D Pool。
+# Reuse Quick Start storage and frontends with one GPU for each P/D stage.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: foretoken-nixl

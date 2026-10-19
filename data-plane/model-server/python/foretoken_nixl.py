@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""通过原生 NIXL 引用为 model-server 提供精确前缀查询与单次领取。"""
+"""Expose exact retained prefixes through vLLM's native NIXL lifecycle."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class _RetainedPrefix:
 
 
 def _worker_lease_call(worker, operation: str, *args):
-    """由 executor 在各 worker 的执行线程调用，返回原生块所有者的处理结果。"""
+    """Run connector utilities on each worker through the executor's RPC."""
     connector = get_kv_transfer_group()
     assert isinstance(connector, NixlConnector)
     native = connector.connector_worker
@@ -53,7 +53,7 @@ def _worker_lease_call(worker, operation: str, *args):
 
 
 class NixlConnector(UpstreamNixlConnector):
-    """在 scheduler 保存来源身份，块保留和 READ 完成仍归原生 connector。"""
+    """Track source identities while native NIXL owns KV retention and transfer."""
 
     def __init__(self, vllm_config, role, kv_cache_config):
         super().__init__(vllm_config, role, kv_cache_config)
@@ -63,7 +63,7 @@ class NixlConnector(UpstreamNixlConnector):
             else self.connector_worker
         )
         assert native is not None
-        # 实际缓存布局在此已确定；请求与 KV 注册尚未开始，两端统一收敛原生值。
+        # Finalize bidirectional settings before cache registration and admission.
         bidirectional = bool(
             self.kv_transfer_config.get_from_extra_config(
                 "bidirectional_kv_xfer", False
@@ -99,19 +99,19 @@ class NixlConnector(UpstreamNixlConnector):
             )
 
     def request_finished(self, request, block_ids):
-        """在 scheduler 确认延迟释放后登记原始 token，返回原生完成结果。"""
+        """Record eligible prefixes from the scheduler's native completion hook."""
         return self._record_prefix(
             request, super().request_finished(request, block_ids)
         )
 
     def request_finished_all_groups(self, request, block_ids):
-        """为多 cache group 的 scheduler 完成钩子登记同一来源生命周期。"""
+        """Record eligible prefixes across cache groups at scheduler completion."""
         return self._record_prefix(
             request, super().request_finished_all_groups(request, block_ids)
         )
 
     def _record_prefix(self, request, result):
-        """只发布普通文本 D 请求已被原生引用保留的完整描述符范围。"""
+        """Publish text prefixes only after native NIXL retains their blocks."""
         delay_free, descriptor = result
         if (
             not self._retain_prefixes
@@ -140,7 +140,7 @@ class NixlConnector(UpstreamNixlConnector):
         return result
 
     def update_connector_output(self, connector_output):
-        """在全部源 worker 完成后移除目录；scheduler 随后释放原生块引用。"""
+        """Remove completed sources before the scheduler releases their KV references."""
         super().update_connector_output(connector_output)
         finished = connector_output.finished_sending or ()
         if finished:
@@ -160,7 +160,7 @@ class NixlConnector(UpstreamNixlConnector):
         }
 
     def _authorize_read(self, request_id, lease_id, consumer_id, reader_rank):
-        """在 side-channel 线程原子关闭撤销窗口，不在此线程操作 GPU worker。"""
+        """Authorize readers under the same lock used to revoke unstarted reads."""
         with self._prefix_lock:
             prefix = self._prefixes.get(lease_id)
             if (
@@ -175,12 +175,12 @@ class NixlConnector(UpstreamNixlConnector):
             return True
 
     def _read_lease_released(self, lease_id):
-        """只观察原生全 worker 完成后移除的来源，不改变引用或完成计数。"""
+        """Observe source release without changing native references or completions."""
         with self._prefix_lock:
             return lease_id not in self._prefixes
 
     def handle_utility_call(self, operation, payload, worker_rpc):
-        """响应 EngineCore utility；仅在全部 native worker 确认后返回 Granted。"""
+        """Serve EngineCore utilities; grant reads only after all source workers pin."""
         if operation == "configuration":
             return {
                 "connector": "NixlConnector",
@@ -244,7 +244,7 @@ class NixlConnector(UpstreamNixlConnector):
                     return {**result, "status": "Miss"}
                 if prefix.authorized_readers:
                     return {**result, "status": "InUse"}
-                # 与读授权共用锁，因此 worker 解 pin 期间不能有新的 READ 获准。
+                # Exclude new read authorization until every worker has dropped its pin.
                 if prefix.consumer_id is not None:
                     worker_rpc(
                         _worker_lease_call,
@@ -258,7 +258,7 @@ class NixlConnector(UpstreamNixlConnector):
                 or not prefix.matches(payload)
             ):
                 return {**result, "status": "Miss"}
-            # RPC 异常也保留领取身份，执行清理仍能撤销已成功保留的 worker。
+            # Preserve claim identity so RPC failures can still be cleaned up.
             prefix.consumer_id = consumer_id
             pinned = worker_rpc(
                 _worker_lease_call,

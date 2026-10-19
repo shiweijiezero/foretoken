@@ -157,7 +157,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .collect()
     }
 
-    /// 按已生效的传输配置形成来源范围；来源不承担本轮计算或 admission 容量。
+    /// Groups compatible Prefill and Decode routes from observed transfer settings.
     fn kv_reuse_scopes(&self, request: &RouterRequest) -> Vec<KvPrefixReuseScope<'_>> {
         let mut scopes = BTreeMap::<_, (BTreeSet<_>, BTreeSet<_>)>::new();
         for route in self
@@ -217,7 +217,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .collect()
     }
 
-    /// 将 Prefill 的请求内只读匹配交给执行链，不创建或领取传输描述符。
+    /// Builds a stage decision with an optional request-local source for Prefill.
     fn decision(&self, request: &RouterRequest, candidate: &RouteCandidate) -> RouteDecision {
         let mut decision = candidate.decision();
         if candidate.role != ModelServerRole::Prefill {
