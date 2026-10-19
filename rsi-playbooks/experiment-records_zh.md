@@ -48,7 +48,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
-├── workspace/                 # Agent 自行组织的辅助材料，按需创建
+├── workspace/
+│   └── tp2/plan.md             # 示例：Agent 编写的方案与计划
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -64,11 +65,17 @@ results/decode/parallelism/
 
 记录保存在执行评测命令的机器上，相对路径以该命令的工作目录为起点。在远端运行时，到远端按命令打印的路径查看。参数扫描的一次运行可以包含多个结果目录；使用 W&B 时，也可通过输出的链接查看曲线和比较结果。
 
-### Agent 辅助材料区
+### 通过文档共享方案与代码
 
-研究资料、分析脚本、准备日志、复核证据和清理记录统一放在 `<output-dir>/workspace/`，不再散放到实验根目录。Agent 按需创建该目录，自行组织内部结构；`research/`、`preparation/`、`review/`、`cleanup/` 只是分类示例，不要求全部创建。评测命令不会自动生成 `workspace/`。
+较长的方案、计划和分析写入 `<output-dir>/workspace/`。例如，Worker 可以维护 `workspace/tp2/plan.md`，说明方案、实现与验证计划，以及当前结果；结果链接已有迭代笔记和原始运行记录，不再复制一份。文档随工作推进更新，区分计划与实测结论。
 
-报告、规定的实验笔记和原始运行产物仍保存在各自约定的位置。笔记和报告汇总发现，并链接 `workspace/` 中的支撑文件。任务结束清理临时文件时，保留仍被引用的证据。
+主 Agent 提供全体成员可读取的实验目录，注明所在主机和绝对路径。共享文件系统上的不同 checkout 使用同一绝对 `--output-dir`，通过 `--iteration` 区分候选；跨主机没有共享存储时，在总览中链接实际记录位置及访问方式。
+
+代码保留在各自负责的 checkout 或 worktree 中。候选文档注明负责人、代码所在主机与绝对路径、分支和版本，链接相关文件或已保存的 diff，并说明未提交的改动。
+
+以 `notes/experiment.md` 作为阅读入口，链接各候选或研究问题的文档、代码和结果。成员按需自行查阅彼此的材料。每份文档由一名作者维护，较长的复核意见或替代方案由提出者另写文档。更新后，向需要协作的成员发送简短结论、文件路径或章节，以及需要采取的动作；完整方案、diff 和日志留在文件中。
+
+Agent 按需创建和组织 `workspace/`，`tp2/plan.md` 只是示例。研究资料、脚本、准备日志、复核与清理记录也放在这里，评测命令不会自动生成该目录。报告、实验笔记和运行产物保留原有位置。删除被引用的工作区前，先保存所需代码并更新链接；清理时保留仍被引用的证据。
 
 ## 分析结果
 

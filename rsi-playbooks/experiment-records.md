@@ -48,7 +48,8 @@ For example, when logged in to W&B, replace the recipe's output options with:
 ```text
 results/decode/parallelism/
 ├── notes/experiment.md
-├── workspace/                 # Agent-managed supporting files, created as needed
+├── workspace/
+│   └── tp2/plan.md             # Example of an agent-written proposal and plan
 └── iterations/tp2/
     ├── notes/iteration.md
     └── runs/perf-000001/
@@ -64,11 +65,17 @@ results/decode/parallelism/
 
 Records are saved on the machine running the evaluation. Relative paths start from the command's working directory. For remote runs, inspect the printed paths on the remote machine. A parameter sweep can produce several result directories within one run. With W&B enabled, the printed links also let you inspect curves and compare results.
 
-### Agent-managed supporting files
+### Share documents and code
 
-Keep research material, analysis scripts, preparation logs, review evidence and cleanup records under `<output-dir>/workspace/`, rather than adding auxiliary directories at the experiment root. Agents create this directory as needed and choose its internal layout; names such as `research/`, `preparation/`, `review/` and `cleanup/` are examples, not required subdirectories. Benchmark commands do not create `workspace/`.
+Store substantial proposals, plans and analyses in `<output-dir>/workspace/`. For example, a Worker can maintain `workspace/tp2/plan.md` with the approach, implementation and validation plan, and current result, linking the iteration notes and original runs rather than copying them. Keep planned work distinct from measured findings.
 
-Keep the report, required experiment notes and original run artifacts in their documented locations. Summarize findings in the notes and report, linking supporting files in `workspace/`. Preserve cited evidence when removing temporary files at task completion.
+The lead provides all members with a readable experiment directory, its host and absolute path. Use that absolute `--output-dir` across checkouts sharing a filesystem, with `--iteration` distinguishing candidates. For records on hosts without shared storage, link their actual locations and access instructions from the overview.
+
+Code stays in its assigned checkout or worktree. The candidate document names its owner, host, absolute code path, branch and revision, links relevant files or a saved diff, and notes any uncommitted changes.
+
+Use `notes/experiment.md` as the reading entry point for each question's or candidate's documents, code and results. Members browse one another's material directly as needed. Each document has one writer; substantial reviews or alternative proposals go in their authors' documents. After updating a file, send relevant members a short finding, its path or section, and any action needed; full plans, diffs and logs stay in files.
+
+Agents create and organize `workspace/` as needed; `tp2/plan.md` is only an example. Research sources, scripts, preparation logs, reviews and cleanup records belong here too. Benchmark commands do not create this directory. Keep reports, experiment notes and run artifacts in their existing locations. Before deleting a referenced checkout, preserve its required code and update the links; retain cited evidence.
 
 ## Analyze results
 

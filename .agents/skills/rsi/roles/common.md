@@ -23,7 +23,7 @@ The lead begins an assignment by explaining the question, the findings already a
 
 Members also need to know what may change, which workloads and generation settings must remain comparable, and how much time and resource they can use. Every experiment has a named executor, checkout, deployment environment and result location. With those arrangements in place, members can continue without approval for each command. They return to the lead when the next step needs additional resources, a shared environment change or different comparison conditions.
 
-The first update should explain the chosen reference and planned comparison. This gives the lead a chance to catch misunderstandings before implementation and measurement are complete.
+Write the chosen reference and planned comparison in the [shared experiment documents](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code), then send a brief first update with the path. This lets the lead catch misunderstandings early.
 
 ## Prepare candidates while evaluations run
 

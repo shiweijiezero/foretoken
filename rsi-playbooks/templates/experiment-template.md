@@ -18,9 +18,11 @@ List the models, workloads, and metrics for comparison. State which conditions m
 
 ## Current coordination
 
-For a team experiment, link existing task records here. Without task tools, use one row per candidate or independent research task:
+Provide the shared experiment directory's host and absolute path, then link each candidate's or research question's document under `../workspace/`. Those documents locate the approach, plan, code and results for other members; follow the [document collaboration guidance](../experiment-records.md#share-documents-and-code).
 
-| Question and next action | Owner | Resources and job/result links | Status and dependencies |
+Link existing task records for owners and dependencies. Without task tools, use one row per candidate or independent research task:
+
+| Question and document | Owner | Next action, resources and job/result links | Status and dependencies |
 | --- | --- | --- | --- |
 
 State the original deadline and any reserved quiet measurement window.
