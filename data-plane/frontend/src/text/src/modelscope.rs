@@ -31,6 +31,28 @@ struct RepositoryFile {
     kind: String,
 }
 
+#[derive(Debug, Error)]
+pub enum ModelScopeError {
+    #[error("ModelScope cache root is not configured")]
+    MissingCacheRoot,
+    #[error("ModelScope model identifier must be a relative repository path")]
+    InvalidModelId,
+    #[error("ModelScope repository returned an invalid path {0:?}")]
+    InvalidRepositoryPath(String),
+    #[error("ModelScope snapshot is not available in the offline cache")]
+    OfflineCacheMiss,
+    #[error("ModelScope repository has no supported frontend artifact")]
+    NoFrontendArtifact,
+    #[error("ModelScope API failed: {0}")]
+    Api(String),
+    #[error("could not download ModelScope artifact {file}: HTTP {status}")]
+    Download { file: String, status: u16 },
+    #[error("ModelScope HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("ModelScope cache operation failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 /// Returns a cached ModelScope directory or downloads the files needed by the frontend runtime.
 pub async fn resolve_snapshot(
     model_id: &str,
@@ -79,7 +101,8 @@ pub async fn resolve_prepared_snapshot(
     prepared: &foretoken_model_protocol::PreparedTokenizer,
 ) -> Result<PathBuf, ModelScopeError> {
     let root = foretoken_artifacts::temporary_model_root()
-        .or_else(foretoken_artifacts::model_root)
+        .map(|root| root.join("prepared"))
+        .or_else(foretoken_artifacts::preparation_root)
         .ok_or(ModelScopeError::MissingCacheRoot)?;
     let snapshot = foretoken_artifacts::preparation_directory(&root, &prepared.scope)?
         .join("frontend-tokenizer");
@@ -99,7 +122,7 @@ fn snapshot_has_frontend_artifact(snapshot: &Path, accepted_files: &[&str]) -> b
 }
 
 fn model_cache_root() -> Result<PathBuf, ModelScopeError> {
-    foretoken_artifacts::model_root()
+    foretoken_artifacts::model_cache_root()
         .map(|root| foretoken_artifacts::modelscope_cache_root(&root))
         .ok_or(ModelScopeError::MissingCacheRoot)
 }
@@ -208,26 +231,4 @@ fn model_url(model_id: &str, suffix: &str) -> Result<reqwest::Url, ModelScopeErr
     segments.extend(suffix.split('/'));
     drop(segments);
     Ok(url)
-}
-
-#[derive(Debug, Error)]
-pub enum ModelScopeError {
-    #[error("ModelScope cache root is not configured")]
-    MissingCacheRoot,
-    #[error("ModelScope model identifier must be a relative repository path")]
-    InvalidModelId,
-    #[error("ModelScope repository returned an invalid path {0:?}")]
-    InvalidRepositoryPath(String),
-    #[error("ModelScope snapshot is not available in the offline cache")]
-    OfflineCacheMiss,
-    #[error("ModelScope repository has no supported frontend artifact")]
-    NoFrontendArtifact,
-    #[error("ModelScope API failed: {0}")]
-    Api(String),
-    #[error("could not download ModelScope artifact {file}: HTTP {status}")]
-    Download { file: String, status: u16 },
-    #[error("ModelScope HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("ModelScope cache operation failed: {0}")]
-    Io(#[from] std::io::Error),
 }

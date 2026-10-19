@@ -17,10 +17,22 @@ type QueueThreshold struct {
 
 const queueThresholdName = "queue_threshold"
 
-// Name identifies the absolute queue-threshold decision algorithm for registry consumers.
-func (QueueThreshold) Name() string { return queueThresholdName }
-
 var queueThresholdDescriptor = core.DecisionDescriptor{Name: queueThresholdName, Factory: NewQueueThreshold}
+
+// NewQueueThreshold constructs the backlog policy for the built-in registry and validates its boundaries.
+func NewQueueThreshold(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	scaleUp, scaleDown := int64(1), int64(0)
+	if err := core.DecodeParameters(parameters, map[string]any{
+		"scaleUpQueuedRequests":   &scaleUp,
+		"scaleDownQueuedRequests": &scaleDown,
+	}); err != nil {
+		return nil, err
+	}
+	if scaleUp < 0 || scaleDown < 0 || scaleDown > scaleUp {
+		return nil, fmt.Errorf("autoscaling queue thresholds are invalid")
+	}
+	return QueueThreshold{ScaleUpQueuedRequests: scaleUp, ScaleDownQueuedRequests: scaleDown}, nil
+}
 
 // RecommendReplicas changes the recommendation by one replica when aggregate queue depth crosses configured boundaries.
 func (threshold QueueThreshold) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
@@ -42,17 +54,5 @@ func (threshold QueueThreshold) RecommendReplicas(snapshot core.ScalingSnapshot)
 	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "queue depth remains between scaling thresholds"), nil
 }
 
-// NewQueueThreshold constructs the backlog policy for the built-in registry and validates its boundaries.
-func NewQueueThreshold(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
-	scaleUp, scaleDown := int64(1), int64(0)
-	if err := core.DecodeParameters(parameters, map[string]any{
-		"scaleUpQueuedRequests":   &scaleUp,
-		"scaleDownQueuedRequests": &scaleDown,
-	}); err != nil {
-		return nil, err
-	}
-	if scaleUp < 0 || scaleDown < 0 || scaleDown > scaleUp {
-		return nil, fmt.Errorf("autoscaling queue thresholds are invalid")
-	}
-	return QueueThreshold{ScaleUpQueuedRequests: scaleUp, ScaleDownQueuedRequests: scaleDown}, nil
-}
+// Name identifies the absolute queue-threshold decision algorithm for registry consumers.
+func (QueueThreshold) Name() string { return queueThresholdName }

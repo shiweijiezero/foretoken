@@ -34,6 +34,8 @@ type autoscalingCollector struct {
 	condition      *prometheus.Desc
 }
 
+var _ prometheus.Collector = (*autoscalingCollector)(nil)
+
 // newAutoscalingCollector binds the controller's cached ModelService reader to a Prometheus collector.
 func newAutoscalingCollector(reader client.Reader) *autoscalingCollector {
 	labels := []string{"namespace", "modelservice", "model_name", "target_kind", "target_name", "role"}
@@ -136,5 +138,3 @@ func (collector *autoscalingCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 }
-
-var _ prometheus.Collector = (*autoscalingCollector)(nil)

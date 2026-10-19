@@ -23,110 +23,68 @@ from datetime import datetime
 from pathlib import Path
 
 
-def timestamp(value: str) -> float:
-    """Parse an offset-aware ISO timestamp used for task deadlines and windows."""
-    date = datetime.fromisoformat(value)
-    if date.tzinfo is None:
-        raise argparse.ArgumentTypeError("Include a UTC offset in the timestamp")
-    return date.timestamp()
-
-
-def positive_seconds(value: str) -> float:
-    """Reject nonpositive or nonfinite collection intervals at the CLI boundary."""
-    number = float(value)
-    if not math.isfinite(number) or number <= 0:
-        raise argparse.ArgumentTypeError("Expected a positive number of seconds")
-    return number
-
-
-def utilization(value: str | float) -> float | None:
-    """Normalize a device reading, retaining unavailable counters as missing."""
-    if str(value).strip() in {"N/A", "[N/A]", "[Not Supported]"}:
-        return None
-    number = float(value)
-    if not math.isfinite(number) or not 0 <= number <= 100:
-        raise ValueError(f"Invalid GPU utilization: {value!r}")
-    return number
-
-
-def query_gpus(backend: str, indices: list[int] | None, timeout: float) -> list[dict]:
-    """Read UUID-identified counters through the vendor CLI within one query budget."""
-    deadline = time.monotonic() + timeout
-
-    def invoke(command: list[str]) -> str:
-        """Run a vendor read using the remaining query budget."""
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("GPU query deadline exceeded")
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=remaining, check=False
-        )
-        if result.returncode:
-            raise RuntimeError(
-                result.stderr.strip()
-                or result.stdout.strip()
-                or f"{command[0]} exited {result.returncode}"
-            )
-        return result.stdout
-
-    if backend == "nvidia":
-        command = [
-            "nvidia-smi",
-            "--query-gpu=index,uuid,utilization.gpu",
-            "--format=csv,noheader,nounits",
-        ]
-    else:
-        command = ["mx-smi", "--show-usage", "--json"]
-    if indices is not None:
-        command.extend(["-i", ",".join(map(str, indices))])
-    text = invoke(command).strip()
-    readings = []
-    if backend == "nvidia":
-        for row in csv.reader(text.splitlines()):
-            index, identity, usage = row
-            readings.append(
-                {
-                    "index": int(index),
-                    "id": identity.strip(),
-                    "utilization_percent": utilization(usage),
-                }
-            )
-    else:
-        # Usage is keyed by PCI location; the device list supplies physical UUIDs.
-        if text.startswith("mx-smi  version:"):
-            text = text.split("\n", 1)[1]
-        devices = {
-            address: value
-            for address, value in json.loads(text).items()
-            if isinstance(value, dict) and "device_id" in value
-        }
-        identities = {}
-        for line in invoke(["mx-smi", "-L"]).splitlines():
-            match = re.search(r"\(UUID:\s*([^\s)]+)\)", line)
-            if match:
-                identities.update(
-                    {
-                        address: match.group(1)
-                        for address in devices
-                        if address in line.split()
-                    }
+def main() -> None:
+    """Expose collection, non-mutating window summaries, and cooperative stop requests."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    collect_parser = commands.add_parser(
+        "collect", help="Continuously collect this host's GPUs"
+    )
+    collect_parser.add_argument(
+        "--output", type=Path, required=True, help="New run directory"
+    )
+    collect_parser.add_argument(
+        "--backend", choices=("auto", "nvidia", "metax"), default="auto"
+    )
+    collect_parser.add_argument(
+        "--gpus",
+        type=lambda value: list(dict.fromkeys(int(item) for item in value.split(","))),
+        help="Comma-separated host GPU indices; default: all visible GPUs",
+    )
+    collect_parser.add_argument(
+        "--interval",
+        type=positive_seconds,
+        default=10.0,
+        help="Sampling interval in seconds (default: 10)",
+    )
+    collect_parser.add_argument(
+        "--deadline", type=timestamp, help="Absolute task deadline with UTC offset"
+    )
+    summary_parser = commands.add_parser(
+        "summarize", help="Summarize retained samples without interrupting collection"
+    )
+    summary_parser.add_argument("directories", type=Path, nargs="+")
+    summary_parser.add_argument("--since", type=timestamp, required=True)
+    summary_parser.add_argument(
+        "--until", type=timestamp, help="Window end; defaults to now"
+    )
+    stop_parser = commands.add_parser(
+        "stop", help="Request a collector to stop; samples are preserved"
+    )
+    stop_parser.add_argument("directory", type=Path)
+    args = parser.parse_args()
+    try:
+        if args.command == "collect":
+            collect(args)
+        elif args.command == "stop":
+            if not (args.directory / "samples.jsonl").is_file():
+                raise ValueError(
+                    "Collector samples.jsonl does not exist in this directory"
                 )
-        for address, device in devices.items():
-            if address not in identities:
-                raise ValueError(f"Device list has no UUID for PCI address {address}")
-            readings.append(
-                {
-                    "index": int(device["device_id"]),
-                    "id": identities[address],
-                    "pci_bus_id": address,
-                    "utilization_percent": utilization(device["utilization"]),
-                }
+            (args.directory / "stop").touch()
+        else:
+            until = args.until if args.until is not None else time.time()
+            if until <= args.since or until > time.time():
+                raise ValueError("Summary window must have since < until <= now")
+            print(
+                json.dumps(
+                    summarize(args.directories, args.since, until),
+                    indent=2,
+                    allow_nan=False,
+                )
             )
-    if not readings:
-        raise ValueError("Device query returned no GPUs")
-    if indices is not None and set(indices) != {row["index"] for row in readings}:
-        raise ValueError("Device query did not return the requested GPU indices")
-    return readings
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f"{exc}\n")
 
 
 def collect(args: argparse.Namespace) -> None:
@@ -235,6 +193,159 @@ def collect(args: argparse.Namespace) -> None:
                     "reason": reason,
                 }
             )
+
+
+def summarize(directories: list[Path], since: float, until: float) -> dict:
+    """Normalize collector identities and integrate each host's full-window device observations."""
+    inputs = read_collectors(directories)
+    host_ids: dict[str, set[str]] = {}
+    for _, metadata, _, _ in inputs:
+        if metadata.get("host_id"):
+            host_ids.setdefault(metadata["node"], set()).add(metadata["host_id"])
+
+    def host_identity(metadata: dict) -> tuple[str, str]:
+        """Resolve a captured host ID or an unambiguous recorded-name alias."""
+        if metadata.get("host_id"):
+            return "machine-id", metadata["host_id"]
+        aliases = host_ids.get(metadata["node"], set())
+        return (
+            ("machine-id", next(iter(aliases)))
+            if len(aliases) == 1
+            else ("hostname", metadata["node"])
+        )
+
+    # Bridge old hostname/PCI records only when the supplied evidence identifies
+    # one host and one physical device; retain ambiguity instead of guessing indices.
+    nodes: dict[tuple, list[tuple]] = {}
+    pci_ids: dict[tuple, set[str]] = {}
+    uuid_hosts = set()
+    for collector_id, metadata, records, paths in inputs:
+        host = host_identity(metadata)
+        collector = collector_window(metadata, records, paths, since, until)
+        nodes.setdefault(host, []).append((collector_id, collector, records))
+        if collector["backend"] == "metax":
+            for record in records:
+                for gpu in record.get("gpus", []):
+                    if gpu.get("pci_bus_id"):
+                        pci_ids.setdefault(
+                            (host, gpu["pci_bus_id"].lower()), set()
+                        ).add(gpu["id"])
+                    if gpu.get("pci_bus_id") or gpu["id"].startswith("GPU-"):
+                        uuid_hosts.add(host)
+
+    summaries = []
+    window = until - since
+    for host, segments in sorted(nodes.items()):
+        collectors = [collector for _, collector, _ in segments]
+        clock_windows = merge_clock_windows(
+            [
+                interval
+                for collector in collectors
+                for interval in collector["unknown_clock_windows"]
+            ]
+        )
+        devices: dict[tuple, dict] = {}
+        requested_indices = set()
+        scope_known = True
+        ambiguous = host[0] == "hostname" and len(host_ids.get(host[1], set())) > 1
+        for collector_id, collector, records in segments:
+            backend = collector["backend"]
+            requested_indices.update(
+                (backend, index) for index in collector["requested_gpu_indices"] or []
+            )
+            has_inventory = False
+            for sequence, record in enumerate(records):
+                stamp = record["timestamp"]
+                if record["event"] == "end":
+                    break
+                has_inventory = has_inventory or bool(record["gpus"])
+                stop = min(until, stamp + collector["interval_seconds"])
+                if sequence + 1 < len(records):
+                    following = records[sequence + 1]
+                    stop = min(stop, following["timestamp"])
+                    if "elapsed_seconds" in record and "elapsed_seconds" in following:
+                        stop = min(
+                            stop,
+                            stamp
+                            + following["elapsed_seconds"]
+                            - record["elapsed_seconds"],
+                        )
+                # A host-clock rollback applies to every collector on that host.
+                for interval in clock_windows:
+                    if interval["since"] <= stamp < interval["until"]:
+                        stop = stamp
+                        break
+                    if stamp < interval["since"] < stop:
+                        stop = interval["since"]
+                        break
+                for gpu in record["gpus"]:
+                    identity = gpu["id"]
+                    if (
+                        backend == "metax"
+                        and not gpu.get("pci_bus_id")
+                        and not identity.startswith("GPU-")
+                    ):
+                        aliases = pci_ids.get((host, identity.lower()), set())
+                        if len(aliases) == 1:
+                            identity = next(iter(aliases))
+                        elif host in uuid_hosts:
+                            ambiguous = True
+                    device = devices.setdefault(
+                        (backend, identity), {"indices": set(), "observations": []}
+                    )
+                    device["indices"].add(gpu["index"])
+                    device["observations"].append(
+                        (
+                            stamp,
+                            stop,
+                            gpu["utilization_percent"],
+                            collector["started_at"],
+                            collector_id,
+                            record.get("sequence", sequence + 1),
+                        )
+                    )
+            if collector["requested_gpu_indices"] is None and not has_inventory:
+                scope_known = False
+
+        gpus = []
+        observed_indices = set()
+        for (backend, identity), device in sorted(devices.items()):
+            observed_indices.update((backend, index) for index in device["indices"])
+            gpus.append(
+                {
+                    "backend": backend,
+                    "id": identity,
+                    "indices": sorted(device["indices"]),
+                    **summarize_gpu(device["observations"], since, until),
+                }
+            )
+        # Requested devices with no identity still contribute unknown GPU-seconds.
+        for backend, index in sorted(requested_indices - observed_indices):
+            gpus.append(
+                {
+                    "backend": backend,
+                    "id": None,
+                    "indices": [index],
+                    **summarize_gpu([], since, until),
+                }
+            )
+        aggregate = aggregate_usage(gpus, window * len(gpus) if scope_known else None)
+        if ambiguous:
+            # Individual readings remain visible, but node totals could double-count a device.
+            aggregate = {key: None for key in aggregate}
+        summaries.append(
+            {
+                "node": min(item["node"] for item in collectors),
+                "host_id": host[1] if host[0] == "machine-id" else None,
+                "identity_source": host[0],
+                "identity_ambiguous": ambiguous,
+                **aggregate,
+                "gpus": gpus,
+                "collectors": collectors,
+                "unknown_clock_windows": clock_windows,
+            }
+        )
+    return {"since": since, "until": until, "nodes": summaries}
 
 
 def read_collectors(directories: list[Path]) -> list[tuple]:
@@ -413,221 +524,110 @@ def aggregate_usage(items: list[dict], expected_gpu_seconds: float | None) -> di
     }
 
 
-def summarize(directories: list[Path], since: float, until: float) -> dict:
-    """Normalize collector identities and integrate each host's full-window device observations."""
-    inputs = read_collectors(directories)
-    host_ids: dict[str, set[str]] = {}
-    for _, metadata, _, _ in inputs:
-        if metadata.get("host_id"):
-            host_ids.setdefault(metadata["node"], set()).add(metadata["host_id"])
+def query_gpus(backend: str, indices: list[int] | None, timeout: float) -> list[dict]:
+    """Read UUID-identified counters through the vendor CLI within one query budget."""
+    deadline = time.monotonic() + timeout
 
-    def host_identity(metadata: dict) -> tuple[str, str]:
-        """Resolve a captured host ID or an unambiguous recorded-name alias."""
-        if metadata.get("host_id"):
-            return "machine-id", metadata["host_id"]
-        aliases = host_ids.get(metadata["node"], set())
-        return (
-            ("machine-id", next(iter(aliases)))
-            if len(aliases) == 1
-            else ("hostname", metadata["node"])
+    def invoke(command: list[str]) -> str:
+        """Run a vendor read using the remaining query budget."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("GPU query deadline exceeded")
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=remaining, check=False
         )
-
-    # Bridge old hostname/PCI records only when the supplied evidence identifies
-    # one host and one physical device; retain ambiguity instead of guessing indices.
-    nodes: dict[tuple, list[tuple]] = {}
-    pci_ids: dict[tuple, set[str]] = {}
-    uuid_hosts = set()
-    for collector_id, metadata, records, paths in inputs:
-        host = host_identity(metadata)
-        collector = collector_window(metadata, records, paths, since, until)
-        nodes.setdefault(host, []).append((collector_id, collector, records))
-        if collector["backend"] == "metax":
-            for record in records:
-                for gpu in record.get("gpus", []):
-                    if gpu.get("pci_bus_id"):
-                        pci_ids.setdefault(
-                            (host, gpu["pci_bus_id"].lower()), set()
-                        ).add(gpu["id"])
-                    if gpu.get("pci_bus_id") or gpu["id"].startswith("GPU-"):
-                        uuid_hosts.add(host)
-
-    summaries = []
-    window = until - since
-    for host, segments in sorted(nodes.items()):
-        collectors = [collector for _, collector, _ in segments]
-        clock_windows = merge_clock_windows(
-            [
-                interval
-                for collector in collectors
-                for interval in collector["unknown_clock_windows"]
-            ]
-        )
-        devices: dict[tuple, dict] = {}
-        requested_indices = set()
-        scope_known = True
-        ambiguous = host[0] == "hostname" and len(host_ids.get(host[1], set())) > 1
-        for collector_id, collector, records in segments:
-            backend = collector["backend"]
-            requested_indices.update(
-                (backend, index) for index in collector["requested_gpu_indices"] or []
+        if result.returncode:
+            raise RuntimeError(
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"{command[0]} exited {result.returncode}"
             )
-            has_inventory = False
-            for sequence, record in enumerate(records):
-                stamp = record["timestamp"]
-                if record["event"] == "end":
-                    break
-                has_inventory = has_inventory or bool(record["gpus"])
-                stop = min(until, stamp + collector["interval_seconds"])
-                if sequence + 1 < len(records):
-                    following = records[sequence + 1]
-                    stop = min(stop, following["timestamp"])
-                    if "elapsed_seconds" in record and "elapsed_seconds" in following:
-                        stop = min(
-                            stop,
-                            stamp
-                            + following["elapsed_seconds"]
-                            - record["elapsed_seconds"],
-                        )
-                # A host-clock rollback applies to every collector on that host.
-                for interval in clock_windows:
-                    if interval["since"] <= stamp < interval["until"]:
-                        stop = stamp
-                        break
-                    if stamp < interval["since"] < stop:
-                        stop = interval["since"]
-                        break
-                for gpu in record["gpus"]:
-                    identity = gpu["id"]
-                    if (
-                        backend == "metax"
-                        and not gpu.get("pci_bus_id")
-                        and not identity.startswith("GPU-")
-                    ):
-                        aliases = pci_ids.get((host, identity.lower()), set())
-                        if len(aliases) == 1:
-                            identity = next(iter(aliases))
-                        elif host in uuid_hosts:
-                            ambiguous = True
-                    device = devices.setdefault(
-                        (backend, identity), {"indices": set(), "observations": []}
-                    )
-                    device["indices"].add(gpu["index"])
-                    device["observations"].append(
-                        (
-                            stamp,
-                            stop,
-                            gpu["utilization_percent"],
-                            collector["started_at"],
-                            collector_id,
-                            record.get("sequence", sequence + 1),
-                        )
-                    )
-            if collector["requested_gpu_indices"] is None and not has_inventory:
-                scope_known = False
+        return result.stdout
 
-        gpus = []
-        observed_indices = set()
-        for (backend, identity), device in sorted(devices.items()):
-            observed_indices.update((backend, index) for index in device["indices"])
-            gpus.append(
+    if backend == "nvidia":
+        command = [
+            "nvidia-smi",
+            "--query-gpu=index,uuid,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+    else:
+        command = ["mx-smi", "--show-usage", "--json"]
+    if indices is not None:
+        command.extend(["-i", ",".join(map(str, indices))])
+    text = invoke(command).strip()
+    readings = []
+    if backend == "nvidia":
+        for row in csv.reader(text.splitlines()):
+            index, identity, usage = row
+            readings.append(
                 {
-                    "backend": backend,
-                    "id": identity,
-                    "indices": sorted(device["indices"]),
-                    **summarize_gpu(device["observations"], since, until),
+                    "index": int(index),
+                    "id": identity.strip(),
+                    "utilization_percent": utilization(usage),
                 }
             )
-        # Requested devices with no identity still contribute unknown GPU-seconds.
-        for backend, index in sorted(requested_indices - observed_indices):
-            gpus.append(
+    else:
+        # Usage is keyed by PCI location; the device list supplies physical UUIDs.
+        if text.startswith("mx-smi  version:"):
+            text = text.split("\n", 1)[1]
+        devices = {
+            address: value
+            for address, value in json.loads(text).items()
+            if isinstance(value, dict) and "device_id" in value
+        }
+        identities = {}
+        for line in invoke(["mx-smi", "-L"]).splitlines():
+            match = re.search(r"\(UUID:\s*([^\s)]+)\)", line)
+            if match:
+                identities.update(
+                    {
+                        address: match.group(1)
+                        for address in devices
+                        if address in line.split()
+                    }
+                )
+        for address, device in devices.items():
+            if address not in identities:
+                raise ValueError(f"Device list has no UUID for PCI address {address}")
+            readings.append(
                 {
-                    "backend": backend,
-                    "id": None,
-                    "indices": [index],
-                    **summarize_gpu([], since, until),
+                    "index": int(device["device_id"]),
+                    "id": identities[address],
+                    "pci_bus_id": address,
+                    "utilization_percent": utilization(device["utilization"]),
                 }
             )
-        aggregate = aggregate_usage(gpus, window * len(gpus) if scope_known else None)
-        if ambiguous:
-            # Individual readings remain visible, but node totals could double-count a device.
-            aggregate = {key: None for key in aggregate}
-        summaries.append(
-            {
-                "node": min(item["node"] for item in collectors),
-                "host_id": host[1] if host[0] == "machine-id" else None,
-                "identity_source": host[0],
-                "identity_ambiguous": ambiguous,
-                **aggregate,
-                "gpus": gpus,
-                "collectors": collectors,
-                "unknown_clock_windows": clock_windows,
-            }
-        )
-    return {"since": since, "until": until, "nodes": summaries}
+    if not readings:
+        raise ValueError("Device query returned no GPUs")
+    if indices is not None and set(indices) != {row["index"] for row in readings}:
+        raise ValueError("Device query did not return the requested GPU indices")
+    return readings
 
 
-def main() -> None:
-    """Expose collection, non-mutating window summaries, and cooperative stop requests."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    collect_parser = commands.add_parser(
-        "collect", help="Continuously collect this host's GPUs"
-    )
-    collect_parser.add_argument(
-        "--output", type=Path, required=True, help="New run directory"
-    )
-    collect_parser.add_argument(
-        "--backend", choices=("auto", "nvidia", "metax"), default="auto"
-    )
-    collect_parser.add_argument(
-        "--gpus",
-        type=lambda value: list(dict.fromkeys(int(item) for item in value.split(","))),
-        help="Comma-separated host GPU indices; default: all visible GPUs",
-    )
-    collect_parser.add_argument(
-        "--interval",
-        type=positive_seconds,
-        default=10.0,
-        help="Sampling interval in seconds (default: 10)",
-    )
-    collect_parser.add_argument(
-        "--deadline", type=timestamp, help="Absolute task deadline with UTC offset"
-    )
-    summary_parser = commands.add_parser(
-        "summarize", help="Summarize retained samples without interrupting collection"
-    )
-    summary_parser.add_argument("directories", type=Path, nargs="+")
-    summary_parser.add_argument("--since", type=timestamp, required=True)
-    summary_parser.add_argument(
-        "--until", type=timestamp, help="Window end; defaults to now"
-    )
-    stop_parser = commands.add_parser(
-        "stop", help="Request a collector to stop; samples are preserved"
-    )
-    stop_parser.add_argument("directory", type=Path)
-    args = parser.parse_args()
-    try:
-        if args.command == "collect":
-            collect(args)
-        elif args.command == "stop":
-            if not (args.directory / "samples.jsonl").is_file():
-                raise ValueError(
-                    "Collector samples.jsonl does not exist in this directory"
-                )
-            (args.directory / "stop").touch()
-        else:
-            until = args.until if args.until is not None else time.time()
-            if until <= args.since or until > time.time():
-                raise ValueError("Summary window must have since < until <= now")
-            print(
-                json.dumps(
-                    summarize(args.directories, args.since, until),
-                    indent=2,
-                    allow_nan=False,
-                )
-            )
-    except (OSError, ValueError) as exc:
-        parser.exit(1, f"{exc}\n")
+def timestamp(value: str) -> float:
+    """Parse an offset-aware ISO timestamp used for task deadlines and windows."""
+    date = datetime.fromisoformat(value)
+    if date.tzinfo is None:
+        raise argparse.ArgumentTypeError("Include a UTC offset in the timestamp")
+    return date.timestamp()
+
+
+def positive_seconds(value: str) -> float:
+    """Reject nonpositive or nonfinite collection intervals at the CLI boundary."""
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("Expected a positive number of seconds")
+    return number
+
+
+def utilization(value: str | float) -> float | None:
+    """Normalize a device reading, retaining unavailable counters as missing."""
+    if str(value).strip() in {"N/A", "[N/A]", "[Not Supported]"}:
+        return None
+    number = float(value)
+    if not math.isfinite(number) or not 0 <= number <= 100:
+        raise ValueError(f"Invalid GPU utilization: {value!r}")
+    return number
 
 
 if __name__ == "__main__":

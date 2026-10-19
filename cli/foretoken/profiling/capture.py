@@ -11,6 +11,7 @@ import time
 from typing import Any, Literal
 
 from foretoken.arguments import ProfileCommand
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -51,10 +52,17 @@ class ProfileRun:
 
     def start(self) -> None:
         """Create one capture and retain its identity for observation and cancellation."""
+        service = self.kubectl.get("modelservice", self.service_name, self.namespace)
         resource = {
             "apiVersion": "inference.foretoken.io/v1alpha1",
             "kind": "ProfileRun",
-            "metadata": {"generateName": "profile-", "namespace": self.namespace},
+            "metadata": {
+                "generateName": "profile-",
+                "namespace": self.namespace,
+                "labels": {
+                    DEPLOYMENT_UID_LABEL: service["metadata"]["labels"][DEPLOYMENT_UID_LABEL],
+                },
+            },
             "spec": {
                 "modelServiceRef": {"name": self.service_name},
                 "engine": self.command.profile_engine,

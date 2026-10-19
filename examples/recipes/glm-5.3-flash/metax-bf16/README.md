@@ -43,4 +43,4 @@ foretoken status "$RECIPE"
 foretoken delete "$RECIPE"
 ```
 
-Deletion removes the namespace's model, frontend and memory Store. Checkpoint files in the shared directory remain; in-memory KV entries do not.
+Deletion removes this instance's model, frontend and memory Store; the namespace remains. Checkpoint files in the shared directory remain; in-memory KV entries do not.

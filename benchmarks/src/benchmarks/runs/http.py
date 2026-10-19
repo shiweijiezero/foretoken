@@ -51,43 +51,6 @@ class EpisodeResult:
     conversation_completed: bool = False
 
 
-def request_measurement(record: dict[str, Any], origin: float) -> RequestMeasurement:
-    """Project an HTTP observation onto its phase clock for common metrics and sinks."""
-    return RequestMeasurement(
-        started_at=record["started_at"] - origin,
-        ttft=record["ttft"],
-        latency=record["latency"],
-        tpot=record["tpot"],
-        itl_summary=record["itl_summary"],
-        request_id=record["request_id"],
-        phase=record["phase"],
-        source_id=record["source_id"],
-        scheduled_at=record["scheduled_at"] - origin
-        if record["scheduled_at"] is not None
-        else None,
-        send_delay=record["send_delay"],
-        finish_reason=record["finish_reason"],
-        response_id=record["response_id"],
-        response_model=record["response_model"],
-        content_characters=record["content_characters"],
-        reasoning_characters=record["reasoning_characters"],
-        transport_completed=record["transport_completed"],
-        input_tokens=record["input_tokens"],
-        output_tokens=record["output_tokens"],
-        cached_input_tokens=record["cached_input_tokens"],
-        succeeded=record["success"],
-        conversation_id=record["conversation_id"],
-        turn=record["turn"],
-        status_code=record["status_code"],
-        error_message=record["error"],
-        dataset=record["dataset"],
-        model=record["model"],
-        priority=record["priority"],
-        request_class=record["request_class"],
-        target_output_tokens=record["target_output_tokens"],
-    )
-
-
 class HttpBenchmark:
     """Run one workload point with one client and isolated warmup and measurement phases."""
 
@@ -108,169 +71,9 @@ class HttpBenchmark:
         self.wandb_group = wandb_group
         self.outputs = outputs
 
-    async def _execute_episode(
-        self,
-        client: OpenAILoadClient,
-        workload: HttpWorkload,
-        index: int,
-        episode: RequestEpisode,
-        scheduled_at: float,
-        deadline: float | None,
-        profile: BenchmarkProfile | None,
-        phase: str,
-        itl: ITLStatistics,
-        group_itl: dict[str, dict[str, ITLStatistics]],
-        record_completed: Callable[[dict[str, Any]], None],
-        progress: HttpProgress | None = None,
-    ) -> EpisodeResult:
-        """Advance one conversation, retaining recorded or generated history and request failures."""
-        result = EpisodeResult([], planned_num=len(episode.turns))
-        context: list[dict[str, Any]] = []
-        generated_history = workload.dataset.conversation_history == "generated"
-        for turn_index, turn in enumerate(episode.turns):
-            if deadline is not None and time.perf_counter() >= deadline:
-                break
-            if profile is not None:
-                await profile.before_request()
-            request = turn.request
-            if episode.conversation:
-                request = replace(
-                    request,
-                    body={
-                        **request.body,
-                        "messages": context + request.body["messages"],
-                    },
-                )
-                result.conversation_attempted = True
-            response = await client.send(
-                request,
-                request_id=f"{phase}:{index}:{turn_index}",
-                phase=phase,
-                source_id=episode.task.id,
-                conversation_id=f"{episode.task.id}:{index}"
-                if episode.conversation
-                else None,
-                turn=turn_index if episode.conversation else None,
-                retain_history=generated_history and episode.conversation,
-                on_start=progress.request_started if progress is not None else None,
-            )
-            if (
-                generated_history
-                and turn_index < len(episode.turns) - 1
-                and response["tool_calls"]
-            ):
-                response.update(
-                    success=False,
-                    error="Model requested tool execution before the next turn; a harness is required",
-                )
-            if profile is not None:
-                profile.response_received(response["success"])
-            planned = (
-                phase == "measurement"
-                and turn_index == 0
-                and (episode.trace is not None or self.benchmark.load.arrival_rate > 0)
-            )
-            response["scheduled_at"] = scheduled_at if planned else None
-            response["send_delay"] = (
-                max(0.0, response["started_at"] - scheduled_at) if planned else None
-            )
-            metadata = episode.task.metadata
-            response.update(
-                conversation_id=f"{episode.task.id}:{index}"
-                if episode.conversation
-                else None,
-                turn=turn_index if episode.conversation else None,
-                dataset=metadata.get("_dataset")
-                or (
-                    workload.dataset.dataset_selectors[0]
-                    if workload.dataset.dataset_selectors
-                    else None
-                ),
-                priority=metadata.get("priority"),
-                request_class=metadata.get("request_class"),
-            )
-            if episode.trace is not None:
-                event = episode.trace
-                delay = max(0.0, response["started_at"] - scheduled_at)
-                response.update(
-                    source_index=event.source_row_index,
-                    conversation_id=event.conversation_id,
-                    trace_timestamp_s=event.timestamp_seconds,
-                    trace_offset_s=event.timestamp_seconds - workload.trace_start,
-                    trace_input_length=event.input_tokens,
-                    trace_hash_block_count=len(event.hash_ids)
-                    if event.hash_ids is not None
-                    else None,
-                    payload_source=event.request_origin,
-                    replay_delay=delay,
-                    trace_e2e_latency=delay + response["latency"],
-                    trace_e2e_ttft=delay + response["ttft"]
-                    if response["ttft"] is not None
-                    else None,
-                )
-            request_itl = response.pop("itl")
-            response["itl_summary"] = request_itl.summary()
-            if response["success"]:
-                itl.merge(request_itl)
-                for field, dimension in (
-                    ("dataset", "datasets"),
-                    ("model", "models"),
-                    ("request_class", "request_classes"),
-                ):
-                    name = response.get(field)
-                    if name is not None:
-                        group_itl.setdefault(dimension, {}).setdefault(
-                            name, ITLStatistics()
-                        ).merge(request_itl)
-            generated_text = response.pop("generated_text")
-            response.pop("tool_calls")
-            result.records.append(response)
-            record_completed(response)
-            if progress is not None:
-                progress.observe(request_measurement(response, progress.origin))
-            if not response["success"]:
-                result.skipped_dependency_num = len(episode.turns) - turn_index - 1
-                break
-            if episode.conversation:
-                context.extend(turn.request.body["messages"])
-                if generated_history:
-                    context.append({"role": "assistant", "content": generated_text})
-                elif turn.answer is not None:
-                    context.append(turn.answer)
-                result.conversation_completed = turn_index == len(episode.turns) - 1
-        return result
-
-    def _record(self, workload: HttpWorkload) -> dict[str, Any]:
-        """Record resolved load coordinates without exposing execution machinery as configuration."""
-        load = resolved_load_record(self.benchmark)
-        load["num_prompts"] = workload.request_count
-        trace = self.benchmark.trace
-        if workload.trace_events is not None:
-            load.update(
-                request_rate=-1.0, duration=trace.duration_seconds, open_loop=False
-            )
-        record = build_benchmark_run_record(
-            self.benchmark,
-            self.service,
-            "arrival_trace" if workload.trace_events is not None else "http_load",
-            load,
-        )
-        if self.benchmark.is_multi_turn:
-            record["multi_turn"] = bool(workload.scripts)
-        if workload.dataset_tasks is not None:
-            record["datasets"] = list(workload.dataset_tasks)
-        if workload.trace_events is not None:
-            record.update(
-                dataset=f"trace={trace.trace_selector}",
-                trace_path=trace.trace_selector,
-                payload_dataset=workload.dataset.dataset_selectors[0],
-                trace_start=trace.start_offset_seconds,
-                trace_duration=trace.duration_seconds,
-                trace_synthetic_prefix_reuse=trace.synthetic_prefix_reuse,
-                trace_format=workload.trace_format,
-                payload_source=workload.request_origin,
-            )
-        return record
+    def run(self) -> BenchmarkRun:
+        """Execute one measurement point for the CLI, sweep, or SLO search."""
+        return asyncio.run(self._run())
 
     async def _run(self) -> BenchmarkRun:
         """Prepare requests, drain independent warmup, then observe and publish the formal phase."""
@@ -550,6 +353,203 @@ class HttpBenchmark:
             outputs.publish(run)
             return run
 
-    def run(self) -> BenchmarkRun:
-        """Execute one measurement point for the CLI, sweep, or SLO search."""
-        return asyncio.run(self._run())
+    async def _execute_episode(
+        self,
+        client: OpenAILoadClient,
+        workload: HttpWorkload,
+        index: int,
+        episode: RequestEpisode,
+        scheduled_at: float,
+        deadline: float | None,
+        profile: BenchmarkProfile | None,
+        phase: str,
+        itl: ITLStatistics,
+        group_itl: dict[str, dict[str, ITLStatistics]],
+        record_completed: Callable[[dict[str, Any]], None],
+        progress: HttpProgress | None = None,
+    ) -> EpisodeResult:
+        """Advance one conversation, retaining recorded or generated history and request failures."""
+        result = EpisodeResult([], planned_num=len(episode.turns))
+        context: list[dict[str, Any]] = []
+        generated_history = workload.dataset.conversation_history == "generated"
+        for turn_index, turn in enumerate(episode.turns):
+            if deadline is not None and time.perf_counter() >= deadline:
+                break
+            if profile is not None:
+                await profile.before_request()
+            request = turn.request
+            if episode.conversation:
+                request = replace(
+                    request,
+                    body={
+                        **request.body,
+                        "messages": context + request.body["messages"],
+                    },
+                )
+                result.conversation_attempted = True
+            response = await client.send(
+                request,
+                request_id=f"{phase}:{index}:{turn_index}",
+                phase=phase,
+                source_id=episode.task.id,
+                conversation_id=f"{episode.task.id}:{index}"
+                if episode.conversation
+                else None,
+                turn=turn_index if episode.conversation else None,
+                retain_history=generated_history and episode.conversation,
+                on_start=progress.request_started if progress is not None else None,
+            )
+            if (
+                generated_history
+                and turn_index < len(episode.turns) - 1
+                and response["tool_calls"]
+            ):
+                response.update(
+                    success=False,
+                    error="Model requested tool execution before the next turn; a harness is required",
+                )
+            if profile is not None:
+                profile.response_received(response["success"])
+            planned = (
+                phase == "measurement"
+                and turn_index == 0
+                and (episode.trace is not None or self.benchmark.load.arrival_rate > 0)
+            )
+            response["scheduled_at"] = scheduled_at if planned else None
+            response["send_delay"] = (
+                max(0.0, response["started_at"] - scheduled_at) if planned else None
+            )
+            metadata = episode.task.metadata
+            response.update(
+                conversation_id=f"{episode.task.id}:{index}"
+                if episode.conversation
+                else None,
+                turn=turn_index if episode.conversation else None,
+                dataset=metadata.get("_dataset")
+                or (
+                    workload.dataset.dataset_selectors[0]
+                    if workload.dataset.dataset_selectors
+                    else None
+                ),
+                priority=metadata.get("priority"),
+                request_class=metadata.get("request_class"),
+            )
+            if episode.trace is not None:
+                event = episode.trace
+                delay = max(0.0, response["started_at"] - scheduled_at)
+                response.update(
+                    source_index=event.source_row_index,
+                    conversation_id=event.conversation_id,
+                    trace_timestamp_s=event.timestamp_seconds,
+                    trace_offset_s=event.timestamp_seconds - workload.trace_start,
+                    trace_input_length=event.input_tokens,
+                    trace_hash_block_count=len(event.hash_ids)
+                    if event.hash_ids is not None
+                    else None,
+                    payload_source=event.request_origin,
+                    replay_delay=delay,
+                    trace_e2e_latency=delay + response["latency"],
+                    trace_e2e_ttft=delay + response["ttft"]
+                    if response["ttft"] is not None
+                    else None,
+                )
+            request_itl = response.pop("itl")
+            response["itl_summary"] = request_itl.summary()
+            if response["success"]:
+                itl.merge(request_itl)
+                for field, dimension in (
+                    ("dataset", "datasets"),
+                    ("model", "models"),
+                    ("request_class", "request_classes"),
+                ):
+                    name = response.get(field)
+                    if name is not None:
+                        group_itl.setdefault(dimension, {}).setdefault(
+                            name, ITLStatistics()
+                        ).merge(request_itl)
+            generated_text = response.pop("generated_text")
+            response.pop("tool_calls")
+            result.records.append(response)
+            record_completed(response)
+            if progress is not None:
+                progress.observe(request_measurement(response, progress.origin))
+            if not response["success"]:
+                result.skipped_dependency_num = len(episode.turns) - turn_index - 1
+                break
+            if episode.conversation:
+                context.extend(turn.request.body["messages"])
+                if generated_history:
+                    context.append({"role": "assistant", "content": generated_text})
+                elif turn.answer is not None:
+                    context.append(turn.answer)
+                result.conversation_completed = turn_index == len(episode.turns) - 1
+        return result
+
+    def _record(self, workload: HttpWorkload) -> dict[str, Any]:
+        """Record resolved load coordinates without exposing execution machinery as configuration."""
+        load = resolved_load_record(self.benchmark)
+        load["num_prompts"] = workload.request_count
+        trace = self.benchmark.trace
+        if workload.trace_events is not None:
+            load.update(
+                request_rate=-1.0, duration=trace.duration_seconds, open_loop=False
+            )
+        record = build_benchmark_run_record(
+            self.benchmark,
+            self.service,
+            "arrival_trace" if workload.trace_events is not None else "http_load",
+            load,
+        )
+        if self.benchmark.is_multi_turn:
+            record["multi_turn"] = bool(workload.scripts)
+        if workload.dataset_tasks is not None:
+            record["datasets"] = list(workload.dataset_tasks)
+        if workload.trace_events is not None:
+            record.update(
+                dataset=f"trace={trace.trace_selector}",
+                trace_path=trace.trace_selector,
+                payload_dataset=workload.dataset.dataset_selectors[0],
+                trace_start=trace.start_offset_seconds,
+                trace_duration=trace.duration_seconds,
+                trace_synthetic_prefix_reuse=trace.synthetic_prefix_reuse,
+                trace_format=workload.trace_format,
+                payload_source=workload.request_origin,
+            )
+        return record
+
+
+def request_measurement(record: dict[str, Any], origin: float) -> RequestMeasurement:
+    """Project an HTTP observation onto its phase clock for common metrics and sinks."""
+    return RequestMeasurement(
+        started_at=record["started_at"] - origin,
+        ttft=record["ttft"],
+        latency=record["latency"],
+        tpot=record["tpot"],
+        itl_summary=record["itl_summary"],
+        request_id=record["request_id"],
+        phase=record["phase"],
+        source_id=record["source_id"],
+        scheduled_at=record["scheduled_at"] - origin
+        if record["scheduled_at"] is not None
+        else None,
+        send_delay=record["send_delay"],
+        finish_reason=record["finish_reason"],
+        response_id=record["response_id"],
+        response_model=record["response_model"],
+        content_characters=record["content_characters"],
+        reasoning_characters=record["reasoning_characters"],
+        transport_completed=record["transport_completed"],
+        input_tokens=record["input_tokens"],
+        output_tokens=record["output_tokens"],
+        cached_input_tokens=record["cached_input_tokens"],
+        succeeded=record["success"],
+        conversation_id=record["conversation_id"],
+        turn=record["turn"],
+        status_code=record["status_code"],
+        error_message=record["error"],
+        dataset=record["dataset"],
+        model=record["model"],
+        priority=record["priority"],
+        request_class=record["request_class"],
+        target_output_tokens=record["target_output_tokens"],
+    )

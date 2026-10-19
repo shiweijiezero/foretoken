@@ -43,6 +43,36 @@ _VIDEO_SWEEP_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
 }
 
 
+__all__ = [
+    "apply_video_sweep_point",
+    "expand_video_sweep_point",
+    "load_video_sweep_points",
+    "run_video_sweep",
+]
+
+
+def run_video_sweep(
+    config: VideoBenchmarkConfig,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Run video repetitions through shared directories and scalar summaries."""
+    sweep = config.sweep
+    execution = run_sweep(
+        config,
+        SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume),
+        _VideoSweepAdapter(),
+        mode="video_parameter_sweep",
+        dry_run=dry_run,
+    )
+    return {
+        "dry_run": dry_run,
+        "metrics": execution.run.metrics,
+        "exit_code": execution.run.exit_code,
+        "output_dir": execution.experiment_dir if config.outputs.saves_local else None,
+    }
+
+
 class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
     """Apply and execute video points without importing HTTP result semantics."""
 
@@ -144,33 +174,3 @@ def apply_video_sweep_point(
 ) -> VideoBenchmarkConfig:
     """Apply one video-owned point for compatibility with existing callers."""
     return _VideoSweepAdapter().apply_point(config, point)
-
-
-def run_video_sweep(
-    config: VideoBenchmarkConfig,
-    *,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    """Run video repetitions through shared directories and scalar summaries."""
-    sweep = config.sweep
-    execution = run_sweep(
-        config,
-        SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume),
-        _VideoSweepAdapter(),
-        mode="video_parameter_sweep",
-        dry_run=dry_run,
-    )
-    return {
-        "dry_run": dry_run,
-        "metrics": execution.run.metrics,
-        "exit_code": execution.run.exit_code,
-        "output_dir": execution.experiment_dir if config.outputs.saves_local else None,
-    }
-
-
-__all__ = [
-    "apply_video_sweep_point",
-    "expand_video_sweep_point",
-    "load_video_sweep_points",
-    "run_video_sweep",
-]

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
@@ -16,49 +17,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// sourceSelectionAllowed admits new source intent only in source mode, while preserving
-// controller-owned selections after that mode is disabled.
-func (reconciler *ServiceReconciler) sourceSelectionAllowed(ctx context.Context, service *inferencev1alpha1.ModelService) (bool, error) {
-	if reconciler.SourceMode {
-		return true, nil
-	}
-	revision := service.Annotations[runtimeconfig.SourceRevisionAnnotation]
-	if revision == "" {
-		return false, nil
-	}
-	if len(service.Status.PoolApplications) > 0 {
-		for _, selected := range service.Status.PoolApplications {
-			if selected.SourceRevision != revision || selected.DeploymentRevision != service.Spec.DeploymentRevision {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-	pools, err := reconciler.ownedPools(ctx, service)
-	if err != nil {
-		return false, err
-	}
-	if len(pools) == 0 {
-		return false, nil
-	}
-	for _, pool := range pools {
-		if pool.Spec.Template.SourceRevision != revision {
-			return false, nil
-		}
-		selected := pool.Spec.Template.Application
-		if selected == nil {
-			if service.Spec.DeploymentRevision != "" {
-				return false, nil
-			}
-		} else if selected.DeploymentRevision != service.Spec.DeploymentRevision {
-			return false, nil
-		}
-	}
-	return true, nil
+type instanceAdmissionDeploymentRequiredError struct {
+	poolName string
 }
 
-// selectPoolApplications binds compiled templates to executable choices and persists them before Pool writes.
-func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, byPoolName map[string]*inferencev1alpha1.ModelPool) error {
+// selectPoolApplications returns selected targets without changing compiled input.
+// It persists their executable choices before callers write any Pool resources.
+func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, byPoolName map[string]*inferencev1alpha1.ModelPool) ([]compiler.ModelPool, error) {
+	desiredPools := slices.Clone(compiledPools)
 	// Cache identity follows encoder content, not replica counts or service alert settings.
 	cacheGeneration := service.Generation
 	for _, compiled := range compiledPools {
@@ -73,30 +39,36 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 		}
 	}
 	base := service.DeepCopy()
-	applications := make(map[string]inferencev1alpha1.ApplicationSelection, len(compiledPools))
-	for index := range compiledPools {
-		template := &compiledPools[index].Template
-		previous := byPoolName[compiledPools[index].Name]
-		selection, err := reconciler.selectPoolApplication(ctx, service, compiledPools[index], previous)
+	applications := make(map[string]inferencev1alpha1.ApplicationSelection, len(desiredPools))
+	for index := range desiredPools {
+		selected := &desiredPools[index]
+		template := &selected.Template
+		previous := byPoolName[selected.Name]
+		selection, err := reconciler.selectPoolApplication(ctx, service, *selected, previous)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		if selection != nil && selection.PreparationVersion == nil {
+			if err := reconciler.retainPreparationVersion(ctx, service, previous, selection, template.Backend); err != nil {
+				return nil, err
+			}
 		}
 		if template.Backend == "vllm" && selection != nil && selection.InstanceAdmissionProtocol == 0 {
-			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, compiledPools[index].Name)
+			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, selected.Name)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			if !reflect.DeepEqual(startupAdmission, compiledPools[index].InstanceAdmission) {
-				return &instanceAdmissionDeploymentRequiredError{poolName: compiledPools[index].Name}
+			if !reflect.DeepEqual(startupAdmission, selected.InstanceAdmission) {
+				return nil, &instanceAdmissionDeploymentRequiredError{poolName: selected.Name}
 			}
 			template.InstanceAdmission = startupAdmission
 		}
 		template.Application = selection
 		if selection != nil {
-			applications[compiledPools[index].Name] = *selection
+			applications[selected.Name] = *selection
 		}
-		if compiledPools[index].Template.ECProfile != "" {
-			compiledPools[index].Template.EncoderCacheGeneration = cacheGeneration
+		if template.ECProfile != "" {
+			template.EncoderCacheGeneration = cacheGeneration
 		}
 	}
 
@@ -106,11 +78,11 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 	if !reflect.DeepEqual(service.Status.PoolApplications, applications) {
 		service.Status.PoolApplications = applications
 		if err := reconciler.Status().Patch(ctx, service, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return fmt.Errorf("persist Pool application selections: %w", err)
+			return nil, fmt.Errorf("persist Pool application selections: %w", err)
 		}
 	}
 
-	return nil
+	return desiredPools, nil
 }
 
 // selectPoolApplication retains execution choices independently of changing platform defaults.
@@ -149,7 +121,8 @@ func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, 
 			}
 		}
 	}
-	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy()}
+	preparationVersion := runtimeconfig.SharedModelCachePreparationVersion
+	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion}
 	if template.Backend == "vllm" {
 		selection.InstanceAdmissionProtocol = inferencev1alpha1.InstanceAdmissionFileProtocol
 	}
@@ -213,6 +186,8 @@ func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context,
 			selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
 			selection.AdmissionStore = group.Spec.Runtime.AdmissionStore.DeepCopy()
 			selection.InstanceAdmissionProtocol = group.Spec.Runtime.InstanceAdmissionProtocol
+			version := group.Spec.Runtime.PreparationVersion
+			selection.PreparationVersion = &version
 			if selection.ApplicationURL == "" {
 				selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", group.Spec.Runtime.SourceRevision)
 			}
@@ -220,10 +195,6 @@ func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context,
 		}
 	}
 	return false, nil
-}
-
-type instanceAdmissionDeploymentRequiredError struct {
-	poolName string
 }
 
 // Error identifies instance intent that the selected executable cannot apply without redeployment.
@@ -266,4 +237,84 @@ func (reconciler *ServiceReconciler) legacyInstanceAdmission(ctx context.Context
 		return nil, &instanceAdmissionDeploymentRequiredError{poolName: poolName}
 	}
 	return startupAdmission, nil
+}
+
+// sourceSelectionAllowed admits new source intent only in source mode, while preserving
+// controller-owned selections after that mode is disabled.
+func (reconciler *ServiceReconciler) sourceSelectionAllowed(ctx context.Context, service *inferencev1alpha1.ModelService) (bool, error) {
+	if reconciler.SourceMode {
+		return true, nil
+	}
+	revision := service.Annotations[runtimeconfig.SourceRevisionAnnotation]
+	if revision == "" {
+		return false, nil
+	}
+	if len(service.Status.PoolApplications) > 0 {
+		for _, selected := range service.Status.PoolApplications {
+			if selected.SourceRevision != revision || selected.DeploymentRevision != service.Spec.DeploymentRevision {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return false, err
+	}
+	if len(pools) == 0 {
+		return false, nil
+	}
+	for _, pool := range pools {
+		if pool.Spec.Template.SourceRevision != revision {
+			return false, nil
+		}
+		selected := pool.Spec.Template.Application
+		if selected == nil {
+			if service.Spec.DeploymentRevision != "" {
+				return false, nil
+			}
+		} else if selected.DeploymentRevision != service.Spec.DeploymentRevision {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// retainPreparationVersion recovers the protocol of an application selected before it was persisted.
+// A committed cohort is authoritative; uncommitted cohorts must agree on the same executable contract.
+func (reconciler *ServiceReconciler) retainPreparationVersion(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ApplicationSelection, backend string) error {
+	version := runtimeconfig.ModelPreparationVersion(selection, backend)
+	if pool != nil {
+		reader := reconciler.APIReader
+		if reader == nil {
+			reader = reconciler.Client
+		}
+		groups, err := ownedModelGroups(ctx, reader, pool)
+		if err != nil {
+			return err
+		}
+		selected := servingconfig.ServingRevision(service, pool)
+		if selected == "" {
+			selected = pool.Status.PreparedRevision
+		}
+		found, conflict := false, false
+		for _, group := range groups {
+			runtime := group.Spec.Runtime
+			if runtime.Backend != backend || runtime.Image != selection.Image || groupApplicationURL(&group, reconciler.ApplicationFiles) != selection.ApplicationURL || runtime.SourceRevision != selection.SourceRevision {
+				continue
+			}
+			if selected != "" && group.Spec.Revision == selected {
+				version = runtime.PreparationVersion
+				selection.PreparationVersion = &version
+				return nil
+			}
+			conflict = conflict || found && version != runtime.PreparationVersion
+			version, found = runtime.PreparationVersion, true
+		}
+		if conflict {
+			return fmt.Errorf("retained application for ModelPool %q has conflicting preparation protocols; redeploy the service to select its application", pool.Name)
+		}
+	}
+	selection.PreparationVersion = &version
+	return nil
 }

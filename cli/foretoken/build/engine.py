@@ -16,6 +16,20 @@ if TYPE_CHECKING:
     from foretoken.build.cluster import ClusterBuilder
 
 
+def _main() -> None:
+    """Print the resolved base for repository build scripts without importing the CLI."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--image", default="")
+    parser.add_argument("--docker-registry", default="")
+    arguments = parser.parse_args()
+    print(
+        resolve_vllm_base_image(
+            arguments.root, arguments.image, arguments.docker_registry
+        )
+    )
+
+
 def resolve_vllm_base_image(
     root: Path, image: str | None = None, docker_registry: str = ""
 ) -> str:
@@ -70,7 +84,7 @@ def export_engine_source(
     """Build and merge engine sources into a completed model-server export before publication."""
     output = payload + "-engine"
     builder.build(
-        "deploy/inference-engines/source-build.Dockerfile",
+        "deploy/inference-engines/vllm/source-build.Dockerfile",
         target="source-export", destination=output,
         arguments={
             **engine_build_arguments(arguments),
@@ -82,20 +96,6 @@ def export_engine_source(
     builder.run(
         ["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", output, payload],
         container=builder.artifact_container,
-    )
-
-
-def _main() -> None:
-    """Print the resolved base for repository build scripts without importing the CLI."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--image", default="")
-    parser.add_argument("--docker-registry", default="")
-    arguments = parser.parse_args()
-    print(
-        resolve_vllm_base_image(
-            arguments.root, arguments.image, arguments.docker_registry
-        )
     )
 
 

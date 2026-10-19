@@ -122,7 +122,6 @@ nav:
       - Continuous integration: docs/development/ci.md
       - Deployment maintenance: docs/development/source-deployment.md
       - Runtime cache: docs/development/runtime-cache.md
-      - Runtime configuration: docs/development/runtime-configuration.md
       - Architecture:
           - data-plane/README.md
           - data-plane/frontend/src/*/README*.md

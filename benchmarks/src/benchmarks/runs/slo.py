@@ -38,64 +38,6 @@ _SLO_ALIASES = {
 }
 
 
-def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
-    name = _SLO_ALIASES.get(name, name)
-    if name in {"avg_latency", "avg_ttft", "avg_tpot", "rps", "tps"}:
-        if name == "rps":
-            value = metrics["throughput"].get("requests_per_second")
-        elif name == "tps":
-            value = metrics["throughput"].get("generation_tokens_per_second")
-        else:
-            value = metrics[name.removeprefix("avg_")]["mean"]
-        return float(value) if value is not None else None
-    for prefix in ("p50", "p90", "p95", "p99"):
-        if name == f"{prefix}_latency":
-            value = metrics["latency"].get(prefix)
-            return float(value) if value is not None else None
-        if name == f"{prefix}_ttft":
-            value = metrics["ttft"].get(prefix)
-            return float(value) if value is not None else None
-        if name == f"{prefix}_tpot":
-            value = metrics["tpot"].get(prefix)
-            return float(value) if value is not None else None
-    raise ValueError(f"unknown SLO metric: {name}")
-
-
-def _average_metric_values(
-    metrics_list: list[dict[str, Any]], criteria: dict[str, str]
-) -> dict[str, float | None]:
-    values: dict[str, float | None] = {}
-    for name in criteria:
-        samples = [_metric_value(metrics, name) for metrics in metrics_list]
-        if any(value is None for value in samples):
-            values[name] = None
-        else:
-            values[name] = sum(float(value) for value in samples) / len(samples)
-    return values
-
-
-def _mean_optional(values: list[dict[str, Any]], key: str) -> float | None:
-    """Average a diagnostic SLO value when every repeated run reports it."""
-    samples = [value.get(key) for value in values]
-    if not samples or any(sample is None for sample in samples):
-        return None
-    return sum(float(sample) for sample in samples) / len(samples)
-
-
-def _check_slo(
-    criteria: dict[str, str],
-    average_values: dict[str, float | None],
-    metrics_list: list[dict[str, Any]],
-) -> bool:
-    """Reuse EvalScope comparisons for complete, successful repeated probes."""
-    if not all(item["success_rate"] == 1.0 for item in metrics_list):
-        return False
-    return all(
-        average_values[name] is not None and rule.validate(average_values[name])
-        for name, rule in parse_slo_criteria([criteria])[0].items()
-    )
-
-
 class SloAutoTuneBenchmark:
     """Search client concurrency under the configured arrival process and publish each probe."""
 
@@ -115,6 +57,85 @@ class SloAutoTuneBenchmark:
         self.label = label
         self.output_dir = output_dir
         self.outputs = outputs
+
+    def run(self) -> BenchmarkRun:
+        """Publish search decisions separately from the request measurements owned by each probe."""
+        if not self.benchmark.slo.params:
+            raise ValueError("--slo-params is required for SLO auto-tune")
+        model = self.model or "service"
+        wandb_group = self.benchmark.wandb.group.strip() or f"{model}_{wandb_run_timestamp()}"
+        record = {
+            "mode": "slo_search",
+            "model": model,
+            "label": self.label,
+        }
+
+        def sinks(directory: str) -> list[ResultSink]:
+            """Open summary destinations; resource observations belong to the individual probes."""
+            selected: list[ResultSink] = []
+            if self.benchmark.outputs.saves_local:
+                selected.append(LocalDirectorySink(directory))
+            if self.benchmark.outputs.includes("wandb"):
+                selected.append(WandbSink(
+                    self.benchmark,
+                    execution_dir=directory,
+                    run_name=f"{self.benchmark.wandb.run_name or model}_slo_{self.label or Path(directory).name}",
+                    group=wandb_group,
+                    publisher=publish_slo_wandb,
+                    run_config={**self.benchmark.to_dict(), **record},
+                ))
+            return selected
+
+        context = nullcontext(self.outputs) if self.outputs is not None else ResultOutputs(
+            self.benchmark, None, output_dir=self.output_dir,
+            directory_prefix="slo-", sink_factory=sinks,
+        )
+        with context as outputs:
+            plan = {"mode": "slo_search", "base": self.benchmark.to_dict()}
+            if self.benchmark.sweep.resume:
+                prepare_task_resume(
+                    Path(self.benchmark.sweep.resume), Path(outputs.execution_dir), plan,
+                    outputs=self.benchmark.outputs,
+                )
+                plan["resumed_from"] = str(Path(self.benchmark.sweep.resume).resolve())
+            write_json(outputs.execution_dir, "config.json", plan)
+            outputs.sink_factory = sinks
+            outputs.open(record)
+            probes: list[dict[str, Any]] = []
+            groups: list[dict[str, Any]] = []
+            winning_run: BenchmarkRun | None = None
+            for group_index, criteria in enumerate(self.benchmark.slo.params):
+                group_probes, summary, best_run = self._search_group(
+                    group_index, criteria, outputs.execution_dir, wandb_group,
+                )
+                probes.extend(group_probes)
+                groups.append(summary)
+                if best_run is not None:
+                    winning_run = best_run
+            record["model"] = self.model
+            record["concurrency_limit_unit"] = (
+                "conversations" if any(group["concurrency_limit_unit"] == "conversations" for group in groups)
+                else "requests"
+            )
+            search = {
+                "concurrency_limit_unit": record["concurrency_limit_unit"],
+                "probes": probes,
+                "groups": groups,
+            }
+            artifact = write_json(outputs.execution_dir, "slo_results.json", search)
+            run = BenchmarkRun(
+                record=record,
+                metrics={
+                    **(winning_run.metrics if winning_run is not None else {"success_num": 0}),
+                    "slo_search": search,
+                },
+                measurements=None,
+                artifacts={"slo_results": artifact},
+                exit_code=0 if all(group["best_max_concurrency"] is not None for group in groups) else 1,
+            )
+            log_slo_results(search)
+            outputs.publish(run)
+        return run
 
     def _run_probe(
         self,
@@ -266,81 +287,60 @@ class SloAutoTuneBenchmark:
         }
         return probes, summary, best_run
 
-    def run(self) -> BenchmarkRun:
-        """Publish search decisions separately from the request measurements owned by each probe."""
-        if not self.benchmark.slo.params:
-            raise ValueError("--slo-params is required for SLO auto-tune")
-        model = self.model or "service"
-        wandb_group = self.benchmark.wandb.group.strip() or f"{model}_{wandb_run_timestamp()}"
-        record = {
-            "mode": "slo_search",
-            "model": model,
-            "label": self.label,
-        }
 
-        def sinks(directory: str) -> list[ResultSink]:
-            """Open summary destinations; resource observations belong to the individual probes."""
-            selected: list[ResultSink] = []
-            if self.benchmark.outputs.saves_local:
-                selected.append(LocalDirectorySink(directory))
-            if self.benchmark.outputs.includes("wandb"):
-                selected.append(WandbSink(
-                    self.benchmark,
-                    execution_dir=directory,
-                    run_name=f"{self.benchmark.wandb.run_name or model}_slo_{self.label or Path(directory).name}",
-                    group=wandb_group,
-                    publisher=publish_slo_wandb,
-                    run_config={**self.benchmark.to_dict(), **record},
-                ))
-            return selected
+def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
+    name = _SLO_ALIASES.get(name, name)
+    if name in {"avg_latency", "avg_ttft", "avg_tpot", "rps", "tps"}:
+        if name == "rps":
+            value = metrics["throughput"].get("requests_per_second")
+        elif name == "tps":
+            value = metrics["throughput"].get("generation_tokens_per_second")
+        else:
+            value = metrics[name.removeprefix("avg_")]["mean"]
+        return float(value) if value is not None else None
+    for prefix in ("p50", "p90", "p95", "p99"):
+        if name == f"{prefix}_latency":
+            value = metrics["latency"].get(prefix)
+            return float(value) if value is not None else None
+        if name == f"{prefix}_ttft":
+            value = metrics["ttft"].get(prefix)
+            return float(value) if value is not None else None
+        if name == f"{prefix}_tpot":
+            value = metrics["tpot"].get(prefix)
+            return float(value) if value is not None else None
+    raise ValueError(f"unknown SLO metric: {name}")
 
-        context = nullcontext(self.outputs) if self.outputs is not None else ResultOutputs(
-            self.benchmark, None, output_dir=self.output_dir,
-            directory_prefix="slo-", sink_factory=sinks,
-        )
-        with context as outputs:
-            plan = {"mode": "slo_search", "base": self.benchmark.to_dict()}
-            if self.benchmark.sweep.resume:
-                prepare_task_resume(
-                    Path(self.benchmark.sweep.resume), Path(outputs.execution_dir), plan,
-                    outputs=self.benchmark.outputs,
-                )
-                plan["resumed_from"] = str(Path(self.benchmark.sweep.resume).resolve())
-            write_json(outputs.execution_dir, "config.json", plan)
-            outputs.sink_factory = sinks
-            outputs.open(record)
-            probes: list[dict[str, Any]] = []
-            groups: list[dict[str, Any]] = []
-            winning_run: BenchmarkRun | None = None
-            for group_index, criteria in enumerate(self.benchmark.slo.params):
-                group_probes, summary, best_run = self._search_group(
-                    group_index, criteria, outputs.execution_dir, wandb_group,
-                )
-                probes.extend(group_probes)
-                groups.append(summary)
-                if best_run is not None:
-                    winning_run = best_run
-            record["model"] = self.model
-            record["concurrency_limit_unit"] = (
-                "conversations" if any(group["concurrency_limit_unit"] == "conversations" for group in groups)
-                else "requests"
-            )
-            search = {
-                "concurrency_limit_unit": record["concurrency_limit_unit"],
-                "probes": probes,
-                "groups": groups,
-            }
-            artifact = write_json(outputs.execution_dir, "slo_results.json", search)
-            run = BenchmarkRun(
-                record=record,
-                metrics={
-                    **(winning_run.metrics if winning_run is not None else {"success_num": 0}),
-                    "slo_search": search,
-                },
-                measurements=None,
-                artifacts={"slo_results": artifact},
-                exit_code=0 if all(group["best_max_concurrency"] is not None for group in groups) else 1,
-            )
-            log_slo_results(search)
-            outputs.publish(run)
-        return run
+
+def _average_metric_values(
+    metrics_list: list[dict[str, Any]], criteria: dict[str, str]
+) -> dict[str, float | None]:
+    values: dict[str, float | None] = {}
+    for name in criteria:
+        samples = [_metric_value(metrics, name) for metrics in metrics_list]
+        if any(value is None for value in samples):
+            values[name] = None
+        else:
+            values[name] = sum(float(value) for value in samples) / len(samples)
+    return values
+
+
+def _mean_optional(values: list[dict[str, Any]], key: str) -> float | None:
+    """Average a diagnostic SLO value when every repeated run reports it."""
+    samples = [value.get(key) for value in values]
+    if not samples or any(sample is None for sample in samples):
+        return None
+    return sum(float(sample) for sample in samples) / len(samples)
+
+
+def _check_slo(
+    criteria: dict[str, str],
+    average_values: dict[str, float | None],
+    metrics_list: list[dict[str, Any]],
+) -> bool:
+    """Reuse EvalScope comparisons for complete, successful repeated probes."""
+    if not all(item["success_rate"] == 1.0 for item in metrics_list):
+        return False
+    return all(
+        average_values[name] is not None and rule.validate(average_values[name])
+        for name, rule in parse_slo_criteria([criteria])[0].items()
+    )

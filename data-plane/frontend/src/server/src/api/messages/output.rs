@@ -20,6 +20,14 @@ use super::types::{AnthropicMessagesResponse, AnthropicUsage, ResponseContentBlo
 use crate::api::stream::{chat_events, sse_response};
 use crate::runtime::GeneratedChat;
 
+/// Maps the chat processor's independent text/tool indices into one Anthropic block sequence.
+#[derive(Default)]
+struct StreamBlocks {
+    next: usize,
+    open: BTreeMap<(u8, usize), usize>,
+    has_tools: bool,
+}
+
 /// Collects the canonical chat stream into one Anthropic message.
 pub(super) async fn collected(generated: GeneratedChat, idle: Duration) -> Response {
     let id = generated
@@ -206,14 +214,6 @@ pub(super) fn streaming(generated: GeneratedChat, idle: Duration) -> Response {
         yield Ok(sse("error", AnthropicApiError::stream().body()));
     };
     sse_response(stream)
-}
-
-/// Maps the chat processor's independent text/tool indices into one Anthropic block sequence.
-#[derive(Default)]
-struct StreamBlocks {
-    next: usize,
-    open: BTreeMap<(u8, usize), usize>,
-    has_tools: bool,
 }
 
 impl StreamBlocks {

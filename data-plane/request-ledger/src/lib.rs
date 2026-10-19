@@ -90,60 +90,6 @@ impl RequestLedger {
         json!([connection.addr.to_string(), connection.redis.db]).to_string()
     }
 
-    // Length-prefixed components keep model and service identities distinct without content hashes.
-    fn key(scope: &str, model: &str) -> String {
-        format!("{MODEL_KEY_PREFIX}{}:{scope}:{model}", scope.len())
-    }
-
-    /// Shares the upstream client with bounded connection attempts and short reconnect sleeps.
-    /// Connection deadlines cover stale service endpoints; retry jitter adds up to one second.
-    async fn connection(&self) -> Result<ConnectionManager, LedgerError> {
-        let connection = self
-            .connection
-            .get_or_try_init(|| {
-                self.client.get_connection_manager_with_config(
-                    ConnectionManagerConfig::new()
-                        .set_connection_timeout(std::time::Duration::from_secs(5))
-                        .set_max_delay(1_000),
-                )
-            })
-            .await?;
-        Ok(connection.clone())
-    }
-
-    async fn transition(
-        &self,
-        scope: &str,
-        model: &str,
-        action: &str,
-        request: &str,
-        input: Value,
-    ) -> Result<String, LedgerError> {
-        let mut connection = self.connection().await?;
-        Ok(TRANSITION
-            .key(Self::key(scope, model))
-            .arg(action)
-            .arg(request)
-            .arg(input.to_string())
-            .invoke_async(&mut connection)
-            .await?)
-    }
-
-    fn outcome(value: String) -> Result<Outcome, LedgerError> {
-        match value.as_str() {
-            "ok" => Ok(Outcome::Applied),
-            "full" => Ok(Outcome::Full),
-            "busy" => Ok(Outcome::Busy),
-            "role" => Ok(Outcome::InvalidRole),
-            "batch" => Ok(Outcome::BatchTooLarge),
-            "closed" => Ok(Outcome::Closed),
-            "accepted" => Ok(Outcome::AlreadyAccepted),
-            "backend_unavailable" => Ok(Outcome::BackendUnavailable),
-            "unavailable" => Err(LedgerError::Unpublished),
-            _ => Err(LedgerError::Protocol(value)),
-        }
-    }
-
     /// Publishes effective settings monotonically; older frontend snapshots cannot reset limits.
     pub async fn publish(
         &self,
@@ -601,6 +547,60 @@ impl RequestLedger {
             "accepted" | "reserved" | "waiting" | "handoff" => Ok(false),
             "unavailable" => Err(LedgerError::Unpublished),
             _ => Err(LedgerError::Protocol(state)),
+        }
+    }
+
+    async fn transition(
+        &self,
+        scope: &str,
+        model: &str,
+        action: &str,
+        request: &str,
+        input: Value,
+    ) -> Result<String, LedgerError> {
+        let mut connection = self.connection().await?;
+        Ok(TRANSITION
+            .key(Self::key(scope, model))
+            .arg(action)
+            .arg(request)
+            .arg(input.to_string())
+            .invoke_async(&mut connection)
+            .await?)
+    }
+
+    /// Shares the upstream client with bounded connection attempts and short reconnect sleeps.
+    /// Connection deadlines cover stale service endpoints; retry jitter adds up to one second.
+    async fn connection(&self) -> Result<ConnectionManager, LedgerError> {
+        let connection = self
+            .connection
+            .get_or_try_init(|| {
+                self.client.get_connection_manager_with_config(
+                    ConnectionManagerConfig::new()
+                        .set_connection_timeout(std::time::Duration::from_secs(5))
+                        .set_max_delay(1_000),
+                )
+            })
+            .await?;
+        Ok(connection.clone())
+    }
+
+    // Length-prefixed components keep model and service identities distinct without content hashes.
+    fn key(scope: &str, model: &str) -> String {
+        format!("{MODEL_KEY_PREFIX}{}:{scope}:{model}", scope.len())
+    }
+
+    fn outcome(value: String) -> Result<Outcome, LedgerError> {
+        match value.as_str() {
+            "ok" => Ok(Outcome::Applied),
+            "full" => Ok(Outcome::Full),
+            "busy" => Ok(Outcome::Busy),
+            "role" => Ok(Outcome::InvalidRole),
+            "batch" => Ok(Outcome::BatchTooLarge),
+            "closed" => Ok(Outcome::Closed),
+            "accepted" => Ok(Outcome::AlreadyAccepted),
+            "backend_unavailable" => Ok(Outcome::BackendUnavailable),
+            "unavailable" => Err(LedgerError::Unpublished),
+            _ => Err(LedgerError::Protocol(value)),
         }
     }
 }

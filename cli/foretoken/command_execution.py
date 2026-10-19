@@ -29,6 +29,20 @@ _OBSERVATION_DEADLINE: ContextVar[float | None] = ContextVar(
 )
 
 
+def run_command(args: list[str], *, timeout: float | None = None, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+    """Run a control command within its owning operation's wait and cancellation budget."""
+    execution = CommandExecution.current() or CommandExecution()
+    if execution.control_timeout is not None:
+        timeout = execution.control_timeout if timeout is None else min(timeout, execution.control_timeout)
+    deadline = _OBSERVATION_DEADLINE.get()
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DeploymentError("Observation deadline exceeded")
+        timeout = remaining if timeout is None else min(timeout, remaining)
+    return execution.run(args, timeout=timeout, **kwargs)
+
+
 class CommandExecution(AbstractContextManager):
     """Own an operation's commands and cleanup, retaining its first failure.
 
@@ -210,17 +224,3 @@ def cleanup_commands(error: BaseException | None = None, *, timeout: float | Non
             raise
     finally:
         _OBSERVATION_DEADLINE.reset(token)
-
-
-def run_command(args: list[str], *, timeout: float | None = None, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
-    """Run a control command within its owning operation's wait and cancellation budget."""
-    execution = CommandExecution.current() or CommandExecution()
-    if execution.control_timeout is not None:
-        timeout = execution.control_timeout if timeout is None else min(timeout, execution.control_timeout)
-    deadline = _OBSERVATION_DEADLINE.get()
-    if deadline is not None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise DeploymentError("Observation deadline exceeded")
-        timeout = remaining if timeout is None else min(timeout, remaining)
-    return execution.run(args, timeout=timeout, **kwargs)

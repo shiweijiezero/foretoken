@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Persist resolved deployment defaults without running a shared serving controller.
-{{- if eq .Values.scope "platform" }}
 {{- include "foretoken.validateValues" . }}
 {{- $applications := include "foretoken.applications" . | fromJson }}
 {{- $image := deepCopy .Values.image }}
@@ -32,7 +31,6 @@
 {{- $_ := set $responseStore "externalURL" "" }}
 {{- end }}
 {{- $values := dict
-    "scope" "deployment"
     "global" (dict "imageRegistry" "")
     "image" $image
     "imagePullSecrets" .Values.imagePullSecrets
@@ -49,6 +47,16 @@
     "applicationFiles" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "clientImage" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage)) "releaseURL" "")
     "observability" (dict "mode" .Values.observability.mode "additionalLabels" .Values.observability.additionalLabels "interval" .Values.observability.interval "scrapeTimeout" .Values.observability.scrapeTimeout "prometheus" .Values.observability.prometheus)
 }}
+{{- $template := dict
+    "controller" (include "foretoken.deploymentController" . | fromYaml)
+    "configuration" (include "foretoken.deploymentConfiguration" . | fromYaml)
+    "rules" (include "foretoken.deploymentRules" . | fromYamlArray)
+    "directories" .Values.workload.cache.directories
+}}
+{{- $metrics := include "foretoken.deploymentMetricsService" . | fromYaml }}
+{{- if $metrics }}
+{{- $_ := set $template "metricsService" $metrics }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -61,4 +69,4 @@ metadata:
     foretoken.io/install-source: {{ ternary "source" "release" .Values.development.enabled | quote }}
 data:
   deploymentValues: {{ $values | toJson | quote }}
-{{- end }}
+  deployment-template.json: {{ $template | toJson | quote }}

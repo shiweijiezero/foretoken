@@ -52,37 +52,22 @@ type GroupReconciler struct {
 	ApplicationFiles      runtimeconfig.ApplicationFiles
 }
 
-// SetupWithManager registers the ModelGroup controller and its owned resources.
-func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
-	reconciler.APIReader = manager.GetAPIReader()
-	builder := ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.ModelGroup{}).
-		Owns(&batchv1.Job{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&networkingv1.NetworkPolicy{}).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelGroupsForPod))
-	_, err := manager.GetRESTMapper().RESTMapping(lwsv1.GroupVersion.WithKind("LeaderWorkerSet").GroupKind(), lwsv1.GroupVersion.Version)
-	if err == nil {
-		reconciler.LeaderWorkerSets = true
-		builder = builder.Owns(&lwsv1.LeaderWorkerSet{})
-	} else if !meta.IsNoMatchError(err) {
-		return fmt.Errorf("discover LeaderWorkerSet: %w", err)
-	}
-	return builder.Complete(reconciler)
+type modelGroupConditionState struct {
+	status  metav1.ConditionStatus
+	reason  string
+	message string
 }
 
-// modelGroupsForPod requeues the execution Group when a member Pod changes.
-// Workload controllers, rather than ModelGroups, directly own the Pods.
-func (reconciler *GroupReconciler) modelGroupsForPod(_ context.Context, object client.Object) []reconcile.Request {
-	groupName := object.GetLabels()[workload.ModelGroupLabel]
-	if groupName == "" {
-		groupName = object.GetLabels()[workload.ModelPreparationGroupLabel]
-	}
-	if groupName == "" {
-		return nil
-	}
-	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: groupName}}}
+type schedulingCapacityState = modelGroupConditionState
+
+type modelGroupStatusState struct {
+	phase            inferencev1alpha1.ModelGroupPhase
+	preparation      modelGroupConditionState
+	materialized     modelGroupConditionState
+	available        bool
+	unavailableSince metav1.Time
+	target           metav1.Condition
+	scheduling       schedulingCapacityState
 }
 
 // Reconcile materializes the workload and derives readiness from the model server.
@@ -208,24 +193,6 @@ func (reconciler *GroupReconciler) owningModelPool(ctx context.Context, group *i
 		return nil, fmt.Errorf("ModelGroup encoder cache scope does not match its owning ModelService")
 	}
 	return pool, nil
-}
-
-type modelGroupConditionState struct {
-	status  metav1.ConditionStatus
-	reason  string
-	message string
-}
-
-type schedulingCapacityState = modelGroupConditionState
-
-type modelGroupStatusState struct {
-	phase            inferencev1alpha1.ModelGroupPhase
-	preparation      modelGroupConditionState
-	materialized     modelGroupConditionState
-	available        bool
-	unavailableSince metav1.Time
-	target           metav1.Condition
-	scheduling       schedulingCapacityState
 }
 
 func schedulingNotEvaluated() schedulingCapacityState {
@@ -399,4 +366,37 @@ func readinessMessage(ready bool) string {
 		return "The group-local model server and vLLM EngineCore are ready"
 	}
 	return "The group-local model server or vLLM EngineCore is not yet ready"
+}
+
+// SetupWithManager registers the ModelGroup controller and its owned resources.
+func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
+	builder := ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.ModelGroup{}).
+		Owns(&batchv1.Job{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelGroupsForPod))
+	_, err := manager.GetRESTMapper().RESTMapping(lwsv1.GroupVersion.WithKind("LeaderWorkerSet").GroupKind(), lwsv1.GroupVersion.Version)
+	if err == nil {
+		reconciler.LeaderWorkerSets = true
+		builder = builder.Owns(&lwsv1.LeaderWorkerSet{})
+	} else if !meta.IsNoMatchError(err) {
+		return fmt.Errorf("discover LeaderWorkerSet: %w", err)
+	}
+	return builder.Complete(reconciler)
+}
+
+// modelGroupsForPod requeues the execution Group when a member Pod changes.
+// Workload controllers, rather than ModelGroups, directly own the Pods.
+func (reconciler *GroupReconciler) modelGroupsForPod(_ context.Context, object client.Object) []reconcile.Request {
+	groupName := object.GetLabels()[workload.ModelGroupLabel]
+	if groupName == "" {
+		groupName = object.GetLabels()[workload.ModelPreparationGroupLabel]
+	}
+	if groupName == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: groupName}}}
 }

@@ -9,6 +9,16 @@ use std::time::Duration;
 use foretoken_model_protocol::{CumulativeHistogram, HistogramMoments, TelemetryResponse};
 use foretoken_router::{RouteTargetLatencyStats, RouteTargetStats};
 
+/// Registry-owned compact counters and their last calculated daily mean.
+/// Updating on telemetry arrival keeps history scans off the request path.
+#[derive(Default)]
+struct RequestLengthHistory {
+    samples: VecDeque<(u64, HistogramMoments)>,
+    sum_delta: f64,
+    count_delta: f64,
+    mean: Option<f64>,
+}
+
 pub(crate) struct RouteTargetStatsHistory {
     retention: Duration,
     snapshots: VecDeque<TelemetryResponse>,
@@ -148,16 +158,6 @@ impl RouteTargetStatsHistory {
                 .and_then(|baseline| latency(&baseline.e2e_seconds, &current.e2e_seconds)),
         })
     }
-}
-
-/// Registry-owned compact counters and their last calculated daily mean.
-/// Updating on telemetry arrival keeps history scans off the request path.
-#[derive(Default)]
-struct RequestLengthHistory {
-    samples: VecDeque<(u64, HistogramMoments)>,
-    sum_delta: f64,
-    count_delta: f64,
-    mean: Option<f64>,
 }
 
 impl RequestLengthHistory {

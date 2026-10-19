@@ -111,6 +111,14 @@ class BuildEnvironments:
         self.records[name] = record
         return record
 
+    def deliver(self, builder: ClusterBuilder) -> None:
+        """Import new environments without taking ownership of borrowed image references."""
+        if builder.containerd_socket:
+            # The controller is delivered last, immediately before installation.
+            for name in sorted(self._built, key=lambda value: value == "control-plane"):
+                image = self.records[name]["image"]
+                builder.import_image(image, image)
+
     def _available(self, record: dict[str, Any]) -> bool:
         """Check every selected node before borrowing a producer's retained image reference."""
         for builder in self.builders:
@@ -121,11 +129,3 @@ class BuildEnvironments:
                 print(f"Environment image was removed; rebuilding: {error}", flush=True)
                 return False
         return True
-
-    def deliver(self, builder: ClusterBuilder) -> None:
-        """Import new environments without taking ownership of borrowed image references."""
-        if builder.containerd_socket:
-            # The controller is delivered last, immediately before installation.
-            for name in sorted(self._built, key=lambda value: value == "control-plane"):
-                image = self.records[name]["image"]
-                builder.import_image(image, image)

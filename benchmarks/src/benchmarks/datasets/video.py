@@ -32,6 +32,70 @@ _VIDEOARGUS_REPO_ID = "zengziyun/VideoArgusBench"
 logger = logging.getLogger(__name__)
 
 
+def load_video_dataset(
+    path: str,
+    *,
+    defaults: VideoDatasetDefaults | None = None,
+    number: int | None = 0,
+    offset: int = 0,
+) -> tuple[str, tuple[VideoGenerationRequest, ...]]:
+    """Load native video JSONL or a VideoArgusBench manifest."""
+    if number < 0:
+        raise ValueError("video --num-prompts must be zero or positive")
+    if offset < 0:
+        raise ValueError("video --dataset-offset must be zero or positive")
+    dataset_path = Path(resolve_video_dataset(path))
+    if not dataset_path.is_file():
+        raise ValueError(f"video dataset does not exist: {dataset_path}")
+    public_defaults = defaults or VideoDatasetDefaults()
+    requests: list[VideoGenerationRequest] = []
+    row_index = 0
+    with dataset_path.open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, start=1):
+            if not line.strip():
+                continue
+            current_index = row_index
+            row_index += 1
+            if current_index < offset:
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"invalid JSON on video dataset line {line_number}: {exc.msg}"
+                ) from exc
+            if (
+                isinstance(raw, dict)
+                and raw.get("task") in _VIDEOARGUS_TASKS
+                and "text" in raw
+            ):
+                requests.append(
+                    _videoargus_request(
+                        raw,
+                        line_number=line_number,
+                        row_index=current_index,
+                        dataset_dir=dataset_path.parent,
+                        defaults=public_defaults,
+                    )
+                )
+            else:
+                requests.append(
+                    _load_request(
+                        raw,
+                        line_number=line_number,
+                        dataset_dir=dataset_path.parent,
+                    )
+                )
+            if number and len(requests) >= number:
+                break
+    if number and len(requests) < number:
+        raise ValueError(
+            f"loaded {len(requests)} video requests from {dataset_path} "
+            f"(offset={offset}), need {number}"
+        )
+    return str(dataset_path), tuple(requests)
+
+
 def _row_int(value: Any, name: str, line_number: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
@@ -411,67 +475,3 @@ def resolve_video_dataset(path_or_selector: str) -> str:
     # as symlinks into ``blobs/``; resolving manifest.jsonl would therefore make
     # its relative media paths point at the blob store instead of the task dir.
     return str(manifest_path.absolute())
-
-
-def load_video_dataset(
-    path: str,
-    *,
-    defaults: VideoDatasetDefaults | None = None,
-    number: int | None = 0,
-    offset: int = 0,
-) -> tuple[str, tuple[VideoGenerationRequest, ...]]:
-    """Load native video JSONL or a VideoArgusBench manifest."""
-    if number < 0:
-        raise ValueError("video --num-prompts must be zero or positive")
-    if offset < 0:
-        raise ValueError("video --dataset-offset must be zero or positive")
-    dataset_path = Path(resolve_video_dataset(path))
-    if not dataset_path.is_file():
-        raise ValueError(f"video dataset does not exist: {dataset_path}")
-    public_defaults = defaults or VideoDatasetDefaults()
-    requests: list[VideoGenerationRequest] = []
-    row_index = 0
-    with dataset_path.open("r", encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, start=1):
-            if not line.strip():
-                continue
-            current_index = row_index
-            row_index += 1
-            if current_index < offset:
-                continue
-            try:
-                raw = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"invalid JSON on video dataset line {line_number}: {exc.msg}"
-                ) from exc
-            if (
-                isinstance(raw, dict)
-                and raw.get("task") in _VIDEOARGUS_TASKS
-                and "text" in raw
-            ):
-                requests.append(
-                    _videoargus_request(
-                        raw,
-                        line_number=line_number,
-                        row_index=current_index,
-                        dataset_dir=dataset_path.parent,
-                        defaults=public_defaults,
-                    )
-                )
-            else:
-                requests.append(
-                    _load_request(
-                        raw,
-                        line_number=line_number,
-                        dataset_dir=dataset_path.parent,
-                    )
-                )
-            if number and len(requests) >= number:
-                break
-    if number and len(requests) < number:
-        raise ValueError(
-            f"loaded {len(requests)} video requests from {dataset_path} "
-            f"(offset={offset}), need {number}"
-        )
-    return str(dataset_path), tuple(requests)

@@ -30,65 +30,6 @@ class RDMASelection:
     available: bool = False
 
 
-def shared_rdma_resources(
-    kubectl: Kubectl, daemonset: dict[str, Any]
-) -> frozenset[str] | None:
-    """Read resources from an upstream shared-RDMA plugin's mounted configuration.
-
-    None identifies a different device plugin. An unrecognized mount or argument
-    is left to explicit platform configuration rather than guessed from resource names.
-    """
-    template = daemonset["spec"]["template"]
-    pod = template["spec"]
-    packaged = template.get("metadata", {}).get("labels", {}).get(
-        "app.kubernetes.io/name"
-    ) == "foretoken-rdma"
-    for container in pod.get("containers", []):
-        image = container.get("image", "").split("@", 1)[0].rsplit("/", 1)[-1]
-        if image.split(":", 1)[0] != _PLUGIN_IMAGE and not (
-            packaged and container.get("name") == "rdma-device-plugin"
-        ):
-            continue
-        command = container.get("command", [])
-        if command and command[0].rsplit("/", 1)[-1] != "k8s-rdma-shared-dp":
-            return frozenset()
-        arguments = (*command[1:], *container.get("args", []))
-        if any(arg.split("=", 1)[0] in {"--config-file", "-config-file"} for arg in arguments):
-            return frozenset()
-        mounts = {
-            mount["name"]
-            for mount in container.get("volumeMounts", [])
-            if mount.get("mountPath", "").rstrip("/") == _CONFIG_PATH
-            and not mount.get("subPath")
-        }
-        for volume in pod.get("volumes", []):
-            if volume["name"] not in mounts or "configMap" not in volume:
-                continue
-            source = volume["configMap"]
-            key = "config.json"
-            if "items" in source:
-                keys = [item["key"] for item in source["items"] if item["path"] == key]
-                if len(keys) != 1:
-                    return frozenset()
-                key = keys[0]
-            configmap = kubectl.get(
-                "configmap", source["name"], daemonset["metadata"]["namespace"]
-            )
-            try:
-                config = json.loads(configmap["data"][key])
-                return frozenset(
-                    f"{entry.get('resourcePrefix', 'rdma')}/{entry['resourceName']}"
-                    for entry in config["configList"]
-                )
-            except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise DeploymentError(
-                    f"cannot read RDMA resource configuration from "
-                    f"{daemonset['metadata']['namespace']}/{source['name']}"
-                ) from exc
-        return frozenset()
-    return None
-
-
 def select_rdma(
     kubectl: Kubectl,
     nodes: tuple[dict[str, Any], ...],
@@ -231,3 +172,62 @@ def require_unused_managed_rdma(
             "cannot remove the managed RDMA device plugin while Pods use its allocation: "
             + ", ".join(sorted(users))
         )
+
+
+def shared_rdma_resources(
+    kubectl: Kubectl, daemonset: dict[str, Any]
+) -> frozenset[str] | None:
+    """Read resources from an upstream shared-RDMA plugin's mounted configuration.
+
+    None identifies a different device plugin. An unrecognized mount or argument
+    is left to explicit platform configuration rather than guessed from resource names.
+    """
+    template = daemonset["spec"]["template"]
+    pod = template["spec"]
+    packaged = template.get("metadata", {}).get("labels", {}).get(
+        "app.kubernetes.io/name"
+    ) == "foretoken-rdma"
+    for container in pod.get("containers", []):
+        image = container.get("image", "").split("@", 1)[0].rsplit("/", 1)[-1]
+        if image.split(":", 1)[0] != _PLUGIN_IMAGE and not (
+            packaged and container.get("name") == "rdma-device-plugin"
+        ):
+            continue
+        command = container.get("command", [])
+        if command and command[0].rsplit("/", 1)[-1] != "k8s-rdma-shared-dp":
+            return frozenset()
+        arguments = (*command[1:], *container.get("args", []))
+        if any(arg.split("=", 1)[0] in {"--config-file", "-config-file"} for arg in arguments):
+            return frozenset()
+        mounts = {
+            mount["name"]
+            for mount in container.get("volumeMounts", [])
+            if mount.get("mountPath", "").rstrip("/") == _CONFIG_PATH
+            and not mount.get("subPath")
+        }
+        for volume in pod.get("volumes", []):
+            if volume["name"] not in mounts or "configMap" not in volume:
+                continue
+            source = volume["configMap"]
+            key = "config.json"
+            if "items" in source:
+                keys = [item["key"] for item in source["items"] if item["path"] == key]
+                if len(keys) != 1:
+                    return frozenset()
+                key = keys[0]
+            configmap = kubectl.get(
+                "configmap", source["name"], daemonset["metadata"]["namespace"]
+            )
+            try:
+                config = json.loads(configmap["data"][key])
+                return frozenset(
+                    f"{entry.get('resourcePrefix', 'rdma')}/{entry['resourceName']}"
+                    for entry in config["configList"]
+                )
+            except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise DeploymentError(
+                    f"cannot read RDMA resource configuration from "
+                    f"{daemonset['metadata']['namespace']}/{source['name']}"
+                ) from exc
+        return frozenset()
+    return None

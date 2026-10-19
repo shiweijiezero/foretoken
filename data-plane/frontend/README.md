@@ -98,34 +98,42 @@ spec:
     retentionSeconds: 86400
 ```
 
-`video-results` must be an existing dedicated persistent volume claim (PVC) in the same namespace. Use ReadWriteMany storage across nodes. Place the reference image at `inputs/reference.png` in this volume, then apply the configuration:
+`video-results` must be an existing dedicated persistent volume claim (PVC) in the same namespace. Use ReadWriteMany storage across nodes. Place the reference image at `inputs/reference.png` in this volume, then update the recipe's default instance, `h3-api`. If it was deployed with `--name`, set `INSTANCE` to that name instead:
 
 ```bash
 DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
-foretoken deploy "$DEPLOYMENT" --timeout 1h
-FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+INSTANCE=h3-api
+foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" --timeout 1h
+FRONTEND_URL="$(foretoken endpoint "$INSTANCE")"
+REQUEST_HOST="$(foretoken endpoint "$INSTANCE" --host)"
 mkdir -p ./data
 ```
 
-This request selects the ModelService named `h3`. Input paths are relative to the video storage volume:
+`modelServiceRef.name` selects the deployed Kubernetes ModelService, not the model identifier. Read this recipe's single ModelService name from the instance before submitting the request. Input paths are relative to the video storage volume:
 
 ```bash
+MODEL_SERVICE="$(kubectl get inferencedeployment "$INSTANCE" \
+  -o jsonpath='{.spec.resources[?(@.kind=="ModelService")].name}')"
+
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "modelServiceRef": {"name": "h3"},
-    "request": {
-      "task": "fl2va",
-      "prompt": "A sailboat crossing a calm bay at sunrise",
-      "width": 1024, "height": 576,
-      "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
-      "inputFiles": [{
-        "field": "input_reference",
-        "path": "inputs/reference.png",
-        "contentType": "image/png"
-      }]
-    }
-  }'
+  --data-binary @- <<EOF
+{
+  "modelServiceRef": {"name": "$MODEL_SERVICE"},
+  "request": {
+    "task": "fl2va",
+    "prompt": "A sailboat crossing a calm bay at sunrise",
+    "width": 1024, "height": 576,
+    "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
+    "inputFiles": [{
+      "field": "input_reference",
+      "path": "inputs/reference.png",
+      "contentType": "image/png"
+    }]
+  }
+}
+EOF
 ```
 
 The response contains a task `id`, `status_url`, and `content_url`. Use the same frontend address and replace `{id}` below with the returned task ID:
@@ -222,7 +230,7 @@ With `spec.modelPools`, add it to each applicable Pool's `features.structuredOut
 
 ## Operations
 
-Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command. Metrics, logs, and alerts are covered by [Observability](../../observability/README.md).
+Pass the deployment instance name to `foretoken status` to inspect it, or to `foretoken delete` to remove it. Both commands also accept its configuration directory, with the original `--name` when one was selected. Metrics, logs, and alerts are covered by [Observability](../../observability/README.md).
 
 | Endpoint | Purpose |
 | --- | --- |

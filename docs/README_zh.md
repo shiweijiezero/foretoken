@@ -37,6 +37,7 @@ Foretoken 在 Kubernetes 上编排生成式推理服务，并支持 RSI（递归
 | 本地 CPU 开发集群 | [kind](deployment/kind_zh.md) |
 | 已有 Kubernetes 集群 | [Kubernetes](deployment/kubernetes_zh.md) |
 | 沐曦 GPU | [平台准备](deployment/metax-platform_zh.md) · [模型部署](deployment/metax_zh.md) |
+| 创建和管理具名部署实例 | [CLI](../cli/README_zh.md#服务部署) |
 | 构建和部署源码改动、并行运行候选方案 | [源码部署](deployment/source_zh.md) |
 
 ### 模型配置
@@ -78,5 +79,4 @@ Foretoken 在 Kubernetes 上编排生成式推理服务，并支持 RSI（递归
 - 修改指南或导航时，[预览和构建文档](development/documentation_zh.md)。
 - 按[测试规范](development/testing_zh.md)和 [CI 规范](development/ci_zh.md)验证改动。
 - 维护部署与存储行为时，参阅[源码部署](development/source-deployment_zh.md)和[运行时缓存](development/runtime-cache_zh.md)。
-- 修改默认值、派生规则和监听配置时，先确认[运行配置的职责归属](development/runtime-configuration_zh.md)。
 - 构建和发布版本，按[发布指南](development/release_zh.md)执行。

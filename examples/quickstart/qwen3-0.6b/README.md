@@ -21,14 +21,14 @@ Install the [platform from source](../../../docs/deployment/source.md) and prepa
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-The command reports each service state as it changes and exits when the current configuration is ready.
+Without `--name`, the instance uses the `FrontendService` name from [`frontend.yaml`](frontend.yaml), `metadata.name: qwen3-0-6b`. The command creates that instance in the current kubeconfig namespace and waits for its services to be ready. Add `--name candidate-a` to deploy an independent instance called `candidate-a` instead; use that name in subsequent commands.
 
 ## Send a request
 
 Resolve the frontend URL:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 ```
 
 Send an OpenAI-compatible request:
@@ -48,5 +48,5 @@ printf '\n'
 ## Clean up
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 ```

@@ -69,7 +69,7 @@ foretoken install -e .
 # foretoken install
 ```
 
-安装准备集群共享的 API 和依赖；部署时，再在服务所在的命名空间创建独立控制器。
+平台在集群中安装一次，之后每个部署实例都有独立的控制器和服务。
 
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/deployment/k3d_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
@@ -79,14 +79,16 @@ foretoken install -e .
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。
+
+实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
 
 同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -169,8 +171,8 @@ foretoken install -e . --frontend-mode gateway
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 # 发送测试请求
 curl --fail-with-body --no-buffer \
@@ -185,10 +187,10 @@ curl --fail-with-body --no-buffer \
 ## 停止与卸载
 
 ```bash
-# 删除快速开始的资源，包括命名空间和运行时缓存 PVC
-foretoken delete examples/quickstart/qwen3-0.6b
+# 只删除快速开始实例
+foretoken delete qwen3-0-6b
 
-# 卸载 Foretoken 平台
+# 平台管理员：不再有部署需要平台时卸载
 foretoken uninstall
 ```
 

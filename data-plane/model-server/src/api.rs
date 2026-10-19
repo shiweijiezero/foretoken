@@ -43,6 +43,174 @@ pub struct RuntimeHealth {
     stopped: tokio::sync::Notify,
 }
 
+/// A definite rejection before any request is submitted to the inference engine.
+#[derive(Debug, Clone, Copy)]
+pub enum AdmissionRejection {
+    Closed,
+    Busy,
+}
+
+/// Instance slot retained until engine termination is confirmed.
+pub struct AdmissionPermit {
+    health: Arc<RuntimeHealth>,
+}
+
+#[derive(Clone)]
+struct ExecutionStore {
+    ledger: Arc<foretoken_request_ledger::RequestLedger>,
+    pod_uid: String,
+    epoch: u64,
+}
+
+/// Mutable process state shared by typed HTTP handlers.
+#[derive(Clone)]
+pub struct AppState {
+    backend: Arc<dyn Backend>,
+    health: Arc<RuntimeHealth>,
+    metadata: RuntimeMetadataResponse,
+    kv_source_endpoint: Option<String>,
+    kv_events: Option<Arc<KvEventAdapter>>,
+    runtime_cache: Option<runtime_cache::Config>,
+    profiling: Option<crate::profiling::Handle>,
+    shared_kv: Option<crate::shared_kv::SharedKvLookup>,
+    ledger: Option<ExecutionStore>,
+    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
+}
+
+struct CancelExecution(Arc<ExecutionControl>);
+
+struct ExecutionRegistration {
+    request_id: String,
+    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
+}
+
+#[derive(Clone, Copy)]
+enum ReservationEnd {
+    NotSubmitted,
+    StageTerminated,
+    RequestTerminated,
+}
+
+/// Fixed, wire-safe errors for the internal API.
+#[derive(Debug, Clone, Copy)]
+enum ApiError {
+    InvalidRequest,
+    Unavailable,
+    Busy,
+    AdmissionUnavailable,
+    Rejected,
+    Protocol,
+    RequestFailed,
+}
+
+#[derive(Serialize)]
+struct ErrorDetail {
+    code: &'static str,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+struct ErrorBody {
+    error: ErrorDetail,
+}
+
+/// Builds the internal ModelGroup API used by frontends and lifecycle controllers.
+///
+/// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
+pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
+    let profiling = crate::profiling::router(state.profiling.clone());
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
+        .route("/v1/internal/metadata", get(metadata))
+        .route("/v1/internal/telemetry", get(telemetry))
+        .route("/v1/internal/scheduler-load", get(scheduler_load))
+        .route("/v1/internal/admission", get(instance_admission_status))
+        .route(
+            "/v1/internal/admission/ready",
+            get(instance_admission_ready),
+        )
+        .route("/v1/internal/admission/close", post(close_admission))
+        .route("/v1/internal/generate", post(generate))
+        .route("/v1/internal/abort", post(abort))
+        .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
+        .route(
+            foretoken_model_protocol::KV_LOCAL_PREFIX_PATH,
+            post(local_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
+            post(shared_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_RETAINED_PREFIX_PATH,
+            post(retained_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CLAIM_PATH,
+            post(claim_kv_prefix),
+        )
+        .route(
+            foretoken_model_protocol::KV_PREFIX_CANCEL_PATH,
+            post(cancel_kv_prefix),
+        )
+        .with_state(state)
+        .merge(profiling)
+        .layer(DefaultBodyLimit::max(
+            internal_generate_request_body_limit_bytes,
+        ))
+}
+
+/// Decodes an internal request and transfers its instance slot to the engine execution task.
+async fn generate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    // Multimodal tensors use MessagePack; ordinary requests keep a human-readable JSON boundary.
+    let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
+        rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
+    } else {
+        serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
+    };
+    if input
+        .reservation
+        .as_ref()
+        .is_some_and(|reference| reference.model != state.metadata.model.model)
+    {
+        return Err(ApiError::InvalidRequest);
+    }
+    if !state.health.healthy() {
+        return Err(ApiError::Unavailable);
+    }
+    let permit = state.health.try_admit().map_err(|error| match error {
+        AdmissionRejection::Closed => ApiError::Unavailable,
+        AdmissionRejection::Busy => ApiError::Busy,
+    })?;
+    let request_id = input.request_id.clone();
+    let stream = start_execution(state, input, permit).await?;
+    // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
+    let body_stream = stream.map(move |item| {
+        let event = match item {
+            Ok(event) => event,
+            Err(error) => TokenEvent::Error {
+                request_id: request_id.clone(),
+                code: error.token_error_code(),
+            },
+        };
+        let mut encoded = serde_json::to_vec(&event).expect("TokenEvent always serializes");
+        encoded.push(b'\n');
+        Ok::<Bytes, Infallible>(Bytes::from(encoded))
+    });
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        Body::from_stream(body_stream),
+    )
+        .into_response())
+}
+
 impl RuntimeHealth {
     /// Creates closed health and admission state for the model-server supervisor.
     pub fn new() -> Self {
@@ -209,18 +377,6 @@ impl RuntimeHealth {
     }
 }
 
-/// A definite rejection before any request is submitted to the inference engine.
-#[derive(Debug, Clone, Copy)]
-pub enum AdmissionRejection {
-    Closed,
-    Busy,
-}
-
-/// Instance slot retained until engine termination is confirmed.
-pub struct AdmissionPermit {
-    health: Arc<RuntimeHealth>,
-}
-
 impl Drop for AdmissionPermit {
     fn drop(&mut self) {
         self.health
@@ -232,27 +388,6 @@ impl Drop for AdmissionPermit {
     }
 }
 
-#[derive(Clone)]
-struct ExecutionStore {
-    ledger: Arc<foretoken_request_ledger::RequestLedger>,
-    pod_uid: String,
-    epoch: u64,
-}
-
-/// Mutable process state shared by typed HTTP handlers.
-#[derive(Clone)]
-pub struct AppState {
-    backend: Arc<dyn Backend>,
-    health: Arc<RuntimeHealth>,
-    metadata: RuntimeMetadataResponse,
-    kv_source_endpoint: Option<String>,
-    kv_events: Option<Arc<KvEventAdapter>>,
-    runtime_cache: Option<runtime_cache::Config>,
-    profiling: Option<crate::profiling::Handle>,
-    shared_kv: Option<crate::shared_kv::SharedKvLookup>,
-    ledger: Option<ExecutionStore>,
-    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
-}
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
     pub fn new(
@@ -320,54 +455,6 @@ impl AppState {
         self.profiling = Some(handle);
         self
     }
-}
-
-/// Builds the internal ModelGroup API used by frontends and lifecycle controllers.
-///
-/// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
-pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
-    let profiling = crate::profiling::router(state.profiling.clone());
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .route("/metrics", get(metrics))
-        .route("/v1/internal/metadata", get(metadata))
-        .route("/v1/internal/telemetry", get(telemetry))
-        .route("/v1/internal/scheduler-load", get(scheduler_load))
-        .route("/v1/internal/admission", get(instance_admission_status))
-        .route(
-            "/v1/internal/admission/ready",
-            get(instance_admission_ready),
-        )
-        .route("/v1/internal/admission/close", post(close_admission))
-        .route("/v1/internal/generate", post(generate))
-        .route("/v1/internal/abort", post(abort))
-        .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
-        .route(
-            foretoken_model_protocol::KV_LOCAL_PREFIX_PATH,
-            post(local_kv_prefix),
-        )
-        .route(
-            foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
-            post(shared_kv_prefix),
-        )
-        .route(
-            foretoken_model_protocol::KV_RETAINED_PREFIX_PATH,
-            post(retained_kv_prefix),
-        )
-        .route(
-            foretoken_model_protocol::KV_PREFIX_CLAIM_PATH,
-            post(claim_kv_prefix),
-        )
-        .route(
-            foretoken_model_protocol::KV_PREFIX_CANCEL_PATH,
-            post(cancel_kv_prefix),
-        )
-        .with_state(state)
-        .merge(profiling)
-        .layer(DefaultBodyLimit::max(
-            internal_generate_request_body_limit_bytes,
-        ))
 }
 
 // The protocol-1 workload probe cannot admit an older binary that ignores the projected limit.
@@ -624,55 +711,6 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     }
 }
 
-/// Decodes an internal request and transfers its instance slot to the engine execution task.
-async fn generate(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, ApiError> {
-    // Multimodal tensors use MessagePack; ordinary requests keep a human-readable JSON boundary.
-    let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
-        rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
-    } else {
-        serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
-    };
-    if input
-        .reservation
-        .as_ref()
-        .is_some_and(|reference| reference.model != state.metadata.model.model)
-    {
-        return Err(ApiError::InvalidRequest);
-    }
-    if !state.health.healthy() {
-        return Err(ApiError::Unavailable);
-    }
-    let permit = state.health.try_admit().map_err(|error| match error {
-        AdmissionRejection::Closed => ApiError::Unavailable,
-        AdmissionRejection::Busy => ApiError::Busy,
-    })?;
-    let request_id = input.request_id.clone();
-    let stream = start_execution(state, input, permit).await?;
-    // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
-    let body_stream = stream.map(move |item| {
-        let event = match item {
-            Ok(event) => event,
-            Err(error) => TokenEvent::Error {
-                request_id: request_id.clone(),
-                code: error.token_error_code(),
-            },
-        };
-        let mut encoded = serde_json::to_vec(&event).expect("TokenEvent always serializes");
-        encoded.push(b'\n');
-        Ok::<Bytes, Infallible>(Bytes::from(encoded))
-    });
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/x-ndjson")],
-        Body::from_stream(body_stream),
-    )
-        .into_response())
-}
-
 // Submission outlives the HTTP handler. A disconnect during engine submission must not drop
 // the future and leave an accepted request without a completion owner.
 async fn start_execution(
@@ -873,11 +911,6 @@ async fn execution_cancelled(
     }
 }
 
-struct ExecutionRegistration {
-    request_id: String,
-    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
-}
-
 impl Drop for ExecutionRegistration {
     fn drop(&mut self) {
         self.executions
@@ -887,7 +920,6 @@ impl Drop for ExecutionRegistration {
     }
 }
 
-struct CancelExecution(Arc<ExecutionControl>);
 impl Drop for CancelExecution {
     fn drop(&mut self) {
         self.0.cancel();
@@ -899,13 +931,6 @@ impl Drop for CancelExecution {
 async fn stop_uncertain_execution(health: &RuntimeHealth) {
     health.fail_execution();
     health.wait_stopped().await;
-}
-
-#[derive(Clone, Copy)]
-enum ReservationEnd {
-    NotSubmitted,
-    StageTerminated,
-    RequestTerminated,
 }
 
 // Persist the execution owner's terminal evidence, retaining the reservation across storage outages.
@@ -999,17 +1024,6 @@ fn status(healthy: bool) -> StatusCode {
     }
 }
 
-/// Fixed, wire-safe errors for the internal API.
-#[derive(Debug, Clone, Copy)]
-enum ApiError {
-    InvalidRequest,
-    Unavailable,
-    Busy,
-    AdmissionUnavailable,
-    Rejected,
-    Protocol,
-    RequestFailed,
-}
 impl ApiError {
     fn backend(error: BackendError) -> Self {
         match error {
@@ -1051,15 +1065,6 @@ impl ApiError {
             Self::RequestFailed => "model server request failed",
         }
     }
-}
-#[derive(Serialize)]
-struct ErrorBody {
-    error: ErrorDetail,
-}
-#[derive(Serialize)]
-struct ErrorDetail {
-    code: &'static str,
-    message: &'static str,
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {

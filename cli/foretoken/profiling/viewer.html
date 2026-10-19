@@ -231,75 +231,6 @@
     };
     const fileTime = (file) =>
       file.time ? Date.parse(file.time) : file.modified_at * 1000;
-    function clearViewer() {
-      clearInterval(ping);
-      clearTimeout(handshakeTimeout);
-      if (listener) window.removeEventListener("message", listener);
-      listener = null;
-      $("viewer").replaceChildren();
-      frame = null;
-    }
-    async function request(path, method = "GET") {
-      const response = await fetch(path, { cache: "no-store", method });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error || `Request failed (${response.status})`);
-      }
-      return response;
-    }
-    function renderTree() {
-      const root = { directories: new Map(), files: [] };
-      for (const file of files) {
-        const parts = file.name.split("/");
-        parts.pop();
-        let node = root;
-        for (const part of parts) {
-          if (!node.directories.has(part))
-            node.directories.set(part, { directories: new Map(), files: [] });
-          node = node.directories.get(part);
-        }
-        node.files.push(file);
-      }
-      function append(node, parent, prefix) {
-        for (const [name, child] of node.directories) {
-          const path = prefix + name + "/";
-          const details = document.createElement("details");
-          details.open = !!selected?.name.startsWith(path);
-          const summary = document.createElement("summary");
-          summary.textContent = name;
-          const children = document.createElement("div");
-          details.append(summary, children);
-          append(child, children, path);
-          parent.append(details);
-        }
-        for (const file of node.files) {
-          const button = document.createElement("button");
-          button.className = "file";
-          button.dataset.file = file.name;
-          button.setAttribute(
-            "aria-pressed",
-            String(selected?.name === file.name),
-          );
-          const name = document.createElement("span");
-          name.textContent =
-            file.format === "nsight"
-              ? "Nsight Systems timeline"
-              : file.name.endsWith(".mctracer.json")
-                ? "mcTracer timeline"
-                : file.format === "sqlite"
-                  ? "Nsight analysis database"
-                  : file.name.split("/").pop();
-          const detail = document.createElement("span");
-          detail.className = "detail";
-          detail.textContent = `${new Date(fileTime(file)).toLocaleString()} · ${(file.size / 1048576).toFixed(1)} MiB`;
-          button.append(name, detail);
-          button.onclick = () => selectFile(file);
-          parent.append(button);
-        }
-      }
-      $("tree").replaceChildren();
-      append(root, $("tree"), "");
-    }
     async function refresh() {
       $("refresh").disabled = true;
       try {
@@ -470,6 +401,75 @@
       } finally {
         if (ticket === selection) $("open").disabled = false;
       }
+    }
+    function clearViewer() {
+      clearInterval(ping);
+      clearTimeout(handshakeTimeout);
+      if (listener) window.removeEventListener("message", listener);
+      listener = null;
+      $("viewer").replaceChildren();
+      frame = null;
+    }
+    async function request(path, method = "GET") {
+      const response = await fetch(path, { cache: "no-store", method });
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.error || `Request failed (${response.status})`);
+      }
+      return response;
+    }
+    function renderTree() {
+      const root = { directories: new Map(), files: [] };
+      for (const file of files) {
+        const parts = file.name.split("/");
+        parts.pop();
+        let node = root;
+        for (const part of parts) {
+          if (!node.directories.has(part))
+            node.directories.set(part, { directories: new Map(), files: [] });
+          node = node.directories.get(part);
+        }
+        node.files.push(file);
+      }
+      function append(node, parent, prefix) {
+        for (const [name, child] of node.directories) {
+          const path = prefix + name + "/";
+          const details = document.createElement("details");
+          details.open = !!selected?.name.startsWith(path);
+          const summary = document.createElement("summary");
+          summary.textContent = name;
+          const children = document.createElement("div");
+          details.append(summary, children);
+          append(child, children, path);
+          parent.append(details);
+        }
+        for (const file of node.files) {
+          const button = document.createElement("button");
+          button.className = "file";
+          button.dataset.file = file.name;
+          button.setAttribute(
+            "aria-pressed",
+            String(selected?.name === file.name),
+          );
+          const name = document.createElement("span");
+          name.textContent =
+            file.format === "nsight"
+              ? "Nsight Systems timeline"
+              : file.name.endsWith(".mctracer.json")
+                ? "mcTracer timeline"
+                : file.format === "sqlite"
+                  ? "Nsight analysis database"
+                  : file.name.split("/").pop();
+          const detail = document.createElement("span");
+          detail.className = "detail";
+          detail.textContent = `${new Date(fileTime(file)).toLocaleString()} · ${(file.size / 1048576).toFixed(1)} MiB`;
+          button.append(name, detail);
+          button.onclick = () => selectFile(file);
+          parent.append(button);
+        }
+      }
+      $("tree").replaceChildren();
+      append(root, $("tree"), "");
     }
     $("refresh").onclick = refresh;
     $("stores").onchange = () => selectStore($("stores").value);

@@ -28,64 +28,6 @@ const (
 	weightSourceRevisionLabel = "inference.foretoken.io/weight-source-revision"
 )
 
-// modelExpressSourcesEnabled selects cohorts with stable shard placement and shared prepared files.
-func modelExpressSourcesEnabled(spec inferencev1alpha1.ModelGroupSpec) bool {
-	var loader string
-	argument := spec.Runtime.EngineArgs["load-format"]
-	return json.Unmarshal(argument.Raw, &loader) == nil && loader == "modelexpress" && spec.RDMA != nil &&
-		spec.Accelerator.DeviceResourceName == "nvidia.com/gpu" && spec.Artifacts.Cache != nil &&
-		spec.Artifacts.Source != inferencev1alpha1.ModelSourceLocal && spec.Parallelism.DP == 1 &&
-		(spec.Parallelism.EP == nil || !spec.Parallelism.EP.EPLB)
-}
-
-func weightSourceLabels(spec inferencev1alpha1.ModelGroupSpec) map[string]string {
-	return map[string]string{weightSourcePoolLabel: spec.ModelPoolRef.UID, weightSourceRevisionLabel: spec.Revision}
-}
-
-// configureWeightSources adds discovery only to serving Pod templates, never Deployment selectors.
-// The upstream loader publishes tensors before engine readiness; Services exclude starting Pods.
-func configureWeightSources(spec inferencev1alpha1.ModelGroupSpec, pod *corev1.PodTemplateSpec) error {
-	if !modelExpressSourcesEnabled(spec) {
-		return nil
-	}
-	if err := runtimeconfig.ValidateModelExpressPorts(spec.Runtime.Port, spec.Resources.Requests.GPU.Count, spec.PDRuntime); err != nil {
-		return err
-	}
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
-	}
-	for name, value := range weightSourceLabels(spec) {
-		pod.Labels[name] = value
-	}
-	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
-		corev1.EnvVar{Name: "MX_METADATA_BACKEND", Value: "k8s-service"},
-		corev1.EnvVar{Name: "MX_P2P_METADATA", Value: "1"},
-		corev1.EnvVar{Name: "MX_K8S_SERVICE_PATTERN", Value: fmt.Sprintf("mx-%s-r{rank}:%d", spec.Revision, runtimeconfig.ModelExpressGRPCPort)},
-		corev1.EnvVar{Name: "MX_MODEL_REVISION", Value: spec.ModelPoolRef.UID + "/" + spec.Revision},
-		corev1.EnvVar{Name: "MX_WORKER_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
-		corev1.EnvVar{Name: "MX_WORKER_GRPC_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressGRPCPort))},
-		corev1.EnvVar{Name: "MX_METADATA_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressMetadataPort))},
-		corev1.EnvVar{Name: "MX_RDMA_NIC_PIN", Value: "auto"},
-	)
-	return nil
-}
-
-// weightSourceIngress permits only cohort-local manifest and NIXL metadata connections.
-// RDMA data uses the allocated device network, not dynamically opened Pod TCP ports.
-func weightSourceIngress(spec inferencev1alpha1.ModelGroupSpec) []networkingv1.NetworkPolicyIngressRule {
-	if !modelExpressSourcesEnabled(spec) {
-		return nil
-	}
-	tcp := corev1.ProtocolTCP
-	ports := make([]networkingv1.NetworkPolicyPort, 0, 2)
-	for _, base := range []int32{runtimeconfig.ModelExpressGRPCPort, runtimeconfig.ModelExpressMetadataPort} {
-		start := intstr.FromInt32(base)
-		end := base + spec.Resources.Requests.GPU.Count - 1
-		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &start, EndPort: &end})
-	}
-	return []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchLabels: weightSourceLabels(spec)}}}, Ports: ports}}
-}
-
 // reconcileWeightSources owns one Service per global shard rank for each live Pool cohort.
 // With DP=1, vLLM mp places consecutive world ranks on each LWS member; ModelExpress
 // listens on base+local CUDA device ID. Source Services translate the global rank to that port.
@@ -148,4 +90,62 @@ func (reconciler *PoolReconciler) reconcileWeightSources(ctx context.Context, po
 		}
 	}
 	return nil
+}
+
+// modelExpressSourcesEnabled selects cohorts with stable shard placement and shared prepared files.
+func modelExpressSourcesEnabled(spec inferencev1alpha1.ModelGroupSpec) bool {
+	var loader string
+	argument := spec.Runtime.EngineArgs["load-format"]
+	return json.Unmarshal(argument.Raw, &loader) == nil && loader == "modelexpress" && spec.RDMA != nil &&
+		spec.Accelerator.DeviceResourceName == "nvidia.com/gpu" && spec.Artifacts.Cache != nil &&
+		spec.Artifacts.Source != inferencev1alpha1.ModelSourceLocal && spec.Parallelism.DP == 1 &&
+		(spec.Parallelism.EP == nil || !spec.Parallelism.EP.EPLB)
+}
+
+func weightSourceLabels(spec inferencev1alpha1.ModelGroupSpec) map[string]string {
+	return map[string]string{weightSourcePoolLabel: spec.ModelPoolRef.UID, weightSourceRevisionLabel: spec.Revision}
+}
+
+// configureWeightSources adds discovery only to serving Pod templates, never Deployment selectors.
+// The upstream loader publishes tensors before engine readiness; Services exclude starting Pods.
+func configureWeightSources(spec inferencev1alpha1.ModelGroupSpec, pod *corev1.PodTemplateSpec) error {
+	if !modelExpressSourcesEnabled(spec) {
+		return nil
+	}
+	if err := runtimeconfig.ValidateModelExpressPorts(spec.Runtime.Port, spec.Resources.Requests.GPU.Count, spec.PDRuntime); err != nil {
+		return err
+	}
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	for name, value := range weightSourceLabels(spec) {
+		pod.Labels[name] = value
+	}
+	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+		corev1.EnvVar{Name: "MX_METADATA_BACKEND", Value: "k8s-service"},
+		corev1.EnvVar{Name: "MX_P2P_METADATA", Value: "1"},
+		corev1.EnvVar{Name: "MX_K8S_SERVICE_PATTERN", Value: fmt.Sprintf("mx-%s-r{rank}:%d", spec.Revision, runtimeconfig.ModelExpressGRPCPort)},
+		corev1.EnvVar{Name: "MX_MODEL_REVISION", Value: spec.ModelPoolRef.UID + "/" + spec.Revision},
+		corev1.EnvVar{Name: "MX_WORKER_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
+		corev1.EnvVar{Name: "MX_WORKER_GRPC_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressGRPCPort))},
+		corev1.EnvVar{Name: "MX_METADATA_PORT", Value: strconv.Itoa(int(runtimeconfig.ModelExpressMetadataPort))},
+		corev1.EnvVar{Name: "MX_RDMA_NIC_PIN", Value: "auto"},
+	)
+	return nil
+}
+
+// weightSourceIngress permits only cohort-local manifest and NIXL metadata connections.
+// RDMA data uses the allocated device network, not dynamically opened Pod TCP ports.
+func weightSourceIngress(spec inferencev1alpha1.ModelGroupSpec) []networkingv1.NetworkPolicyIngressRule {
+	if !modelExpressSourcesEnabled(spec) {
+		return nil
+	}
+	tcp := corev1.ProtocolTCP
+	ports := make([]networkingv1.NetworkPolicyPort, 0, 2)
+	for _, base := range []int32{runtimeconfig.ModelExpressGRPCPort, runtimeconfig.ModelExpressMetadataPort} {
+		start := intstr.FromInt32(base)
+		end := base + spec.Resources.Requests.GPU.Count - 1
+		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &start, EndPort: &end})
+	}
+	return []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchLabels: weightSourceLabels(spec)}}}, Ports: ports}}
 }

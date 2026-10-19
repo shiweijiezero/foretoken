@@ -104,18 +104,6 @@ class LeaderWorkerLifecycle:
         self._kubectl.wait_for_crds((_RESOURCE,), timeout)
         self._require_api()
 
-    def _require_api(self) -> None:
-        """Require the v1 API consumed by the model-group controller."""
-        crd = self._kubectl.get("customresourcedefinition", _RESOURCE)
-        if not any(
-            version["name"] == "v1" and version.get("served")
-            for version in crd["spec"]["versions"]
-        ):
-            raise DeploymentError(
-                "the installed LeaderWorkerSet controller must serve "
-                "leaderworkerset.x-k8s.io/v1"
-            )
-
     def finish_uninstall(self, timeout: str) -> tuple[str, str]:
         """Remove our controller only when no LWS-managed custom resources remain."""
         release = self._helm.leader_worker_release()
@@ -133,3 +121,15 @@ class LeaderWorkerLifecycle:
             return "Preserve", "LeaderWorkerSet resources still use the controller"
         self._helm.uninstall(release, timeout)
         return "Removed", release.display_name
+
+    def _require_api(self) -> None:
+        """Require the v1 API consumed by the model-group controller."""
+        crd = self._kubectl.get("customresourcedefinition", _RESOURCE)
+        if not any(
+            version["name"] == "v1" and version.get("served")
+            for version in crd["spec"]["versions"]
+        ):
+            raise DeploymentError(
+                "the installed LeaderWorkerSet controller must serve "
+                "leaderworkerset.x-k8s.io/v1"
+            )

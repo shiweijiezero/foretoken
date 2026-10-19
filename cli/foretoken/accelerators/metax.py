@@ -126,24 +126,6 @@ class MetaXExporterLifecycle:
         self.daemonset = resource_ref(daemonset)
         self._resources = tuple(resource_ref(doc) for doc in self._workloads)
 
-    def _existing_resources(self) -> tuple[dict[str, Any], ...]:
-        """Read exact identities, including before monitoring CRDs are installed."""
-        monitors_available = "servicemonitors.monitoring.coreos.com" in (
-            self._kubectl.api_resource_names("monitoring.coreos.com")
-        )
-        existing = []
-        for ref in self._resources:
-            if ref.kind == "ServiceMonitor" and not monitors_available:
-                continue
-            value = self._kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-            if value is not None:
-                existing.append(value)
-        return tuple(existing)
-
-    def _owned(self, document: dict[str, Any]) -> bool:
-        key, value = self._management_label
-        return (document["metadata"].get("labels") or {}).get(key) == value
-
     def managed_resources(self) -> tuple[ResourceRef, ...]:
         """Return CLI-owned resources for planning install or uninstall."""
         return tuple(
@@ -210,3 +192,21 @@ class MetaXExporterLifecycle:
         documents = tuple(doc for doc in self._existing_resources() if self._owned(doc))
         if documents:
             self._kubectl.delete(yaml.safe_dump_all(reversed(documents)), timeout)
+
+    def _existing_resources(self) -> tuple[dict[str, Any], ...]:
+        """Read exact identities, including before monitoring CRDs are installed."""
+        monitors_available = "servicemonitors.monitoring.coreos.com" in (
+            self._kubectl.api_resource_names("monitoring.coreos.com")
+        )
+        existing = []
+        for ref in self._resources:
+            if ref.kind == "ServiceMonitor" and not monitors_available:
+                continue
+            value = self._kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
+            if value is not None:
+                existing.append(value)
+        return tuple(existing)
+
+    def _owned(self, document: dict[str, Any]) -> bool:
+        key, value = self._management_label
+        return (document["metadata"].get("labels") or {}).get(key) == value

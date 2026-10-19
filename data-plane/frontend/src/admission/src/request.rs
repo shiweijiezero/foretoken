@@ -13,6 +13,18 @@ pub struct CallerIdentity {
     pub role: Option<String>,
 }
 
+/// Facts needed to reserve an entire request before preprocessing its candidates.
+#[derive(Clone, Debug)]
+pub struct AdmissionRequest {
+    pub model: String,
+    pub caller: CallerIdentity,
+    /// Includes all generated candidates, including those used only for best-of selection.
+    pub units: u32,
+    /// Tracks execution in the ledger even when no admission limits are configured.
+    pub track_execution: bool,
+    pub received_at: Instant,
+}
+
 tokio::task_local! {
     static CALLER: CallerIdentity;
 }
@@ -28,16 +40,4 @@ impl CallerIdentity {
     pub fn current() -> Self {
         CALLER.try_with(Clone::clone).unwrap_or_default()
     }
-}
-
-/// Facts needed to reserve an entire request before preprocessing its candidates.
-#[derive(Clone, Debug)]
-pub struct AdmissionRequest {
-    pub model: String,
-    pub caller: CallerIdentity,
-    /// Includes all generated candidates, including those used only for best-of selection.
-    pub units: u32,
-    /// Tracks execution in the ledger even when no admission limits are configured.
-    pub track_execution: bool,
-    pub received_at: Instant,
 }

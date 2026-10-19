@@ -23,7 +23,9 @@ Install the CLI from this checkout:
 pip install -e .
 ```
 
-For a local kind or k3d cluster, build and install without a registry:
+The platform needs one source installation for the cluster. If it is already installed from source, continue with [deployment](#deploy-a-model-service); another workstation only needs the CLI and a source checkout.
+
+For the initial installation on a local kind or k3d cluster, build and install without a registry:
 
 ```bash
 foretoken install -e .
@@ -38,19 +40,21 @@ Source builds automatically reuse persistent node-local compiler caches. To stor
 From the Foretoken repository root, deploy the Quick Start using the code in this directory:
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-This creates a frontend and a `Qwen/Qwen3-0.6B` model service in the `foretoken-demo` namespace, using one GPU. Once deployment completes, send a request:
+Without `--name`, the instance name comes from `metadata.name` of the `FrontendService` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml): `qwen3-0-6b` in this example. Add `--name candidate-a` to choose `candidate-a` instead, and use that name in subsequent commands.
+
+The instance runs in your current kubeconfig namespace, with a frontend and a `Qwen/Qwen3-0.6B` model service using one GPU. Once deployment completes, send a request:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-After changing controller, frontend or model-server code, rerun `foretoken deploy`; it builds the changes and updates the deployment namespace. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
+After changing controller, frontend or model-server code, rerun the deployment command above to build the changes and update this instance without changing its neighbors. Use `foretoken install -e .` for shared CRD or platform configuration changes. Updating serving code restarts the affected processes and may reload model weights.
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 
@@ -59,57 +63,43 @@ CLI changes use the directory where `pip install -e .` was run. Reinstall the CL
 Remove the example when finished:
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 ```
 
 ### Run candidates in parallel
 
-Give each candidate an independent Foretoken source directory and Kubernetes namespace to build and deploy different changes in parallel. Use separate clones or Git worktrees, which provide separate working directories from one repository. Candidates share the CLI installation and cluster platform, while each namespace has its own controller and serving code.
+Use a separate source checkout and instance name for each candidate. Candidates share one installed platform and can run in the same Kubernetes namespace, with independently updated controllers and serving code.
 
-From the repository root, create a candidate and a Kustomize configuration based on the Quick Start:
+From the repository root:
 
 ```bash
 git worktree add ../candidate-a -b experiment/candidate-a
-cd ../candidate-a
-mkdir -p examples/candidate
-cat > examples/candidate/kustomization.yaml <<'EOF'
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: candidate-a
-resources:
-  - ../quickstart/qwen3-0.6b
-patches:
-  - target:
-      kind: RuntimeCache
-    patch: |-
-      - op: replace
-        path: /spec
-        value:
-          initialSize: 20Gi
-          accessMode: ReadWriteOnce
-          retentionPolicy: Delete
-EOF
+git worktree add ../candidate-b -b experiment/candidate-b
 
-foretoken deploy examples/candidate --timeout 20m
-foretoken perf examples/candidate --num-prompts 20 \
+foretoken deploy ../candidate-a/examples/quickstart/qwen3-0.6b \
+  --name candidate-a -e ../candidate-a --timeout 20m
+foretoken deploy ../candidate-b/examples/quickstart/qwen3-0.6b \
+  --name candidate-b -e ../candidate-b --timeout 20m
+
+foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
+  --name candidate-a --num-prompts 20 \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidate keeps the Quick Start's single-GPU configuration and gets 20 GiB of model storage from the cluster, so no host-directory mount is needed. To share an existing model directory instead, follow [model storage](../features/model-storage.md).
+The candidates keep the Quick Start's single-GPU configuration. Their default `data/` selections resolve to the primary checkout's data directory, sharing model downloads while keeping runtime state private to each instance. The directory must be available to the target nodes; see [shared model storage](../features/model-storage.md#share-model-files-across-namespaces), or choose [dynamic storage](../features/model-storage.md#use-dynamic-storage) when no shared directory is available.
 
-Use separate source directories, namespaces and iteration names for other candidates. Each needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
+Each candidate needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
-Results are saved in each source directory. The [experiment records guide](../../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
+The benchmark saves its results under `results/candidates`. The [experiment records guide](../../rsi-playbooks/experiment-records.md#analyze-results) explains which files to inspect when comparing candidates. Shared CPU, storage and network activity can affect measurements. With all GPUs occupied, replacement may briefly stop the old service to release its devices.
 
-Delete the candidate when finished:
+Delete the candidates when finished:
 
 ```bash
-foretoken delete examples/candidate
+foretoken delete candidate-a
+foretoken delete candidate-b
 ```
 
-Deletion waits for the candidate's services to finish cleanup, then removes its namespace controller and namespace. It also cleans up build resources no longer in use, while preserving source directories, experiment results and source archives.
-
-Uninstall the platform only after all candidates have finished.
+Deleting one candidate removes only that instance and its controller, not the neighboring candidate or Kubernetes namespace. Source directories, experiment results and administrator-provided storage are retained. See the [CLI guide](../../cli/README.md#clean-up) for model-cache and dynamic-volume cleanup.
 
 ## Edit an inference engine
 
@@ -119,7 +109,7 @@ To use vLLM code from a local directory, pass that directory on deployment. It m
 foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeout 20m
 ```
 
-Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, rerun `foretoken deploy`; compilation is automatic. Select the engine directory separately for each Foretoken source directory.
+Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
@@ -139,7 +129,7 @@ To use a custom environment, edit `baseImage` in [`deploy/inference-engines/vllm
 {"baseImage": "ghcr.io/example/custom-vllm:latest"}
 ```
 
-Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, run `foretoken deploy` again.
+Source installs, `make image-model-server`, `deploy/dev-build`, and release builds all use this setting. The image must be compatible with Foretoken's vLLM adapter and accessible to the builder. After changing it in an existing source installation, redeploy with `-e .`.
 
 To override the base for one installation instead, set `runtime.vllm.image` in `deploy/platform-values.yaml`:
 

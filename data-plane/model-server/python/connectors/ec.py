@@ -30,19 +30,6 @@ class SharedStorageConnector(ECExampleConnector):
             ]
         }
 
-    def _generate_filename_debug(self, mm_hash: str) -> str:
-        """Share newly owned entry directories across workers using the volume's group."""
-        filename = super()._generate_filename_debug(mm_hash)
-        directory = os.open(
-            Path(filename).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        )
-        try:
-            if os.fstat(directory).st_uid == os.geteuid():
-                os.fchmod(directory, 0o2770)
-        finally:
-            os.close(directory)
-        return filename
-
     def save_caches(self, encoder_cache, mm_hash, **kwargs) -> None:
         """Publish a complete tensor before another worker can discover its cache key."""
         if not self.is_producer:
@@ -60,3 +47,16 @@ class SharedStorageConnector(ECExampleConnector):
             os.replace(source, destination)
         finally:
             source.unlink(missing_ok=True)
+
+    def _generate_filename_debug(self, mm_hash: str) -> str:
+        """Share newly owned entry directories across workers using the volume's group."""
+        filename = super()._generate_filename_debug(mm_hash)
+        directory = os.open(
+            Path(filename).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        try:
+            if os.fstat(directory).st_uid == os.geteuid():
+                os.fchmod(directory, 0o2770)
+        finally:
+            os.close(directory)
+        return filename

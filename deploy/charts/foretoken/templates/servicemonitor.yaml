@@ -1,7 +1,7 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{- if and (eq .Values.scope "platform") (eq (include "foretoken.observabilityEnabled" .) "true") }}
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

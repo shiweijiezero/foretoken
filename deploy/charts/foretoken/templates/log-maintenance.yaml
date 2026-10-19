@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Kubernetes schedules independent observations of shared log-storage capacity.
-{{- if and (eq .Values.scope "platform") .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
+{{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
 {{- $store := splitList "/" .Values.observability.logs.managedStatefulSet }}
 {{- $name := include "foretoken.compactName" (printf "%s-log-maintenance" .Release.Name) }}
 {{- $application := index (include "foretoken.applications" . | fromJson) "control-plane" }}

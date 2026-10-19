@@ -37,6 +37,7 @@ Choose the guide for the environment where the service will run:
 | Local CPU development cluster | [kind](deployment/kind.md) |
 | Existing Kubernetes cluster | [Kubernetes](deployment/kubernetes.md) |
 | MetaX GPUs | [Platform preparation](deployment/metax-platform.md) · [Model deployment](deployment/metax.md) |
+| Create and operate named deployment instances | [CLI](../cli/README.md#service-deployment) |
 | Build and deploy source changes, including parallel candidates | [Source deployment](deployment/source.md) |
 
 ### Model configuration
@@ -78,5 +79,4 @@ Start with [Contributing](../CONTRIBUTING.md) and the [code style](development/c
 - [Preview and build the documentation](development/documentation.md) when updating guides or navigation.
 - Validate changes with the [testing guidelines](development/testing.md) and [CI guidelines](development/ci.md).
 - Maintain deployment and storage behavior using the [source-deployment](development/source-deployment.md) and [runtime-cache](development/runtime-cache.md) guides.
-- Keep defaults, derived values and listener configuration with their [runtime configuration owners](development/runtime-configuration.md).
 - Build and publish versions with the [release guide](development/release.md).

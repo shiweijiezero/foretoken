@@ -26,98 +26,6 @@ _CONTAINERD_CLIENT = "/usr/local/bin/ctr"
 _CONTAINERD_SOCKET = "/run/foretoken-containerd.sock"
 
 
-def image_manifest_digest(
-    digest: str, read: Callable[[str], dict[str, Any]]
-) -> str:
-    """Resolve a single-image index for node and OCI-layout consumers without unwrapping artifacts."""
-    descriptor = read(digest)
-    if descriptor.get("mediaType") not in {
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-    }:
-        return digest
-    manifests = descriptor["manifests"]
-    if len(manifests) != 1:
-        return digest
-    child = manifests[0]
-    if (
-        child["mediaType"] not in {
-            "application/vnd.oci.image.manifest.v1+json",
-            "application/vnd.docker.distribution.manifest.v2+json",
-        }
-        or child.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest"
-    ):
-        return digest
-    manifest = read(child["digest"])
-    if (
-        manifest.get("artifactType") or manifest.get("subject")
-        or manifest.get("config", {}).get("mediaType") not in {
-            "application/vnd.oci.image.config.v1+json",
-            "application/vnd.docker.container.image.v1+json",
-        }
-    ):
-        return digest
-    return child["digest"]
-
-
-def image_tools_image(
-    arguments: dict[str, str],
-    registry_mirrors: dict[str, list[str]] | None = None,
-) -> str:
-    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
-    automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
-    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
-    return f"{registry}/library/debian:bookworm-slim"
-
-
-def node_containerd_socket(context: str, node: dict[str, Any]) -> str:
-    """Resolve the node-local runtime path supported by source import and cleanup."""
-    runtime = (
-        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
-    )
-    if context.startswith("k3d-") or "k3s" in runtime:
-        return "/run/k3s/containerd/containerd.sock"
-    if context.startswith("kind-"):
-        return "/run/containerd/containerd.sock"
-    return ""
-
-
-def images_container_spec(
-    tools_image: str, containerd_socket: str
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Return the shared socket-only container and host volumes for builders and cleanup."""
-    client = "/bin/k3s" if "/k3s/" in containerd_socket else _CONTAINERD_CLIENT
-    return (
-        {
-            "name": "images",
-            "image": tools_image,
-            "command": ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"],
-            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
-            "securityContext": {
-                "runAsUser": 1000,
-                "runAsGroup": 0,
-                "allowPrivilegeEscalation": False,
-                "capabilities": {"drop": ["ALL"]},
-            },
-            "volumeMounts": [
-                {"name": "runtime-socket", "mountPath": _CONTAINERD_SOCKET},
-                {
-                    "name": "runtime-client",
-                    "mountPath": _CONTAINERD_CLIENT,
-                    "readOnly": True,
-                },
-            ],
-        },
-        [
-            {
-                "name": "runtime-socket",
-                "hostPath": {"path": containerd_socket, "type": "Socket"},
-            },
-            {"name": "runtime-client", "hostPath": {"path": client, "type": "File"}},
-        ],
-    )
-
-
 class NodeImageStore:
     """Operate on source image records through one node's images container."""
 
@@ -468,3 +376,95 @@ def node_image_store(
                     "--timeout=" + timeout,
                 ]
             )
+
+
+def image_manifest_digest(
+    digest: str, read: Callable[[str], dict[str, Any]]
+) -> str:
+    """Resolve a single-image index for node and OCI-layout consumers without unwrapping artifacts."""
+    descriptor = read(digest)
+    if descriptor.get("mediaType") not in {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    }:
+        return digest
+    manifests = descriptor["manifests"]
+    if len(manifests) != 1:
+        return digest
+    child = manifests[0]
+    if (
+        child["mediaType"] not in {
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        }
+        or child.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest"
+    ):
+        return digest
+    manifest = read(child["digest"])
+    if (
+        manifest.get("artifactType") or manifest.get("subject")
+        or manifest.get("config", {}).get("mediaType") not in {
+            "application/vnd.oci.image.config.v1+json",
+            "application/vnd.docker.container.image.v1+json",
+        }
+    ):
+        return digest
+    return child["digest"]
+
+
+def image_tools_image(
+    arguments: dict[str, str],
+    registry_mirrors: dict[str, list[str]] | None = None,
+) -> str:
+    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
+    automatic = (registry_mirrors or {}).get("docker.io", ["docker.io"])[0]
+    registry = arguments.get("BASE_IMAGE_REGISTRY", automatic).rstrip("/")
+    return f"{registry}/library/debian:bookworm-slim"
+
+
+def node_containerd_socket(context: str, node: dict[str, Any]) -> str:
+    """Resolve the node-local runtime path supported by source import and cleanup."""
+    runtime = (
+        node.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion", "")
+    )
+    if context.startswith("k3d-") or "k3s" in runtime:
+        return "/run/k3s/containerd/containerd.sock"
+    if context.startswith("kind-"):
+        return "/run/containerd/containerd.sock"
+    return ""
+
+
+def images_container_spec(
+    tools_image: str, containerd_socket: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return the shared socket-only container and host volumes for builders and cleanup."""
+    client = "/bin/k3s" if "/k3s/" in containerd_socket else _CONTAINERD_CLIENT
+    return (
+        {
+            "name": "images",
+            "image": tools_image,
+            "command": ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"],
+            "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
+            "securityContext": {
+                "runAsUser": 1000,
+                "runAsGroup": 0,
+                "allowPrivilegeEscalation": False,
+                "capabilities": {"drop": ["ALL"]},
+            },
+            "volumeMounts": [
+                {"name": "runtime-socket", "mountPath": _CONTAINERD_SOCKET},
+                {
+                    "name": "runtime-client",
+                    "mountPath": _CONTAINERD_CLIENT,
+                    "readOnly": True,
+                },
+            ],
+        },
+        [
+            {
+                "name": "runtime-socket",
+                "hostPath": {"path": containerd_socket, "type": "Socket"},
+            },
+            {"name": "runtime-client", "hostPath": {"path": client, "type": "File"}},
+        ],
+    )

@@ -39,6 +39,94 @@ class ArrivalTraceEvent:
     metadata: dict[str, Any] | None = None
 
 
+TraceRowParser = Callable[..., ArrivalTraceEvent]
+
+
+class ArrivalTraceReader:
+    """Own trace resolution, format detection, time-window selection, and stable sorting."""
+
+    def __init__(self, trace_selector: str | Path) -> None:
+        self.trace_selector = str(trace_selector)
+        self.trace_format: str | None = None
+
+    def read_window(
+        self,
+        *,
+        start_offset_seconds: float = 0.0,
+        duration_seconds: float | None = None,
+    ) -> tuple[float, list[ArrivalTraceEvent]]:
+        """Select a half-open window relative to the first timestamp and sort by arrival time."""
+        self.trace_format = None
+        first_timestamp = None
+        for event in self._iter_events():
+            if first_timestamp is None:
+                first_timestamp = event.timestamp_seconds
+            else:
+                first_timestamp = min(first_timestamp, event.timestamp_seconds)
+
+        if first_timestamp is None:
+            raise ValueError("Trace contains no requests")
+
+        window_start = first_timestamp + start_offset_seconds
+        window_end = (
+            None if duration_seconds is None else window_start + duration_seconds
+        )
+        selected_events = [
+            event
+            for event in self._iter_events()
+            if event.timestamp_seconds >= window_start
+            and (window_end is None or event.timestamp_seconds < window_end)
+        ]
+        if not selected_events:
+            raise ValueError("Trace window contains no requests")
+        selected_events.sort(key=lambda event: event.timestamp_seconds)
+        return window_start, selected_events
+
+    def _iter_rows(self) -> Iterator[tuple[Path, int, int, Any]]:
+        """Yield trace rows through the shared local and Hub source reader."""
+        if not Path(self.trace_selector).expanduser().is_file():
+            logger.info("Resolving trace source %s", self.trace_selector)
+        yield from iter_dataset_rows(self.trace_selector)
+
+    def _iter_events(self) -> Iterator[ArrivalTraceEvent]:
+        row_parser: TraceRowParser | None = None
+        for dataset_path, line_number, source_row_index, row in self._iter_rows():
+            if row_parser is None:
+                trace_format = self._detect_format(
+                    row,
+                    dataset_path=dataset_path,
+                    line_number=line_number,
+                )
+                if self.trace_format not in (None, trace_format):
+                    raise ValueError("Trace format changed between reads")
+                self.trace_format = trace_format
+                row_parser = _TRACE_ROW_PARSERS[trace_format]
+            yield row_parser(
+                row,
+                dataset_path=dataset_path,
+                line_number=line_number,
+                source_row_index=source_row_index,
+            )
+
+    @staticmethod
+    def _detect_format(
+        row: object,
+        *,
+        dataset_path: Path,
+        line_number: int,
+    ) -> str:
+        if isinstance(row, dict):
+            if all(key in row for key in ("timestamp", "chatId", "messages")):
+                return "studychat"
+            if all(key in row for key in ("timestamp", "input_length")):
+                return "mooncake"
+        raise ValueError(
+            f"Cannot detect trace format from {dataset_path}:{line_number}; "
+            "expected StudyChat timestamp/chatId/messages or Mooncake "
+            "timestamp/input_length"
+        )
+
+
 def _parse_studychat_event(
     row: object,
     *,
@@ -154,93 +242,7 @@ def _parse_mooncake_event(
     )
 
 
-TraceRowParser = Callable[..., ArrivalTraceEvent]
 _TRACE_ROW_PARSERS: dict[str, TraceRowParser] = {
     "studychat": _parse_studychat_event,
     "mooncake": _parse_mooncake_event,
 }
-
-
-class ArrivalTraceReader:
-    """Own trace resolution, format detection, time-window selection, and stable sorting."""
-
-    def __init__(self, trace_selector: str | Path) -> None:
-        self.trace_selector = str(trace_selector)
-        self.trace_format: str | None = None
-
-    def _iter_rows(self) -> Iterator[tuple[Path, int, int, Any]]:
-        """Yield trace rows through the shared local and Hub source reader."""
-        if not Path(self.trace_selector).expanduser().is_file():
-            logger.info("Resolving trace source %s", self.trace_selector)
-        yield from iter_dataset_rows(self.trace_selector)
-
-    def _iter_events(self) -> Iterator[ArrivalTraceEvent]:
-        row_parser: TraceRowParser | None = None
-        for dataset_path, line_number, source_row_index, row in self._iter_rows():
-            if row_parser is None:
-                trace_format = self._detect_format(
-                    row,
-                    dataset_path=dataset_path,
-                    line_number=line_number,
-                )
-                if self.trace_format not in (None, trace_format):
-                    raise ValueError("Trace format changed between reads")
-                self.trace_format = trace_format
-                row_parser = _TRACE_ROW_PARSERS[trace_format]
-            yield row_parser(
-                row,
-                dataset_path=dataset_path,
-                line_number=line_number,
-                source_row_index=source_row_index,
-            )
-
-    @staticmethod
-    def _detect_format(
-        row: object,
-        *,
-        dataset_path: Path,
-        line_number: int,
-    ) -> str:
-        if isinstance(row, dict):
-            if all(key in row for key in ("timestamp", "chatId", "messages")):
-                return "studychat"
-            if all(key in row for key in ("timestamp", "input_length")):
-                return "mooncake"
-        raise ValueError(
-            f"Cannot detect trace format from {dataset_path}:{line_number}; "
-            "expected StudyChat timestamp/chatId/messages or Mooncake "
-            "timestamp/input_length"
-        )
-
-    def read_window(
-        self,
-        *,
-        start_offset_seconds: float = 0.0,
-        duration_seconds: float | None = None,
-    ) -> tuple[float, list[ArrivalTraceEvent]]:
-        """Select a half-open window relative to the first timestamp and sort by arrival time."""
-        self.trace_format = None
-        first_timestamp = None
-        for event in self._iter_events():
-            if first_timestamp is None:
-                first_timestamp = event.timestamp_seconds
-            else:
-                first_timestamp = min(first_timestamp, event.timestamp_seconds)
-
-        if first_timestamp is None:
-            raise ValueError("Trace contains no requests")
-
-        window_start = first_timestamp + start_offset_seconds
-        window_end = (
-            None if duration_seconds is None else window_start + duration_seconds
-        )
-        selected_events = [
-            event
-            for event in self._iter_events()
-            if event.timestamp_seconds >= window_start
-            and (window_end is None or event.timestamp_seconds < window_end)
-        ]
-        if not selected_events:
-            raise ValueError("Trace window contains no requests")
-        selected_events.sort(key=lambda event: event.timestamp_seconds)
-        return window_start, selected_events
