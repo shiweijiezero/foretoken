@@ -99,9 +99,11 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 ## Language and repository tools
 
+Write source-code comments, documentation comments, docstrings, and comments in scripts and configuration files in English. Use English for identifiers, CLI help, error messages, commit messages, and PR or issue titles and descriptions. This also applies to Foretoken additions in upstream patches.
+
 Follow the surrounding code and the executable checks for each subtree.
 
-- Rust data plane: run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
+- Rust data plane: run `make verify-data-plane`. It checks formatting and runs Clippy across all workspace targets, including compilation of test targets.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
 - Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
 - Python benchmarks: follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
@@ -157,7 +159,9 @@ Documentation review is iterative. Read the complete user path as a first-time u
 
 Before finalizing, perform a separate deletion pass for duplicated commands, meta-commentary about the document, misplaced alternatives, implementation details, and headings without an independent responsibility. Formatting and tests do not replace this reading review.
 
-Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations, but write each version independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
+Maintain separate English and Simplified Chinese files for first-party READMEs and other project documentation. Use `README.md` and `README_zh.md`, or `name.md` and `name_zh.md`, in the same directory, with reciprocal language links near the top. Update both files in the same change rather than combining both languages on one page.
+
+Keep the two versions aligned in capability, prerequisites, commands, defaults, and limitations, but write each independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
 
 ## Change and PR discipline
 
