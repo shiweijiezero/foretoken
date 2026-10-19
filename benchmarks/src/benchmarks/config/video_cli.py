@@ -14,7 +14,7 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
     parse_duration_seconds,
 )
-from benchmarks.config.cli import _add_benchmark_arguments
+from benchmarks.config.cli import _add_benchmark_arguments, _default
 from benchmarks.config.video import (
     VideoBenchmarkConfig,
     VideoDatasetDefaults,
@@ -22,10 +22,7 @@ from benchmarks.config.video import (
     VideoParameterSweepConfig,
     video_health_url,
 )
-from benchmarks.datasets.video import (
-    load_video_dataset,
-    video_dataset_name,
-)
+from benchmarks.datasets.video.loader import load_video_dataset, video_dataset_name
 
 
 @dataclass(frozen=True)
@@ -48,18 +45,18 @@ def parse_video_arguments(argv: Sequence[str]) -> VideoBenchCommand:
         help="Benchmark video generation instead of Chat Completions",
     )
     _add_benchmark_arguments(parser, video=True)
-    parser.add_argument("--width", type=int, default=1024)
-    parser.add_argument("--height", type=int, default=576)
-    parser.add_argument("--num-frames", type=int, default=124)
-    parser.add_argument("--fps", type=int, default=24)
-    parser.add_argument("--num-inference-steps", type=int, default=50)
-    parser.add_argument("--aspect-ratio", default="16:9")
-    parser.add_argument("--flow-shift", type=float, default=12.0)
-    parser.add_argument("--audio-flow-shift", type=float, default=3.0)
+    parser.add_argument("--width", type=int, default=_default(VideoDatasetDefaults, "width"))
+    parser.add_argument("--height", type=int, default=_default(VideoDatasetDefaults, "height"))
+    parser.add_argument("--num-frames", type=int, default=_default(VideoDatasetDefaults, "num_frames"))
+    parser.add_argument("--fps", type=int, default=_default(VideoDatasetDefaults, "fps"))
+    parser.add_argument("--num-inference-steps", type=int, default=_default(VideoDatasetDefaults, "num_inference_steps"))
+    parser.add_argument("--aspect-ratio", default=_default(VideoDatasetDefaults, "aspect_ratio"))
+    parser.add_argument("--flow-shift", type=float, default=_default(VideoDatasetDefaults, "flow_shift"))
+    parser.add_argument("--audio-flow-shift", type=float, default=_default(VideoDatasetDefaults, "audio_flow_shift"))
     parser.add_argument(
         "--seed",
         type=int,
-        default=1,
+        default=_default(VideoDatasetDefaults, "seed"),
         help="Base seed for public benchmark rows; row index is added",
     )
     parser.add_argument(

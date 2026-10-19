@@ -22,13 +22,14 @@ from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
 from benchmarks.config.video_cli import parse_video_arguments
 from benchmarks.model_service import ModelService, resolve_benchmark_service
-from benchmarks.results.console import (
-    configure_logging,
+from benchmarks.results.experiment import experiment_output
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.logs import configure_logging
+from benchmarks.results.reporting.http import (
     format_benchmark_config,
     print_model_service,
 )
-from benchmarks.results.experiment import experiment_output
-from benchmarks.results.output import BenchmarkRun, ResultOutputs
+from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.runs.video import run_video_benchmark
@@ -117,15 +118,14 @@ def _recover_completed(
     """Recover completed HTTP, video or composed results before any service acquisition."""
     if not resume:
         return None
-    from benchmarks.results.publication import recover_results
-    from benchmarks.results.wandb_sync import publication_lock
+    from benchmarks.results.recording.locks import publication_lock
+    from benchmarks.results.recording.recovery import measurement_complete
+    from benchmarks.results.recovery import recover_results
 
     source = Path(resume).resolve()
     with publication_lock(source):
         context = json.loads((source / "context.json").read_text())
-    if context.get("measurement_exit_code") is None and not (
-        context.get("phase") == "finalization" and (source / "metrics.json").is_file()
-    ):
+    if not measurement_complete(source, context):
         return None
     saved = json.loads((source / "config.json").read_text())
     original = saved.get("base", saved)

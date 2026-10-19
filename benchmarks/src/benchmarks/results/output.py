@@ -1,100 +1,62 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Publish benchmark runs to the console, a local result directory, and Weights & Biases."""
+"""Own the result directory, measurement evidence, destinations, and cleanup for one run."""
 
 from __future__ import annotations
 
 import asyncio
-import csv
-import json
 import logging
 import os
 import shutil
-import subprocess
-import sys
 import time
-from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any, Protocol, Self, cast
+from typing import Any, Self, cast
 
 import wandb
-from foretoken.arguments import ProfileCommand
 from foretoken.errors import DeploymentError
-from foretoken.profiling import ProfileRun
 
-from benchmarks.config.benchmark import (
-    BenchmarkConfig,
-    BenchmarkOutputConfig,
-    WandbRunConfig,
-)
+from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import (
-    capture_run_logs,
-    log_benchmark_summary,
-    print_result_location,
+from benchmarks.results.measurements.progress import HttpProgress
+from benchmarks.results.measurements.requests import (
+    RequestMeasurement,
+    summarize_measurements,
 )
-from benchmarks.results.environment import (
+from benchmarks.results.observations.environment import (
     OBSERVATION_TIMEOUT_SECONDS,
     ApplicationSources,
     client_environment,
     serving_environment,
 )
-from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
-from benchmarks.results.progress import HttpProgress
-from benchmarks.results.prometheus import PrometheusObserver
-from benchmarks.results.records import RequestRecordWriter
-from benchmarks.results.replicas import KubernetesReplicaObserver
-from benchmarks.results.responses import ResponseWriter
-from benchmarks.results.wandb import publish_http_wandb
-from benchmarks.results.wandb_sync import publication_lock, start_sync
+from benchmarks.results.observations.prometheus import PrometheusObserver
+from benchmarks.results.observations.replicas import KubernetesReplicaObserver
+from benchmarks.results.recording.files import (
+    result_directory_path,
+    write_gpu_allocation_csv,
+    write_json,
+)
+from benchmarks.results.recording.locks import publication_lock
+from benchmarks.results.recording.logs import capture_run_logs
+from benchmarks.results.recording.requests import (
+    RequestRecordWriter,
+    request_measurement_record,
+)
+from benchmarks.results.recording.responses import ResponseWriter
+from benchmarks.results.reporting.http import http_result_sinks
+from benchmarks.results.reporting.plots import PlotSink
+from benchmarks.results.types import (
+    BenchmarkRun,
+    ResultConfiguration,
+    ResultSink,
+    _ResultSinkFactory,
+)
+from benchmarks.results.wandb.recording import WandbSink
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class BenchmarkRun:
-    """Result of one benchmark: its run record, aggregated metrics, per-request measurements, and artifacts.
-
-    ``measurements`` is ``None`` when a composition publishes only aggregated
-    points. ``artifacts`` maps a name to a file produced by the run. ``time_origin``
-    is the monotonic clock value corresponding to elapsed time zero for observers.
-    """
-
-    record: dict[str, Any]
-    metrics: dict[str, Any]
-    measurements: list[RequestMeasurement] | None
-    artifacts: dict[str, Path]
-    time_origin: float | None = None
-    # Execution outcome is distinct from measured scores and aggregate request counts.
-    exit_code: int | None = None
-    http_series_published: bool = False
-
-
-class ResultSink(Protocol):
-    """One result destination opened before the run executes and closed after publication."""
-
-    def open(self, record: dict[str, Any]) -> None: ...
-
-    def publish(self, run: BenchmarkRun) -> None: ...
-
-    def close(self, *, exit_code: int = 0) -> None: ...
-
-
-class _ResultConfiguration(Protocol):
-    outputs: BenchmarkOutputConfig
-    wandb: WandbRunConfig
-
-    def to_dict(self) -> dict[str, Any]: ...
-
-
-_ResultSinkFactory = Callable[[str], list[ResultSink]]
-_WandbPublisher = Callable[[Any, BenchmarkRun], None]
-_SYSTEM_STATS_INTERVAL_S = 1.0
 
 
 class ResultOutputs:
@@ -107,7 +69,7 @@ class ResultOutputs:
 
     def __init__(
         self,
-        benchmark: _ResultConfiguration,
+        benchmark: ResultConfiguration,
         service: ModelService | None,
         *,
         label: str = "",
@@ -116,6 +78,7 @@ class ResultOutputs:
         directory_prefix: str = "",
         sink_factory: _ResultSinkFactory | None = None,
     ) -> None:
+        """Retain one run's inputs; entering the context acquires its recording resources."""
         self.benchmark = benchmark
         self.service = service
         self.label = label.strip() or None
@@ -175,59 +138,18 @@ class ResultOutputs:
         """Open result sinks and configuration; callers may defer observation until after warmup."""
         directory = self.execution_dir
         outputs = self.benchmark.outputs
-        sinks: list[ResultSink] = []
         if self.sink_factory is not None:
             sinks = self.sink_factory(directory)
         else:
             if not isinstance(self.benchmark, BenchmarkConfig):
-                raise TypeError(
-                    "non-standard benchmark results require a sink factory"
-                )
+                raise TypeError("non-standard benchmark results require a sink factory")
             if self.service is None:
-                raise TypeError(
-                    "standard benchmark results require a service"
-                )
-            standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-            if outputs.saves_local:
-                sinks.append(
-                    BenchmarkArtifactSink(
-                        standard_benchmark,
-                        directory,
-                    )
-                )
-            sinks.append(ConsoleSink())
-            if outputs.saves_local:
-                sinks.append(
-                    LocalDirectorySink(directory)
-                )
-            if outputs.includes("wandb"):
-                base_name = (
-                    standard_benchmark.wandb.run_name.strip()
-                    or f"{self.service.model or 'dataset-models'}_{wandb_run_timestamp()}"
-                )
-                run_name = (
-                    f"{base_name}_{self.label}" if self.label else base_name
-                )
-                group = (
-                    standard_benchmark.wandb.group.strip()
-                    or self.wandb_group
-                    or ""
-                )
-                run_config = standard_benchmark.to_dict()
-                run_config["service"]["model"] = self.service.model
-                run_config["model"] = self.service.model
-                if self.service.model_service_refs:
-                    run_config["declared_gpu_count"] = self.service.gpu_count
-                sinks.append(
-                    WandbSink(
-                        standard_benchmark,
-                        execution_dir=directory,
-                        run_name=run_name,
-                        group=group,
-                        publisher=publish_http_wandb,
-                        run_config=run_config,
-                    )
-                )
+                raise TypeError("standard benchmark results require a service")
+            sinks = http_result_sinks(
+                self.benchmark, self.service, directory,
+                label=self.label, wandb_group=self.wandb_group,
+            )
+        # Artifacts must exist before plotting, and plots before a remote destination consumes them.
         if outputs.includes("plot"):
             index = next((index for index, sink in enumerate(sinks) if isinstance(sink, WandbSink)), len(sinks))
             sinks.insert(index, PlotSink(directory))
@@ -236,9 +158,7 @@ class ResultOutputs:
             sink.open(record)
         deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if outputs.saves_local:
-            self._environment = {
-                "client": client_environment(deadline=deadline),
-            }
+            self._environment = {"client": client_environment(deadline=deadline)}
             write_json(self.execution_dir, "environment.json", self._environment)
         self._sinks = sinks
         if start_observers:
@@ -297,9 +217,7 @@ class ResultOutputs:
                     )
                 if observations:
                     run.artifacts["replica_observations"] = write_json(
-                        self.execution_dir,
-                        "replica_observations.json",
-                        observations,
+                        self.execution_dir, "replica_observations.json", observations,
                     )
         prometheus_observer = self._prometheus_observer
         self._prometheus_observer = None
@@ -318,15 +236,11 @@ class ResultOutputs:
                     if key not in {"queries", "window_end_unix_seconds"}
                 }
             run.artifacts["prometheus_observations"] = write_json(
-                self.execution_dir,
-                "prometheus_observations.json",
-                observations,
+                self.execution_dir, "prometheus_observations.json", observations,
             )
         if self._environment is not None:
             if self.service is not None:
-                self._environment["after"] = serving_environment(
-                    self.service, deadline=deadline,
-                )
+                self._environment["after"] = serving_environment(self.service, deadline=deadline)
             if "after" in self._environment:
                 self._applications.capture(self._environment["after"], deadline=deadline)
             self._applications.save_archives(deadline=deadline)
@@ -335,6 +249,7 @@ class ResultOutputs:
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )
+        # Destination failures must leave the final measurements and publication inputs reusable.
         write_json(self.execution_dir, "metrics.json", run.metrics)
         self._save_publication(run)
         for sink in self._sinks:
@@ -434,30 +349,6 @@ class ResultOutputs:
         self._resources.callback(writer.close)
         return writer
 
-    def create_profile(self) -> Any | None:
-        """Create the optional HTTP capture observer owned by this point's output directory."""
-        if self._execution_dir is None:
-            raise RuntimeError("result outputs are not active")
-        if not isinstance(self.benchmark, BenchmarkConfig):
-            raise TypeError("profiling is only supported for HTTP benchmark outputs")
-        profile_options = self.benchmark.profile
-        if profile_options is None:
-            return None
-        # Keep the capture adapter's import local to avoid a results/capture cycle.
-        from benchmarks.profiling.capture import BenchmarkProfile
-
-        command = ProfileCommand(
-            kustomize_path=self.benchmark.service.kustomize_path,
-            model=self.service.model if self.service is not None else self.benchmark.service.model,
-            profile_engine=profile_options.engine,
-            profile_duration=profile_options.duration,
-            timeout=self.benchmark.service.wait_timeout,
-        )
-        return BenchmarkProfile(
-            ProfileRun(command, deployment=self.service.deployment if self.service is not None else None),
-            self.execution_dir,
-        )
-
     def create_request_writer(self, name: str) -> RequestRecordWriter:
         """Open a completed-request journal and close it with this run's result resources."""
         writer = RequestRecordWriter(Path(self.execution_dir) / f"{name}.jsonl")
@@ -488,23 +379,14 @@ class ResultOutputs:
             self._environment["before"] = serving_environment(self.service, deadline=deadline)
             self.capture_source_evidence(self._environment["before"], deadline=deadline)
             write_json(self.execution_dir, "environment.json", self._environment)
-        if (
-            self.service is not None
-            and self.service.model_service_refs
-            and outputs.saves_local
-        ):
+        if self.service is not None and self.service.model_service_refs and outputs.saves_local:
             try:
                 observer = KubernetesReplicaObserver(
-                    self.service.model_service_refs,
-                    self.service.model,
-                    self._applications,
+                    self.service.model_service_refs, self.service.model, self._applications,
                 )
                 observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning(
-                    "Replica observation unavailable; continuing with benchmark: %s",
-                    exc,
-                )
+                logger.warning("Replica observation unavailable; continuing with benchmark: %s", exc)
             else:
                 self._replica_observer = observer
                 self._resources.callback(self._close_replica_observer)
@@ -514,10 +396,7 @@ class ResultOutputs:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
                 prometheus_observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning(
-                    "Prometheus observation unavailable; continuing with benchmark: %s",
-                    exc,
-                )
+                logger.warning("Prometheus observation unavailable; continuing with benchmark: %s", exc)
             else:
                 self._prometheus_observer = prometheus_observer
                 self._resources.callback(self._close_prometheus_observer)
@@ -542,8 +421,7 @@ class ResultOutputs:
             measurements, total_time=duration, stream=stream,
             arrival_rate=arrival_rate, request_count=len(measurements),
             reported_concurrency=concurrency, gpu_count=None,
-            include_normalized_throughput=False,
-            itl_summary=itl_summary,
+            include_normalized_throughput=False, itl_summary=itl_summary,
         )
         self.record_warmup(
             [request_measurement_record(item, stream=stream) for item in measurements], metrics,
@@ -588,367 +466,3 @@ class ResultOutputs:
             "output": list(self.benchmark.outputs.destinations),
             "publication_pending": self.benchmark.outputs.includes("wandb") and wandb.setup().settings.mode != "disabled",
         })
-
-
-def wandb_run_timestamp() -> str:
-    """Return a local timestamp for W&B run names and generated groups."""
-    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-
-
-class ConsoleSink:
-    """Print the run summary to the console log."""
-
-    def open(self, record: dict[str, Any]) -> None:
-        return None
-
-    def publish(self, run: BenchmarkRun) -> None:
-        log_benchmark_summary(run.record, run.metrics)
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dict[str, Any]:
-    """Serialize a request on the elapsed measurement clock for HTTP and trace result readers."""
-    return {
-        "success": item.succeeded,
-        "status_code": item.status_code,
-        "error": item.error_message,
-        "stream": stream,
-        "start_time": item.started_at,
-        "end_time": item.started_at + item.latency,
-        "latency": item.latency,
-        "ttft": item.ttft if stream else None,
-        "tpot": item.tpot if stream else None,
-        "input_tokens": item.input_tokens,
-        "output_tokens": item.output_tokens,
-        "cached_input_tokens": item.cached_input_tokens,
-        "itl_summary": item.itl_summary,
-        "request_id": item.request_id,
-        "scheduled_at": item.scheduled_at,
-        "send_delay": item.send_delay,
-        "phase": item.phase,
-        "source_id": item.source_id,
-        "finish_reason": item.finish_reason,
-        "response_id": item.response_id,
-        "response_model": item.response_model,
-        "content_characters": item.content_characters,
-        "reasoning_characters": item.reasoning_characters,
-        "transport_completed": item.transport_completed,
-        "conversation_id": item.conversation_id,
-        "turn": item.turn,
-        "dataset": item.dataset,
-        "model": item.model,
-        "priority": item.priority,
-        "request_class": item.request_class,
-        "target_output_tokens": item.target_output_tokens,
-    }
-
-
-class BenchmarkArtifactSink:
-    """Materialize HTTP configuration and per-request records beside the run's shared metrics."""
-
-    def __init__(self, benchmark: BenchmarkConfig, output_dir: str) -> None:
-        self.benchmark = benchmark
-        self.output_dir = output_dir
-        self.config_path: Path | None = None
-
-    def open(self, record: dict[str, Any]) -> None:
-        self.config_path = write_json(
-            self.output_dir,
-            "config.json",
-            {**self.benchmark.to_dict(), **record},
-        )
-
-    def publish(self, run: BenchmarkRun) -> None:
-        if self.config_path is None:
-            raise RuntimeError("benchmark artifact sink is not open")
-        run.artifacts["config"] = self.config_path
-        if run.measurements is not None and "raw_output" not in run.artifacts:
-            slo = run.metrics.get("slo") or {}
-            slo_met = slo.get("request_slo_met")
-            run.artifacts["raw_output"] = write_json(
-                self.output_dir,
-                "raw_output.json",
-                [
-                    {
-                        **request_measurement_record(item, stream=bool(run.metrics["stream"])),
-                        **(
-                            {"slo_met": slo_met[index], "slo_target": slo["request_criteria"]}
-                            if isinstance(slo_met, list) else {}
-                        ),
-                    }
-                    for index, item in enumerate(run.measurements)
-                ],
-                compact=True,
-            )
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-class LocalDirectorySink:
-    """Report the persistent HTTP result directory selected by ResultOutputs."""
-
-    def __init__(self, output_dir: str) -> None:
-        self.output_dir = output_dir
-
-    def open(self, record: dict[str, Any]) -> None:
-        return None
-
-    def publish(self, run: BenchmarkRun) -> None:
-        logger.info("Results saved: %s", self.output_dir)
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-class PlotSink:
-    """Export figures from the same saved records used by independent redraws."""
-
-    def __init__(self, directory: str) -> None:
-        self.directory = Path(directory)
-
-    def open(self, record: dict[str, Any]) -> None:
-        return None
-
-    def publish(self, run: BenchmarkRun) -> None:
-        """Render after artifact sinks finish and expose the figure directory to publishers."""
-        from benchmarks.results.plots import render_results
-
-        render_results(self.directory)
-        run.artifacts["plots"] = self.directory / "plots"
-        logger.info("Plots saved: %s", run.artifacts["plots"])
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-class WandbSink:
-    """Record one native W&B run locally while an independent process synchronizes it."""
-
-    def __init__(
-        self,
-        benchmark: _ResultConfiguration,
-        *,
-        execution_dir: str,
-        run_name: str,
-        group: str,
-        publisher: _WandbPublisher,
-        run_config: dict[str, Any] | None = None,
-    ) -> None:
-        self.benchmark = benchmark
-        self.execution_dir = execution_dir
-        self.run_name = run_name
-        self.group = group
-        self.publisher = publisher
-        self.run_config = run_config
-        self._run: Any | None = None
-        self._sync: subprocess.Popen[bytes] | None = None
-        self._progress_fields: set[tuple[str, str]] = set()
-
-    def open(self, record: dict[str, Any]) -> None:
-        """Open native recording before requests, preserving W&B's configured offline/disabled modes."""
-        requested_mode = wandb.setup().settings.mode
-        wandb_config = self.benchmark.wandb
-        run_config = self.run_config or self.benchmark.to_dict()
-        init_kwargs: dict[str, Any] = {
-            "project": wandb_config.project,
-            "name": self.run_name,
-            "reinit": "create_new",
-            "mode": "disabled" if requested_mode == "disabled" else "offline",
-            "config": run_config,
-            "dir": self.execution_dir,
-            # Automatic code artifacts would add non-portable staging references.
-            "save_code": False,
-            "settings": wandb.Settings(
-                silent=True,
-                x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S,
-            ),
-        }
-        if self.group:
-            init_kwargs["group"] = self.group
-        if wandb_config.entity:
-            init_kwargs["entity"] = wandb_config.entity
-        try:
-            self._run = wandb.init(**init_kwargs)
-        except wandb.errors.Error:
-            logger.exception("W&B local recording initialization failed")
-            raise
-        if self._run is None:
-            raise RuntimeError("W&B initialization returned no run")
-        if requested_mode != "disabled":
-            directory = Path(self._run.settings.sync_dir).resolve()
-            from benchmarks.results.publication import publisher_name
-
-            identity = {
-                "id": self._run.id, "project": self._run.project,
-                "entity": self._run.entity, "name": self.run_name, "group": self.group,
-                "base_url": self._run.settings.base_url,
-                "directory": Path(os.path.relpath(directory, self.execution_dir)).as_posix(),
-                "publisher": publisher_name(self.publisher),
-            }
-            write_json(self.execution_dir, "wandb.json", identity)
-            print_result_location(f"W&B local run: {directory}")
-            if requested_mode not in {"offline", "dryrun"}:
-                try:
-                    self._sync = start_sync(Path(self.execution_dir), directory)
-                except OSError as error:
-                    logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
-
-    def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
-        """Bind live fields to their domain axis and queue them through the owned run."""
-        if (axis, axis) not in self._progress_fields:
-            self._run.define_metric(axis, hidden=True)
-            self._progress_fields.add((axis, axis))
-        for key in row.keys() - {axis}:
-            if (key, axis) not in self._progress_fields:
-                self._run.define_metric(key, step_metric=axis, step_sync=False)
-                self._progress_fields.add((key, axis))
-        self._run.log(row)
-
-    def publish(self, run: BenchmarkRun) -> None:
-        """Record the outcome; the saved publication inputs own tables, media and artifacts."""
-        if self._run is None:
-            raise RuntimeError("W&B sink is not open")
-        self._run.summary.update({"Foretoken/measurement_exit_code": run.exit_code})
-
-    def close(self, *, exit_code: int = 0) -> None:
-        """Seal portable native history and release background publication without blocking measurement."""
-        run = self._run
-        self._run = None
-        if run is None:
-            return
-        try:
-            try:
-                if not run.disabled:
-                    from benchmarks.results.publication import record_wandb_diagnostics
-
-                    record_wandb_diagnostics(Path(self.execution_dir))
-            finally:
-                failed = sys.exc_info()[0] is not None
-                try:
-                    run.finish(exit_code=exit_code)
-                except (OSError, wandb.errors.Error):
-                    if not failed:
-                        raise
-                    logger.exception("W&B recorder cleanup also failed")
-        except wandb.errors.Error:
-            logger.exception("W&B local recording finalization failed")
-            raise
-        finally:
-            if self._sync is not None:
-                self._sync.stdin.close()
-                self._sync = None
-
-
-def result_directory_path(
-    benchmark: _ResultConfiguration,
-    output_dir: str | None = None,
-    directory_prefix: str = "",
-) -> str:
-    """Return an explicit child path, or reserve a unique local directory under ``--output-dir``."""
-    if output_dir is not None:
-        return output_dir
-    timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    if benchmark.outputs.saves_local:
-        os.makedirs(benchmark.outputs.output_dir, exist_ok=True)
-        return mkdtemp(
-            prefix=f"{directory_prefix}{timestamp}-",
-            dir=benchmark.outputs.output_dir,
-        )
-    return os.path.join(
-        benchmark.outputs.output_dir,
-        f"{directory_prefix}{timestamp}",
-    )
-
-
-def write_json(directory: str, filename: str, data: Any, *, compact: bool = False) -> Path:
-    """Atomically replace a JSON artifact so interrupted writes leave the previous record readable."""
-    path = Path(directory) / filename
-    temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as file:
-        if compact:
-            json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
-        else:
-            json.dump(data, file, indent=4, ensure_ascii=False)
-    temporary.replace(path)
-    return path
-
-
-def write_gpu_allocation_csv(directory: str, allocation: dict[str, Any]) -> Path:
-    """Write every GPU snapshot and failed-read boundary for local inspection."""
-    resources = sorted({
-        resource
-        for sample in allocation["samples"]
-        for resource in sample["gpu_counts"]
-    })
-    rows = [
-        {
-            "elapsed_time_s": sample["elapsed_time_s"],
-            "event": "sample",
-            **{resource: sample["gpu_counts"].get(resource) for resource in resources},
-        }
-        for sample in allocation["samples"]
-    ]
-    rows.extend(
-        {
-            "elapsed_time_s": elapsed,
-            "event": "failed_read",
-            **dict.fromkeys(resources),
-        }
-        for elapsed in allocation["failed_read_elapsed_s"]
-    )
-    rows.sort(key=lambda row: (float(row["elapsed_time_s"]), row["event"]))
-    path = Path(directory) / "gpu_allocation.csv"
-    with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=("elapsed_time_s", "event", *resources))
-        writer.writeheader()
-        writer.writerows(rows)
-    return path
-
-
-def resolved_load_record(benchmark: BenchmarkConfig) -> dict[str, Any]:
-    """Map internal workload settings to scalar fields used by result consumers."""
-    load = benchmark.load
-    max_concurrency = int(load.max_concurrency)
-    return {
-        "max_concurrency": max_concurrency,
-        "num_prompts": load.request_count,
-        "request_rate": float(load.arrival_rate),
-        "duration": load.duration_seconds,
-        "open_loop": max_concurrency == -1,
-    }
-
-
-def build_benchmark_run_record(
-    benchmark: BenchmarkConfig,
-    service: ModelService,
-    mode: str,
-    load_record: dict[str, Any],
-) -> dict[str, Any]:
-    """Build the run record shared by console output and local artifacts."""
-    workload = benchmark.resolved_workload
-    record = {
-        "mode": mode,
-        "model": service.model or "per dataset row",
-        "url": service.chat_completions_url,
-        "max_concurrency": load_record["max_concurrency"],
-        "num_prompts": load_record["num_prompts"],
-        "request_rate": load_record["request_rate"],
-        "duration": load_record.get("duration"),
-        "open_loop": load_record["open_loop"],
-        "stream": benchmark.generation.stream,
-        "resolved": {
-            "max_concurrency": load_record["max_concurrency"],
-            "num_prompts": load_record["num_prompts"],
-            "request_rate": load_record["request_rate"],
-        },
-    }
-    if benchmark.is_multi_turn:
-        record["multi_turn"] = True
-        record["max_turns"] = workload.max_turns
-        record["conversation_history"] = workload.conversation_history
-    if workload.dataset_selectors == ["random"]:
-        record["random_seed"] = workload.random_seed
-    return record

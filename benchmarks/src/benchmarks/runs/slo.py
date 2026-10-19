@@ -15,18 +15,15 @@ from typing import Any
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import log_slo_results
-from benchmarks.results.output import (
-    BenchmarkRun,
-    LocalDirectorySink,
-    ResultOutputs,
-    ResultSink,
-    WandbSink,
-    wandb_run_timestamp,
-    write_json,
-)
-from benchmarks.results.tasks import prepare_task_resume, run_task
-from benchmarks.results.wandb import publish_slo_wandb
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.files import write_json
+from benchmarks.results.recording.tasks import run_task
+from benchmarks.results.recovery import prepare_task_resume
+from benchmarks.results.reporting.http import log_slo_results
+from benchmarks.results.reporting.local import LocalDirectorySink
+from benchmarks.results.types import BenchmarkRun, ResultSink
+from benchmarks.results.wandb.http import publish_slo_wandb
+from benchmarks.results.wandb.recording import WandbSink, wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
 
 _SLO_ALIASES = {
@@ -289,6 +286,7 @@ class SloAutoTuneBenchmark:
 
 
 def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
+    """Resolve a supported SLO metric from a probe, retaining unavailable measurements as None."""
     name = _SLO_ALIASES.get(name, name)
     if name in {"avg_latency", "avg_ttft", "avg_tpot", "rps", "tps"}:
         if name == "rps":
@@ -314,6 +312,7 @@ def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
 def _average_metric_values(
     metrics_list: list[dict[str, Any]], criteria: dict[str, str]
 ) -> dict[str, float | None]:
+    """Average repeated probe values only when every repetition reports the requested metric."""
     values: dict[str, float | None] = {}
     for name in criteria:
         samples = [_metric_value(metrics, name) for metrics in metrics_list]

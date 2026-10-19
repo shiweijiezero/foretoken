@@ -11,13 +11,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from benchmarks.results.plots.charts.quality import _quality_charts, comparison_charts
+from benchmarks.results.plots.charts.slo import _slo_charts
 from benchmarks.results.plots.data import Chart, _method
-from benchmarks.results.plots.measurements import (
-    _quality_charts,
-    _slo_charts,
-    comparison_charts,
+from benchmarks.results.recording.directories import (
+    _parent_plan,
+    discover_result_directories,
 )
-from benchmarks.results.tasks import task_source
+from benchmarks.results.recording.tasks import task_source
 
 
 @dataclass
@@ -45,15 +46,6 @@ class _RecordedRun:
     started: bool
     status: str | None = None
     context: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class SavedResultDirectory:
-    """A saved result set and the optional command record that owns its execution."""
-
-    directory: Path
-    group: Path
-    context: Path | None
 
 
 def read_saved_results(
@@ -104,7 +96,7 @@ def read_saved_results(
             measured = saved.metrics or {}
             quality = saved.conditions.get("mode") == "evaluation"
             if quality:
-                from benchmarks.results.evaluation import read_quality_conditions
+                from benchmarks.results.recording.quality import read_quality_conditions
 
                 saved.conditions["evaluation"] = read_quality_conditions(
                     saved.conditions["evaluator"], saved.directory / "native",
@@ -199,7 +191,7 @@ def read_saved_results(
     unknown = set(methods) - available_methods
     if unknown:
         raise ValueError("Unknown plot methods: " + ", ".join(sorted(unknown)))
-    from benchmarks.sweeps.core import summarize_sweep
+    from benchmarks.results.measurements.sweeps import summarize_sweep
 
     _comparison_changes(runs)
     summary = summarize_sweep(points)
@@ -410,24 +402,6 @@ def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
                 None, True)
 
 
-def _parent_plan(directory: Path) -> tuple[Path, str] | None:
-    """Locate an enclosing result plan without crossing its command boundary."""
-    for parent in directory.parents:
-        if (parent / "generated/context.json").is_file():
-            break
-        configuration = parent / "config.json"
-        config = json.loads(configuration.read_text()) if configuration.is_file() else {}
-        if config.get("mode") in {"parameter_sweep", "video_parameter_sweep"}:
-            return parent, "sweep"
-        metrics_path = parent / "metrics.json"
-        metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}
-        if "evaluation_comparison" in metrics:
-            return parent, "evaluation"
-        if config.get("mode") == "slo_search" or (parent / "slo_results.json").is_file():
-            return parent, "slo_search"
-    return None
-
-
 def _selected_runs(
     directory: Path, plans: dict[Path, list[_RecordedRun]],
 ) -> Iterator[_RecordedRun]:
@@ -446,57 +420,6 @@ def _selected_runs(
     yield from _recorded_runs(directory)
 
 
-def _enclosing_context(directory: Path) -> Path | None:
-    """Find a command record when a user selects one of its result directories directly."""
-    return next((path for parent in (directory, *directory.parents)
-                 if (path := parent / "generated/context.json").is_file()), None)
-
-
-def _discover(
-    directory: Path, visited: set[Path], *, group: Path | None = None,
-    context: Path | None = None,
-) -> Iterator[SavedResultDirectory]:
-    """Descend directory containers, stopping at result owners before their native children."""
-    directory = directory.resolve()
-    group = group.resolve() if group is not None else None
-    if directory in visited:
-        return
-    visited.add(directory)
-    command = directory / "generated/context.json"
-    if command.is_file():
-        found = False
-        for child in sorted((directory / "artifacts").glob("*")):
-            if child.is_dir():
-                for result in _discover(child, visited, group=group or directory, context=command):
-                    found = True
-                    yield result
-        if not found:
-            yield SavedResultDirectory(directory, group or directory, command)
-        return
-    if any((directory / name).is_file() for name in ("config.json", "slo_results.json", "task.json", "context.json")):
-        yield SavedResultDirectory(directory, group or directory, context or _enclosing_context(directory))
-        return
-    if (directory / "iterations").is_dir():
-        for child in sorted((directory / "iterations").iterdir()):
-            if child.is_dir():
-                yield from _discover(child, visited, group=child)
-        return
-    if (directory / "runs").is_dir():
-        for child in sorted((directory / "runs").iterdir()):
-            if child.is_dir():
-                yield from _discover(child, visited, group=group or directory)
-        return
-    parent = _parent_plan(directory)
-    if parent is not None and parent[1] != "slo_search":
-        # A selected sweep point still owns its planned repetitions, including
-        # children that have not created their directories yet.
-        yield SavedResultDirectory(directory, group or directory, context or _enclosing_context(directory))
-        return
-    for child in sorted(directory.iterdir()):
-        if child.is_dir() and not child.name.startswith("."):
-            yield from _discover(child, visited, group=group, context=context)
-
-
 def _directory_labels(paths: list[Path]) -> dict[Path, str]:
     """Use the shortest distinct directory suffix so equal iteration names remain distinguishable."""
     labels = {}
@@ -507,26 +430,3 @@ def _directory_labels(paths: list[Path]) -> dict[Path, str]:
                 labels[path] = Path(*suffix).as_posix()
                 break
     return labels
-
-
-def discover_result_directories(
-    sources: tuple[Path, ...], *, base: Path | None = None,
-) -> list[SavedResultDirectory]:
-    """Resolve plotting and publication inputs to their result owners and experiment groups."""
-    base = base.resolve() if base is not None else None
-    selected = list(dict.fromkeys(path.resolve() for path in ((base, *sources) if base is not None else sources)))
-    for path in selected:
-        if not path.is_dir():
-            raise NotADirectoryError(f"Result directory does not exist: {path}")
-    # Keep an explicit base first so it owns shared resumed measurements. Other
-    # enclosing selections own traversal; leaf evidence is still counted only once.
-    selected = [path for path in selected if path == base or not any(
-        path != parent and path.is_relative_to(parent) for parent in selected
-    )]
-    directories: list[SavedResultDirectory] = []
-    for source in selected:
-        discovered = list(_discover(source, set()))
-        if not discovered:
-            raise FileNotFoundError(f"No saved benchmark results in {source}")
-        directories.extend(discovered)
-    return directories

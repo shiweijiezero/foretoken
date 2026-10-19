@@ -65,8 +65,8 @@ pub(crate) async fn execute_workflow(
     }
 }
 
-// Accepted stage ownership is never reset by a later busy response. The caller cancels the
-// complete workflow on error; the model server reports confirmed termination to the ledger.
+/// Prevents a later Busy response from resetting ownership of an accepted workflow.
+/// The caller cancels the workflow; model-server reports confirmed termination to the ledger.
 fn after_acceptance(error: GenerationError) -> GenerationError {
     match error {
         GenerationError::BackendBusy => GenerationError::Unavailable,
@@ -119,6 +119,7 @@ async fn admitted_generate(
     Ok(stream)
 }
 
+/// Submits one Aggregate stage and transfers its abort guard to the returned stream.
 async fn execute_aggregate(
     resolver: &dyn LlmFacadeResolver,
     decision: RouteDecision,
@@ -143,8 +144,8 @@ async fn execute_aggregate(
     Ok((decision, cleanup.with_stream(stream)))
 }
 
-// Encoder is a completion barrier. Its guard survives descriptor extraction so a failed
-// downstream handoff still cleans up backend-owned intermediate resources.
+/// Completes Encoder while retaining its cleanup guard with the returned descriptor.
+/// A failed downstream handoff still cleans up backend-owned intermediate resources.
 async fn execute_encoder(
     resolver: &dyn LlmFacadeResolver,
     decision: RouteDecision,
@@ -173,8 +174,8 @@ async fn execute_encoder(
     Ok((descriptor, cleanup))
 }
 
-// Prefill completes before fresh Decode selection. All stages share one caller reservation;
-// intermediate terminal output does not release that reservation before the final stage.
+/// Completes Prefill before fresh Decode selection, retaining one caller reservation across stages.
+/// Intermediate terminal output does not release that reservation before the final stage.
 async fn execute_pd(
     resolver: &dyn LlmFacadeResolver,
     session: &mut dyn foretoken_router::RouteSession,

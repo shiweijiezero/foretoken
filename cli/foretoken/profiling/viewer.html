@@ -270,6 +270,7 @@
         $("refresh").disabled = false;
       }
     }
+    // Replace the capture scope and ignore older requests that finish after another selection.
     async function selectStore(id) {
       const ticket = ++selection;
       const previous = store?.id === id ? selected?.name : null;
@@ -339,6 +340,7 @@
         );
       }
     }
+    // Transfer only the current trace after the expected Perfetto frame acknowledges readiness.
     async function openTrace() {
       if (!store || !selected || selected.format !== "perfetto") return;
       const ticket = ++selection,
@@ -402,6 +404,7 @@
         if (ticket === selection) $("open").disabled = false;
       }
     }
+    // End the current frame's handshake before switching traces or unloading the page.
     function clearViewer() {
       clearInterval(ping);
       clearTimeout(handshakeTimeout);

@@ -23,12 +23,14 @@ from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
 from benchmarks.integrations.evalscope.evaluation import EvalScopeProgress
 from benchmarks.integrations.quality import PROGRESS_FILENAME
 from benchmarks.model_service import ModelService, resolve_model_service
-from benchmarks.results.evaluation import (
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.quality import read_quality_metrics
+from benchmarks.results.reporting.evaluation import (
     evaluation_comparison_sinks,
     evaluation_sinks,
-    read_quality_metrics,
 )
-from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_timestamp
+from benchmarks.results.types import BenchmarkRun
+from benchmarks.results.wandb.recording import wandb_run_timestamp
 
 logger = logging.getLogger(__name__)
 

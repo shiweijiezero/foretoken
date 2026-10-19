@@ -312,6 +312,7 @@ func identityPatch(object client.Object, patch client.Patch) (client.Patch, erro
 	return client.RawPatch(patch.Type(), data), nil
 }
 
+// Patch fences updates to the observed incarnation and preserves apply options when creating a missing target.
 func (c *scopedClient) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
 	if err := c.prepare(object); err != nil {
 		return err
@@ -321,9 +322,9 @@ func (c *scopedClient) Patch(ctx context.Context, object client.Object, patch cl
 			return err
 		}
 		settings := new(client.PatchOptions).ApplyOptions(options).AsPatchOptions()
-		return c.Client.Create(ctx, object, &client.CreateOptions{Raw: &metav1.CreateOptions{
+		return c.Client.Create(ctx, object, &client.CreateOptions{
 			FieldManager: settings.FieldManager, FieldValidation: settings.FieldValidation, DryRun: settings.DryRun,
-		}})
+		})
 	}
 	patch, err := identityPatch(object, patch)
 	if err != nil {
@@ -332,6 +333,7 @@ func (c *scopedClient) Patch(ctx context.Context, object client.Object, patch cl
 	return c.Client.Patch(ctx, object, patch, options...)
 }
 
+// Delete preserves the caller's cascade policy while fencing deletion to the observed resource incarnation.
 func (c *scopedClient) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
 	if sharedCredential(object) {
 		return fmt.Errorf("namespace KV credentials do not belong to an individual deployment")
@@ -339,7 +341,7 @@ func (c *scopedClient) Delete(ctx context.Context, object client.Object, options
 	if err := c.checkWrite(ctx, object); err != nil {
 		return err
 	}
-	settings := new(client.DeleteOptions).ApplyOptions(options).AsDeleteOptions()
+	settings := new(client.DeleteOptions).ApplyOptions(options)
 	if settings.Preconditions == nil {
 		settings.Preconditions = &metav1.Preconditions{}
 	}
@@ -351,7 +353,7 @@ func (c *scopedClient) Delete(ctx context.Context, object client.Object, options
 		version := object.GetResourceVersion()
 		settings.Preconditions.ResourceVersion = &version
 	}
-	return c.Client.Delete(ctx, object, &client.DeleteOptions{Raw: settings})
+	return c.Client.Delete(ctx, object, settings)
 }
 
 func (c *scopedClient) DeleteAllOf(ctx context.Context, object client.Object, options ...client.DeleteAllOfOption) error {

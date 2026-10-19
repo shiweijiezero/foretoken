@@ -14,7 +14,7 @@ from typing import Any
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.evaluation import deployment_labels
-from benchmarks.datasets.conversations import iter_jsonl_rows
+from benchmarks.datasets.rows import iter_jsonl_rows
 
 
 @dataclass(frozen=True)

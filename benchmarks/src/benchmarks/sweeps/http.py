@@ -20,8 +20,9 @@ from benchmarks.config.benchmark import (
     parse_duration_seconds,
 )
 from benchmarks.model_service import ModelService, resolve_benchmark_service
-from benchmarks.results.console import format_benchmark_config, log_sweep_results
-from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
+from benchmarks.results.reporting.http import format_benchmark_config, log_sweep_results
+from benchmarks.results.types import BenchmarkRun
+from benchmarks.results.wandb.recording import wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.sweeps.core import (
@@ -178,6 +179,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             raise ValueError(f"Unsupported sweep keys on line {line_no}: " + ", ".join(sorted(unknown)))
 
     def apply_point(self, config: BenchmarkConfig, point: SweepPoint) -> BenchmarkConfig:
+        """Apply explicit workload axes and the selected service without mutating the base benchmark."""
         section_updates: dict[str, dict[str, Any]] = {}
         for raw_key, raw_value in point.items():
             if raw_key in {_BENCHMARK_NAME, _PARAMETER_GROUP, "service"}:
@@ -221,6 +223,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         wandb_group: str,
         dry_run: bool,
     ) -> BenchmarkRun:
+        """Run one HTTP or SLO point while reusing adjacent service selections owned by the sweep stack."""
         point_config = replace(
             config, sweep=ParameterSweepConfig(),
             wandb=replace(config.wandb, group=wandb_group),

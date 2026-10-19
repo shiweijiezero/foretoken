@@ -26,15 +26,15 @@ from foretoken.applications.files import (
     remove_application_jobs,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import remove_build_pods
+from foretoken.build.cluster.builder import remove_build_pods
 from foretoken.build.inputs import BuildInputs, engine_source_roots
-from foretoken.build.node_images import (
+from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     image_tools_image,
     node_containerd_socket,
 )
-from foretoken.build.storage import SOURCE_BUILD_CACHE_LABEL
+from foretoken.build.cluster.storage import SOURCE_BUILD_CACHE_LABEL
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.manifest import ForetokenDeployment
 from foretoken.errors import DeploymentError
@@ -601,7 +601,7 @@ def reconcile_source_resources(
     retired compiler volumes and runtime files. Uninstall releases all Foretoken pins;
     the platform lifecycle owns its remaining storage and state cleanup.
     """
-    from foretoken.build.node_images import node_image_store
+    from foretoken.build.cluster.images import node_image_store
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 

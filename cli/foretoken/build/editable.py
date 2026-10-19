@@ -22,9 +22,10 @@ from foretoken.applications.files import (
     SERVICE_COMPONENTS,
     SOURCE_REVISION,
     ApplicationFiles,
+    ApplicationPublication,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import (
+from foretoken.build.cluster.builder import (
     ClusterBuilder,
     find_build_cache,
     registry_credentials,
@@ -38,7 +39,7 @@ from foretoken.build.inputs import (
     snapshot_versions,
     source_checkout,
 )
-from foretoken.build.node_images import image_tools_image
+from foretoken.build.cluster.images import image_tools_image
 from foretoken.build.source import prepare_source_images
 from foretoken.build.state import (
     SOURCE_BUILD_KEY,
@@ -53,7 +54,7 @@ from foretoken.build.state import (
     runtime_settings,
     write_source_state,
 )
-from foretoken.build.storage import ensure_build_volumes, local_build_nodes
+from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
     service_requires_execution,
@@ -82,6 +83,7 @@ class EditableDeployment:
         self, kubectl: Kubectl, cluster: Path, platform: dict[str, Any],
         root: Path, engine_sources: tuple[str, ...], timeout: str,
     ) -> None:
+        """Resolve the platform's build recipe, borrowing only matching local installation history."""
         self.kubectl = kubectl
         self.cluster = cluster
         self.configuration = platform
@@ -96,6 +98,8 @@ class EditableDeployment:
             or self.platform["runtime"] != runtime_settings(platform)
         ):
             self.platform = None
+        # The cluster recipe supports new workstations; legacy local settings
+        # are usable only after their platform identity and runtime matched.
         recipe = platform["data"].get(SOURCE_BUILD_KEY)
         if recipe is not None:
             self.recipe = json.loads(recipe)
@@ -536,6 +540,98 @@ class EditableDeployment:
             ) is None:
                 bundle.pop("parts")
         build = self.state["build"]
+        with self._application_workspace(
+            origin, snapshot, missing, helm, timeout,
+        ) as (builder, build_engine, references):
+
+            def build_application(component: str) -> None:
+                """Build a component's files and assemble its engine overlay before publication."""
+                bundle = self.state["bundles"][component]
+                revision = bundle["revision"]
+                staging = builder.root + "/output/" + revision
+                payload = staging + "/payload"
+                parts = bundle.get("parts", _APPLICATION_PARTS[component])
+                arguments = dict(build["arguments"])
+                if component == "model-server":
+                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
+                builder.export_application(component, payload, arguments, list(parts))
+                if component == "model-server" and build_engine:
+                    export_engine_source(
+                        builder, payload, build["arguments"],
+                        runtime_image=self.state["runtime"]["model_image"],
+                        cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
+                        build_native=build["engine_native"],
+                    )
+
+            # Each component owns its export directory. Join builds before validating
+            # their shared source snapshot or allowing any publisher to consume them.
+            with ThreadPoolExecutor(max_workers=len(missing)) as builds, builder.cancellation:
+                pending_builds = [
+                    builds.submit(builder.cancellation.run_stage, build_application, component)
+                    for component in sorted(missing)
+                ]
+                for future in pending_builds:
+                    future.result()
+            BuildInputs.select(
+                self.root, self.state.get("engines", {}), snapshot,
+                mooncake_version=self.mooncake_version,
+            ).validate(snapshot)
+            # Join every publisher before committing selections or releasing their exports.
+            published_at = time.monotonic()
+            previous_revisions = {}
+            publications = []
+            for component in sorted(missing):
+                bundle = self.state["bundles"][component]
+                revision = bundle["revision"]
+                previous = bundle.get("previous", "")
+                previous_revisions[component] = previous
+                publications.append(ApplicationPublication(
+                    component=component,
+                    source=builder.root + "/output/" + revision + "/payload",
+                    revision=revision,
+                    previous=previous,
+                    sources=build_sources(snapshot, component),
+                    image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
+                    parts=bundle.get("parts"),
+                ))
+            published = origin.publish_batch(
+                builder, publications, references, timeout=timeout,
+            )
+            for component, published_revision in published.items():
+                default_revision = (
+                    build.get("applications", {}).get(component, {}).get("revision")
+                )
+                # Matching the installed default needs no source override; adding one
+                # would change Pod annotations even though the application is unchanged.
+                if published_revision == default_revision:
+                    self.state["bundles"].pop(component)
+                else:
+                    self.state["bundles"][component] = {"revision": published_revision}
+                publication = (
+                    "reused"
+                    if published_revision == previous_revisions[component]
+                    else "published"
+                )
+                print(f"Application {publication}: {component}", flush=True)
+            write_source_state(self.directory / "install.json", self.state)
+            print(
+                f"Application publication completed in {time.monotonic() - published_at:.1f}s",
+                flush=True,
+            )
+            builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
+
+    @contextmanager
+    def _application_workspace(
+        self,
+        origin: ApplicationFiles,
+        snapshot: Path,
+        missing: set[str],
+        helm: Helm,
+        timeout: str,
+    ) -> Iterator[tuple[ClusterBuilder, bool, set[str] | None]]:
+        """Hold one origin compiler and its retention snapshot through incremental application publication."""
+        namespace = origin.namespace
+        build = self.state["build"]
         mount = "/var/cache/foretoken"
         claim = find_build_cache(
             self.kubectl, namespace, build["binding"], origin.node, mount
@@ -638,88 +734,7 @@ class EditableDeployment:
             pull_secrets=origin.pull_secrets,
         ) as builder:
             builder.sync(inputs, build["versions"])
-
-            def build_application(component: str) -> None:
-                """Build a component's files and assemble its engine overlay before publication."""
-                bundle = self.state["bundles"][component]
-                revision = bundle["revision"]
-                staging = builder.root + "/output/" + revision
-                payload = staging + "/payload"
-                parts = bundle.get("parts", _APPLICATION_PARTS[component])
-                arguments = dict(build["arguments"])
-                if component == "model-server":
-                    arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
-                builder.export_application(component, payload, arguments, list(parts))
-                if component == "model-server" and build_engine:
-                    export_engine_source(
-                        builder, payload, build["arguments"],
-                        runtime_image=self.state["runtime"]["model_image"],
-                        cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
-                        build_native=build["engine_native"],
-                    )
-
-            # Each component owns its export directory. Join builds before validating
-            # their shared source snapshot or allowing any publisher to consume them.
-            with ThreadPoolExecutor(max_workers=len(missing)) as builds, builder.cancellation:
-                pending_builds = [
-                    builds.submit(builder.cancellation.run_stage, build_application, component)
-                    for component in sorted(missing)
-                ]
-                for future in pending_builds:
-                    future.result()
-            BuildInputs.select(
-                self.root, self.state.get("engines", {}), snapshot,
-                mooncake_version=self.mooncake_version,
-            ).validate(snapshot)
-            # Join every publisher before committing selections or releasing their exports.
-            published_at = time.monotonic()
-            previous_revisions = {}
-            with ThreadPoolExecutor(max_workers=len(missing)) as publications, builder.cancellation:
-                futures = {}
-                for component in sorted(missing):
-                    bundle = self.state["bundles"][component]
-                    revision = bundle["revision"]
-                    previous = bundle.get("previous", "")
-                    previous_revisions[component] = previous
-                    futures[component] = publications.submit(
-                        builder.cancellation.run_stage, origin.publish,
-                        builder,
-                        builder.root + "/output/" + revision + "/payload",
-                        component,
-                        revision,
-                        previous,
-                        references,
-                        timeout=timeout,
-                        reuse_previous=True,
-                        sources=build_sources(snapshot, component),
-                        image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
-                        parts=bundle.get("parts"),
-                    )
-                published = {
-                    component: future.result() for component, future in futures.items()
-                }
-            for component, published_revision in published.items():
-                default_revision = (
-                    build.get("applications", {}).get(component, {}).get("revision")
-                )
-                # Matching the installed default needs no source override; adding one
-                # would change Pod annotations even though the application is unchanged.
-                if published_revision == default_revision:
-                    self.state["bundles"].pop(component)
-                else:
-                    self.state["bundles"][component] = {"revision": published_revision}
-                publication = (
-                    "reused"
-                    if published_revision == previous_revisions[component]
-                    else "published"
-                )
-                print(f"Application {publication}: {component}", flush=True)
-            write_source_state(self.directory / "install.json", self.state)
-            print(
-                f"Application publication completed in {time.monotonic() - published_at:.1f}s",
-                flush=True,
-            )
-            builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
+            yield builder, build_engine, references
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str
