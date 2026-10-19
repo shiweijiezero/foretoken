@@ -37,13 +37,13 @@ Use native task owners, dependencies and completion states when available. Membe
 
 ## Coordinate resources and environments
 
-One member owns each deployment's execution and cleanup. On shared hosts, the administrator confirms GPU usage windows against host processes and Kubernetes workloads; healthy registered devices do not establish availability. The lead allocates within the user's authorization, records assigned nodes, windows, resource budgets and owners in the existing tasks, and coordinates changes to CRDs, drivers and shared platform installations. Code changes also need clear owners and scope.
+The lead records each deployment's owner, nodes, resource budget and usage window in the task records. On shared hosts, the administrator confirms GPU availability against both host processes and Kubernetes workloads. Coordinate changes to shared platforms and drivers with the administrator.
 
-Base placement on live node allocatable resources and existing Pod requests. Request GPU counts through the device plugin, not host device indices. Kubernetes schedules declared requests and enforces declared limits; it does not budget for undeclared work. Include builds, model/data preparation, GPU warmup and benchmark clients alongside serving, accounting for shared CPU, memory, storage and network use. Use the [native build concurrency setting](../../../../docs/deployment/source.md#edit-an-inference-engine) where applicable; allocate CPU and memory separately.
+Budget serving, builds, model/data preparation and benchmark clients against current node capacity and existing Pod requests. Adjust [native build concurrency](../../../../docs/deployment/source.md#edit-an-inference-engine) when needed.
 
-Preparation can overlap evaluation when resources allow. For comparable final measurements, arrange a quiet window for the affected nodes and shared I/O paths. The relevant owners finish or stop this task's competing experiments, builds and warmup before measuring the reference and retained approaches under the same conditions. Other members continue work that does not compete for those resources.
+Preparation and evaluation can overlap when resources allow. For final comparisons, agree on a measurement window with the owners of workloads sharing the nodes, storage or network. Finish or stop this task's competing workloads, then measure the reference and retained approaches under the same conditions.
 
-An executor can continue with another authorized candidate in the same allocation. Release capacity after its processes and services exit, or transfer the running allocation, jobs and collectors to an owner who accepts the handoff. After an SSH disconnect, inspect the original remote job before deciding whether to start it again.
+Release resources after their processes and services exit, or hand the running jobs and collectors to an owner who accepts them. After an SSH disconnect, inspect the original job before restarting it.
 
 ## Return results as work finishes
 

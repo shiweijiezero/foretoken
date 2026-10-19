@@ -8,7 +8,7 @@ Starting configuration: examples/rsi/qwen3.5-35b-a3b; BF16 TP4 with four-token M
 Optimization objectives: improve single-request decode speed and total output throughput (tokens/s) at concurrency 16, and reduce decode latency (TPOT) in both groups
 Precision: fixed BF16
 Deployment layout: agent-selected within the final single-node GPU budget, including parallelism and any stage separation
-Final deployment budget: 4 GPUs on one node; at most 32 CPU cores and 250G host memory (250 GB, about 232.8 GiB) in total for the model and frontend workloads
+Final deployment budget: 4 GPUs on one node; at most 32 CPU cores and 250G host memory (250 GB) in total for the model and frontend workloads
 Experiment sizing: service candidates fit the final budget; focused kernel, compilation, or correctness experiments may use fewer resources, including one GPU
 Available resources: 2 nodes, each with 8 available GPUs, 64 CPU cores, and 1 TiB memory
 Minimum concurrently working subagents: 6
@@ -36,21 +36,13 @@ Follow the [RSI skill](../../.agents/skills/rsi/SKILL.md) for execution and reso
 
 ## Starting deployment
 
-The example enables four-token multi-token prediction (MTP): the model verifies draft tokens before returning them. It uses asynchronous scheduling while retaining graph acceleration and automatic GPU KV cache sizing.
-
-The model requests and is limited to `246G` of host memory; the frontend requests and is limited to `4G`, for a combined `250G`. CPU KV offload starts at `128G` across all four TP workers, leaving `118G` of the model's budget for loading, processes, staging and shared memory. Adjust offload from observed memory use while keeping the total budget unchanged. Builds, preparation jobs and benchmark clients use separately allocated node capacity.
-
-The example selects the repository's shared `data/` directory. Worktrees use the primary checkout's data, so candidates reuse model downloads while keeping runtime state and profiling captures private to each instance. The platform administrator prepares [directory access](../../docs/features/model-storage.md#share-model-files-across-namespaces) once.
-
-Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a source-installed Foretoken platform with a compatible runtime, shared directory access and a reachable LoadBalancer or HTTP Gateway. Adapt the engine arguments and environment variables to the target hardware, then deploy from the candidate checkout:
+Adapt the engine arguments and environment variables in the [four-GPU example](../../examples/rsi/qwen3.5-35b-a3b/) to the target hardware. Prepare a [source-installed platform](../../docs/deployment/source.md) with [access to the repository's shared `data/` directory](../../docs/features/model-storage.md#share-model-files-across-namespaces), then deploy from the candidate checkout:
 
 ```bash
 foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi -e . --timeout 60m
 ```
 
-Each parallel candidate uses its own checkout and `--name`. HTTP Gateway routing assigns a distinct host automatically; `foretoken endpoint qwen-rsi --host` returns it, and benchmarks discover it themselves. Inspect the starting instance with `foretoken status qwen-rsi`; `stop`, `delete` and `endpoint` use the same name. Keep the starting instance stopped between comparisons to retain shared model references, and delete it when the task ends.
-
-Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+The model and frontend request and limit host memory to `246G` and `4G`, respectively. The model allocation includes `128G` of CPU KV offload in total across its four TP workers. Use comparable four-GPU service runs for the final comparison; smaller probes support diagnosis.
 
 ## Evaluation commands
 

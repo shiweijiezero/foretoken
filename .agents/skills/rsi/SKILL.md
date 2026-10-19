@@ -40,23 +40,11 @@ During execution, the lead maintains the task's required number of working membe
 
 ## Isolate candidate workspaces and execution
 
-Give each Worker a task branch, a separate checkout and a stable deployment instance name; reuse them across iterations. Concurrent writers need separate directories, not branch switches in a shared directory. The lead records source versions and owners in the existing tasks, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
+Give each Worker a separate checkout, task branch and stable instance name, and reuse them across iterations. Keep the delivered version unchanged through build and evaluation, following the [candidate handoff](roles/common.md#prepare-candidates-while-evaluations-run).
 
-Prepare the CLI and shared platform once through the [source deployment guide](../../../docs/deployment/source.md). Use the initial build and model/dataset preparation to resolve registry, dependency and download access in the execution environment. Reuse the prepared source installation, workspaces and incremental build caches rather than reinstalling for each candidate.
+Prepare the shared platform once. Resolve dependency and download access during the initial builds and model/dataset preparation, then reuse the workspaces and build caches. Follow [parallel source deployment](../../../docs/deployment/source.md#run-candidates-in-parallel), using the same candidate name for deployment and evaluation.
 
-Candidates can share a Kubernetes namespace. Select the same node-accessible [data directory](../../../docs/features/model-storage.md) to reuse downloaded model files and tokenizers; runtime state, runtime compilation caches and profiling captures stay private to each instance. Keep each candidate's result records distinct.
-
-The executor uses the assigned kubeconfig context and namespace. Set `CHECKOUT` to the candidate checkout, `DEPLOYMENT` to its Kustomize directory, both as absolute paths, and `INSTANCE` to its stable instance name:
-
-```bash
-foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" -e "$CHECKOUT"
-```
-
-Use the same configuration and `--name` for `perf` and `eval`, and select that instance by name for `status`, `endpoint`, `stop` and `delete`. Engine changes use `--engine-source`; subsequent runs reuse the recorded source selection and incremental builds.
-
-Keep the baseline instance while the task still needs its shared model files. Use `foretoken stop` when it is idle rather than deleting it between candidate runs; this retains its model-cache references. At task completion, save required results, then delete the baseline and other unused task instances.
-
-Task-owned remote sessions or an existing job manager preserve logs and exit status. After a disconnect, inspect the original job before restarting it. Remove workspaces and resources only after required changes and results are saved and their users have finished. Preserve unfinished work on pause and inspect the Git index before committing.
+Candidates select the same shared [data directory](../../../docs/features/model-storage.md) for model downloads; runtime caches and results remain separate. Keep the baseline instance while its model files are needed: use `foretoken stop` when idle, then `foretoken delete` when the task ends.
 
 ## Advance each iteration
 

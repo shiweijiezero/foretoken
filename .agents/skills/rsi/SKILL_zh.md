@@ -35,23 +35,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 隔离候选工作区与执行
 
-为每名 Worker 分配任务分支、独立工作区和固定部署实例名，后续迭代继续复用。并行写入者使用不同目录，不能靠在同一目录切换分支隔离改动。主 Agent 在已有任务中记录版本与负责人，并按[候选交接约定](roles/common_zh.md#分开候选准备与评测)安排开发和测量。
+每名 Worker 使用独立工作区、任务分支和固定实例名，跨轮复用。交付的版本在构建和评测期间保持不变，具体安排见[候选交接](roles/common_zh.md#分开候选准备与评测)。
 
-按[源码部署指南](../../../docs/deployment/source_zh.md)统一准备一次 CLI 与共享平台。在首次构建和模型、数据集准备过程中解决执行环境的镜像仓库、依赖和下载访问问题，之后复用源码安装产物、固定工作区与增量构建缓存，不为每个候选重新安装。
+共享平台只准备一次。首次构建和模型、数据集准备时解决依赖与下载访问，后续复用工作区和构建缓存。候选沿用[并行源码部署](../../../docs/deployment/source_zh.md#并行运行候选方案)流程，部署和评测使用同一个实例名。
 
-各候选可以使用同一 Kubernetes 命名空间。选择同一个节点可访问的[数据目录](../../../docs/features/model-storage_zh.md)，复用已下载的模型文件与 tokenizer；运行状态、运行时编译缓存和性能剖析结果按部署实例隔离，实验结果也分别记录。
-
-执行者使用已分配的 kubeconfig 上下文和命名空间。将 `CHECKOUT` 设为候选工作区的绝对路径，`DEPLOYMENT` 设为其 Kustomize 目录的绝对路径，`INSTANCE` 设为固定实例名：
-
-```bash
-foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" -e "$CHECKOUT"
-```
-
-`perf`、`eval` 使用同一配置和 `--name`，`status`、`endpoint`、`stop`、`delete` 也选择这个实例名。修改引擎时通过 `--engine-source` 指定源码，后续沿用已记录的选择和增量构建。
-
-任务仍需复用起始方案的模型文件时，保留该实例；空闲时用 `foretoken stop` 暂停，不在候选切换间删除，以保留模型缓存引用。任务结束、所需结果保存后，再删除起始实例和其他不再使用的任务实例。
-
-远端执行使用任务专属会话或已有任务管理器保存日志和退出状态；断线后先检查原作业，再决定是否重启。所需改动与结果已保存、相关使用者退出后，才删除工作区或释放资源。暂停时保留未完成工作，提交前检查 Git 索引。
+各候选选择同一个共享[数据目录](../../../docs/features/model-storage_zh.md)复用模型下载，运行缓存和结果分别保存。任务仍需要起始模型时，空闲实例用 `foretoken stop` 暂停，任务结束再用 `foretoken delete` 删除。
 
 ## 推进迭代
 

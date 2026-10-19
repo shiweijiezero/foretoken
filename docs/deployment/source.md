@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
+Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -34,12 +34,6 @@ foretoken install -e .
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
 Source builds automatically reuse persistent node-local compiler caches. To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
-
-## Shared development
-
-The administrator prepares the source-installed platform, registry access and shared model directory once. Ordinary members receive [instance permissions](../../cli/README.md#prepare-a-namespace-for-members) and can operate services using installed applications.
-
-Source builds and publication use platform-level resources. Assign this access to a trusted developer or RSI Experimenter on the execution host; Workers can hand off their candidate checkout and version without receiving the executor's kubeconfig. The executor uses the same `deploy -e` path for each named instance. Platform installation and cluster changes remain separate administrative operations.
 
 ## Deploy a model service
 
@@ -119,7 +113,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
 
-Set `BUILD_JOBS` on the deployment command to control native compilation concurrency, for example `BUILD_JOBS=4 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m`. It applies when the next native build is needed; changing it alone does not rebuild an unchanged application. This setting covers local engine builds and MetaX SDK/Mooncake builds, not Go or Rust compilation or a total memory limit.
+For native engine compilation, prefix the deployment command with `BUILD_JOBS=4` to use four build jobs. This does not set Go/Rust concurrency or a memory limit.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 

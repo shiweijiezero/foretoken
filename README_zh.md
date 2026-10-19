@@ -150,7 +150,7 @@ codex \
 
 ## 网关模式
 
-网关模式通过 Kubernetes Gateway 提供统一入口。HTTP 路由会为各实例自动分配不同的主机名，下面的命令直接获取地址和所需的 Host 请求头。
+网关模式让多个实例共用一个入口。调用时带上 `foretoken endpoint --host` 返回的 Host。
 
 启用网关模式并部署：
 
@@ -177,7 +177,7 @@ curl --fail-with-body --no-buffer \
 
 命令会按需安装 Envoy Gateway。复用已有 Gateway 或指定 listener，见[命令行工具使用指南](cli/README_zh.md)。
 
-使用自定义域名或 HTTPS 监听器时，在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 的 `spec` 中填写 Gateway 接受的主机名并重新部署。HTTPS 还需对应的 DNS 和网关证书：
+使用自定义域名、HTTPS 或限定域名的监听器时，在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中填写 Gateway 接受的主机名并重新部署。HTTPS 还需对应的 DNS 和网关证书：
 
 ```yaml
 spec:

@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
+准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -34,12 +34,6 @@ foretoken install -e .
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes_zh.md#2-从源码安装-foretoken)。
 
 源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
-
-## 团队共用开发环境
-
-管理员一次性准备源码版平台、镜像仓库访问和共享模型目录。普通成员获得[实例操作权限](../../cli/README_zh.md#为成员准备命名空间)，即可使用已安装的应用部署和管理服务。
-
-源码构建和发布会使用平台级资源，由执行主机上的可信开发者或 RSI Experimenter 持相应身份执行。Worker 交付候选工作区和版本，无需领取执行者的 kubeconfig；执行者沿用同一条 `deploy -e` 路径更新各具名实例。平台安装与集群变更仍由管理员单独负责。
 
 ## 部署模型服务
 
@@ -119,7 +113,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
 
-在部署命令前设置 `BUILD_JOBS` 可调整原生编译并发，例如 `BUILD_JOBS=4 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m`。该值在下一次需要原生构建时生效，仅改变并发不会重建未变的应用。它作用于本地引擎及 MetaX SDK、Mooncake 构建；Go/Rust 编译和总内存预算需另行安排。
+需要限制引擎原生编译并发时，在部署命令前加 `BUILD_JOBS=4`，使用四个编译作业。该选项不设置 Go/Rust 编译并发或内存上限。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 

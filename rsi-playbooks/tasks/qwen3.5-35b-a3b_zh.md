@@ -8,7 +8,7 @@
 优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 精度：固定 BF16
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
-最终部署预算：单机 4 卡；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存（250 GB，约 232.8 GiB）
+最终部署预算：单机 4 卡；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存（250 GB）
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
 可用资源：2 台节点，每台可用 8 张 GPU、64 核 CPU、1 TiB 内存
 最小并行工作子 Agent 数：6
@@ -36,21 +36,13 @@
 
 ## 起始部署
 
-示例启用四步多 token 预测（MTP），由模型验证草稿 token 后输出，并配置异步调度，保留图加速与自动 GPU KV 缓存容量计算。
-
-模型的主机内存请求与上限均为 `246G`，frontend 均为 `4G`，合计 `250G`。CPU KV offload 起始容量为四个 TP worker 合计 `128G`，模型预算中余下的 `118G` 用于加载、进程、数据搬运和共享内存。根据实际内存占用调整 offload，保持总预算不变。构建、准备任务和评测客户端另行计入节点资源安排。
-
-示例选择仓库的共享 `data/` 目录。Git worktree 使用主 checkout 的数据，让各候选复用模型下载，同时分别保存运行状态和性能剖析结果。[目录访问](../../docs/features/model-storage_zh.md#跨命名空间复用模型文件)由平台管理员准备一次。
-
-[四卡起始配置](../../examples/rsi/qwen3.5-35b-a3b/)需要源码版 Foretoken 平台、兼容的推理运行环境、共享目录访问，以及可达的 LoadBalancer 或 HTTP Gateway。按实际硬件调整引擎参数和环境变量后，从候选源码目录部署：
+按目标硬件调整[四卡示例](../../examples/rsi/qwen3.5-35b-a3b/)中的引擎参数和环境变量。准备好[源码版平台](../../docs/deployment/source_zh.md)，由管理员授权[仓库 `data/` 的共享访问](../../docs/features/model-storage_zh.md#跨命名空间复用模型文件)，再从候选源码目录部署：
 
 ```bash
 foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi -e . --timeout 60m
 ```
 
-各并行候选使用独立 checkout 和 `--name`。HTTP Gateway 自动分配不同的路由主机名，通过 `foretoken endpoint qwen-rsi --host` 可读取，评测命令会自行发现。使用 `foretoken status qwen-rsi` 查看起始实例，`stop`、`delete` 和 `endpoint` 也使用这个名字。对比间隙暂停起始实例，保留共享模型引用，任务结束时再删除。
-
-服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+模型与前端的内存请求及上限分别为 `246G` 和 `4G`。模型额度内包含四个 TP worker 合计 `128G` 的 CPU KV offload。最终对照使用可比的四卡服务结果，小型验证用于诊断。
 
 ## 评测命令
 

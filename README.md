@@ -150,7 +150,7 @@ The command opens an interactive session and submits the optimization task. To p
 
 ## Gateway Mode
 
-Gateway mode provides a shared entry point through Kubernetes Gateway. HTTP routing automatically gives each instance its own hostname; the commands below discover the address and required Host header.
+Gateway mode lets instances share one entry point. Send requests with the Host returned by `foretoken endpoint --host`.
 
 Enable Gateway mode and deploy:
 
@@ -177,7 +177,7 @@ curl --fail-with-body --no-buffer \
 
 The command installs Envoy Gateway when needed. See the [command-line tool guide](cli/README.md) to reuse an existing Gateway or select a listener.
 
-For a custom domain or an HTTPS listener, set the accepted hostname under `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml` and redeploy. HTTPS also needs matching DNS and a Gateway certificate:
+For a custom domain, HTTPS or a hostname-restricted listener, set the accepted hostname in `examples/quickstart/qwen3-0.6b/frontend.yaml` and redeploy. HTTPS also needs matching DNS and a Gateway certificate:
 
 ```yaml
 spec:

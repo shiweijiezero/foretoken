@@ -97,7 +97,7 @@ kubectl create rolebinding foretoken-operator --namespace team-inference \
   --clusterrole foretoken-operator --user MEMBER_ID
 ```
 
-Installation does not grant permissions to users. This RoleBinding permits instance deployment, inspection, stop and deletion without platform administration. Source development with `deploy -e` uses platform-level build resources; assign it to a [trusted development executor](../docs/deployment/source.md#shared-development).
+This RoleBinding permits members to deploy, inspect, stop and delete instances. Source builds with `deploy -e` require platform-level access and are run by the administrator or an authorized, trusted developer.
 
 Members select the assigned namespace in their kubeconfig once:
 
@@ -157,7 +157,7 @@ Managed model downloads are collected after their last service reference is rele
 
 ### endpoint
 
-Print the public frontend URL for an API client. Use `--host` to get the request's `Host` value. HTTP Gateway access assigns each instance a routing hostname automatically unless `FrontendService.spec.hostname` selects a custom host. HTTPS and hostname-restricted listeners require an explicit hostname supported by the Gateway; HTTPS also requires matching DNS and a certificate.
+Print the frontend URL, or its request `Host` with `--host`. HTTP Gateway routing is configured automatically for each instance. For a custom domain, HTTPS or a hostname-restricted listener, see [Gateway configuration](../README.md#gateway-mode).
 
 ```bash
 # Public URL
