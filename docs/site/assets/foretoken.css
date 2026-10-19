@@ -226,6 +226,8 @@ body {
   border-radius: var(--ft-radius);
   padding: 0.85rem 1rem;
   line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .md-typeset .md-clipboard {
   color: var(--ft-muted);
