@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Own namespace controllers, service submission and temporary deployment cleanup."""
+"""Submit named deployment intent and observe platform-owned controller and service lifecycles."""
 
 from __future__ import annotations
 
-import json
+import copy
 import time
 from contextlib import ExitStack
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -18,43 +17,40 @@ from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
 from foretoken.build.state import release_source_deployment, source_operation
 from foretoken.command_execution import CommandExecution
+from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
-    parse_deployment,
     service_requires_execution,
 )
 from foretoken.deployment.progress import StartupProgress
 from foretoken.deployment.status import report_progress, wait_for_resources
-from foretoken.deployment.storage import DirectoryVolumes
-from foretoken.deployment.submission import _SERVICE_OPERATION_ANNOTATION, DeploymentSubmission
+from foretoken.deployment.submission import DeploymentSubmission
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
-from foretoken.kubernetes.namespace import NamespaceMutation
-from foretoken.platform.config import default_platform_config
-from foretoken.platform.helm import Helm
+from foretoken.kubernetes.client import (
+    Kubectl,
+    KubernetesPermissionError,
+    ResourceRef,
+    resource_ref,
+    timeout_seconds,
+)
+from foretoken.kubernetes.mutation import DeploymentMutation
+from foretoken.working_directory import resolve_runtime_directory
 
 
 class DeploymentLifecycle:
-    """Own controller preparation and resource retirement for CLI and benchmark callers."""
+    """Own CLI and benchmark submission while the platform owns controller startup and retirement."""
 
     def __init__(self, kubectl: Kubectl, *, temporary: bool = False) -> None:
         self.kubectl = kubectl
-        self.helm = Helm(default_platform_config())
-        self.volumes = DirectoryVolumes(kubectl)
         self.temporary = temporary
         self.submission: DeploymentSubmission | None = None
-        self.controller_created: tuple[int, str, int] | None = None
         self.retained = False
 
     def apply(
-        self,
-        deployment: ForetokenDeployment,
-        timeout: str,
-        *,
-        editable: str | None = None,
-        engine_sources: tuple[str, ...] = (),
+        self, deployment: ForetokenDeployment, timeout: str, *,
+        editable: str | None = None, engine_sources: tuple[str, ...] = (),
     ) -> ForetokenDeployment:
-        """Own command cancellation while preparing and converging one namespace deployment."""
+        """Publish selected applications, submit instance intent, and wait for its services."""
         with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
             return self._apply(deployment, timeout, editable=editable, engine_sources=engine_sources)
 
@@ -62,418 +58,217 @@ class DeploymentLifecycle:
         self, deployment: ForetokenDeployment, timeout: str, *,
         editable: str | None, engine_sources: tuple[str, ...],
     ) -> ForetokenDeployment:
-        """Publish applications, select the namespace controller, then observe serving readiness."""
         started = time.monotonic()
-        timeout_seconds(timeout)
-        namespace = deployment.namespace or self.kubectl.current_namespace()
-        if not deployment.namespace:
-            for document in deployment.objects:
-                if document.get("apiVersion", "").startswith("inference.foretoken.io/"):
-                    document["metadata"]["namespace"] = namespace
-            deployment = parse_deployment(
-                deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
-            )
-        self.helm.deployment_release(namespace)
-        submission = DeploymentSubmission(
-            self.kubectl, deployment, timeout, create_only=self.temporary
-        )
+        submission = DeploymentSubmission(self.kubectl, deployment, timeout, create_only=self.temporary)
         self.submission = submission
         submission.begin()
-        schema = json.loads(
-            self.kubectl.get_raw(
-                "/openapi/v3/apis/inference.foretoken.io/v1alpha1", timeout
-            )
-        )
-        selection_kinds = {
-            identity["kind"]
-            for definition in schema["components"]["schemas"].values()
-            for identity in definition.get("x-kubernetes-group-version-kind", [])
-            if identity["kind"] in {"ModelService", "FrontendService"}
-            and "deploymentRevision" in definition["properties"]["spec"]["properties"]
-        }
+        deployment = submission.deployment
+        objects = copy.deepcopy(deployment.objects)
         services = [
-            obj
-            for obj in deployment.objects
+            obj for obj in objects
             if obj.get("kind") in {"ModelService", "FrontendService"}
             and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
         ]
         for obj in services:
             obj["spec"].setdefault("suspend", False)
-        deployment = parse_deployment(
-            deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
-        )
+        deployment = deployment.with_objects(objects)
         stopping = [obj for obj in services if not service_requires_execution(obj)]
         runtime_required = len(stopping) != len(services)
-        # Retirement intent precedes build locks, so stopping never waits for source preparation.
+        # Suspension takes effect before source compilation and does not select a new executable.
         if stopping:
             submission.apply(yaml.safe_dump_all(stopping, sort_keys=False))
-        # Builds publish complete applications before the controller and services select them.
+
         source = None
         with ExitStack() as locks:
-            locks.enter_context(source_operation(self.kubectl, timeout, shared=True))
-            values = self.helm.deployment_values(self.kubectl)
-            if not self.temporary:
-                source = EditableDeployment.discover(
-                    self.kubectl, timeout, editable, engine_sources
-                )
-                if source is not None:
-                    locks.enter_context(source.operation(deployment, timeout))
-                    source.prepare(timeout)
-                    deployment = source.apply(deployment, timeout)
-                    values = source.deployment_values(values)
-            controller_revision = self.prepare_controller(
-                submission,
-                timeout,
-                values=values,
-                source_root=source.root if source is not None else None,
-                reuse_existing=self.temporary,
+            if editable is not None or engine_sources:
+                locks.enter_context(source_operation(self.kubectl, timeout, required=True, shared=True))
+                source = EditableDeployment.discover(self.kubectl, timeout, editable, engine_sources)
+                assert source is not None
+                locks.enter_context(source.operation(deployment, timeout))
+                source.prepare(timeout)
+                deployment = source.apply(deployment, timeout)
+            revision = self.prepare_controller(
+                submission, deployment, timeout,
+                controller_source_revision=source.controller_source_revision if source is not None else "",
             )
-            if runtime_required:
-                # API generations already identify configuration changes. Advance the
-                # application selection only with its controller or source publication.
-                for obj in deployment.objects:
-                    if (
-                        obj.get("kind") in selection_kinds
-                        and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
-                        and service_requires_execution(obj)
-                    ):
-                        source_revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION, "")
-                        obj["spec"]["deploymentRevision"] = f"{controller_revision}:{source_revision}"
-                deployment = parse_deployment(
-                    deployment.path, yaml.safe_dump_all(deployment.objects, sort_keys=False)
-                )
-                print(
-                    f"Applying {deployment.path} to namespace {namespace}", flush=True
-                )
-                self.volumes.apply(deployment, timeout, submit=submission.apply)
-        # Readiness observation releases build locks so another operation can stop the service.
+            deployment = self._select_storage(deployment, submission.instance.access())
+            objects = copy.deepcopy(deployment.objects)
+            for obj in objects:
+                if (
+                    obj.get("kind") in {"ModelService", "FrontendService"}
+                    and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
+                    and service_requires_execution(obj)
+                ):
+                    selected_source = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION, "")
+                    obj["spec"]["deploymentRevision"] = f"{revision}:{selected_source}"
+            deployment = deployment.with_objects(objects)
+            print(f"Applying deployment instance {deployment.name}", flush=True)
+            submission.apply(deployment.rendered)
+
         print(f"Waiting up to {timeout} for Foretoken services", flush=True)
         rollout_started = time.monotonic()
         with self.kubectl.until(rollout_started + timeout_seconds(timeout)) as deadline, StartupProgress(
             self.kubectl, lambda line: print(line, flush=True)
         ) as startup:
-
-            def observe(
-                resources: tuple[ResourceRef, ...], elapsed: float, budget: float = 5.0
-            ) -> None:
-                """Report startup only while this submission still owns the service intent."""
+            def observe(resources: tuple[ResourceRef, ...], elapsed: float, budget: float = 5.0) -> None:
+                """Report progress only while this submission still owns the instance."""
                 submission.check()
                 startup.poll(resources, elapsed, budget)
 
             try:
                 wait_for_resources(
-                    deployment.service_refs(),
-                    self.kubectl,
-                    timeout,
-                    report=report_progress,
-                    observe=observe,
+                    deployment.service_refs(), self.kubectl, timeout,
+                    report=report_progress, observe=observe,
                     expected_revisions={
                         resource_ref(obj): obj["spec"]["deploymentRevision"]
                         for obj in deployment.objects
-                        if obj.get("kind") in selection_kinds
+                        if obj.get("kind") in {"ModelService", "FrontendService"}
                         and obj.get("apiVersion", "").startswith("inference.foretoken.io/")
                         and "deploymentRevision" in obj["spec"]
                     },
                 )
             except DeploymentError:
-                startup.poll(
-                    deployment.service_refs(),
-                    time.monotonic() - rollout_started,
-                    follow_logs=False,
-                    force=True,
-                )
+                startup.poll(deployment.service_refs(), time.monotonic() - rollout_started, follow_logs=False, force=True)
                 raise
             if source is not None and runtime_required:
                 source.verify(
-                    deployment,
-                    deadline,
-                    observe=lambda: observe(
-                        deployment.service_refs(), time.monotonic() - rollout_started
-                    ),
+                    deployment, deadline,
+                    observe=lambda: observe(deployment.service_refs(), time.monotonic() - rollout_started),
                 )
+            deployment = replace(submission.instance.deployment(), path=deployment.path)
             submission.check()
-        print(
-            f"Foretoken deployment completed in {time.monotonic() - started:.1f}s",
-            flush=True,
-        )
+        print(f"Foretoken deployment completed in {time.monotonic() - started:.1f}s", flush=True)
         return deployment
 
     def prepare_controller(
-        self,
-        submission: DeploymentSubmission,
-        timeout: str,
-        *,
-        values: dict[str, Any] | None = None,
-        source_root: Path | None = None,
-        reuse_existing: bool = False,
+        self, submission: DeploymentSubmission, deployment: ForetokenDeployment, timeout: str, *,
+        controller_source_revision: str,
     ) -> str:
-        """Prepare reconciliation and return the ready namespace controller's application-selection identity."""
-        self.submission = submission
-        namespace = submission.namespace
-        release = self.helm.deployment_release(namespace)
+        """Request published controller code under the instance lock, then observe outside it."""
         with submission.mutation.hold():
             submission.check()
-            controllers = self.kubectl.list_resources(
-                ("deployments",),
-                namespace,
-                label_selector="app.kubernetes.io/name=foretoken-control-plane",
+            submission.instance.request(
+                deployment, timeout, update_id=submission.operation,
+                controller_source_revision=controller_source_revision,
             )
-            if not reuse_existing or not controllers:
-                existed = self.helm.release_exists(release)
-                try:
-                    self.helm.install_deployment(
-                        release,
-                        values
-                        if values is not None
-                        else self.helm.deployment_values(self.kubectl),
-                        timeout,
-                        source_root=source_root,
-                        operation=submission.operation,
-                    )
-                finally:
-                    if self.temporary and not existed:
-                        self._record_controller(namespace)
-        revision = self.helm.wait_control_plane(release, timeout)
+        revision = submission.instance.wait_ready(timeout, observe=submission.check)
         submission.check()
         return revision
 
-    def _record_controller(self, namespace: str) -> None:
-        """Retain native Helm and Deployment identities, including a partially successful installation."""
-        release = self.helm.deployment_release(namespace)
-        if not self.helm.release_exists(release):
-            return
-        if not self.helm.has_release_label(
-            release, _SERVICE_OPERATION_ANNOTATION, self.submission.operation
-        ):
-            return
-        status = json.loads(
-            self.helm.run(
-                ["status", release.name, "-n", namespace, "-o", "json"]
-            ).stdout
-        )
-        controller = self.kubectl.get_if_exists(
-            "deployment", release.name + "-control-plane", namespace
-        )
-        metadata = controller["metadata"] if controller is not None else {}
-        self.controller_created = (
-            status["version"],
-            metadata.get("uid", ""),
-            metadata.get("generation", 0),
-        )
+    def _select_storage(self, deployment: ForetokenDeployment, access: dict[str, Any]) -> ForetokenDeployment:
+        """Resolve directory intent against the platform's authorized bindings without creating volumes."""
+        objects = copy.deepcopy(deployment.objects)
+        for document in objects:
+            if document["kind"] != "RuntimeCache" or not document["apiVersion"].startswith("inference.foretoken.io/"):
+                continue
+            document["metadata"].get("annotations", {}).pop("inference.foretoken.io/directory-owner", None)
+            if directory := document["spec"].get("directory"):
+                assert deployment.path is not None
+                resolved = str(resolve_runtime_directory(directory, deployment.path))
+                if resolved not in access["directoryBindings"]:
+                    raise DeploymentError(f"The platform has no prepared storage for directory {resolved}")
+                document["spec"]["directory"] = resolved
+        return deployment.with_objects(objects)
 
     def cleanup_temporary(
-        self,
-        deployment: ForetokenDeployment,
-        timeout: str,
-        *,
-        retain_storage: bool = False,
+        self, deployment: ForetokenDeployment, timeout: str, *, retain_storage: bool = False,
     ) -> None:
-        """Delete only actual creations whose namespace and object intent have not been taken over."""
+        """Retire only this operation's creations, preserving retained captures and newer intent."""
         submission = self.submission
-        if submission is None or (
-            not submission.created and self.controller_created is None
-        ):
+        if submission is None or not submission.created:
             return
-        if not submission.owns_namespace():
-            print(
-                "Temporary deployment retained: a newer operation owns its namespace",
-                flush=True,
-            )
+        if not submission.owns_instance():
+            print("Temporary deployment retained: another operation owns its instance", flush=True)
             return
-        # A namespace can acquire unrelated resources after this operation creates it.
-        excluded = (
-            {"Namespace", "RuntimeCache", "PersistentVolumeClaim"}
-            if retain_storage
-            else {"Namespace"}
-        )
-        objects = tuple(
-            obj for ref, obj in submission.created.items() if ref.kind not in excluded
-        )
-        selected = {resource_ref(obj) for obj in objects}
-        caches = tuple(
-            cache
-            for cache in deployment.runtime_caches
-            if ResourceRef("RuntimeCache", cache.name, cache.namespace) in selected
-        )
-        created = replace(
-            deployment,
-            objects=objects,
-            runtime_caches=caches,
-            rendered=yaml.safe_dump_all(objects, sort_keys=False),
-        )
-        if objects:
-            self.volumes.delete(
-                created,
-                timeout,
-                remove=lambda values: self._remove_created(values, timeout),
-            )
+        root = ResourceRef("InferenceDeployment", submission.instance.name, submission.namespace)
+        if root in submission.created and not retain_storage:
+            self._delete_instance(submission.instance, submission.mutation, timeout, submission=submission)
+            return
+        excluded = {"InferenceDeployment"}
+        if retain_storage:
+            excluded.update({"RuntimeCache", "PersistentVolumeClaim"})
+        objects = tuple(obj for ref, obj in submission.created.items() if ref.kind not in excluded)
+        self._remove_created(objects, timeout)
+        if self.retained:
+            return
         with submission.mutation.hold():
-            if (
-                self.retained
-                or not submission.owns_namespace()
-                or self._remaining_resources(submission.namespace)
-            ):
+            if not submission.owns_instance():
                 return
-            if self.controller_created is not None:
-                release = self.helm.deployment_release(submission.namespace)
-                if self.helm.release_exists(release):
-                    status = json.loads(
-                        self.helm.run(
-                            [
-                                "status",
-                                release.name,
-                                "-n",
-                                release.namespace,
-                                "-o",
-                                "json",
-                            ]
-                        ).stdout
-                    )
-                    controller = self.kubectl.get_if_exists(
-                        "deployment", release.name + "-control-plane", release.namespace
-                    )
-                    metadata = controller["metadata"] if controller is not None else {}
-                    identity = (
-                        status["version"],
-                        metadata.get("uid", ""),
-                        metadata.get("generation", 0),
-                    )
-                    if identity != self.controller_created:
-                        return
-                    self.helm.remove_deployment(release, timeout)
+            current = submission.instance.read()
+            removed = {resource_ref(obj) for obj in objects}
+            retained = replace(submission.deployment, objects=tuple(
+                obj for obj in submission.deployment.objects if resource_ref(obj) not in removed
+            ))
+            # Keep capture storage addressable and leave no serving intent. The
+            # next temporary caller can atomically claim this retained instance.
+            submission.instance.request(
+                retained, timeout, update_id=current["spec"]["updateID"],
+                controller_source_revision=current["spec"].get("controllerSourceRevision", ""),
+            )
 
-    def _remove_created(
-        self, objects: tuple[dict[str, Any], ...], timeout: str
-    ) -> set[str]:
-        """Fence each temporary deletion with its current namespace, intent, UID and API version."""
-        removed = set()
-        ordered = sorted(
-            objects,
-            key=lambda obj: (
-                resource_ref(obj) not in self.submission.expected,
-                obj["kind"] == "RuntimeCache",
-            ),
-        )
+    def _remove_created(self, objects: tuple[dict[str, Any], ...], timeout: str) -> None:
+        """Fence temporary deletion with instance intent and each observed object's UID/version."""
+        submission = self.submission
+        assert submission is not None
+        ordered = sorted(objects, key=lambda obj: (resource_ref(obj) not in submission.expected, obj["kind"] == "RuntimeCache"))
         for obj in ordered:
             ref = resource_ref(obj)
             deadline = time.monotonic() + timeout_seconds(timeout)
             while True:
-                with self.submission.mutation.hold():
-                    if not self.submission.owns_namespace():
+                with submission.mutation.hold():
+                    if not submission.owns_instance():
                         self.retained = True
-                        return removed
-                    current = self.kubectl.get_if_exists(
-                        ref.kind, ref.name, ref.namespace
-                    )
+                        return
+                    current = self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
                     if current is None:
-                        removed.add(obj["metadata"]["uid"])
                         break
-                    deleting = (
-                        current["metadata"].get("deletionTimestamp")
-                        and current["metadata"]["uid"] == obj["metadata"]["uid"]
-                    )
+                    deleting = current["metadata"].get("deletionTimestamp") and current["metadata"]["uid"] == obj["metadata"]["uid"]
                     if not deleting:
-                        if not self.submission.owns_created(ref, current):
+                        if not submission.owns_created(ref, current):
                             self.retained = True
-                            return removed
+                            return
                         try:
-                            self.kubectl.delete_object(
-                                current,
-                                f"{max(1, int(deadline - time.monotonic()))}s",
-                                wait=False,
-                            )
+                            self.kubectl.delete_object(current, f"{max(1, int(deadline - time.monotonic()))}s", wait=False)
                         except DeploymentError:
-                            latest = self.kubectl.get_if_exists(
-                                ref.kind, ref.name, ref.namespace
-                            )
+                            latest = self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
                             if latest is None:
-                                removed.add(obj["metadata"]["uid"])
                                 break
-                            if (
-                                latest["metadata"]["resourceVersion"]
-                                == current["metadata"]["resourceVersion"]
-                                or time.monotonic() >= deadline
-                            ):
+                            if latest["metadata"]["resourceVersion"] == current["metadata"]["resourceVersion"] or time.monotonic() >= deadline:
                                 raise
                             continue
                 self.kubectl.wait_deleted(ref.kind, current["metadata"], timeout)
-                removed.add(current["metadata"]["uid"])
                 break
-        return removed
 
     def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Drain an explicitly deleted deployment before removing its controller and namespace."""
-        timeout_seconds(timeout)
-        namespace = deployment.namespace or self.kubectl.current_namespace()
-        with (
-            CommandExecution.current() or CommandExecution(timeout_seconds(timeout)),
-            source_operation(self.kubectl, timeout),
-            NamespaceMutation(self.kubectl, namespace, timeout).hold(),
-        ):
-            self._delete(deployment, timeout)
+        """Request instance retirement; its platform owner drains services before removing the controller."""
+        with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
+            if deployment.uid:
+                instance = DeploymentInstance(self.kubectl, deployment.namespace, deployment.name)
+                instance.uid = deployment.uid
+                mutation = DeploymentMutation(self.kubectl, deployment.namespace, deployment.name, timeout, uid=deployment.uid)
+                self._delete_instance(instance, mutation, timeout)
+            try:
+                with CommandExecution(timeout_seconds(timeout)):
+                    release_source_deployment(self.kubectl, deployment, timeout)
+            except KubernetesPermissionError:
+                print("Source build resources retained; repeat deletion with source-development access to reclaim them", flush=True)
 
-    def _delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Keep the finalizer owner alive until all namespace resources have retired."""
-        namespace_objects = tuple(
-            obj for obj in deployment.objects if obj.get("kind") == "Namespace"
-        )
-        objects = tuple(
-            obj for obj in deployment.objects if obj.get("kind") != "Namespace"
-        )
-        resources = replace(
-            deployment,
-            objects=objects,
-            rendered=yaml.safe_dump_all(objects, sort_keys=False),
-        )
-        self.volumes.delete(resources, timeout)
-        namespace = deployment.namespace or self.kubectl.current_namespace()
-        if namespace_objects:
-            for kind in (
-                "profileruns",
-                "videotasks",
-                "frontendservices",
-                "modelservices",
-                "kvservices",
-                "runtimecaches",
-            ):
-                self.kubectl.run(
-                    [
-                        "delete",
-                        kind + ".inference.foretoken.io",
-                        "--all",
-                        "-n",
-                        namespace,
-                        "--ignore-not-found",
-                        "--wait=true",
-                        f"--timeout={timeout}",
-                    ]
-                )
-        remaining = self._remaining_resources(namespace)
-        if remaining:
-            if namespace_objects:
-                deadline = time.monotonic() + timeout_seconds(timeout)
-                while remaining:
-                    if time.monotonic() >= deadline:
-                        names = ", ".join(
-                            obj["kind"] + "/" + obj["metadata"]["name"]
-                            for obj in remaining
-                        )
-                        raise DeploymentError(
-                            f"waiting for controller cleanup in {namespace}: {names}"
-                        )
-                    time.sleep(1)
-                    remaining = self._remaining_resources(namespace)
-            else:
-                release_source_deployment(self.kubectl, deployment, timeout)
+    def _delete_instance(
+        self, instance: DeploymentInstance, mutation: DeploymentMutation, timeout: str, *,
+        submission: DeploymentSubmission | None = None,
+    ) -> None:
+        """Invalidate pending submission without holding its mutation lock while finalizers drain."""
+        current = instance.read(required=False)
+        if current is None:
+            return
+        if current["metadata"].get("deletionTimestamp"):
+            self.kubectl.wait_deleted(DEPLOYMENT_RESOURCE, current["metadata"], timeout)
+            return
+        with mutation.hold():
+            if submission is None:
+                mutation.supersede()
+            elif not submission.owns_instance():
+                self.retained = True
                 return
-        self.helm.remove_deployment(self.helm.deployment_release(namespace), timeout)
-        if namespace_objects:
-            self.kubectl.delete(
-                yaml.safe_dump_all(namespace_objects, sort_keys=False), timeout
-            )
-        release_source_deployment(self.kubectl, deployment, timeout)
-
-    def _remaining_resources(self, namespace: str) -> tuple[dict[str, Any], ...]:
-        """Keep the namespace controller while any Foretoken resource still needs reconciliation."""
-        kinds = self.kubectl.api_resource_names("inference.foretoken.io")
-        return self.kubectl.list_resources(tuple(kinds), namespace) if kinds else ()
+            instance.delete(timeout, wait=False)
+        instance.wait_deleted(timeout)

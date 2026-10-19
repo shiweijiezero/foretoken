@@ -21,11 +21,13 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from foretoken.deployment.storage import DirectoryVolumes
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.profiling.reader import (
     CAPTURE_MOUNT_PATH,
+    READER_DEPLOYMENT_UID_ENV,
+    READER_NAMESPACE_ENV,
     READER_PORT,
     READER_SECRET_ENV,
     capture_path,
@@ -33,6 +35,20 @@ from foretoken.profiling.reader import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _capture_storage_identity(claim: dict[str, Any]) -> tuple[int, int]:
+    """Read the existing directory identity without changing capture storage ownership."""
+    value = claim["metadata"].get("annotations", {}).get("inference.foretoken.io/directory-owner")
+    if value is None:
+        return 1000, 1000
+    try:
+        uid, gid = map(int, value.split(":"))
+        if not 0 < uid < 2**32 - 1 or not 0 <= gid < 2**32 - 1:
+            raise ValueError
+    except ValueError as error:
+        raise DeploymentError(f"invalid capture storage directory owner: {value}") from error
+    return uid, gid
 
 
 @dataclass(frozen=True)
@@ -57,7 +73,7 @@ class ProfileStorage:
             "/"
         )
         self.image = image or f"{registry}/library/python:3.12-slim"
-        self._readers: dict[tuple[str, str], _Reader] = {}
+        self._readers: dict[tuple[str, str, str], _Reader] = {}
         self._created: list[tuple[str, str, str, str]] = []
         self._nsight_sessions: dict[tuple[str, str, str], str] = {}
         configs = json.loads(
@@ -169,12 +185,12 @@ class ProfileStorage:
             )
         return next(iter(nodes), None)
 
-    def _reader(self, namespace: str, claim_name: str) -> _Reader:
-        """Mount an existing claim without changing its binding, contents, or workload."""
+    def _reader(self, namespace: str, claim_name: str, deployment_uid: str) -> _Reader:
+        """Mount one deployment's existing capture scope without changing storage or workloads."""
         claim = self._object("pvc", claim_name, namespace)
         if claim is None:
             raise FileNotFoundError("capture storage no longer exists")
-        key = namespace, claim_name
+        key = namespace, claim_name, deployment_uid
         if key in self._readers:
             reader = self._readers[key]
             if reader.claim_uid != claim["metadata"]["uid"]:
@@ -187,13 +203,15 @@ class ProfileStorage:
         if claim.get("status", {}).get("phase") != "Bound":
             raise DeploymentError("capture storage is not bound")
         node = self._placement(namespace, claim)
-        uid, gid = DirectoryVolumes.read_directory_owner(claim) or (1000, 1000)
+        uid, gid = _capture_storage_identity(claim)
         name = f"foretoken-profile-view-{uuid4().hex[:16]}"
         reader = _Reader(name, claim["metadata"]["uid"], secrets.token_hex(32))
         labels = {
             "app.kubernetes.io/name": "foretoken-profile-view",
             "foretoken.io/view-session": name,
         }
+        if deployment_uid:
+            labels[DEPLOYMENT_UID_LABEL] = deployment_uid
         metadata = {"name": name, "namespace": namespace, "labels": labels}
         start = len(self._created)
         try:
@@ -235,7 +253,12 @@ class ProfileStorage:
                             {
                                 "name": READER_SECRET_ENV,
                                 "value": reader.secret,
-                            }
+                            },
+                            {
+                                "name": READER_NAMESPACE_ENV,
+                                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                            },
+                            {"name": READER_DEPLOYMENT_UID_ENV, "value": deployment_uid},
                         ],
                         "securityContext": {
                             "allowPrivilegeEscalation": False,
@@ -336,7 +359,8 @@ class ProfileStorage:
         return reader
 
     def open_nsight(
-        self, namespace: str, claim_name: str, directory: str, filename: str
+        self, namespace: str, claim_name: str, directory: str, filename: str,
+        *, deployment_uid: str,
     ) -> str:
         """Start an authenticated official viewer for one retained report; close owns cleanup."""
         image = self.viewer_config.get("nsightImage")
@@ -344,8 +368,8 @@ class ProfileStorage:
             raise DeploymentError(
                 "NVIDIA Nsight Viewer is not configured; update the platform or download the report"
             )
-        reader = self._reader(namespace, claim_name)
-        report = f"{capture_path(directory)}/{filename}"
+        reader = self._reader(namespace, claim_name, deployment_uid)
+        report = f"{capture_path(directory, namespace, deployment_uid)}/{filename}"
         key = namespace, reader.claim_uid, report
         if key in self._nsight_sessions:
             return self._nsight_sessions[key]
@@ -365,6 +389,8 @@ class ProfileStorage:
             "app.kubernetes.io/name": "foretoken-nsight-view",
             "foretoken.io/view-session": name,
         }
+        if deployment_uid:
+            labels[DEPLOYMENT_UID_LABEL] = deployment_uid
         metadata = {
             "name": name,
             "namespace": namespace,
@@ -668,14 +694,15 @@ except (URLError, OSError) as error:
         return f"/api/v1/namespaces/{quote(namespace, safe='')}/services/{reader.name}:http/proxy/{action}?{query}"
 
     def list_files(
-        self, namespace: str, claim_name: str, artifact_path: str
+        self, namespace: str, claim_name: str, artifact_path: str,
+        *, deployment_uid: str,
     ) -> list[dict[str, Any]]:
         """List nested traces relative to a capture directory, distinguishing missing storage."""
         try:
-            run = capture_path(artifact_path)
+            run = capture_path(artifact_path, namespace, deployment_uid)
         except ValueError as exc:
             raise DeploymentError("invalid capture directory") from exc
-        reader = self._reader(namespace, claim_name)
+        reader = self._reader(namespace, claim_name, deployment_uid)
         path = self._path(reader, namespace, "list", run)
         try:
             result = json.loads(
@@ -693,7 +720,7 @@ except (URLError, OSError) as error:
             token = capture_token(reader.secret, run)
             raise DeploymentError(str(exc).replace(token, "[redacted]")) from None
         if result.get("error") == "not_found":
-            raise FileNotFoundError("capture directory was not found")
+            return []
         if result.get("error"):
             raise DeploymentError("capture files cannot be read by the storage viewer")
         return result["files"]
@@ -705,9 +732,10 @@ except (URLError, OSError) as error:
         artifact_path: str,
         name: str,
         output: BinaryIO,
+        *, deployment_uid: str,
     ) -> None:
         """Stream a listed trace through kubectl without materializing it in CLI memory."""
-        reader = self._reader(namespace, claim_name)
+        reader = self._reader(namespace, claim_name, deployment_uid)
         path = self._path(reader, namespace, "file", artifact_path, name)
         timed_out = threading.Event()
         with tempfile.TemporaryFile() as errors:

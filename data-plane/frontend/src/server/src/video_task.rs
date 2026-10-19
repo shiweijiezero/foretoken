@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Namespace-scoped VideoTask access and streaming reads from dedicated result storage.
+//! Deployment-scoped VideoTask access and streaming reads from dedicated result storage.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -23,6 +23,7 @@ pub(crate) struct VideoTaskClient {
     collection: Url,
     output_mount: PathBuf,
     frontend_uid: String,
+    deployment_uid: String,
     worker_image: String,
     worker_endpoint: String,
     output_claim: String,
@@ -135,6 +136,7 @@ impl VideoTaskClient {
             collection,
             output_mount: std::fs::canonicalize(output_mount)?,
             frontend_uid: std::env::var("FORETOKEN_VIDEO_TASK_FRONTEND_UID")?,
+            deployment_uid: std::env::var("FORETOKEN_DEPLOYMENT_UID")?,
             worker_image: std::env::var("FORETOKEN_VIDEO_TASK_WORKER_IMAGE")?,
             worker_endpoint: std::env::var("FORETOKEN_VIDEO_TASK_ENDPOINT")?,
             output_claim: std::env::var("FORETOKEN_VIDEO_TASK_OUTPUT_CLAIM")?,
@@ -174,7 +176,13 @@ impl VideoTaskClient {
         let body = serde_json::json!({
             "apiVersion": "inference.foretoken.io/v1alpha1",
             "kind": "VideoTask",
-            "metadata": {"name": id, "labels": {"inference.foretoken.io/video-frontend-uid": self.frontend_uid}},
+            "metadata": {
+                "name": id,
+                "labels": {
+                    "inference.foretoken.io/video-frontend-uid": self.frontend_uid,
+                    "inference.foretoken.io/deployment-uid": self.deployment_uid,
+                },
+            },
             "spec": {
                 "frontendUID": self.frontend_uid,
                 "inputsReady": inputs_ready,

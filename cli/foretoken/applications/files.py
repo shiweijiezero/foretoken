@@ -38,6 +38,11 @@ def application_references(objects: Iterable[dict[str, Any]]) -> set[str]:
     references: set[str] = set()
     for obj in objects:
         spec = obj.get("spec", {})
+        if obj.get("kind") == "InferenceDeployment" and spec.get("controllerSourceRevision"):
+            references.add(spec["controllerSourceRevision"])
+        if obj.get("kind") == "ConfigMap" and "controller-selection.json" in obj.get("data", {}):
+            selection = json.loads(obj["data"]["controller-selection.json"])
+            references.update(application_references([selection["template"]["controller"]]))
         template = spec.get("template", {})
         metadata = obj["metadata"]
         template_metadata = template.get("metadata", {})
@@ -93,6 +98,7 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
     kinds = tuple(
         kind
         for kind in (
+            "inferencedeployments",
             "modelservices",
             "frontendservices",
             "modelpools",
@@ -110,9 +116,12 @@ def application_consumers(kubectl: Kubectl) -> list[dict[str, Any]]:
             parent.register(execution.cancel)
         with ThreadPoolExecutor() as queries, execution:
             pending = [queries.submit(copy_context().run, execution.run_stage, kubectl.list_all_resources, kinds)] if kinds else []
-            pending.append(queries.submit(
+            pending.extend(queries.submit(
                 copy_context().run, execution.run_stage, kubectl.list_all_resources, ("configmaps",),
-                label_selector="foretoken.io/platform=configuration",
+                label_selector=selector,
+            ) for selector in (
+                "foretoken.io/platform=configuration",
+                "app.kubernetes.io/component=deployment-controller",
             ))
             pending.extend(
                 queries.submit(
@@ -281,11 +290,15 @@ class ApplicationFiles:
         return destination
 
     def source_images(self, objects: Iterable[dict[str, Any]]) -> set[str]:
-        """Retain environments selected by service intent before controllers publish status."""
+        """Retain source environments selected by instance or service intent before materialization."""
         references = set()
         for obj in objects:
-            component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            if obj.get("kind") == "InferenceDeployment":
+                component = "control-plane"
+                revision = obj.get("spec", {}).get("controllerSourceRevision")
+            else:
+                component = SERVICE_COMPONENTS.get(obj.get("kind"))
+                revision = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
             if component is None or not revision:
                 continue
             if revision in {".", ".."} or any(char in revision for char in "/\\\\\x00"):

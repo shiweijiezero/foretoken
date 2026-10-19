@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Bootstrap instance controllers from the installed platform's trusted templates.
+{{- $name := include "foretoken.compactName" (printf "%s-deployment-manager" .Release.Name) }}
+{{- $cluster := include "foretoken.compactName" (printf "%s-%s" .Release.Namespace $name) }}
+{{- $application := index (include "foretoken.applications" . | fromJson) "control-plane" }}
+{{- $arguments := list "manage-deployments" (printf "--namespace=%s" .Release.Namespace) (printf "--configuration=%s" (include "foretoken.platformName" .)) }}
+{{- $pod := include "foretoken.platformJobPod" (dict "root" . "binary" "manager" "args" $arguments) | fromYaml }}
+{{- $_ := set $pod "serviceAccountName" $name }}
+{{- $_ := set $pod "restartPolicy" "Always" }}
+{{- $container := first $pod.containers }}
+{{- $_ := set $container "name" "manager" }}
+{{- $_ := set $container "ports" (list (dict "name" "healthz" "containerPort" 8081 "protocol" "TCP")) }}
+{{- $_ := set $container "livenessProbe" (dict "httpGet" (dict "path" "/healthz" "port" "healthz") "initialDelaySeconds" 15 "periodSeconds" 20) }}
+{{- $_ := set $container "readinessProbe" (dict "httpGet" (dict "path" "/readyz" "port" "healthz") "periodSeconds" 2) }}
+{{- with .Values.resources }}
+{{- $_ := set $container "resources" . }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cluster }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  {{- include "foretoken.deploymentRules" . | nindent 2 }}
+  - apiGroups: [inference.foretoken.io]
+    resources: [inferencedeployments, inferencedeployments/status, inferencedeployments/finalizers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [inference.foretoken.io]
+    resources: [frontendservices, modelservices, runtimecaches, kvservices]
+    verbs: [create, delete]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, update, patch, delete]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gateways]
+    verbs: [get]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheuses]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cluster }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cluster }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: foretoken-deployment-manager
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: foretoken-deployment-manager
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        inference.foretoken.io/chart-version: {{ .Chart.Version | quote }}
+        {{- with $application }}
+        inference.foretoken.io/application-url: {{ . | quote }}
+        {{- end }}
+      labels:
+        app.kubernetes.io/name: foretoken-deployment-manager
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- if $application }}
+        foretoken.io/application-files: consumer
+        {{- end }}
+    spec:
+      {{- toYaml $pod | nindent 6 }}

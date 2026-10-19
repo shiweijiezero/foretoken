@@ -64,6 +64,12 @@ func (reconciler *Reconciler) reconcileApplication(ctx context.Context, frontend
 					},
 					ResponseStore: responseStore,
 				}
+				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
+					if env.Name == runtimeconfig.ModelCacheRootEnv && env.Value != "" {
+						version := runtimeconfig.SharedModelCachePreparationVersion
+						selection.PreparationVersion = &version
+					}
+				}
 				selection.AdmissionStore, err = runtimeconfig.RedisConnectionFromEnv(current.Spec.Template.Spec.Containers[0].Env, runtimeconfig.AdmissionStoreURLEnv)
 				if err != nil {
 					return nil, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
@@ -84,10 +90,11 @@ func (reconciler *Reconciler) reconcileApplication(ctx context.Context, frontend
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
+		preparationVersion := runtimeconfig.SharedModelCachePreparationVersion
 		selection = &inferencev1alpha1.FrontendApplicationSelection{
 			ApplicationSelection: inferencev1alpha1.ApplicationSelection{
 				Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision,
-				DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy(),
+				DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion,
 			},
 			ResponseStore: profile.ResponseStore.DeepCopy(),
 		}

@@ -40,18 +40,18 @@ The example enables four-token multi-token prediction (MTP): the model verifies 
 
 Local KV offload uses `500G` of host memory (500 GB, about 465.7 GiB) across the instance's four TP workers. The model requests and is limited to 508Gi, including this cache; the frontend has a 4Gi limit, keeping the combined limit at 512Gi. Account for model loading and steady-state memory use when evaluating this configuration. The separate volume for model files and runtime caches starts at 128Gi and can grow to 256Gi when its StorageClass supports online expansion.
 
-Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Adapt the example's engine arguments and environment variables to the target hardware before deployment. Deploy with `foretoken deploy examples/rsi/qwen3.5-35b-a3b --timeout 60m`, then evolve it within the task budget. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
+Use the [four-GPU starting configuration](../../examples/rsi/qwen3.5-35b-a3b/) on a Foretoken platform with a compatible runtime, Gateway frontend access, and a default StorageClass supporting `ReadWriteOnce`. Adapt the example's engine arguments and environment variables to the target hardware before deployment. Concurrent Gateway candidates need distinct `hostname` values in their `frontend.yaml`. Deploy with `foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --timeout 60m`, then evolve it within the task budget. This creates the `qwen-rsi` instance in the current kubeconfig namespace; inspect it with `foretoken status qwen-rsi` and use that name for `stop`, `delete` and `endpoint`. Use comparable four-GPU results to judge service-level gains; smaller probes answer local questions and do not replace the final service evaluation. Validate the retained approach without competing experiment load before delivery.
 
 ## Evaluation commands
 
-Run from the repository root. These commands use the starting deployment; substitute each candidate's own deployment directory when comparing approaches. Authenticate with `wandb login` before using W&B. Results are saved under `results/qwen3.5-35b-a3b/` on the execution machine. Use `baseline` for the initial approach, rename it for a new approach, and reuse it for repeat measurements of the same approach. The agent writes the notes above; commands generate metrics and plots.
+Run from the repository root. These commands select the starting instance `qwen-rsi`; substitute each candidate's deployment directory and `--name` together when comparing approaches. Authenticate with `wandb login` before using W&B. Results are saved under `results/qwen3.5-35b-a3b/` on the execution machine. Use `baseline` for the initial approach, rename it for a new approach, and reuse it for repeat measurements of the same approach. The agent writes the notes above; commands generate metrics and plots.
 
 Each performance loop below measures concurrency 1 and 16 sequentially, using the same inputs, 80 measured requests and four warmup requests per group. StudyChat is required for the final retained approach and optional during intermediate iterations. The GSM8K command allows up to 64 concurrent API requests; the engine schedules them within its sequence limit. See [recipes](../../benchmarks/docs/recipes.md) for more workloads.
 
 ```bash
 # Every performance iteration: random lengths at concurrency 1 and 16.
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b --dataset random \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --dataset random \
     --min-prompt-length 128 --max-prompt-length 4096 \
     --min-output-length 128 --max-output-length 512 \
     --max-concurrency "$concurrency" --num-prompts 80 --warmup-requests 4 \
@@ -61,7 +61,7 @@ done
 
 # Required for the final retained approach: StudyChat at concurrency 1 and 16.
 for concurrency in 1 16; do
-  foretoken perf examples/rsi/qwen3.5-35b-a3b \
+  foretoken perf examples/rsi/qwen3.5-35b-a3b --name qwen-rsi \
     --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
     --max-concurrency "$concurrency" --num-prompts 80 --max-tokens 2048 \
     --warmup-requests 4 --temperature 0 --output experiment,raw,plot,wandb \
@@ -69,7 +69,7 @@ for concurrency in 1 16; do
 done
 
 # Accuracy evaluation as needed, with up to 64 concurrent requests.
-foretoken eval examples/rsi/qwen3.5-35b-a3b \
+foretoken eval examples/rsi/qwen3.5-35b-a3b --name qwen-rsi \
   --evaluator lm-eval --tasks gsm8k --num_fewshot 0 --limit 20 \
   --model_args num_concurrent=64 --output experiment,plot,wandb \
   --output-dir results/qwen3.5-35b-a3b --iteration baseline

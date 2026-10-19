@@ -23,9 +23,18 @@ const OBSERVATION_VERSION: u8 = 1;
 const RUNTIME_CACHE_CLAIM_ENV: &str = "FORETOKEN_RUNTIME_CACHE_CLAIM";
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
-const CACHE_ENV: [&str; 4] = [
+const CACHE_ENV: [&str; 13] = [
+    "HOME",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
     "HF_HOME",
+    "HF_HUB_CACHE",
+    "HF_ASSETS_CACHE",
+    "HF_XET_CACHE",
     "VLLM_CACHE_ROOT",
+    "VLLM_CONFIG_ROOT",
+    "VLLM_ASSETS_CACHE",
+    "VLLM_XLA_CACHE_PATH",
     "TORCHINDUCTOR_CACHE_DIR",
     "TRITON_CACHE_DIR",
 ];
@@ -51,6 +60,8 @@ impl Mode {
 pub struct Config {
     pub(crate) claim_name: String,
     pub(crate) mount_path: PathBuf,
+    model_directory: PathBuf,
+    preparation_directory: PathBuf,
     cache_directories: Vec<(&'static str, PathBuf)>,
     temporary_root: PathBuf,
     pub(crate) pod_uid: String,
@@ -80,12 +91,18 @@ impl Config {
             .ok()
             .filter(|value| !value.is_empty())
             .ok_or("FORETOKEN_RUNTIME_CACHE_CLAIM must be set when a RuntimeCache is mounted")?;
-        let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV)
-            .map(PathBuf::from)
-            .ok_or("FORETOKEN_MODEL_ROOT must be set when a RuntimeCache is mounted")?;
-        if !model_root.is_absolute() {
-            return Err("FORETOKEN_MODEL_ROOT must be absolute".into());
-        }
+        let model_root = foretoken_artifacts::model_cache_root()
+            .ok_or("FORETOKEN_MODEL_CACHE_ROOT must be set when a RuntimeCache is mounted")?;
+        let preparation_root =
+            foretoken_artifacts::preparation_root().unwrap_or_else(|| model_root.join("prepared"));
+        let model_directory = model_root
+            .strip_prefix(&mount_path)
+            .map_err(|_| "model cache must remain within FORETOKEN_CACHE_MOUNT_PATH")?
+            .to_path_buf();
+        let preparation_directory = preparation_root
+            .strip_prefix(&mount_path)
+            .map_err(|_| "preparation state must remain within FORETOKEN_CACHE_MOUNT_PATH")?
+            .to_path_buf();
         // Relocate only directories projected beneath this data root. Provider-specific
         // paths outside it keep their own owner and are not part of the temporary retry.
         let cache_directories = CACHE_ENV
@@ -113,6 +130,8 @@ impl Config {
         Ok(Some(Self {
             claim_name,
             mount_path,
+            model_directory,
+            preparation_directory,
             cache_directories,
             temporary_root: Path::new(TEMPORARY_CACHE_ROOT).join(&pod_uid),
             pod_uid,
@@ -121,9 +140,14 @@ impl Config {
         }))
     }
 
-    /// Returns the model root for the selected persistent or temporary cache mode.
-    pub fn model_root(&self, mode: Mode) -> PathBuf {
-        self.root(mode).join("models")
+    /// Returns provider download storage for the selected persistent or temporary cache mode.
+    pub fn model_cache_root(&self, mode: Mode) -> PathBuf {
+        self.root(mode).join(&self.model_directory)
+    }
+
+    /// Returns namespace preparation state under the selected cache lifetime.
+    pub fn preparation_root(&self, mode: Mode) -> PathBuf {
+        self.root(mode).join(&self.preparation_directory)
     }
 
     /// Returns the controller-selected private observation port.
@@ -238,6 +262,20 @@ pub async fn serve(
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { shutdown.notified().await })
         .await
+}
+
+/// Reports unexpected observation-server termination to its preparation or serving supervisor.
+pub async fn wait_for_server(
+    server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
+) -> String {
+    let Some(server) = server else {
+        return std::future::pending().await;
+    };
+    match server.await {
+        Ok(Ok(())) => "cache observation server stopped unexpectedly".into(),
+        Ok(Err(error)) => format!("cache observation server failed: {error}"),
+        Err(error) => format!("cache observation task failed: {error}"),
+    }
 }
 
 async fn observe(State(config): State<Config>) -> Result<Json<Observation>, StatusCode> {

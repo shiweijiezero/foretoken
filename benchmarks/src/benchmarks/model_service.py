@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from foretoken.command_execution import CommandExecution, cleanup_commands, run_command
 from foretoken.deployment.endpoint import resolve_frontend_endpoint
+from foretoken.deployment.instances import DeploymentInstance, storage_only_instance
 from foretoken.deployment.lifecycle import DeploymentLifecycle
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.deployment.status import wait_for_resources
@@ -113,7 +114,11 @@ class ModelService:
             for cache in self.deployment.runtime_caches:
                 if not cache.directory:
                     continue
-                data_root = self.deployment.path / Path(cache.directory).expanduser()
+                data_root = Path(cache.directory).expanduser()
+                if not data_root.is_absolute():
+                    if self.deployment.path is None:
+                        continue
+                    data_root = self.deployment.path / data_root
                 local = find_local_tokenizer_path(tokenizer, data_root=data_root)
                 if local is not None:
                     return source, local
@@ -266,7 +271,7 @@ def _discover_model_service(
     *,
     allow_multiple_models: bool = False,
 ) -> ModelService:
-    """Wait for the rendered service to become ready and return its public model service."""
+    """Wait for the selected instance's services and return their public model endpoint."""
     model = (
         "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
         else _select_model(deployment.models.values(), source.model)
@@ -277,9 +282,12 @@ def _discover_model_service(
         progress = wait_for_resources(resources, kubectl, source.wait_timeout)
         for service in progress:
             if service.state == "Stopped":
+                command = f"foretoken deploy {shlex.quote(source.kustomize_path)}"
+                if source.instance_name:
+                    command += f" --name {shlex.quote(source.instance_name)}"
                 raise DeploymentError(
                     f"{service.resource.display_name} is stopped; resume it before benchmarking with:\n"
-                    f"foretoken deploy {shlex.quote(str(deployment.path))}"
+                    f"{command}"
                 )
         gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
         endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
@@ -304,16 +312,6 @@ def _discover_model_service(
         model_service_refs=model_refs,
         deployment=deployment,
     )
-
-
-def _service_presence(
-    deployment: ForetokenDeployment,
-    kubectl: Kubectl,
-) -> list[bool]:
-    return [
-        kubectl.exists(resource.kind, resource.name, resource.namespace)
-        for resource in deployment.service_refs()
-    ]
 
 
 @contextmanager
@@ -343,11 +341,11 @@ def resolve_model_service(
 ) -> Iterator[ModelService]:
     """Yield the model service selected by the benchmark user.
 
-    A URL source is used as given without touching Kubernetes. A Kustomize source
-    reuses a complete deployment unchanged, or creates a temporary deployment
-    and retires only its own creations afterward; a partially present deployment
-    is rejected. Profiling retains RuntimeCache resources and their namespace after
-    serving begins, so temporary workload cleanup cannot delete capture output.
+    A URL source is used without touching Kubernetes. A Kustomize source selects
+    an instance whose submitted configuration is reused unchanged, or creates a
+    temporary instance and retires only its own creations. Incomplete instances
+    and services without their instance owner are rejected. Profiling retains
+    capture storage after serving begins.
     """
     if source.url:
         yield ModelService(
@@ -365,22 +363,32 @@ def resolve_model_service(
     execution = CommandExecution.current() or CommandExecution(timeout_seconds(source.wait_timeout))
     kubectl = Kubectl()
     with execution:
-        deployment = load_deployment(source.kustomize_path, kubectl)
-        presence = _service_presence(deployment, kubectl)
-    if any(presence) and not all(presence):
-        raise DeploymentError(
-            "The Foretoken deployment is only partially present. "
-            "Apply or delete it, then rerun the benchmark"
+        deployment = load_deployment(
+            source.kustomize_path, kubectl, name=source.instance_name or None,
         )
+        instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
+        current = instance.read(required=False)
+        temporary = current is None or storage_only_instance(current)
+        if current is not None:
+            if current["metadata"].get("deletionTimestamp"):
+                raise DeploymentError(f"deployment instance {deployment.name!r} is being deleted")
+            deployment = instance.bind(deployment) if temporary else instance.deployment()
+        elif any(
+            kubectl.exists(resource.kind, resource.name, resource.namespace)
+            for resource in deployment.service_refs()
+        ):
+            raise DeploymentError(
+                "The Foretoken deployment is only partially present: services exist without their instance. "
+                "Apply or delete it, then rerun the benchmark"
+            )
 
     lifecycle = DeploymentLifecycle(kubectl, temporary=True)
-    temporary = not any(presence)
     serving = False
     try:
         with execution:
             if temporary:
-                logger.info("Deploying Foretoken service from %s", deployment.path)
-                lifecycle.apply(deployment, source.wait_timeout)
+                logger.info("Deploying Foretoken instance %s from %s", deployment.name, source.kustomize_path)
+                deployment = lifecycle.apply(deployment, source.wait_timeout)
             service = _discover_model_service(
                 deployment, kubectl, source, allow_multiple_models=allow_multiple_models
             )
@@ -389,14 +397,14 @@ def resolve_model_service(
     except CaptureCleanupError:
         # Keep participants alive until the controller confirms stop and export.
         logger.error(
-            "Capture cleanup is unconfirmed; retaining deployment %s for inspection",
-            deployment.path,
+            "Capture cleanup is unconfirmed; retaining deployment instance %s for inspection",
+            deployment.name,
         )
         temporary = False
         raise
     finally:
         if temporary:
-            logger.info("Cleaning up Foretoken service from %s", deployment.path)
+            logger.info("Cleaning up Foretoken deployment instance %s", deployment.name)
             with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
                 lifecycle.cleanup_temporary(
                     deployment, source.wait_timeout,

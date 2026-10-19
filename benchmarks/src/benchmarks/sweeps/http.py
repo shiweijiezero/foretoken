@@ -154,6 +154,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 path = str((Path.cwd() / Path(path).expanduser()).resolve())
             updated = replace(updated, service=replace(
                 config.service, name=choice["name"], kustomize_path=path,
+                instance_name="" if choice.get("url") else config.service.instance_name,
                 url=choice.get("url", ""), model=choice.get("model", config.service.model),
                 health_url=choice.get("health_url", ""),
             ))

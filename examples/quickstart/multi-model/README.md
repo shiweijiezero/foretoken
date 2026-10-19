@@ -18,19 +18,19 @@ Install the [platform from source](../../../docs/deployment/source.md) and prepa
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
+export FRONTEND_URL="$(foretoken endpoint multi-model)"
 ```
+
+Without `--name`, the instance uses the `FrontendService` name from [`frontend.yaml`](frontend.yaml), `metadata.name: multi-model`. Add `--name candidate-a` to deploy an independent instance called `candidate-a` instead; use that name in subsequent commands.
 
 ## Observe queue autoscaling
 
 The Qwen service evaluates queue demand every five seconds. It starts with one replica, changes by at most one replica per evaluation, and delays scale down for five minutes. The settings used by this example are in the [Qwen model configuration](model-qwen3-0.6b.yaml).
 
-Open a separate terminal to watch the Qwen capacity resources:
+Open a separate terminal to follow the instance's services:
 
 ```bash
-kubectl get modelpool,modelgroup \
-  --namespace foretoken-multi-model-demo \
-  --watch
+foretoken status multi-model --watch
 ```
 
 In the terminal used for deployment, send 32 requests with at most eight in flight:
@@ -44,22 +44,7 @@ seq 1 32 | xargs -P8 -I{} sh -c '
 '
 ```
 
-Queue pressure can add Qwen replicas while this workload runs. Whether it does depends on the available GPU capacity and request duration. Inspect the applied capacity and decision reasons with:
-
-```bash
-kubectl get modelservice multi-model-qwen3-0.6b \
-  --namespace foretoken-multi-model-demo \
-  -o json | jq '.status.autoscaling[] | {
-    id,
-    kind,
-    role,
-    observationState,
-    direction,
-    desiredReplicas: .decision.desiredReplicas,
-    adjustedReplicas: .adjustment.adjustedReplicas,
-    appliedReplicas
-  }'
-```
+Queue pressure can add Qwen replicas while this workload runs. Whether it does depends on available GPU capacity and request duration; the status view follows replica readiness as capacity changes.
 
 ## Send requests
 
@@ -92,5 +77,5 @@ printf '\n'
 ## Clean up
 
 ```bash
-foretoken delete examples/quickstart/multi-model
+foretoken delete multi-model
 ```

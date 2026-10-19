@@ -66,7 +66,10 @@ type ProfileExecutionPlan struct {
 	ServingGeneration int64                 `json:"servingGeneration"`
 	Revisions         []ServingPoolRevision `json:"revisions"`
 	RuntimeCacheClaim string                `json:"runtimeCacheClaim"`
-	Participants      []ProfileParticipant  `json:"participants"`
+	// ArtifactDirectory retains the run's PVC-relative output directory across workload replacement.
+	// +optional
+	ArtifactDirectory string               `json:"artifactDirectory,omitempty"`
+	Participants      []ProfileParticipant `json:"participants"`
 	// Members includes every engine container covered by the selected controls.
 	// +optional
 	Members []ProfileMember `json:"members,omitempty"`

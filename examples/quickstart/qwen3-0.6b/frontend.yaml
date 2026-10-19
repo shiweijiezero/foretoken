@@ -6,7 +6,7 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: FrontendService
 metadata:
-  name: quickstart-frontend # Kubernetes name of this frontend service.
+  name: qwen3-0-6b # Default deployment instance name; --name overrides it.
 spec:
   replicas: 2 # Increase or decrease to scale frontend capacity.
   resources: # Resources allocated to each frontend replica.

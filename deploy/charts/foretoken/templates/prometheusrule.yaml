@@ -3,7 +3,7 @@
 
 {{/* Installs Foretoken recording rules into an existing Prometheus Operator. */}}
 
-{{- if and (eq .Values.scope "platform") (eq (include "foretoken.observabilityEnabled" .) "true") }}
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

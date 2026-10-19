@@ -48,6 +48,11 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
+		if selection != nil && selection.PreparationVersion == nil {
+			if err := reconciler.retainPreparationVersion(ctx, service, previous, selection, template.Backend); err != nil {
+				return nil, err
+			}
+		}
 		if template.Backend == "vllm" && selection != nil && selection.InstanceAdmissionProtocol == 0 {
 			startupAdmission, err := reconciler.legacyInstanceAdmission(ctx, service, previous, selected.Name)
 			if err != nil {
@@ -116,7 +121,8 @@ func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, 
 			}
 		}
 	}
-	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy()}
+	preparationVersion := runtimeconfig.SharedModelCachePreparationVersion
+	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion}
 	if template.Backend == "vllm" {
 		selection.InstanceAdmissionProtocol = inferencev1alpha1.InstanceAdmissionFileProtocol
 	}
@@ -180,6 +186,8 @@ func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context,
 			selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
 			selection.AdmissionStore = group.Spec.Runtime.AdmissionStore.DeepCopy()
 			selection.InstanceAdmissionProtocol = group.Spec.Runtime.InstanceAdmissionProtocol
+			version := group.Spec.Runtime.PreparationVersion
+			selection.PreparationVersion = &version
 			if selection.ApplicationURL == "" {
 				selection.ApplicationURL = reconciler.ApplicationFiles.Ref("model-server", group.Spec.Runtime.SourceRevision)
 			}
@@ -270,4 +278,43 @@ func (reconciler *ServiceReconciler) sourceSelectionAllowed(ctx context.Context,
 		}
 	}
 	return true, nil
+}
+
+// retainPreparationVersion recovers the protocol of an application selected before it was persisted.
+// A committed cohort is authoritative; uncommitted cohorts must agree on the same executable contract.
+func (reconciler *ServiceReconciler) retainPreparationVersion(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ApplicationSelection, backend string) error {
+	version := runtimeconfig.ModelPreparationVersion(selection, backend)
+	if pool != nil {
+		reader := reconciler.APIReader
+		if reader == nil {
+			reader = reconciler.Client
+		}
+		groups, err := ownedModelGroups(ctx, reader, pool)
+		if err != nil {
+			return err
+		}
+		selected := servingconfig.ServingRevision(service, pool)
+		if selected == "" {
+			selected = pool.Status.PreparedRevision
+		}
+		found, conflict := false, false
+		for _, group := range groups {
+			runtime := group.Spec.Runtime
+			if runtime.Backend != backend || runtime.Image != selection.Image || groupApplicationURL(&group, reconciler.ApplicationFiles) != selection.ApplicationURL || runtime.SourceRevision != selection.SourceRevision {
+				continue
+			}
+			if selected != "" && group.Spec.Revision == selected {
+				version = runtime.PreparationVersion
+				selection.PreparationVersion = &version
+				return nil
+			}
+			conflict = conflict || found && version != runtime.PreparationVersion
+			version, found = runtime.PreparationVersion, true
+		}
+		if conflict {
+			return fmt.Errorf("retained application for ModelPool %q has conflicting preparation protocols; redeploy the service to select its application", pool.Name)
+		}
+	}
+	selection.PreparationVersion = &version
+	return nil
 }

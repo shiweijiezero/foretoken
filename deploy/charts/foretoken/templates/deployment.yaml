@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Each deployment owns a controller for its namespace, never the shared APIs.
-{{- if eq .Values.scope "deployment" }}
+{{/* Compile the serving-controller workload for platform-owned deployment instances. */}}
+{{- define "foretoken.deploymentController" }}
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := .Values.development.enabled }}
 {{- $applications := include "foretoken.applications" . | fromJson }}
@@ -118,6 +118,7 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
+            - {{ printf "--cache-directory-bindings=%s" (include "foretoken.cacheDirectoryBindings" .) | quote }}
             {{- with .Values.modelDistribution.proxyURL }}
             - {{ printf "--model-distribution-download-proxy=%s" . | quote }}
             {{- end }}
@@ -196,7 +197,7 @@ spec:
             {{- end }}
             {{- if and .Values.frontend.enabled (not .Values.responseStore.externalURLSecret.name) }}
             - name: FORETOKEN_RESPONSE_STORE_URL
-              value: {{ .Values.responseStore.externalURL | quote }}
+              value: {{ include "foretoken.responseStoreURL" . | quote }}
             {{- end }}
             - name: POD_NAMESPACE
               valueFrom:

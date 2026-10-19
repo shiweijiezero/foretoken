@@ -209,8 +209,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		TokenizerRevision: effective.TokenizerRevision,
 		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
 	})
-	// Only the vLLM runtime consumes the source-publication preparation contract.
-	resolved.Runtime.PreparationVersion = 1
 	resolved.Runtime.Profiling = template.Profiling.DeepCopy()
 	resolved.PDRuntime, resolved.RDMA, resolved.ECRuntime, resolved.KVRuntime = pdRuntime, rdma, ecRuntime, kvRuntime
 	return resolved, nil
@@ -279,6 +277,7 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
+	preparationVersion := runtimeconfig.ModelPreparationVersion(template.Application, template.Backend)
 	var admissionStore *inferencev1alpha1.RedisConnection
 	var instanceAdmissionProtocol uint32
 	if template.Application != nil {
@@ -298,16 +297,17 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			Cache: template.RuntimeCache.DeepCopy(), HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			SourceRevision: template.SourceRevision,
-			ApplicationURL: applicationURL,
-			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
+			PreparationVersion: preparationVersion,
+			SourceRevision:     template.SourceRevision,
+			ApplicationURL:     applicationURL,
+			Backend:            template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
 			Env:                                   template.DeepCopy().Env,
 			AdmissionStore:                        admissionStore,
 			PrefixCacheIsolation:                  template.PrefixCacheIsolation,
 			InstanceAdmissionProtocol:             instanceAdmissionProtocol,
 			InstanceAdmission:                     startupAdmission,
-			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
+			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache, preparationVersion),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},

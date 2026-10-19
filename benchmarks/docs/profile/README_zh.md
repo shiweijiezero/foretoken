@@ -89,12 +89,12 @@ runtime:
 [Nsight 示例](../../../examples/feature/profile/nsight/README_zh.md)已选择该工具，并沿用快速开始示例的持久存储：
 
 ```bash
-foretoken perf examples/feature/profile/nsight \
+foretoken perf examples/feature/profile/nsight --name nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local,wandb
 ```
 
-如需采集外部流量，改用 `foretoken deploy examples/feature/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m`。该命令在采集后保留运行中的服务，再次执行即可采集下一段。
+如需采集外部流量，改用 `foretoken deploy examples/feature/profile/nsight --name nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m`。该命令在采集后保留运行中的服务，再次执行即可采集下一段。
 
 ## 清理
 
@@ -104,4 +104,4 @@ foretoken perf examples/feature/profile/nsight \
 foretoken delete examples/quickstart/qwen3-0.6b
 ```
 
-清理 Nsight 示例时将路径换为 `examples/feature/profile/nsight`。Profiling 会增加开销，延迟和吞吐量对比请使用不带 `--profile` 的评测。
+清理具名 Nsight 实例时，执行 `foretoken delete nsight`。Profiling 会增加开销，延迟和吞吐量对比请使用不带 `--profile` 的评测。
