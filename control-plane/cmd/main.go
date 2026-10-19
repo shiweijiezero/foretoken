@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Starts the Foretoken control-plane manager and health endpoints.
+// Starts the Foretoken controller manager and registers domain controllers.
 
 package main
 
@@ -15,6 +15,16 @@ import (
 	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/frontend"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/kv"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/model"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/profiling"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/video"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/observability"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -28,11 +38,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
-
-	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/controllers"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 const (
@@ -180,8 +185,8 @@ func main() {
 	for index, name := range workloadImagePullSecretNames {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
-	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
-	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
+	cacheProfile := runtimeconfig.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
+	huggingFaceAccessProfile := runtimeconfig.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{ProxyURL: modelDownloadProxyURL}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	admissionStore := &inferencev1alpha1.RedisConnection{URL: os.Getenv(runtimeconfig.AdmissionStoreURLEnv)}
@@ -371,40 +376,40 @@ func main() {
 		ctrl.Log.Error(err, "invalid observability labels")
 		os.Exit(1)
 	}
-	serviceAlerts, err := controllers.NewServiceAlerts(manager, observabilityPrometheus, observabilityLabels)
+	serviceAlerts, err := observability.NewServiceAlerts(manager, observabilityPrometheus, observabilityLabels)
 	if err != nil {
 		ctrl.Log.Error(err, "invalid observability configuration")
 		os.Exit(1)
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
-	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&profiling.Reconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&video.Reconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, WorkerApplicationURL: videoWorkerApplicationURL, ApplicationFiles: applicationFiles, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&storage.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
 	}
 	if frontendEnabled {
-		var gateway *controllers.GatewayParent
+		var gateway *frontend.GatewayParent
 		if frontendMode == frontendModeGateway {
-			gateway = &controllers.GatewayParent{
+			gateway = &frontend.GatewayParent{
 				Name:        frontendGatewayName,
 				Namespace:   frontendGatewayNamespace,
 				SectionName: frontendGatewaySectionName,
 			}
 		}
-		frontendReconciler := &controllers.FrontendServiceReconciler{
+		frontendReconciler := &frontend.Reconciler{
 			Client:       manager.GetClient(),
 			APIReader:    manager.GetAPIReader(),
 			CacheProfile: cacheProfile,
 			Alerts:       serviceAlerts,
-			RuntimeProfile: controllers.FrontendRuntimeProfile{
+			RuntimeProfile: frontend.FrontendRuntimeProfile{
 				SourceMode:        sourceMode,
 				ApplicationFiles:  applicationFiles,
 				Image:             frontendImage,
@@ -423,12 +428,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	metricsProvider, err := controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
+	metricsProvider, err := model.NewHTTPScalingMetricsProvider(manager.GetClient(), autoscalingTelemetryConfigurationPath)
 	if err != nil {
 		ctrl.Log.Error(err, "invalid autoscaling telemetry configuration")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelServiceReconciler{
+	if err := (&model.ServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
 		SourceMode:               sourceMode,
@@ -442,21 +447,21 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&kv.ServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVService controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVPoolReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&kv.PoolReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
+	if err := (&kv.GroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVGroup controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelPoolReconciler{
+	if err := (&model.PoolReconciler{
 		Client: manager.GetClient(),
-		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
+		RuntimeProfile: resolver.RuntimeProfile{
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
@@ -469,12 +474,12 @@ func main() {
 			RDMA:               rdma,
 			EC:                 ec,
 			MooncakeStore:      mooncakeStore,
-		}},
+		},
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
+	if err := (&model.GroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, ApplicationFiles: applicationFiles}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

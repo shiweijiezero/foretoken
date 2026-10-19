@@ -9,17 +9,15 @@ import (
 	"encoding/json"
 	"fmt"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-// MooncakePDProfile contains opaque platform-owned Mooncake P/D profile identity and settings.
 // MooncakeStoreProfile contains opaque platform-owned external Store settings.
 type MooncakeStoreProfile struct {
 	Name           string
@@ -29,6 +27,7 @@ type MooncakeStoreProfile struct {
 	PythonHashSeed string
 }
 
+// MooncakePDProfile contains platform-owned Mooncake transfer identity and settings.
 type MooncakePDProfile struct {
 	Name                       string
 	Revision                   string
@@ -62,17 +61,6 @@ type RuntimeProfile struct {
 	RDMA               *inferencev1alpha1.RDMAAllocation
 	EC                 *ECProfile
 	MooncakeStore      *MooncakeStoreProfile
-}
-
-// StaticModelPoolResolver resolves every Pool with one platform runtime profile.
-// Alternative resolvers may select profiles from the Pool template.
-type StaticModelPoolResolver struct {
-	RuntimeProfile RuntimeProfile
-}
-
-// Resolve applies the resolver runtime profile to one normalized ModelPool template.
-func (resolver StaticModelPoolResolver) Resolve(template inferencev1alpha1.NormalizedPoolTemplate) (ModelGroupTemplate, error) {
-	return ResolveModelPool(template, resolver.RuntimeProfile)
 }
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.

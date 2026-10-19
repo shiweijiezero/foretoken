@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Converts lifecycle budgets to their owning runtime representations.
+
 package runtimeconfig
 
 import (
@@ -9,6 +11,18 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
+
+// WholeDurationSeconds returns a positive whole-second budget for workload and Gateway fields.
+func WholeDurationSeconds(input inferencev1alpha1.Duration) (int64, error) {
+	duration, err := time.ParseDuration(string(input))
+	if err != nil {
+		return 0, err
+	}
+	if duration <= 0 || duration%time.Second != 0 {
+		return 0, fmt.Errorf("duration must be a positive whole number of seconds")
+	}
+	return int64(duration / time.Second), nil
+}
 
 // PositiveDurationSeconds rounds up a runtime budget and bounds it for Kubernetes int32 fields.
 func PositiveDurationSeconds(value inferencev1alpha1.Duration, name string) (int64, error) {

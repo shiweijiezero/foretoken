@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -42,12 +43,11 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if err := spec.Admission.Validate(); err != nil {
 		return nil, err
 	}
-	source := spec.Source
-	if source == "" {
-		source = inferencev1alpha1.ModelSourceHF
+	if spec.Source == "" {
+		spec.Source = inferencev1alpha1.ModelSourceHF
 	}
 	artifactRevision := defaultHFRevision
-	switch source {
+	switch spec.Source {
 	case inferencev1alpha1.ModelSourceLocal:
 		artifactRevision = localArtifactRevision
 	case inferencev1alpha1.ModelSourceHF:
@@ -56,13 +56,14 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	default:
 		return nil, fmt.Errorf("source must be local, hf, or modelscope")
 	}
-	if source != inferencev1alpha1.ModelSourceLocal && (path.IsAbs(spec.Model) || path.IsAbs(spec.Tokenizer)) {
+	if spec.Source != inferencev1alpha1.ModelSourceLocal && (path.IsAbs(spec.Model) || path.IsAbs(spec.Tokenizer)) {
 		return nil, fmt.Errorf("absolute model and tokenizer paths require source local")
 	}
 	timeouts, err := normalizeTimeouts(spec.Timeouts)
 	if err != nil {
 		return nil, err
 	}
+	spec.Timeouts = timeouts
 	if spec.Backend == "vllm-omni" {
 		if spec.PrefixCacheIsolation != nil {
 			return nil, fmt.Errorf("prefixCacheIsolation is not supported by the vllm-omni video backend")
@@ -77,14 +78,23 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if spec.InstanceAdmission != nil && spec.InstanceAdmission.MaxConcurrentRequests == 0 {
 		return nil, fmt.Errorf("instanceAdmission.maxConcurrentRequests must be positive")
 	}
-	internalGenerateRequestBodyLimitBytes := valueOrDefaultInt64(spec.InternalGenerateRequestBodyLimitBytes, inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes)
+	internalGenerateRequestBodyLimitBytes := ptr.Deref(spec.InternalGenerateRequestBodyLimitBytes, inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes)
 	if internalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || internalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return nil, fmt.Errorf("internalGenerateRequestBodyLimitBytes must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
 	}
+	spec.InternalGenerateRequestBodyLimitBytes = &internalGenerateRequestBodyLimitBytes
 	if len(spec.ModelPools) == 0 {
-		replicas := valueOrDefault(spec.Replicas, 1)
-		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.NodeSelector, spec.EngineArgs, spec.Env, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		entry := inferencev1alpha1.ModelPoolTemplate{
+			Name:           defaultPoolName,
+			Role:           inferencev1alpha1.ModelRoleAggregate,
+			Replicas:       spec.Replicas,
+			Nodes:          spec.Nodes,
+			Resources:      *spec.Resources,
+			MaxInputTokens: spec.MaxInputTokens,
+			KVCache:        spec.KVCache,
+			Features:       spec.Features,
+		}
+		pool, err := compilePool(spec, entry, artifactRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -102,25 +112,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 
 	pools := make([]ModelPool, 0, len(spec.ModelPools))
 	for _, entry := range spec.ModelPools {
-		role := entry.Role
-		if role == "" {
-			role = inferencev1alpha1.ModelRoleAggregate
-		}
-		replicas := valueOrDefault(entry.Replicas, 1)
-		nodes := valueOrDefault(entry.Nodes, 1)
-		engineArgs := spec.EngineArgs
-		if entry.EngineArgs != nil {
-			engineArgs = *entry.EngineArgs
-		}
-		environment := spec.Env
-		if entry.Env != nil {
-			environment = *entry.Env
-		}
-		nodeSelector := spec.NodeSelector
-		if entry.NodeSelector != nil {
-			nodeSelector = entry.NodeSelector
-		}
-		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, nodeSelector, engineArgs, environment, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		pool, err := compilePool(spec, entry, artifactRevision)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -162,24 +154,43 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, nodeSelector map[string]string, engineArgs inferencev1alpha1.EngineArguments, environment inferencev1alpha1.ModelEnvironment, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+// compilePool resolves one Pool's overrides and builds its execution template.
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, entry inferencev1alpha1.ModelPoolTemplate, artifactRevision string) (ModelPool, error) {
+	role := entry.Role
+	if role == "" {
+		role = inferencev1alpha1.ModelRoleAggregate
+	}
+	nodes := ptr.Deref(entry.Nodes, 1)
 	if nodes < 1 {
 		return ModelPool{}, fmt.Errorf("nodes must be positive")
+	}
+	// Pool maps replace the corresponding service map as a whole, including an explicit empty map.
+	engineArgs := spec.EngineArgs
+	if entry.EngineArgs != nil {
+		engineArgs = *entry.EngineArgs
+	}
+	environment := spec.Env
+	if entry.Env != nil {
+		environment = *entry.Env
+	}
+	nodeSelector := spec.NodeSelector
+	if entry.NodeSelector != nil {
+		nodeSelector = entry.NodeSelector
 	}
 	env, err := normalizeEnvironment(environment)
 	if err != nil {
 		return ModelPool{}, err
 	}
-	normalizedResources, err := normalizeResources(resources)
+	normalizedResources, err := normalizeResources(entry.Resources)
 	if err != nil {
 		return ModelPool{}, err
 	}
-	normalizedKVCache, err := normalizeKVCache(kvCache)
+	normalizedKVCache, err := normalizeKVCache(entry.KVCache)
 	if err != nil {
 		return ModelPool{}, err
 	}
 
-	normalizedFeatures, err := normalizeModelFeatures(features)
+	normalizedFeatures, err := normalizeModelFeatures(entry.Features)
 	if err != nil {
 		return ModelPool{}, err
 	}
@@ -196,13 +207,13 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 		engineArgs = nil
 	}
 	return ModelPool{
-		Name:              name,
-		DesiredGroups:     replicas,
-		MaxInputTokens:    copyInt32(maxInputTokens),
+		Name:              entry.Name,
+		DesiredGroups:     ptr.Deref(entry.Replicas, 1),
+		MaxInputTokens:    copyInt32(entry.MaxInputTokens),
 		InstanceAdmission: spec.InstanceAdmission.DeepCopy(),
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
-			Source:                                source,
+			Source:                                spec.Source,
 			ModelRevision:                         artifactRevision,
 			Tokenizer:                             tokenizer,
 			TokenizerRevision:                     artifactRevision,
@@ -213,10 +224,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Resources:                             normalizedResources,
 			NodeSelector:                          normalizedNodeSelector,
 			PrefixCacheIsolation:                  spec.PrefixCacheIsolation,
-			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
-			Network:                               network,
-			ECProfile:                             ecProfile,
-			Timeouts:                              timeouts,
+			InternalGenerateRequestBodyLimitBytes: *spec.InternalGenerateRequestBodyLimitBytes,
+			Network:                               entry.Network,
+			ECProfile:                             ecProfileForRole(spec.ECProfile, role),
+			Timeouts:                              spec.Timeouts,
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
@@ -447,27 +458,6 @@ func normalizeDuration(field string, input inferencev1alpha1.Duration) (inferenc
 		return "", fmt.Errorf("%s must be a positive duration", field)
 	}
 	return inferencev1alpha1.Duration(duration.String()), nil
-}
-
-func valueOrDefault(value *int32, fallback int32) int32 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func valueOrDefaultDuration(value inferencev1alpha1.Duration, fallback inferencev1alpha1.Duration) inferencev1alpha1.Duration {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func valueOrDefaultInt64(value *int64, fallback int64) int64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }
 
 func normalizeModelFeatures(input *inferencev1alpha1.ModelFeatures) (inferencev1alpha1.ModelFeatures, error) {
