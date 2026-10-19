@@ -3,7 +3,7 @@
 
 # Creates an optional HTTP Gateway for frontend routes when a GatewayClass already exists.
 
-{{- if and (eq .Values.scope "platform") .Values.frontend.enabled (eq .Values.frontend.mode "gateway") .Values.frontend.gateway.create }}
+{{- if and .Values.frontend.enabled (eq .Values.frontend.mode "gateway") .Values.frontend.gateway.create }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:

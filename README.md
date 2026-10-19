@@ -69,7 +69,7 @@ foretoken install -e .
 # foretoken install
 ```
 
-Installation prepares the shared cluster APIs and dependencies. The deployment command creates a controller for each service namespace.
+Install the platform once for the cluster. Each deployment instance then has its own controller and services.
 
 The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](cli/README.md#before-you-start), and your user must be able to run `docker info` without `sudo`. Install host dependencies separately when needed. For kind or an existing Kubernetes cluster, use the corresponding guide in the table above.
 
@@ -79,14 +79,14 @@ The host must have Docker, NVIDIA Container Toolkit, k3d, kubectl, and [Helm 4](
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
+This creates the `quickstart-frontend` instance, with one frontend service and one `Qwen/Qwen3-0.6B` model replica. The model requests 1 GPU, 4 CPU, and 48 GiB memory, with limits of 8 CPU and 64 GiB. The example uses the repository-root `./data` directory for model files and runtime cache. More deployments are available in [`examples/`](examples/).
 
 To try different code changes side by side, see [parallel candidates](docs/deployment/source.md#run-candidates-in-parallel); to modify vLLM, see [local engine source](docs/deployment/source.md#edit-an-inference-engine).
 
 ### 4. Send a test request
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -169,8 +169,8 @@ foretoken install -e . --frontend-mode gateway
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 # Resolve the Gateway address and request hostname
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
 
 # Send a test request
 curl --fail-with-body --no-buffer \
@@ -185,10 +185,10 @@ The command installs Envoy Gateway when needed. See the [command-line tool guide
 ## Stop and Uninstall
 
 ```bash
-# Delete the Quick Start resources, including its namespace and runtime cache PVC
-foretoken delete examples/quickstart/qwen3-0.6b
+# Delete only the Quick Start instance
+foretoken delete quickstart-frontend
 
-# Uninstall the Foretoken platform
+# Platform administrator: uninstall when no deployments need the platform
 foretoken uninstall
 ```
 

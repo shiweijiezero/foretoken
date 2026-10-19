@@ -19,12 +19,12 @@ spec:
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-挂载同一目录的部署会复用下载的权重、tokenizer 和模型配置文件；编译缓存等运行状态按命名空间分别保存：
+挂载同一目录的部署实例会复用下载的权重、tokenizer 和模型配置文件。同一命名空间中的实例也分别保存编译缓存、运行配置和性能剖析结果，不混用可写状态。
 
 | 目录 | 用途 |
 |---|---|
 | `data/shared/models/` | 各服务共享的托管模型下载缓存 |
-| `data/namespaces/<namespace>/` | 编译缓存、运行配置、账号状态及性能剖析结果 |
+| `data/deployments/` | 各实例独立的运行状态与性能剖析目录 |
 | `data/models/` | 自行准备和维护的模型文件，不参与下载缓存回收 |
 
 源码构建缓存由构建流程单独管理。选择 ModelScope 或 Hugging Face 兼容地址，见[模型来源](model-sources_zh.md)。
@@ -39,31 +39,22 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 ## 跨命名空间复用模型文件
 
-成员使用的共享目录由管理员一次性准备。如果仓库的 `data/` 位于 CLI 主机和集群都能访问的 NFS 上，在仓库根目录执行：
+管理员在安装平台时授权共享目录。从仓库根目录安装时，命令可以发现 CLI 主机与集群节点都能访问的默认 NFS `data/`；本机 k3d 则复用已有的目录绑定挂载。
 
-```bash
-foretoken install --namespace candidate-a
-foretoken install --namespace candidate-b
-```
-
-本机 k3d 则复用已有的数据目录绑定挂载。安装会为两个命名空间分别准备指向同一实际目录的存储。管理员分配[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)后，成员继续在 `cache.yaml` 中选择该目录，正常部署即可，无需填写 PVC 名称或取得集群级存储权限。
+成员继续在 `cache.yaml` 中选择该目录，使用正常部署命令。某个实例首次需要目录时，平台会准备所在命名空间的存储绑定，成员无需填写 PVC 名称或取得集群级存储权限。[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)由管理员另外分配。
 
 CLI 主机无法直接读取共享挂载时，管理员也可以用已有的 NFS `ReadWriteMany` 卷提供目录。将下面的配置保存到 `deploy/member-storage.yaml`，目录和源 PVC 换成实际选择：
 
 ```yaml
-namespaceAccess:
-  directories:
-    models:
-      directory: /srv/shared/foretoken-data
-      sourceClaim: model-library/models
+workload:
+  cache:
+    directories:
+      models:
+        directory: /srv/shared/foretoken-data
+        sourceClaim: model-library/models
 ```
 
-为两个命名空间应用该配置：
-
-```bash
-foretoken install --namespace candidate-a --values deploy/member-storage.yaml
-foretoken install --namespace candidate-b --values deploy/member-storage.yaml
-```
+安装平台时，在原命令中加上 `--values deploy/member-storage.yaml`；源码安装保留 `-e` 和镜像仓库选项。
 
 成员在 `spec.directory` 中填写 `/srv/shared/foretoken-data`。源 PVC 支持原生 NFS 和 `nfs.csi.k8s.io`。仅存在于 CLI 主机本地磁盘的目录无法提供远程共享；此时应选择节点可访问的目录，或使用下文的动态存储。
 
@@ -71,8 +62,8 @@ foretoken install --namespace candidate-b --values deploy/member-storage.yaml
 
 `foretoken stop` 释放服务运行资源，但保留其模型缓存引用；之后执行 `foretoken deploy` 可以继续复用文件。
 
-`foretoken delete` 在被删除服务的工作负载退出后释放引用。每个托管模型版本在该目录中不再被任何服务引用时，才会被回收。例如 A、B 两个命名空间使用 X，C、D 使用 Y：删除 A、B 后就能回收 X，无需等待 Y 停止。
-数据目录本身、`data/models/` 中的自备模型和命名空间运行状态会保留。管理员准备的卷仍可用于后续部署；动态卷则遵循配置的保留策略及 StorageClass 回收策略。
+`foretoken delete` 在选中实例的工作负载退出后释放模型引用。每个托管模型版本在该目录中不再被任何服务引用时，才会被回收。例如 A、B 两个实例使用 X，C、D 使用 Y：删除 A、B 后就能回收 X，无需等待 Y 停止。
+数据目录本身、`data/models/` 中的自备模型和实例运行文件会保留。管理员准备的卷仍可用于后续部署；动态卷则遵循配置的保留策略及 StorageClass 回收策略。
 
 ## 使用已有模型
 
@@ -110,4 +101,4 @@ StorageClass 只支持单节点卷时，使用 `ReadWriteOnce`。需要指定存
 
 管理员也可以通过 `workload.cache.claimName` 将已有的命名空间 PVC 设为默认存储。成员显式选择已授权的 `directory` 时，以目录选择为准。
 
-性能剖析结果保存在对应命名空间的数据区域，采集和查看方法见[性能剖析指南](../../benchmarks/docs/profile/README_zh.md)。
+性能剖析结果保存在对应实例的私有数据区域，采集和查看方法见[性能剖析指南](../../benchmarks/docs/profile/README_zh.md)。

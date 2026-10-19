@@ -50,6 +50,7 @@ foretoken install -e . --registry "$REGISTRY"
 
 ```bash
 docker login registry.example.com:5000
+kubectl create namespace foretoken-platform --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic registry-auth \
   --namespace foretoken-platform \
   --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
@@ -88,12 +89,12 @@ spec:
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
+这会在当前 kubeconfig 的命名空间中创建 `quickstart-frontend` 实例。修改控制器、前端或模型服务代码后，继续执行同一条命令，只更新该实例。使用另一个 `--name`，即可在同一命名空间运行独立实例。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete quickstart-frontend
 foretoken uninstall
 ```
 

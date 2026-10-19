@@ -11,7 +11,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.11 或更高版本、`kubectl`，以及 Helm 4.2.4 或更高版本。可以按下文创建本地集群，或选择已有集群的 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
+准备 Python 3.11 或更高版本、`kubectl` 和目标集群的访问配置。安装平台或开发源码时，还需 Helm 4.2.4 或更高版本。可以按下文创建本地集群，或选择已有 Kubernetes context。GPU 节点需要安装厂商驱动和 Kubernetes device plugin。
 
 ## 安装命令行工具
 
@@ -59,9 +59,9 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## 安装 Kubernetes 平台
 
-`foretoken install` 在当前 Kubernetes context 中安装或更新共享的 Foretoken CRD 和依赖。平台资源使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。`foretoken deploy` 在各个部署命名空间中创建控制器和模型服务。
+管理员在集群中执行一次 `foretoken install`，准备共享 API、依赖、监控和部署默认配置。平台资源使用 `foretoken-platform` 命名空间，网关模式还会准备共享访问入口。
 
-安装会设置后续部署使用的默认配置，不会重启已有控制器或服务。自行管理的部署在重新部署时采用新默认值；管理员准备的命名空间保留已选配置，由管理员通过命名空间安装的 `--values` 或 `-e` 选择需要更新的设置或源码。
+用户随后通过 `foretoken deploy` 创建独立部署实例。平台更新不会重启已有实例；重新部署某个实例后，它才会采用更新后的默认配置。
 
 ### 默认安装
 
@@ -158,25 +158,22 @@ loadBalancer:
 
 ## 为成员准备命名空间
 
-管理员一次性准备控制器和服务操作权限，成员随后用自己的 namespace 权限执行正常部署命令。以下使用多模型示例的 `foretoken-multi-model-demo` 命名空间；将 `MEMBER_ID` 换成成员 kubeconfig 对应的 Kubernetes 身份：
+平台安装后，管理员在已有命名空间内分配服务操作权限。将 `team-inference` 换成实际命名空间，`MEMBER_ID` 换成成员 kubeconfig 对应的 Kubernetes 身份：
 
 ```bash
-foretoken install --namespace foretoken-multi-model-demo
-kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-demo \
-  --role foretoken-control-plane-operator --user MEMBER_ID
+kubectl create rolebinding foretoken-operator --namespace team-inference \
+  --clusterrole foretoken-operator --user MEMBER_ID
 ```
 
-成员可以部署、暂停、恢复和删除服务，无需管理平台或控制器。Namespace 仍由管理员维护，成员在 `cache.yaml` 中选择已准备的数据目录。同一目录中的模型下载可以共享，运行状态则按命名空间隔离。配置见[跨命名空间复用模型文件](../docs/features/model-storage_zh.md#跨命名空间复用模型文件)。
+安装平台不会自动给用户授权。这条 RoleBinding 让成员能够部署、查看、暂停和删除实例，无需管理共享平台。使用 `deploy -e` 开发源码仍需单独授予构建权限。
 
-已有源码安装的管理员可以执行 `foretoken install --namespace foretoken-multi-model-demo -e .`，为该命名空间构建应用。成员的普通部署使用这些已准备的应用；显式执行 `deploy -e` 更新源码仍需源码开发权限。
-
-成员删除服务及托管缓存后，管理员可以移除该命名空间的控制器和访问配置：
+成员在自己的 kubeconfig 中选择一次分配的命名空间：
 
 ```bash
-foretoken uninstall --namespace foretoken-multi-model-demo
+kubectl config set-context --current --namespace team-inference
 ```
 
-命名空间和共享模型文件继续保留，共享平台不受影响。
+日常命令会自动使用该命名空间，无需创建 Namespace 资源或安装控制器。部署时，平台会准备该实例的控制器和已授权存储。管理员选择共享目录的方式见[模型存储](../docs/features/model-storage_zh.md#跨命名空间复用模型文件)。
 
 ## 部署和管理模型服务
 
@@ -185,10 +182,12 @@ foretoken uninstall --namespace foretoken-multi-model-demo
 资源要求见[多模型示例](../examples/quickstart/multi-model/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/features/model-storage_zh.md)。单模型部署使用 `examples/quickstart/qwen3-0.6b`。
 
 ```bash
-foretoken deploy examples/quickstart/multi-model --timeout 20m
+foretoken deploy examples/quickstart/multi-model --name team-models --timeout 20m
 ```
 
-命令应用所选服务的配置，复用管理员已准备的控制器，或为自行管理的命名空间安装、更新控制器。部署内容未变时，复用已有控制器和运行实例。同一命名空间中的服务共用控制器；需要独立运行不同代码版本时，使用不同命名空间。
+命令在当前 kubeconfig 的命名空间中创建或更新 `team-models` 部署实例，每个实例都有自己的控制器和服务。对同一目录使用另一个 `--name`，即可并行运行独立实例；更新、暂停和删除只作用于选中的实例。
+
+不传 `--name` 时，默认使用配置中唯一 FrontendService 的名称，本例为 `multi-model-frontend`；前端资源也使用该实例名。普通部署直接使用已安装的应用，不构建源码。只有开发源码时才添加 `-e PATH`。
 
 等待期间显示服务状态和 Pod/容器日志。运行中的服务达到 Ready、零副本服务停止、所选告警配置完成后，命令退出。告警配置见[服务可观测性示例](../examples/feature/observability/README_zh.md)。
 
@@ -199,26 +198,28 @@ foretoken deploy examples/quickstart/multi-model --timeout 20m
 不应用配置，直接查看同一部署的状态：
 
 ```bash
-foretoken status examples/quickstart/multi-model
+foretoken status team-models
 ```
 
-状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。查看命名空间中的全部服务，或添加 `--watch` 持续查看状态变化与完整 Pod/容器日志，按 Ctrl+C 结束：
+状态输出包含 Kubernetes 的等待与退出消息，重启后也保留上一次容器退出的诊断。可以列出当前命名空间中的实例，或持续查看指定实例的状态和 Pod/容器日志，按 Ctrl+C 结束：
 
 ```bash
-foretoken status -n foretoken-multi-model-demo
-foretoken status -n foretoken-multi-model-demo --watch
+foretoken status
+foretoken status team-models --watch
 ```
+
+这些命令也接受 Kustomize 路径。通过路径选择具名实例时，同时传入 `--name team-models`，例如 `foretoken status examples/quickstart/multi-model --name team-models`。
 
 部署后解析前端服务的公开 URL：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint team-models)"
 ```
 
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint team-models --host)"
 ```
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
@@ -226,14 +227,14 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --h
 ### 停止与恢复
 
 ```bash
-foretoken stop examples/quickstart/multi-model
+foretoken stop team-models
 ```
 
-实验暂时不用 GPU 时，可以停止服务，同时保留配置、存储和构建缓存。命令等待前端和模型实例退出；之后对同一目录执行 `foretoken deploy` 即可恢复，模型进程会重新启动并加载权重。
+实验暂时不用 GPU 时，可以暂停实例，同时保留配置、模型缓存引用和运行状态。命令等待该实例的前端和模型退出；之后执行 `foretoken deploy examples/quickstart/multi-model --name team-models` 即可恢复，模型进程会重新启动并加载权重。
 
 ## 性能评测：响应速度与吞吐量
 
-使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
+使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。评测上面的具名实例时，添加 `--name team-models`；`eval` 使用相同的选择方式。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
 
 ## 质量评测：回答评分与模型对比
 
@@ -254,11 +255,11 @@ foretoken stop examples/quickstart/multi-model
 删除部署的服务：
 
 ```bash
-foretoken delete examples/quickstart/multi-model
+foretoken delete team-models
 ```
 
 共享平台不再使用时，由平台管理员执行 `foretoken uninstall`。
 
-在管理员准备的命名空间中，删除命令清理提交的服务资源，保留控制器、命名空间和已准备的存储。托管模型下载在最后一个服务引用释放后回收，`stop` 则保留引用。自行管理的部署会在服务完成清理后移除不再使用的控制器；Kustomize 配置中包含的命名空间及其资源在最后删除。
+删除命令等待选中实例的服务和工作负载退出，再移除其控制器和实例资源，不删除 Kubernetes 命名空间、相邻实例或管理员提供的存储。托管模型下载在最后一个服务引用释放后回收，`stop` 则保留引用。动态卷遵循配置的保留策略及 StorageClass 回收策略。
 
 卸载保留 CRD、日志存储和复用的集群组件。仍有工作负载依赖托管的 LeaderWorkerSet 或 MetalLB 时，也会保留对应控制器。

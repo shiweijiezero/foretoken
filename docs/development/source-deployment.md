@@ -5,17 +5,19 @@
 
 English | [简体中文](source-deployment_zh.md)
 
-This guide describes the behavior to preserve when maintaining source deployments. For commands and examples, see [Deploy Foretoken from Source](../deployment/source.md).
+This guide describes the ownership and lifecycle maintained by source deployments. Installation, deployment and parallel experiment commands are in [Deploy Foretoken from Source](../deployment/source.md).
 
 ## Installation and updates
 
-Platform installation owns shared CRDs, dependencies and runtime defaults, and prepares initial application builds. Administrators can prepare a namespace's controller, access and application defaults without reinstalling the platform. Members then submit service intent using those applications.
+Platform installation owns shared CRDs, dependencies, runtime defaults and the deployment manager. A source installation also prepares initial applications and publishes the build settings needed by developer workstations. Users receive namespace access through administrator-managed RoleBindings; installation does not grant user permissions.
 
-Source deployments build controller, frontend and model-server code from the selected checkout and update the submitted namespace. In an administrator-prepared namespace, source updates are explicit and retain their administrative permissions; ordinary service operations do not enter platform builds or cleanup. CRD changes still require platform installation.
+The CLI submits an `InferenceDeployment` for each named instance. The platform manager selects its controller from the installed template and prepares controller permissions, authorized directory bindings and Gateway access. Each controller reconciles only its instance, including when neighboring instances use different controller code in the same namespace. An older namespace-wide controller must retire before instance controllers can take ownership there.
 
-Source updates reuse compatible runtime environments and rebuild them automatically when dependency or base-image inputs change. The CLI remembers engine directories separately for each Foretoken source directory. Engine source must remain compatible with the selected Python, PyTorch and accelerator libraries.
+Source development is explicit through `deploy -e` or an engine-source selection. It builds the selected checkout's controller, frontend and model-server applications and updates only the target instance. Ordinary deployment uses installed applications without source builds. CRD and shared platform changes still require platform installation.
 
-For example, a frontend-only update keeps unchanged model instances serving. Repeating an unchanged deployment reuses its controller and applications; configuration drift still needs to be repaired.
+A new workstation reads build settings from the source-installed platform rather than reinstalling it. Source updates reuse compatible runtime environments and rebuild when dependencies or base-image inputs change. Each checkout retains its own engine-source selection; the engine must match the selected Python, PyTorch and device environment.
+
+A frontend-only update keeps unchanged model instances serving. Repeating an unchanged deployment reuses its controller and applications; configuration drift still needs to be repaired. Later platform defaults are selected on an explicit deployment, not by restarting an existing instance.
 
 ## Builds and publication
 
@@ -23,7 +25,7 @@ Go controller executables, Rust serving executables, Python adapters and inferen
 
 Compiler caches survive builder replacement. Builds execute on node-local storage; completed artifacts can use a selected StorageClass. The source checkout reclaims its artifact and local execution volumes when unused. Application and model storage remain separately managed.
 
-Independent source directories can build concurrently. Serialize each checkout's source update and each namespace's service mutations; platform installation and removal remain exclusive with source updates. Bound lock acquisition without expiring active holders. Stop and delete supersede older pending submissions. Builds and readiness observation must not hold the namespace mutation lock.
+Independent checkouts can build concurrently. Serialize source updates within one checkout and service mutations for one deployment instance. Source operations sharing a workstation state directory exclude platform changes during builds. The deployment manager rejects new instances while the platform retires. Bound lock acquisition without expiring active holders. Stop and delete supersede older pending submissions; builds and readiness observation do not hold an instance's mutation lock.
 
 ## Readiness and failure
 
@@ -37,6 +39,6 @@ On failure or cancellation, stop builders and publishers before reusing compiler
 
 Preserve applications still needed by deployments, builds or rollback, and save recoverable build inputs before releasing unused resources.
 
-`foretoken delete` waits for the submitted services and workloads to retire. An administrator-prepared namespace retains its controller and provided storage until the administrator removes them. Self-managed deployments remove an unused controller and delete a declared namespace last. Source cleanup releases unused build resources while preserving source directories, experiment results and source archives. Namespace uninstall also releases builds no longer used by its applications.
+`foretoken delete` waits for the selected instance's services, workloads and model references to retire before the platform removes its controller and instance resources. Other instances, the Kubernetes namespace and administrator-provided storage remain. Dynamic caches follow their retention policy. Source cleanup releases unused build resources while preserving checkout directories, experiment results and source archives.
 
-Uninstall the shared platform after its deployments have been deleted, reclaiming compiler volumes before removing their provisioner. Model data and archived inputs are retained.
+Uninstall the shared platform only after its deployment instances are gone. Reclaim managed compilation volumes before removing their provisioner. Model-download collection follows the separate [runtime cache lifecycle](runtime-cache.md).

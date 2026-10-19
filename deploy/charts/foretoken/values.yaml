@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# One chart installs shared infrastructure or one namespace's serving controller.
-# The CLI selects the scope for install and deploy.
-scope: platform
+# Installs shared infrastructure and trusted templates for deployment instance controllers.
 
 global:
   # Replaces the registry host for release images. Source-image installs set explicit images instead.
@@ -39,7 +37,7 @@ development:
 
 # Persistent application file delivery, independent of model caches.
 applicationFiles:
-  # The deployment scope receives the installed platform's shared origin.
+  # Deployment controllers use the installed platform's shared origin.
   origin: ""
   # Ordinary HTTP tar.gz asset; published charts supply their version's URL.
   releaseURL: ""
@@ -60,14 +58,6 @@ controller:
     requestTimeout: 1s
     concurrency: 8
 
-# Prepared by foretoken install --namespace for namespace-local service operations.
-namespaceAccess:
-  enabled: false
-  gateway: {}
-  # Namespace-local claim names mapped to administrator-authorized directories.
-  # Namespace installation resolves NFS mounts or sourceClaim references and prepares static aliases.
-  directories: {}
-
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
@@ -75,6 +65,9 @@ workload:
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
+    # Claim names mapped to administrator-authorized directories, shared once per namespace.
+    # Entries select an existing claim, sourceClaim, NFS export or node-visible hostPath.
+    directories: {}
 
 # Optional peer distribution for model files and loaded weights.
 modelDistribution:

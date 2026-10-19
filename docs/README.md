@@ -25,7 +25,7 @@ Start with the [Quick Start](../README.md#quick-start) to deploy a model and sen
 | Configure persistent model storage | [Model storage](features/model-storage.md) |
 | Set engine options, placement, parallelism, and concurrency | [Inference parameters](features/inference-parameters.md) |
 | Call model APIs and configure frontend admission | [Frontend](../data-plane/frontend/README.md) |
-| Operate services from the command line | [CLI](../cli/README.md) |
+| Create and operate named deployment instances | [CLI](../cli/README.md#deploy-and-operate-model-services) |
 | Measure performance or model quality | [Benchmarks](../benchmarks/README.md) |
 | Inspect metrics, logs, and alerts | [Observability](../observability/README.md) |
 

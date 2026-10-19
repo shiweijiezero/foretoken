@@ -21,7 +21,7 @@
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
+命令在当前 kubeconfig 的命名空间中创建 `quickstart-frontend` 实例，并在服务就绪后退出。使用 `--name` 可以从同一份配置运行另一个独立实例。
 
 ## 发送请求
 

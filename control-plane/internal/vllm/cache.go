@@ -20,32 +20,32 @@ const (
 )
 
 // runtimeCacheDirectory preserves the cache layout of the selected executable.
-func runtimeCacheDirectory(root, namespace string, preparationVersion int32) string {
+func runtimeCacheDirectory(root, namespace, deploymentUID string, preparationVersion int32) string {
 	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
 		return path.Join(root, "runtime", namespace)
 	}
-	return runtimeconfig.NamespaceCacheDirectory(root, namespace)
+	return runtimeconfig.DeploymentCacheDirectory(root, deploymentUID)
 }
 
 // TritonCacheDirectory resolves the PVC cache template for an immutable Group runtime.
-// Namespace and node identity preserve candidate caches across Pod replacement without sharing writers.
+// Deployment and node identity preserve instance caches across Pod replacement without sharing writers.
 func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding, preparationVersion int32) string {
 	if cache == nil {
 		return ""
 	}
-	return path.Join(runtimeCacheDirectory(cache.MountPath, "$("+cacheNamespaceEnv+")", preparationVersion), "triton", "$("+cacheNodeNameEnv+")")
+	return path.Join(runtimeCacheDirectory(cache.MountPath, "$("+cacheNamespaceEnv+")", "$("+runtimeconfig.DeploymentUIDEnv+")", preparationVersion), "triton", "$("+cacheNodeNameEnv+")")
 }
 
 // RuntimeCacheEnv projects cache paths supported by the selected model-server application.
 // Native and v1 applications retain their earlier storage outside managed shared-cache collection.
-func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tritonCacheDirectory string, preparationVersion int32) []corev1.EnvVar {
+func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, deploymentUID, tritonCacheDirectory string, preparationVersion int32) []corev1.EnvVar {
 	root := "/tmp/foretoken-runtime-cache"
 	if cache != nil {
 		root = cache.MountPath
 	}
 	// Runtime identities need not have a passwd entry or a writable image home.
 	user := strconv.FormatInt(runtimeconfig.CacheStorageAccess(cache).Identity.UID, 10)
-	runtimeRoot := runtimeCacheDirectory(root, namespace, preparationVersion)
+	runtimeRoot := runtimeCacheDirectory(root, namespace, deploymentUID, preparationVersion)
 	modelRoot := runtimeconfig.ModelDirectory(root)
 	home := modelRoot
 	shared := preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion
@@ -54,6 +54,7 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tr
 	}
 	env := []corev1.EnvVar{
 		{Name: cacheNamespaceEnv, Value: namespace},
+		{Name: runtimeconfig.DeploymentUIDEnv, Value: deploymentUID},
 		{Name: "HOME", Value: runtimeRoot},
 		{Name: "USER", Value: user},
 		{Name: "LOGNAME", Value: user},

@@ -11,7 +11,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 
 ## Before you start
 
-You need Python 3.11 or later, `kubectl`, and Helm 4.2.4 or later. Create a local cluster as shown below, or select the Kubernetes context for an existing cluster. GPU nodes need their vendor driver and Kubernetes device plugin.
+Use Python 3.11 or later and `kubectl` with access to the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Create a local cluster as shown below, or select an existing Kubernetes context. GPU nodes need their vendor driver and Kubernetes device plugin.
 
 ## Install the command-line tool
 
@@ -59,9 +59,9 @@ foretoken cluster delete kind --name foretoken-dev
 
 ## Install the Kubernetes platform
 
-`foretoken install` installs or updates the shared Foretoken CRDs and dependencies in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. `foretoken deploy` creates the controller and model services in each deployment namespace.
+An administrator runs `foretoken install` once for the cluster to prepare shared APIs, dependencies, monitoring and deployment defaults. Platform resources use the `foretoken-platform` namespace. Gateway mode also prepares the shared entry point.
 
-Installation sets defaults for subsequent deployments; it does not restart existing controllers or services. Self-managed deployments adopt new defaults when redeployed. Administrator-prepared namespaces keep their selected settings; their administrator chooses changes through namespace installation with `--values` or `-e`.
+Users then deploy independent instances with `foretoken deploy`. Updating the platform does not restart existing instances; redeploy an instance to adopt the updated defaults.
 
 ### Default installation
 
@@ -158,25 +158,22 @@ loadBalancer:
 
 ## Prepare a namespace for members
 
-An administrator can prepare the controller and service permissions once, then let members use the normal deployment commands with namespace-scoped access. The following uses the multi-model example's `foretoken-multi-model-demo` namespace. Replace `MEMBER_ID` with the Kubernetes identity in the member's kubeconfig:
+After installing the platform, an administrator grants service access in an existing namespace. Replace `team-inference` with that namespace and `MEMBER_ID` with the Kubernetes identity in the member's kubeconfig:
 
 ```bash
-foretoken install --namespace foretoken-multi-model-demo
-kubectl create rolebinding foretoken-operator --namespace foretoken-multi-model-demo \
-  --role foretoken-control-plane-operator --user MEMBER_ID
+kubectl create rolebinding foretoken-operator --namespace team-inference \
+  --clusterrole foretoken-operator --user MEMBER_ID
 ```
 
-Members can deploy, stop, resume and delete services without managing the platform or controller. Namespace declarations remain administrator-managed. Members select a prepared data directory in `cache.yaml`; deployments using the same directory share model downloads while keeping separate runtime state. See [sharing model files](../docs/features/model-storage.md#share-model-files-across-namespaces).
+Platform installation does not grant permissions to users. The RoleBinding lets members deploy, inspect, stop and delete instances without managing the shared platform. Source development with `deploy -e` requires separate build permissions.
 
-From an existing source installation, the administrator can build this namespace's applications with `foretoken install --namespace foretoken-multi-model-demo -e .`. Ordinary member deployments use those prepared applications. Explicit `deploy -e` updates still require source-development permissions.
-
-After members have removed their services and managed caches, the administrator can remove the namespace controller and access resources:
+Members select the assigned namespace in their kubeconfig once:
 
 ```bash
-foretoken uninstall --namespace foretoken-multi-model-demo
+kubectl config set-context --current --namespace team-inference
 ```
 
-The namespace and shared model files remain available. This operation does not uninstall the shared platform.
+Daily commands use that namespace automatically. Members do not create Namespace resources or install a controller. The platform prepares each instance's controller and authorized storage when it is deployed. See [model storage](../docs/features/model-storage.md#share-model-files-across-namespaces) for administrator-selected shared directories.
 
 ## Deploy and operate model services
 
@@ -185,10 +182,12 @@ Run from the repository checkout prepared in the [Quick Start](../README.md). De
 See the [multi-model example](../examples/quickstart/multi-model/README.md) for resources and [model storage](../docs/features/model-storage.md) for directory or PVC configuration. Use `examples/quickstart/qwen3-0.6b` for a single model.
 
 ```bash
-foretoken deploy examples/quickstart/multi-model --timeout 20m
+foretoken deploy examples/quickstart/multi-model --name team-models --timeout 20m
 ```
 
-The command applies the selected services, reusing an administrator-prepared controller or installing and updating one for a self-managed namespace. An unchanged deployment reuses its controller and running applications. Services in the same namespace share the controller; use separate namespaces for independent code versions.
+The command creates or updates the `team-models` deployment instance in the current kubeconfig namespace. Each instance has its own controller and services. Deploy the same directory with another `--name` to run an independent instance alongside it; updates, stop and deletion affect only the selected instance.
+
+Without `--name`, the instance takes the name of the configuration's single FrontendService: `multi-model-frontend` for this example. The frontend uses the instance name in either case. Ordinary deployments use installed applications without building source; use `-e PATH` only for source development.
 
 While waiting, the command shows service status and Pod/container logs. It completes when active services are Ready, zero-capacity services have stopped, and selected alerts are configured. See [service observability](../examples/feature/observability/README.md) for alert configuration.
 
@@ -199,26 +198,28 @@ If preparation fails or readiness times out, the command reports the cause and l
 Inspect the same deployment without applying it:
 
 ```bash
-foretoken status examples/quickstart/multi-model
+foretoken status team-models
 ```
 
-Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. Inspect all services in a namespace, or add `--watch` to follow state changes and full Pod/container logs until Ctrl+C:
+Status includes Kubernetes waiting and termination messages, including the previous container attempt after a restart. List instances in the current namespace, or watch the selected instance's status and Pod/container logs until Ctrl+C:
 
 ```bash
-foretoken status -n foretoken-multi-model-demo
-foretoken status -n foretoken-multi-model-demo --watch
+foretoken status
+foretoken status team-models --watch
 ```
+
+Commands also accept the Kustomize path. For a named instance, pass `--name team-models` with that path, for example `foretoken status examples/quickstart/multi-model --name team-models`.
 
 Resolve the public frontend URL after deployment:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint team-models)"
 ```
 
 For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint team-models --host)"
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
@@ -226,14 +227,14 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/multi-model --h
 ### Stop and resume
 
 ```bash
-foretoken stop examples/quickstart/multi-model
+foretoken stop team-models
 ```
 
-Use this to release GPUs between experiments while keeping configuration, storage and build caches. The command waits for frontend and model execution to stop. Run `foretoken deploy` with the same directory to resume; model processes start and load weights again.
+Use this to release GPUs between experiments while keeping configuration, model-cache references and runtime state. The command waits for this instance's frontend and model execution to stop. Resume with `foretoken deploy examples/quickstart/multi-model --name team-models`; model processes start and load weights again.
 
 ## Measure serving performance
 
-Use `foretoken perf` to measure response latency and request or token throughput. Pass a Kustomize directory, or `--url` with `--model` for an existing endpoint. Choose a workload in [Performance examples](../benchmarks/docs/perf/README.md).
+Use `foretoken perf` to measure response latency and request or token throughput. Pass a Kustomize directory, or `--url` with `--model` for an existing endpoint. Add `--name team-models` to measure the named instance above; `eval` uses the same selection. Choose a workload in [Performance examples](../benchmarks/docs/perf/README.md).
 
 ## Evaluate and compare models
 
@@ -254,11 +255,11 @@ Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU exec
 Delete the deployed services:
 
 ```bash
-foretoken delete examples/quickstart/multi-model
+foretoken delete team-models
 ```
 
 The platform administrator can run `foretoken uninstall` when the shared platform is no longer needed.
 
-In administrator-prepared namespaces, deletion removes the submitted service resources and leaves the controller, namespace and prepared storage in place. Managed model downloads are collected after their last service reference is released; `stop` retains those references. For self-managed deployments, deletion waits for service cleanup before removing an unused controller; a namespace included in the Kustomize configuration is removed last, along with its resources.
+Deletion waits for the selected instance's services and workloads to retire, then removes its controller and instance resources. It does not delete the Kubernetes namespace, neighboring instances or administrator-provided storage. Managed model downloads are collected after their last service reference is released; `stop` retains those references. Dynamic volumes follow their configured retention and StorageClass reclaim policies.
 
 Uninstall preserves CRDs, log storage, and reused cluster components. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

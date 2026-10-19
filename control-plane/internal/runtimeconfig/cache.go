@@ -18,12 +18,14 @@ const (
 	ModelRootEnv = "FORETOKEN_MODEL_ROOT"
 	// ModelCacheRootEnv selects provider-owned downloads shared by cache consumers.
 	ModelCacheRootEnv = "FORETOKEN_MODEL_CACHE_ROOT"
-	// PreparationRootEnv separates namespace acquisition state from shared model files.
+	// PreparationRootEnv separates deployment acquisition state from shared model files.
 	PreparationRootEnv = "FORETOKEN_MODEL_PREPARATION_ROOT"
 	// TemporaryModelRootEnv is consumed by foretoken-artifacts in the frontend process.
 	TemporaryModelRootEnv = "FORETOKEN_TEMPORARY_MODEL_ROOT"
 	// RuntimeCacheBindingEnv carries namespace/claim identity for prepared tokenizer reuse.
 	RuntimeCacheBindingEnv = "FORETOKEN_RUNTIME_CACHE_BINDING"
+	// DeploymentUIDEnv binds runtime consumers to the deployment's private state directories.
+	DeploymentUIDEnv = "FORETOKEN_DEPLOYMENT_UID"
 	// ModelPreparationScopeEnv selects the Pool revision's immutable acquisition publication.
 	ModelPreparationScopeEnv = "FORETOKEN_MODEL_PREPARATION_SCOPE"
 	// SourceRevisionAnnotation selects a CLI-published bundle for service reconciliation.
@@ -81,7 +83,7 @@ func RuntimeCacheIdentity(namespace, claim string, preparationVersion int32) str
 	return binding
 }
 
-// NamespaceCacheDirectory separates mutable workload state while preserving reuse after Pod replacement.
-func NamespaceCacheDirectory(dataRoot, namespace string) string {
-	return path.Join(dataRoot, "namespaces", namespace)
+// DeploymentCacheDirectory isolates mutable runtime state for one deployment across Pod replacement.
+func DeploymentCacheDirectory(dataRoot, deploymentUID string) string {
+	return path.Join(dataRoot, "deployments", deploymentUID)
 }

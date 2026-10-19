@@ -50,6 +50,7 @@ Use a registry without authentication for an internal network when available. If
 
 ```bash
 docker login registry.example.com:5000
+kubectl create namespace foretoken-platform --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic registry-auth \
   --namespace foretoken-platform \
   --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
@@ -88,12 +89,12 @@ Deploy and update code:
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-After editing controller, frontend or model-server code, run the same command again to update this deployment namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
+This creates the `quickstart-frontend` instance in the current kubeconfig namespace. After editing controller, frontend or model-server code, run the same command again to update only this instance. Use another `--name` for an independent instance in the same namespace. Shared CRD changes require `foretoken install -e . --registry "$REGISTRY"` first, retaining any installation overrides. See [Deploy Foretoken from Source](source.md#deploy-a-model-service) for engine checkouts and runtime changes.
 
 ## 4. Remove Foretoken
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete quickstart-frontend
 foretoken uninstall
 ```
 

@@ -16,6 +16,7 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
@@ -31,6 +32,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/deployments"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
@@ -55,6 +57,14 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "manage-deployments" {
+		if err := manageDeployments(os.Args[2:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	var deploymentUID string
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
@@ -101,7 +111,7 @@ func main() {
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
-	var cacheDirectoryBindings controllers.RuntimeCacheDirectoryBindings
+	cacheDirectoryBindings := controllers.RuntimeCacheDirectoryBindings{}
 	var admissionStoreURLSecretName string
 	var admissionStoreURLSecretKey string
 	var modelSourceEndpoint string
@@ -112,6 +122,7 @@ func main() {
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
 
+	flag.StringVar(&deploymentUID, "deployment-uid", "", "Immutable deployment UID selecting this controller's resources.")
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
@@ -338,17 +349,25 @@ func main() {
 	}
 
 	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
-	if controlPlaneNamespace == "" {
-		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure deployment controller scope")
+	if controlPlaneNamespace == "" || deploymentUID == "" {
+		ctrl.Log.Error(errors.New("POD_NAMESPACE and --deployment-uid are required"), "unable to configure deployment controller scope")
 		os.Exit(1)
 	}
-	// Each deployment owns its cache and election lease. Cluster-scoped node
-	// observations remain available; direct API access is restricted by RBAC.
+	scope := deployments.Scope{Namespace: controlPlaneNamespace, UID: deploymentUID}
+	// Instance membership applies to watches and both client paths. Shared claims
+	// remain observable so binding or expansion can wake their instance consumers.
 	manager, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme: scheme,
-		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
-			controlPlaneNamespace: {},
-		}},
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				controlPlaneNamespace: {LabelSelector: scope.Selector()},
+			},
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.PersistentVolumeClaim{}: {Namespaces: map[string]cache.Config{
+					controlPlaneNamespace: {LabelSelector: labels.Everything()},
+				}},
+			},
+		},
 		Client: client.Options{Cache: &client.CacheOptions{
 			// Namespace credentials are read by fixed names without a Secret informer.
 			DisableFor: []client.Object{&corev1.Secret{}},
@@ -356,7 +375,7 @@ func main() {
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddress},
 		HealthProbeBindAddress:  probeAddress,
 		LeaderElection:          leaderElection,
-		LeaderElectionID:        "inference.foretoken.io",
+		LeaderElectionID:        deployments.ResourceName(deploymentUID),
 		LeaderElectionNamespace: controlPlaneNamespace,
 		// Main exits when the manager stops, so a normal shutdown can release the lease.
 		LeaderElectionReleaseOnCancel: true,
@@ -365,6 +384,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to create manager")
 		os.Exit(1)
 	}
+	manager = scope.Manager(manager)
 
 	var observabilityLabels map[string]string
 	if err := json.Unmarshal([]byte(observabilityLabelsJSON), &observabilityLabels); err != nil {
@@ -386,7 +406,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient(), DirectoryBindings: cacheDirectoryBindings}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient(), Profile: cacheProfile}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
 	}

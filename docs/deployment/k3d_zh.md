@@ -115,8 +115,8 @@ foretoken install
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
 ```
 
 ### 4.3 网关模式
@@ -139,8 +139,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 解析已配置的 Gateway 入口：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
 ```
 
 ### 4.4 发送 OpenAI API 兼容格式的请求

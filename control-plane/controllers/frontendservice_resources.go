@@ -94,7 +94,8 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	modelRoot := runtimeconfig.ModelDirectory(cacheMountPath)
 	modelCache := runtimeconfig.ModelCacheDirectory(cacheMountPath)
-	runtimeRoot := runtimeconfig.NamespaceCacheDirectory(cacheMountPath, frontend.Namespace)
+	deploymentUID := frontend.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	runtimeRoot := runtimeconfig.DeploymentCacheDirectory(cacheMountPath, deploymentUID)
 	preparationVersion := runtimeconfig.ModelPreparationVersion(frontend.Status.Application, "")
 	sharedCache := preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion
 	huggingFaceHome := modelRoot
@@ -105,6 +106,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
 		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
+		{Name: runtimeconfig.DeploymentUIDEnv, Value: deploymentUID},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "HF_HOME", Value: huggingFaceHome},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},

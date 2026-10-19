@@ -110,7 +110,7 @@ class Worker(GPUWorker):
         # The managed-engine startup deadline owns failure teardown. Keep bootstrap
         # artifacts separate from the supervisor's publishable capture directory.
         with tempfile.TemporaryDirectory(
-            prefix="mctracer-", dir=os.environ["FORETOKEN_CACHE_MOUNT_PATH"]
+            prefix="mctracer-", dir=os.environ["FORETOKEN_PROFILE_ROOT"]
         ) as directory:
             capture = Capture(directory)
             capture.start()

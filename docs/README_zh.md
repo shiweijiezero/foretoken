@@ -25,7 +25,7 @@
 | 配置模型持久存储 | [模型存储](features/model-storage_zh.md) |
 | 设置引擎参数、节点、并行方式和并发上限 | [推理参数](features/inference-parameters_zh.md) |
 | 调用模型 API、配置前端准入 | [前端](../data-plane/frontend/README_zh.md) |
-| 通过命令行管理服务 | [CLI](../cli/README_zh.md) |
+| 创建和管理具名部署实例 | [CLI](../cli/README_zh.md#部署和管理模型服务) |
 | 测量性能或评估模型质量 | [评测](../benchmarks/README_zh.md) |
 | 查看指标、日志和告警 | [可观测性](../observability/README_zh.md) |
 

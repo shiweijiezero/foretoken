@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Prepare administrator-authorized filesystem directories as namespace-local claims."""
+"""Resolve administrator-authorized directories before installing platform defaults."""
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import posixpath
 import subprocess
 from pathlib import Path
@@ -14,17 +15,16 @@ from typing import Any
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.working_directory import repository_data_directory, resolve_runtime_directory
+from foretoken.working_directory import (
+    repository_data_directory,
+    resolve_runtime_directory,
+)
 
 
 def _source_claim(
     kubectl: Kubectl, reference: str, timeout: str
 ) -> dict[str, Any]:
-    """Return the selected RWX NFS location for namespace installation, retaining its backing volume.
-
-    Namespace Helm releases own their alias claims and volumes; the source's model
-    data remains independent of either the source claim or a candidate's removal.
-    """
+    """Resolve an RWX NFS source and retain its volume before Go creates namespace aliases."""
     namespace, separator, name = reference.partition("/")
     if not separator or not namespace or not name or "/" in name:
         raise DeploymentError("directory sourceClaim requires SOURCE_NAMESPACE/PVC")
@@ -157,11 +157,89 @@ def _mounted_directory(directory: Path) -> dict[str, Any] | None:
     return source
 
 
+def _resolve_k3d_directory(
+    directory: Path, context: str, nodes: tuple[dict[str, Any], ...],
+) -> tuple[str, list[str], tuple[int, int] | None]:
+    """Inspect local node binds and return their common path, scheduling names and directory owner."""
+    if os.environ.get("DOCKER_CONTEXT") or not os.environ.get("DOCKER_HOST"):
+        endpoint = json.loads(_docker(["context", "inspect"]))[0]["Endpoints"]["docker"]["Host"]
+    else:
+        endpoint = os.environ["DOCKER_HOST"]
+    if not endpoint.startswith(("unix://", "npipe://")):
+        raise DeploymentError("k3d directory mapping needs a local Docker endpoint")
+
+    # All eligible nodes must expose the same host tree at the same container path.
+    mappings: dict[str, list[str]] = {}
+    cluster = context.removeprefix("k3d-")
+    for node in nodes:
+        container = node["metadata"]["name"]
+        if not container.startswith(f"k3d-{cluster}-"):
+            continue
+        info = json.loads(_docker(["inspect", container]))[0]
+        if (info.get("Config", {}).get("Labels") or {}).get("k3d.cluster") != cluster:
+            raise DeploymentError(f"Docker container {container} does not belong to {context}")
+        matches = []
+        for mount in info.get("Mounts", []):
+            if mount.get("Type") != "bind":
+                continue
+            source = Path(mount["Source"]).resolve()
+            try:
+                relative = directory.relative_to(source)
+            except ValueError:
+                continue
+            matches.append((len(source.parts), mount, relative))
+        if not matches:
+            continue
+        _, mount, relative = max(matches, key=lambda match: match[0])
+        destination = Path(mount["Destination"]) / relative
+        # A child mount can hide the chosen host tree inside the node, even when
+        # the parent bind is writable. Bind only the directory actually exposed.
+        visible_mount = max(
+            (
+                candidate for candidate in info["Mounts"]
+                if destination.is_relative_to(Path(candidate["Destination"]))
+            ),
+            key=lambda candidate: len(Path(candidate["Destination"]).parts),
+        )
+        if visible_mount != mount:
+            raise DeploymentError(f"directory mount in {container} is hidden by {visible_mount['Destination']}")
+        if not mount.get("RW"):
+            raise DeploymentError(f"directory mount in {container} must be writable")
+        mappings.setdefault(str(destination), []).append(_hostname(node))
+    if not mappings:
+        raise DeploymentError(f"{context} does not mount {directory}; add a bind mount when creating its nodes")
+    if len(mappings) != 1:
+        raise DeploymentError("k3d nodes must use the same directory mount destination")
+    destination, hostnames = next(iter(mappings.items()))
+    status = directory.stat()
+    owner = (status.st_uid, status.st_gid) if status.st_uid != 0 else None
+    return destination, hostnames, owner
+
+
+def _hostname(node: dict[str, Any]) -> str:
+    """Read the scheduling label rather than assuming it equals the node name."""
+    hostname = (node["metadata"].get("labels") or {}).get("kubernetes.io/hostname")
+    if not hostname:
+        raise DeploymentError(f"node {node['metadata']['name']} has no kubernetes.io/hostname label")
+    return hostname
+
+
+def _docker(args: list[str]) -> str:
+    """Read local Docker metadata without creating or building containers."""
+    try:
+        result = subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+    except FileNotFoundError as error:
+        raise DeploymentError("Docker is required to inspect k3d directory mounts") from error
+    if result.returncode:
+        raise DeploymentError(f"docker {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
 def prepare_directory_bindings(
-    kubectl: Kubectl, namespace: str, directories: dict[str, Any],
+    kubectl: Kubectl, directories: dict[str, Any],
     root: Path, default_claim: str, timeout: str,
 ) -> dict[str, Any]:
-    """Resolve namespace installation's authorized roots while retaining external model storage."""
+    """Resolve authorized roots once; Go validates borrowed claims in each target namespace."""
     prepared = copy.deepcopy(directories)
     automatic = not prepared
     if automatic:
@@ -174,12 +252,9 @@ def prepare_directory_bindings(
         directory = resolve_runtime_directory(entry["directory"], root)
         entry["directory"] = str(directory)
         if directory in seen:
-            raise DeploymentError(f"Directory {directory} has more than one namespace claim binding")
+            raise DeploymentError(f"Directory {directory} has more than one claim binding")
         seen.add(directory)
         if entry.get("existingClaim"):
-            claim = kubectl.get("pvc", name, namespace)
-            if claim["metadata"].get("deletionTimestamp"):
-                raise DeploymentError(f"Directory claim {namespace}/{name} is being deleted")
             continue
         if reference := entry.pop("sourceClaim", None):
             source = _source_claim(kubectl, reference, timeout)
@@ -191,13 +266,9 @@ def prepare_directory_bindings(
         elif not entry.get("server") and not entry.get("hostPath"):
             context = kubectl.current_context()
             if context.startswith("k3d-"):
-                from foretoken.deployment.manifest import RuntimeCacheManifest
-                from foretoken.deployment.storage import _resolve_directory
-
                 directory.mkdir(exist_ok=True)
-                cache = RuntimeCacheManifest(name, namespace, str(directory), "ReadWriteMany", "Retain")
-                path, hostnames, owner = _resolve_directory(
-                    cache, root, context, kubectl.list_cluster_resources(("nodes",)),
+                path, hostnames, owner = _resolve_k3d_directory(
+                    directory, context, kubectl.list_cluster_resources(("nodes",)),
                 )
                 entry["hostPath"], entry["hostnames"] = path, hostnames
                 if owner is not None:
@@ -207,7 +278,7 @@ def prepare_directory_bindings(
                 if source is None:
                     if not automatic:
                         raise DeploymentError(
-                            f"Cannot discover shared storage for {directory}; namespace values must select its NFS source or an existing claim"
+                            f"Cannot discover shared storage for {directory}; platform values must select its NFS source or an existing claim"
                         )
                     print(f"No shared mount was found for {directory}; no directory claim was prepared", flush=True)
                     del prepared[name]

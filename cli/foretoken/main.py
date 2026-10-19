@@ -15,7 +15,6 @@ from foretoken.arguments import (
     EndpointCommand,
     EvaluationCommand,
     InstallCommand,
-    NamespaceCommand,
     PerformanceCommand,
     PlotCommand,
     ProfileViewCommand,
@@ -27,7 +26,6 @@ from foretoken.arguments import (
 from foretoken.cluster import run as run_cluster
 from foretoken.deployment.commands import delete, deploy, stop
 from foretoken.deployment.endpoint import print_endpoint
-from foretoken.deployment.namespaces import NamespaceLifecycle
 from foretoken.deployment.status import show_status
 from foretoken.errors import DeploymentError
 from foretoken.platform.commands import install, uninstall
@@ -40,12 +38,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if isinstance(command, ClusterCommand):
             run_cluster(command)
-        elif isinstance(command, NamespaceCommand):
-            lifecycle = NamespaceLifecycle()
-            if command.action == "install":
-                lifecycle.install(command)
-            else:
-                lifecycle.uninstall(command)
         elif isinstance(command, InstallCommand):
             install(command)
         elif isinstance(command, UninstallCommand):

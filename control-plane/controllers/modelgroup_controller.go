@@ -394,7 +394,7 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		// CUDA base images expose all devices unless CPU-only preparation overrides them.
 		{Name: "NVIDIA_VISIBLE_DEVICES", Value: "void"},
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, "", group.Spec.Runtime.PreparationVersion)...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], "", group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	startupSeconds, err := durationSeconds(group.Spec.Timeouts.Startup)
 	if err != nil {
@@ -584,7 +584,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
@@ -647,7 +647,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 			env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
 			if group.Spec.Runtime.PreparationVersion >= runtimeconfig.SharedModelCachePreparationVersion {
-				env = append(env, corev1.EnvVar{Name: profileRootEnv, Value: profileArtifactDirectory(cache.MountPath, group.Namespace)})
+				env = append(env, corev1.EnvVar{Name: profileRootEnv, Value: profileArtifactDirectory(cache.MountPath, group.Labels[inferencev1alpha1.DeploymentUIDLabel])})
 			}
 		} else {
 			env = append(env,
@@ -894,9 +894,24 @@ func modelServerProbe(path string, periodSeconds, failureThreshold int32) *corev
 	}
 }
 
-// reconcileNetworkPolicy allows the frontend, control plane, runtime peers, and trusted metrics-scraper namespaces to reach a ModelGroup.
+// reconcileNetworkPolicy permits deployment-local traffic, runtime peers, and trusted metrics scrapers to reach a ModelGroup.
 func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+	deploymentUID := group.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	if deploymentUID == "" {
+		return fmt.Errorf("ModelGroup %q has no deployment UID", group.Name)
+	}
 	labels := modelGroupLabels(group)
+	deploymentLabels := map[string]string{inferencev1alpha1.DeploymentUIDLabel: deploymentUID}
+	frontendSelector := &metav1.LabelSelector{
+		MatchLabels: deploymentLabels,
+		MatchExpressions: []metav1.LabelSelectorRequirement{{
+			Key:      frontendServiceLabel,
+			Operator: metav1.LabelSelectorOpExists,
+		}},
+	}
+	controllerLabels := maps.Clone(deploymentLabels)
+	controllerLabels[controlPlanePodLabel] = controlPlanePodLabelValue
+	controllerSelector := &metav1.LabelSelector{MatchLabels: controllerLabels}
 	protocol := corev1.ProtocolTCP
 	modelServerPort := intstr.FromString("model-server")
 	if reconciler.ControlPlaneNamespace == "" {
@@ -905,14 +920,11 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 	ingress := []networkingv1.NetworkPolicyIngressRule{{
 		From: []networkingv1.NetworkPolicyPeer{
 			{
-				PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-					Key:      frontendServiceLabel,
-					Operator: metav1.LabelSelectorOpExists,
-				}}},
+				PodSelector: frontendSelector,
 			},
 			{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{controlPlanePodLabel: controlPlanePodLabelValue}},
+				PodSelector:       controllerSelector,
 			},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
@@ -923,7 +935,7 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		preparationIngress = []networkingv1.NetworkPolicyIngressRule{{
 			From: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{controlPlanePodLabel: controlPlanePodLabelValue}},
+				PodSelector:       controllerSelector,
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &cacheObservationPort}},
 		}}
@@ -951,10 +963,7 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
 			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-				From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-					Key:      frontendServiceLabel,
-					Operator: metav1.LabelSelectorOpExists,
-				}}}}},
+				From:  []networkingv1.NetworkPolicyPeer{{PodSelector: frontendSelector}},
 				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &bootstrapPort}},
 			})
 		}

@@ -122,12 +122,8 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	}
 	directory := ""
 	if cache != nil && cache.Spec.Directory != "" {
-		if profile.DirectoryBindings != nil {
-			if profile.DirectoryBindings[cache.Spec.Directory] != claim.Name {
-				return nil, false, fmt.Errorf("directory %q has no matching administrator-prepared claim", cache.Spec.Directory)
-			}
-		} else if claim.Annotations[runtimeCacheDirectoryAnnotation] != cache.Spec.Directory {
-			return nil, false, fmt.Errorf("runtime cache claim %q does not confirm directory %q", claim.Name, cache.Spec.Directory)
+		if profile.DirectoryBindings[cache.Spec.Directory] != claim.Name {
+			return nil, false, fmt.Errorf("directory %q has no matching administrator-prepared claim", cache.Spec.Directory)
 		}
 		directory = cache.Spec.Directory
 	} else if cache == nil {

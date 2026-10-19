@@ -5,7 +5,7 @@
 
 [English](README.md) | 简体中文
 
-这些示例使用预量化 checkpoint，或在加载普通权重时进行量化，部署 Qwen2.5-0.5B-Instruct。每个目录都是完整的 Kustomize 部署，包含独立的 namespace、RuntimeCache、FrontendService 和 ModelService。各套部署可以分别创建和清理，同时运行也不会发生资源名称冲突。目录中还提供相同基础模型的 BF16 参考部署，用于概率分布对比。
+这些示例使用预量化 checkpoint，或在加载普通权重时进行量化，部署 Qwen2.5-0.5B-Instruct。每个目录都是完整的 Kustomize 部署，使用独立的实例名，包含自己的 RuntimeCache、FrontendService 和 ModelService。各套部署可以分别创建和清理，同时运行也不会发生资源名称冲突。目录中还提供相同基础模型的 BF16 参考部署，用于概率分布对比。
 
 部署前，先从当前源码目录[构建并安装平台](../../../docs/deployment/source_zh.md)：
 

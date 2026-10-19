@@ -60,7 +60,7 @@ nodeSelector:
 查看 Store 和存储成员：
 
 ```bash
-kubectl get kvservice,kvpool,kvgroup --namespace foretoken-shared-kv
+kubectl get kvservice,kvpool,kvgroup
 ```
 
 ## 清理

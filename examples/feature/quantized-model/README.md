@@ -5,7 +5,7 @@
 
 English | [简体中文](README_zh.md)
 
-These examples serve Qwen2.5-0.5B-Instruct with a prequantized checkpoint or quantize ordinary weights while loading. Each directory is a complete Kustomize deployment with its own namespace, runtime cache, frontend, and model service. The deployments can be created and removed independently without resource-name conflicts. A matching BF16 reference is included for distribution comparisons.
+These examples serve Qwen2.5-0.5B-Instruct with a prequantized checkpoint or quantize ordinary weights while loading. Each directory is a complete Kustomize deployment with its own instance name, runtime cache, frontend and model service. The deployments can be created and removed independently without resource-name conflicts. A matching BF16 reference is included for distribution comparisons.
 
 Build and install the [platform from this source checkout](../../../docs/deployment/source.md) before deploying an example:
 

@@ -19,12 +19,12 @@ Deploy normally:
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-Deployments that mount the same directory reuse downloaded model files, including weights, tokenizers and model configuration. Runtime state is kept separately for each namespace:
+Deployment instances that mount the same directory reuse downloaded weights, tokenizers and model configuration. Compilation caches, runtime settings and profiling captures remain private to each instance, including instances in the same namespace.
 
 | Directory | Contents |
 |---|---|
 | `data/shared/models/` | Managed model downloads shared by services |
-| `data/namespaces/<namespace>/` | Compilation caches, runtime configuration, account state and profiling captures |
+| `data/deployments/` | Separate runtime state and profiling directories for each instance |
 | `data/models/` | Model files supplied and maintained outside Foretoken's download cache |
 
 Source-build caches are managed separately from model storage. See [Model sources](model-sources.md) to select ModelScope or a Hugging Face-compatible endpoint.
@@ -39,31 +39,22 @@ Changing the directory of an already bound RuntimeCache requires a new RuntimeCa
 
 ## Share model files across namespaces
 
-For member namespaces, an administrator prepares access to the shared directory once. If the repository's `data/` is on an NFS mount visible to the CLI host and the cluster, run these commands from the repository root:
+An administrator authorizes shared directories when installing the platform. From the repository root, installation can discover the default `data/` on an NFS mount visible to both the CLI host and cluster nodes. Local k3d uses its existing data bind mount.
 
-```bash
-foretoken install --namespace candidate-a
-foretoken install --namespace candidate-b
-```
+Members keep selecting the directory in `cache.yaml` and use the normal deployment commands. The platform prepares the namespace's storage binding when an instance first needs it; members do not need PVC names or cluster-wide storage permissions. Assign [namespace service permissions](../../cli/README.md#prepare-a-namespace-for-members) separately.
 
-Local k3d uses its existing data bind mount instead. Namespace installation prepares a claim in each namespace for the same underlying directory. Members keep selecting that directory in `cache.yaml` and use the normal deployment commands; they do not need PVC names or cluster-wide storage permissions. Assign [namespace service permissions](../../cli/README.md#prepare-a-namespace-for-members) before handing the namespace to members.
-
-When the CLI host cannot inspect the shared mount, the administrator can bind a directory selection to an existing NFS-backed `ReadWriteMany` claim. For example, save the following in `deploy/member-storage.yaml`, replacing the directory and source claim with the intended storage:
+When the CLI host cannot inspect the shared mount, the administrator can bind a directory selection to an existing NFS-backed `ReadWriteMany` claim. Save the following in `deploy/member-storage.yaml`, replacing the directory and source claim with the intended storage:
 
 ```yaml
-namespaceAccess:
-  directories:
-    models:
-      directory: /srv/shared/foretoken-data
-      sourceClaim: model-library/models
+workload:
+  cache:
+    directories:
+      models:
+        directory: /srv/shared/foretoken-data
+        sourceClaim: model-library/models
 ```
 
-Then install both namespaces with that selection:
-
-```bash
-foretoken install --namespace candidate-a --values deploy/member-storage.yaml
-foretoken install --namespace candidate-b --values deploy/member-storage.yaml
-```
+Add `--values deploy/member-storage.yaml` to the platform installation command. Source installations retain their `-e` and registry options.
 
 Members select `/srv/shared/foretoken-data` as `spec.directory`. Native NFS and `nfs.csi.k8s.io` source claims are supported. A local filesystem on the CLI host alone does not provide shared remote storage; use a node-accessible directory or choose dynamic storage below.
 
@@ -71,8 +62,8 @@ Members select `/srv/shared/foretoken-data` as `spec.directory`. Native NFS and 
 
 `foretoken stop` releases serving resources while retaining the service's model-cache references. Resume with `foretoken deploy` to reuse those files.
 
-`foretoken delete` releases the deleted services' references after their workloads exit. Foretoken collects each managed model version when its last reference in that directory is gone. For example, if namespaces A and B use model X while C and D use model Y, deleting A and B can reclaim X without waiting for Y to stop.
-The directory itself, user-supplied files in `data/models/`, and namespace-local state are retained. Administrator-prepared claims remain available for later deployments. Dynamic volumes follow their configured retention and StorageClass reclaim policies.
+`foretoken delete` releases the selected instance's model references after its workloads exit. Foretoken collects each managed model version when its last reference in that directory is gone. For example, if instances A and B use model X while C and D use model Y, deleting A and B can reclaim X without waiting for Y to stop.
+The directory itself, user-supplied files in `data/models/`, and instance-local files remain. Administrator-prepared claims remain available for later deployments. Dynamic volumes follow their configured retention and StorageClass reclaim policies.
 
 ## Use an existing model
 
@@ -110,4 +101,4 @@ Use `ReadWriteOnce` for a single-node volume when that is what the StorageClass 
 
 An administrator can set `workload.cache.claimName` to use an existing namespace-local PVC as the default. An explicit authorized `directory` selection takes precedence over that default.
 
-Profiling results stay in the namespace's data area; use [Profiling](../../benchmarks/docs/profile/README.md) to collect and view them.
+Profiling results stay in the instance's private data area; use [Profiling](../../benchmarks/docs/profile/README.md) to collect and view them.

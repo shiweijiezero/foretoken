@@ -15,6 +15,7 @@ import (
 	"path"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -104,7 +105,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	}
 	plan := *run.Status.Plan
 	if plan.ArtifactDirectory == "" {
-		// Plans persisted before namespace-scoped capture storage keep their original directory.
+		// Plans persisted before scoped capture storage keep their original directory.
 		plan.ArtifactDirectory = path.Join(profileLegacyArtifactRoot, string(run.UID))
 	}
 
@@ -342,11 +343,6 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				return plan, fmt.Errorf("serving runtimes use different RuntimeCache claims")
 			}
 			plan.RuntimeCacheClaim = cache.ClaimName
-			directory := profileRunArtifactPath(run.Namespace, string(run.UID), group.Spec.Runtime.PreparationVersion)
-			if plan.ArtifactDirectory != "" && plan.ArtifactDirectory != directory {
-				return plan, fmt.Errorf("serving runtimes use different profiling directory layouts; redeploy ModelService %s before profiling", service.Name)
-			}
-			plan.ArtifactDirectory = directory
 			pods := new(corev1.PodList)
 			if err := r.APIReader.List(ctx, pods, client.InNamespace(run.Namespace), client.MatchingLabels{modelGroupLabel: group.Name}); err != nil {
 				return plan, err
@@ -359,6 +355,14 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				if err := r.verifyProfilePod(ctx, &pod, &group); err != nil {
 					return plan, err
 				}
+				directory, err := profileRunArtifactPath(&pod, cache.MountPath, string(run.UID), group.Spec.Runtime.PreparationVersion)
+				if err != nil {
+					return plan, err
+				}
+				if plan.ArtifactDirectory != "" && plan.ArtifactDirectory != directory {
+					return plan, fmt.Errorf("serving runtimes use different profiling directory layouts; redeploy ModelService %s before profiling", service.Name)
+				}
+				plan.ArtifactDirectory = directory
 				member := api.ProfileMember{GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID)}
 				for _, container := range pod.Status.ContainerStatuses {
 					if container.Name == "model-server" && container.State.Running != nil {
@@ -542,18 +546,32 @@ func profileTerminal(phase string) bool {
 	return phase == "Succeeded" || phase == "Failed" || phase == "Cancelled"
 }
 
-// profileArtifactDirectory gives workload projection and retained status the same namespace root.
-func profileArtifactDirectory(dataRoot, namespace string) string {
-	return path.Join(runtimeconfig.NamespaceCacheDirectory(dataRoot, namespace), "profiles")
+// profileArtifactDirectory projects private capture storage for one deployment's runtimes.
+func profileArtifactDirectory(dataRoot, deploymentUID string) string {
+	return path.Join(runtimeconfig.DeploymentCacheDirectory(dataRoot, deploymentUID), "profiles")
 }
 
-// profileRunArtifactPath follows the executable's pinned storage layout, not controller defaults.
-func profileRunArtifactPath(namespace, runUID string, preparationVersion int32) string {
-	root := profileLegacyArtifactRoot
-	if preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion {
-		root = path.Join(profileArtifactDirectory("", namespace), "runs")
+// profileRunArtifactPath retains the selected Pod's actual output layout in a new execution plan.
+func profileRunArtifactPath(pod *corev1.Pod, dataRoot, runUID string, preparationVersion int32) (string, error) {
+	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
+		return path.Join(profileLegacyArtifactRoot, runUID), nil
 	}
-	return path.Join(root, runUID)
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "model-server" {
+			continue
+		}
+		for _, variable := range container.Env {
+			if variable.Name != profileRootEnv {
+				continue
+			}
+			root, within := strings.CutPrefix(path.Clean(variable.Value), path.Clean(dataRoot)+"/")
+			if !within {
+				return "", fmt.Errorf("diagnostic Pod %s has profiling storage outside its RuntimeCache", pod.Name)
+			}
+			return path.Join(root, "runs", runUID), nil
+		}
+	}
+	return "", fmt.Errorf("diagnostic Pod %s has no profiling storage root", pod.Name)
 }
 
 // writeProfileStatus publishes only observed progress while preserving user-owned intent.

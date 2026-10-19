@@ -204,6 +204,11 @@ def _add_benchmark_arguments(
         help="Kustomize directories to deploy or reuse sequentially with the same workload",
     )
     parser.add_argument(
+        "--name", dest="instance_name",
+        default=_default(ModelServiceSource, "instance_name"),
+        help="Deployment instance name for a single Kustomize PATH; not a model alias",
+    )
+    parser.add_argument(
         "--model", nargs="+", default=[],
         help="Model names; one shared value or one per service, inferred for single-model deployments",
     )
@@ -483,6 +488,8 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     models = tuple(namespace.model or ())
     if paths and urls:
         raise ValueError("provide Kustomize paths or --url values, not both")
+    if namespace.instance_name and len(paths) != 1:
+        raise ValueError("--name requires exactly one Kustomize PATH")
     sources = paths or urls
     if models and len(models) not in (1, len(sources)):
         raise ValueError("--model accepts one shared value or one value per service")
@@ -513,6 +520,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             timeout_seconds=namespace.timeout,
             max_retries=namespace.max_retries,
             wait_timeout=namespace.wait_timeout,
+            instance_name=namespace.instance_name,
         ),
         load=HttpLoadSchedule(
             max_concurrency=namespace.max_concurrency,

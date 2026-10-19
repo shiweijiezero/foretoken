@@ -13,7 +13,8 @@ from urllib.parse import urlsplit
 
 from foretoken.arguments import EndpointCommand
 from foretoken.command_execution import CommandExecution
-from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
+from foretoken.deployment.instances import DeploymentInstance, resolve_deployment_target
+from foretoken.deployment.manifest import DEPLOYMENT_UID_LABEL, ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 
@@ -62,6 +63,8 @@ def _load_balancer_endpoint(
             "implementation, or configure loadBalancer.managedAddresses for "
             "'foretoken install --values PATH'",
         )
+    if deployment.uid and service["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
+        raise DeploymentError(f"service/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
     ingress = service["status"]["loadBalancer"]["ingress"][0]
     address = str(ingress.get("ip") or ingress.get("hostname") or "").strip()
     if not address:
@@ -80,39 +83,6 @@ def _load_balancer_endpoint(
     return FrontendEndpoint(
         _endpoint_url("http", address, int(http_port["port"]))
     )
-
-
-def resolve_gateway_access(
-    kubectl: Kubectl, name: str, namespace: str, section_name: str, timeout: str,
-) -> dict[str, Any]:
-    """Resolve a public Gateway listener for namespace preparation and endpoint consumers."""
-    gateway = wait_for_object(
-        lambda: kubectl.get_if_exists("gateway", name, namespace) or {},
-        lambda value: bool((value.get("status") or {}).get("addresses")),
-        time.monotonic() + timeout_seconds(timeout),
-        f"address for gateway/{name} in namespace {namespace}; inspect its Gateway controller Service and LoadBalancer",
-    )
-    address = str(gateway["status"]["addresses"][0].get("value") or "").strip()
-    if not address:
-        raise DeploymentError(f"gateway/{name} has an empty address")
-    listeners = tuple(
-        item for item in (gateway.get("spec") or {}).get("listeners") or []
-        if not section_name or item.get("name") == section_name
-    )
-    if len(listeners) != 1:
-        if not section_name and len(listeners) > 1:
-            raise DeploymentError(
-                f"gateway/{name} has multiple listeners; reinstall with --gateway-section-name to select one"
-            )
-        raise DeploymentError(f"gateway/{name} has no matching listener")
-    listener = listeners[0]
-    protocol = str(listener.get("protocol") or "HTTP").upper()
-    scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
-    return {
-        "name": name, "namespace": namespace, "sectionName": section_name,
-        "address": address, "scheme": scheme,
-        "port": int(listener.get("port") or (443 if scheme == "https" else 80)),
-    }
 
 
 def _gateway_endpoint(
@@ -141,6 +111,8 @@ def _gateway_endpoint(
         deadline,
         f"HTTPRoute for frontendservice/{deployment.frontend}",
     )
+    if deployment.uid and route["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
+        raise DeploymentError(f"HTTPRoute/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
     parents = (route.get("spec") or {}).get("parentRefs") or []
     parent = next(
         (
@@ -155,24 +127,17 @@ def _gateway_endpoint(
     if not parent or not parent.get("name"):
         raise DeploymentError(f"httproute/{deployment.frontend} has no Gateway parent")
 
-    from foretoken.deployment.namespace_access import NamespaceAccess
-
     gateway_name = str(parent["name"])
     gateway_namespace = str(parent.get("namespace") or deployment.namespace)
     section_name = str(parent.get("sectionName") or "")
-    access = NamespaceAccess.read(kubectl, deployment.namespace)
-    if access is not None:
-        published = access.gateway
-        if not published or (published["namespace"], published["name"], published["sectionName"]) != (
-            gateway_namespace, gateway_name, section_name,
-        ):
-            raise DeploymentError(
-                f"Gateway access for namespace {deployment.namespace} must be refreshed by its administrator"
-            )
-    else:
-        published = resolve_gateway_access(
-            kubectl, gateway_name, gateway_namespace, section_name,
-            f"{max(1, int(deadline - time.monotonic()))}s",
+    instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
+    instance.uid = deployment.uid
+    published = instance.access()["gateway"]
+    if not published or (published["namespace"], published["name"], published["sectionName"]) != (
+        gateway_namespace, gateway_name, section_name,
+    ):
+        raise DeploymentError(
+            f"Gateway access for deployment instance {deployment.name!r} is not current; redeploy the instance"
         )
     address, scheme, port = published["address"], published["scheme"], published["port"]
     if scheme == "https":
@@ -188,6 +153,8 @@ def resolve_frontend_endpoint(
     deployment: ForetokenDeployment, kubectl: Kubectl, timeout: str
 ) -> FrontendEndpoint:
     """Wait for and return the deployment's public frontend network endpoint."""
+    if not deployment.frontend:
+        raise DeploymentError(f"Deployment instance {deployment.name!r} retains storage but has no frontend")
     with kubectl.until(time.monotonic() + timeout_seconds(timeout)) as deadline:
         service = wait_for_object(
             lambda: kubectl.get_if_exists(
@@ -198,6 +165,8 @@ def resolve_frontend_endpoint(
             deadline,
             f"service/{deployment.frontend}",
         )
+        if deployment.uid and service["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
+            raise DeploymentError(f"service/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
         if (service.get("spec") or {}).get("type") == "LoadBalancer":
             return _load_balancer_endpoint(service, deployment, kubectl, deadline)
         return _gateway_endpoint(deployment, kubectl, deadline)
@@ -207,7 +176,7 @@ def print_endpoint(command: EndpointCommand) -> None:
     """Print the CLI-selected frontend URL or routing host after a bounded endpoint wait."""
     with CommandExecution(timeout_seconds(command.timeout)):
         kubectl = Kubectl()
-        deployment = load_deployment(command.kustomize_path, kubectl)
+        deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
         print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
         endpoint = resolve_frontend_endpoint(deployment, kubectl, command.timeout)
         if command.host:

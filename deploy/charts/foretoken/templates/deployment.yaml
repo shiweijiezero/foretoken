@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Each deployment owns a controller for its namespace, never the shared APIs.
-{{- if eq .Values.scope "deployment" }}
+{{/* Compile the serving-controller workload for platform-owned deployment instances. */}}
+{{- define "foretoken.deploymentController" }}
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := .Values.development.enabled }}
 {{- $applications := include "foretoken.applications" . | fromJson }}
@@ -118,9 +118,7 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
-            {{- if .Values.namespaceAccess.enabled }}
             - {{ printf "--cache-directory-bindings=%s" (include "foretoken.cacheDirectoryBindings" .) | quote }}
-            {{- end }}
             {{- if .Values.modelDistribution.modelexpress.enabled }}
             - --model-distribution-modelexpress=true
             {{- end }}

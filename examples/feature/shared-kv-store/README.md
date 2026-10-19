@@ -60,7 +60,7 @@ Use a label present on the intended nodes. Set that pool's `client.disk.storageC
 Inspect the Store and its members:
 
 ```bash
-kubectl get kvservice,kvpool,kvgroup --namespace foretoken-shared-kv
+kubectl get kvservice,kvpool,kvgroup
 ```
 
 ## Clean up

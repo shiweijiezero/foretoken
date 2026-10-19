@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Keep cache collection in the platform without granting cluster permissions to namespace members.
-{{- if eq .Values.scope "platform" }}
 {{- $name := include "foretoken.compactName" (printf "%s-model-cache-collection" .Release.Name) }}
 {{- $worker := include "foretoken.compactName" (printf "%s-worker" $name) }}
 {{- $cluster := include "foretoken.compactName" (printf "%s-%s" .Release.Namespace $name) }}
@@ -185,4 +184,3 @@ spec:
         {{- end }}
     spec:
       {{- toYaml $pod | nindent 6 }}
-{{- end }}

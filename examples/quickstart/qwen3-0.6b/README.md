@@ -21,7 +21,7 @@ Install the [platform from source](../../../docs/deployment/source.md) and prepa
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-The command reports each service state as it changes and exits when the current configuration is ready.
+The command creates the `quickstart-frontend` instance in the current kubeconfig namespace and exits when its services are ready. Use `--name` to run another independent instance from the same configuration.
 
 ## Send a request
 

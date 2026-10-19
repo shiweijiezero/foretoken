@@ -72,36 +72,42 @@ spec:
     retentionSeconds: 86400
 ```
 
-`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，然后应用配置：
+`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，再更新配方的默认实例 `h3-api`。如果部署时指定了 `--name`，将 `INSTANCE` 换成原来的实例名：
 
 ```bash
 DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
-foretoken deploy "$DEPLOYMENT" --timeout 1h
-FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
-REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
+INSTANCE=h3-api
+foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" --timeout 1h
+FRONTEND_URL="$(foretoken endpoint "$INSTANCE")"
+REQUEST_HOST="$(foretoken endpoint "$INSTANCE" --host)"
 mkdir -p ./data
 ```
 
-以下请求选择名为 `h3` 的模型服务，输入路径相对于视频存储卷根目录：
+`modelServiceRef.name` 需要填写实际部署的 Kubernetes ModelService 名称，不是模型标识。该配方只有一个模型服务，可从实例中读取它的名称后提交请求。输入路径相对于视频存储卷根目录：
 
 ```bash
+MODEL_SERVICE="$(kubectl get inferencedeployment "$INSTANCE" \
+  -o jsonpath='{.spec.resources[?(@.kind=="ModelService")].name}')"
+
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "modelServiceRef": {"name": "h3"},
-    "request": {
-      "task": "fl2va",
-      "prompt": "A sailboat crossing a calm bay at sunrise",
-      "width": 1024, "height": 576,
-      "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
-      "inputFiles": [{
-        "field": "input_reference",
-        "path": "inputs/reference.png",
-        "contentType": "image/png"
-      }]
-    }
-  }'
+  --data-binary @- <<EOF
+{
+  "modelServiceRef": {"name": "$MODEL_SERVICE"},
+  "request": {
+    "task": "fl2va",
+    "prompt": "A sailboat crossing a calm bay at sunrise",
+    "width": 1024, "height": 576,
+    "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
+    "inputFiles": [{
+      "field": "input_reference",
+      "path": "inputs/reference.png",
+      "contentType": "image/png"
+    }]
+  }
+}
+EOF
 ```
 
 响应包含任务 `id`、状态地址 `status_url` 和视频地址 `content_url`。继续使用同一个前端地址，将下表的 `{id}` 替换为返回的任务 ID：

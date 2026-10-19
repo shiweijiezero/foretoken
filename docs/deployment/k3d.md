@@ -115,8 +115,8 @@ Deploy the Quick Start and resolve the address assigned by k3s ServiceLB:
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
 ```
 
 ### 4.3 Gateway mode
@@ -139,8 +139,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 Resolve the configured Gateway endpoint:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint quickstart-frontend)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint quickstart-frontend --host)"
 ```
 
 ### 4.4 Send an OpenAI API-compatible request
