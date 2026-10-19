@@ -1,206 +1,364 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Manage or reuse Dragonfly file distribution without changing node networking."""
+"""Prepare optional peer downloads through an internal Kubernetes Service."""
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
 import yaml
 
+from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, resource_ref
 from foretoken.platform.helm import Helm
 from foretoken.platform.types import ReleaseRef
 
-
-@dataclass(frozen=True)
-class DragonflyConfig:
-    """The platform's P2P choice and optional independently managed release."""
-
-    enabled: bool = False
-    existing_release: ReleaseRef | None = None
-    image_pull_secrets: tuple[dict[str, str], ...] = ()
+_PROXY_SERVICE = "foretoken-model-downloads"
+_PROXY_LABEL = "foretoken.io/model-download-proxy"
+_PROXY_ARGUMENT = "--model-distribution-download-proxy="
+_PROXY_ENV = "FORETOKEN_MODEL_DOWNLOAD_PROXY"
 
 
 @dataclass(frozen=True)
 class DragonflyPlan:
-    """A resolved release operation used by one platform installation."""
+    """An installer-owned download service choice and its image credentials."""
 
-    config: DragonflyConfig
-    release: ReleaseRef
+    release: ReleaseRef | None
     action: str
-
-
-def dragonfly_config_from_values(values: tuple[dict[str, Any], ...]) -> DragonflyConfig:
-    """Resolve the explicit P2P choice from stored values followed by current overrides."""
-    enabled = False
-    existing: dict[str, str] = {}
+    detail: str
     image_pull_secrets: tuple[dict[str, str], ...] = ()
-    for item in values:
-        if "imagePullSecrets" in item:
-            image_pull_secrets = tuple(item["imagePullSecrets"])
-        distribution = item.get("modelDistribution", {})
-        if not isinstance(distribution, dict):
-            raise DeploymentError("modelDistribution must be a mapping")
-        dragonfly = distribution.get("dragonfly", {})
-        if not isinstance(dragonfly, dict):
-            raise DeploymentError("modelDistribution.dragonfly must be a mapping")
-        if "enabled" in dragonfly:
-            enabled = dragonfly["enabled"]
-            if not isinstance(enabled, bool):
-                raise DeploymentError("modelDistribution.dragonfly.enabled must be a boolean")
-        if "existingRelease" in dragonfly:
-            value = dragonfly["existingRelease"]
-            if not isinstance(value, dict) or not all(isinstance(v, str) for v in value.values()):
-                raise DeploymentError("modelDistribution.dragonfly.existingRelease must contain string fields")
-            existing.update(value)
-    name, namespace = existing.get("name", ""), existing.get("namespace", "")
-    if bool(name) != bool(namespace):
-        raise DeploymentError("Dragonfly existingRelease name and namespace must be set together")
-    return DragonflyConfig(enabled, ReleaseRef(name, namespace) if name else None, image_pull_secrets)
 
 
 class ModelDistributionLifecycle:
-    """Own only the CLI-managed Dragonfly release; preserve an explicit shared release."""
+    """Own download discovery and its Service without taking over independent daemons."""
 
     def __init__(self, helm: Helm, kubectl: Kubectl) -> None:
         self._helm = helm
         self._kubectl = kubectl
 
-    def resolve_install(self, config: DragonflyConfig) -> DragonflyPlan:
-        """Choose install, upgrade, reuse, or disable before changing the platform."""
-        release = config.existing_release or self._helm.dragonfly_release()
-        if not config.enabled:
-            return DragonflyPlan(config, release, "Disabled")
+    def resolve_install(self, values: tuple[dict[str, Any], ...]) -> DragonflyPlan:
+        """Select an unambiguous service without making peer downloads a user setting."""
+        image_pull_secrets: tuple[dict[str, str], ...] = ()
+        for value in values:
+            if "imagePullSecrets" in value:
+                image_pull_secrets = tuple(value["imagePullSecrets"])
+        release = self._helm.dragonfly_release()
         exists = self._helm.release_exists(release)
-        if config.existing_release is not None:
-            if not exists:
-                raise DeploymentError(f"Dragonfly release {release.display_name} does not exist")
-            return DragonflyPlan(config, release, "Reuse")
-        if not exists:
-            existing = self._existing_releases()
-            if len(existing) > 1:
-                raise DeploymentError("multiple Dragonfly releases exist; select modelDistribution.dragonfly.existingRelease")
-            if existing:
-                return DragonflyPlan(config, existing[0], "Reuse")
-        if exists and not self._helm.is_cli_managed(release):
-            raise DeploymentError(
-                f"Helm release {release.display_name} is not managed by foretoken; "
-                "select it with modelDistribution.dragonfly.existingRelease"
+        if exists and self._helm.is_cli_managed(release):
+            return DragonflyPlan(
+                release, "Upgrade", release.display_name, image_pull_secrets
             )
-        return DragonflyPlan(config, release, "Upgrade" if exists else "Install")
+        existing = self._existing_releases()
+        if existing is None:
+            return DragonflyPlan(
+                None, "Skip", "node downloads have an independent non-Helm owner"
+            )
+        if len(existing) > 1:
+            return DragonflyPlan(
+                None,
+                "Skip",
+                "multiple node download services; use model providers directly",
+            )
+        if existing:
+            return DragonflyPlan(existing[0], "Reuse", existing[0].display_name)
+        if exists:
+            return DragonflyPlan(
+                None, "Skip", f"{release.display_name} belongs to another installation"
+            )
+        return DragonflyPlan(
+            release, "Install", release.display_name, image_pull_secrets
+        )
 
-    def _existing_releases(self) -> tuple[ReleaseRef, ...]:
-        """Find native daemon installations before another DaemonSet can claim their sockets."""
+    def _existing_releases(self) -> tuple[ReleaseRef, ...] | None:
+        """Find native services; a non-Helm daemon retains its independent lifecycle."""
         releases: set[ReleaseRef] = set()
         for daemon in self._kubectl.list_all_resources(("daemonset.apps",)):
             metadata = daemon["metadata"]
             for volume in daemon["spec"]["template"]["spec"].get("volumes", []):
                 if "configMap" not in volume:
                     continue
-                config = self._kubectl.get_if_exists("configmap", volume["configMap"]["name"], metadata["namespace"])
+                config = self._kubectl.get_if_exists(
+                    "configmap", volume["configMap"]["name"], metadata["namespace"]
+                )
                 if config is None or "dfdaemon.yaml" not in config.get("data", {}):
                     continue
                 ownership = metadata.get("annotations", {})
                 name = ownership.get("meta.helm.sh/release-name")
                 namespace = ownership.get("meta.helm.sh/release-namespace")
                 if not name or not namespace:
-                    raise DeploymentError("an existing Dragonfly daemon has no Helm owner; retain its existing installation lifecycle")
+                    return None
                 releases.add(ReleaseRef(name, namespace))
         return tuple(releases)
 
     def apply(
-        self, plan: DragonflyPlan, accelerator_resource: str, timeout: str,
-        *, node_names: tuple[str, ...] = (),
+        self, plan: DragonflyPlan, accelerator_resource: str, timeout: str
     ) -> str:
-        """Prepare a ready daemon and return its actual host socket for worker projection."""
-        if not plan.config.enabled:
+        """Prepare a network endpoint; workers use their provider when no peer can serve it."""
+        if plan.release is None:
             return ""
-        if plan.action != "Reuse":
-            self._helm.install_dragonfly(plan.release, accelerator_resource, plan.config.image_pull_secrets, timeout)
-        daemon = self._helm.dragonfly_daemonset(plan.release)
-        self._kubectl.rollout_status(daemon, timeout)
-        live = self._kubectl.get(daemon.kind, daemon.name, daemon.namespace)
-        if (live.get("status") or {}).get("desiredNumberScheduled", 0) == 0:
-            raise DeploymentError(f"Dragonfly DaemonSet {daemon.display_name} has no scheduled nodes")
-        if node_names:
-            ready_nodes = {
-                pod["spec"]["nodeName"]
-                for pod in self._kubectl.list_resources(("pod",), daemon.namespace)
-                if any(owner.get("uid") == live["metadata"]["uid"] for owner in pod["metadata"].get("ownerReferences", []))
-                and any(condition["type"] == "Ready" and condition["status"] == "True" for condition in pod.get("status", {}).get("conditions", []))
+        if plan.action != "Reuse" and not self._helm.install_dragonfly(
+            plan.release, accelerator_resource, plan.image_pull_secrets, timeout
+        ):
+            return ""
+        reference = self._helm.dragonfly_daemonset(plan.release)
+        daemon = (
+            self._kubectl.get_if_exists(
+                reference.kind, reference.name, reference.namespace
+            )
+            if reference
+            else None
+        )
+        config = (
+            self._daemon_configuration(daemon, reference.namespace) if daemon else None
+        )
+        proxy = config.get("proxy") if isinstance(config, dict) else None
+        server = proxy.get("server") if isinstance(proxy, dict) else None
+        port = server.get("port") if isinstance(server, dict) else None
+        supported = (
+            type(port) is int and 0 < port <= 65535 and server.get("basicAuth") is None
+        )
+        if supported and server.get("ip"):
+            try:
+                supported = not ipaddress.ip_address(server["ip"]).is_loopback
+            except ValueError:
+                supported = False
+        selector = daemon["spec"]["selector"] if daemon else {}
+        if (
+            not supported
+            or not selector.get("matchLabels")
+            or selector.get("matchExpressions")
+        ):
+            print(
+                f"Model downloads: {plan.release.display_name} has no compatible endpoint; using model providers directly",
+                flush=True,
+            )
+            return ""
+        return self._prepare_proxy_service(
+            reference.namespace, selector["matchLabels"], port
+        )
+
+    def _daemon_configuration(
+        self, daemon: dict[str, Any], namespace: str
+    ) -> dict[str, Any] | None:
+        """Read the selected daemon's native configuration without guessing its defaults."""
+        configurations = []
+        for volume in daemon["spec"]["template"]["spec"].get("volumes", []):
+            if "configMap" not in volume:
+                continue
+            config_map = self._kubectl.get_if_exists(
+                "configmap", volume["configMap"]["name"], namespace
+            )
+            if config_map is None or "dfdaemon.yaml" not in config_map.get("data", {}):
+                continue
+            try:
+                value = yaml.safe_load(config_map["data"]["dfdaemon.yaml"])
+            except yaml.YAMLError:
+                return None
+            if not isinstance(value, dict):
+                return None
+            configurations.append(value)
+        return configurations[0] if len(configurations) == 1 else None
+
+    def _prepare_proxy_service(
+        self, namespace: str, selector: dict[str, str], port: int
+    ) -> str:
+        """Own a stable internal Service while leaving the selected daemon's lifecycle unchanged."""
+        current = self._kubectl.get_if_exists("service", _PROXY_SERVICE, namespace)
+        owner_key, owner_value = self._helm.management_label
+        labels = {owner_key: owner_value, _PROXY_LABEL: "true"}
+        if current is not None and not all(
+            current["metadata"].get("labels", {}).get(key) == value
+            for key, value in labels.items()
+        ):
+            print(
+                f"Model downloads: Service {namespace}/{_PROXY_SERVICE} has another owner; using model providers directly",
+                flush=True,
+            )
+            return ""
+        # Create is conditional on absence. Replace retains the observed UID/version
+        # and server-assigned fields, including the allocated cluster address.
+        operation = "create" if current is None else "replace"
+        desired = (
+            current
+            if current is not None
+            else {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {
+                    "name": _PROXY_SERVICE,
+                    "namespace": namespace,
+                    "labels": labels,
+                },
+                "spec": {},
             }
-            missing = set(node_names) - ready_nodes
-            if missing:
-                raise DeploymentError("Dragonfly has no ready client on selected accelerator nodes: " + ", ".join(sorted(missing)))
-        return self._daemon_socket(live, daemon.namespace)
+        )
+        desired["spec"].update(
+            {
+                "type": "ClusterIP",
+                "selector": selector,
+                "ports": [
+                    {
+                        "name": "proxy",
+                        "protocol": "TCP",
+                        "port": 80,
+                        "targetPort": port,
+                    }
+                ],
+            }
+        )
+        completed = self._kubectl.run(
+            [operation, "--field-manager=foretoken-model-downloads", "--filename=-"],
+            input_text=yaml.safe_dump(desired),
+            check=False,
+        )
+        if execution := CommandExecution.current():
+            execution.check()
+        if completed.returncode:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            print(
+                f"Shared download Service is unavailable; using model providers directly: {detail}",
+                flush=True,
+            )
+            return ""
+        return self._proxy_url(namespace)
 
-    def _daemon_socket(self, daemon: dict[str, Any], namespace: str) -> str:
-        """Map the daemon's configured Unix socket through its actual hostPath mount."""
-        spec = daemon["spec"]["template"]["spec"]
-        volumes = {volume["name"]: volume for volume in spec.get("volumes", [])}
-        sockets: set[str] = set()
-        for container in spec["containers"]:
-            mounts = container.get("volumeMounts", [])
-            for mount in mounts:
-                volume = volumes[mount["name"]]
-                if "configMap" not in volume:
-                    continue
-                config_map = self._kubectl.get("configmap", volume["configMap"]["name"], namespace)
-                raw = config_map.get("data", {}).get("dfdaemon.yaml")
-                if raw is None:
-                    continue
-                try:
-                    config = yaml.safe_load(raw)
-                except yaml.YAMLError as exc:
-                    raise DeploymentError("Dragonfly dfdaemon.yaml is invalid") from exc
-                configured = ((config or {}).get("download") or {}).get("server", {}).get("socketPath")
-                if not isinstance(configured, str) or not PurePosixPath(configured).is_absolute():
-                    raise DeploymentError("Dragonfly must configure an absolute download socketPath")
-                for socket_mount in mounts:
-                    host = volumes[socket_mount["name"]].get("hostPath")
-                    if host is None:
-                        continue
-                    try:
-                        relative = PurePosixPath(configured).relative_to(socket_mount["mountPath"])
-                    except ValueError:
-                        continue
-                    socket = PurePosixPath(host["path"]) / relative
-                    if socket.parent == PurePosixPath("/") or ".." in socket.parts:
-                        raise DeploymentError("Dragonfly download socket must use a dedicated host directory")
-                    sockets.add(str(socket))
-        if len(sockets) != 1:
-            raise DeploymentError("Dragonfly release must expose one download socket through a hostPath directory")
-        return sockets.pop()
+    @staticmethod
+    def _proxy_url(namespace: str) -> str:
+        """Return the stable address of Foretoken's namespace-local proxy Service."""
+        return f"http://{_PROXY_SERVICE}.{namespace}.svc"
 
-    def finish_uninstall(self, timeout: str) -> tuple[str, str]:
-        """Remove our daemon only when no remaining workload mounts its socket directory."""
+    @staticmethod
+    def _pod_spec(resource: dict[str, Any]) -> dict[str, Any] | None:
+        """Read current and declared consumers, excluding terminal workloads."""
+        status = resource.get("status", {})
+        if status.get("phase") in {"Succeeded", "Failed"} or any(
+            condition["type"] in {"Complete", "Failed"}
+            and condition["status"] == "True"
+            for condition in status.get("conditions", [])
+        ):
+            return None
+        return (
+            resource["spec"]
+            if resource["kind"] == "Pod"
+            else resource["spec"]["template"]["spec"]
+        )
+
+    def finish_uninstall(
+        self,
+        timeout: str,
+        *,
+        keep_release: ReleaseRef | None = None,
+        keep_proxy_url: str = "",
+    ) -> tuple[str, str]:
+        """Retire unused owned Services and daemons while preserving declared consumers."""
+        owner_key, owner_value = self._helm.management_label
+        proxies = self._kubectl.list_all_resources(
+            ("service",),
+            label_selector=f"{owner_key}={owner_value},{_PROXY_LABEL}=true",
+        )
         release = self._helm.dragonfly_release()
-        if not self._helm.release_exists(release):
-            return "Preserve", "no CLI-managed Dragonfly release"
-        if not self._helm.is_cleanup_managed(release):
+        exists = self._helm.release_exists(release)
+        managed = exists and self._helm.is_cleanup_managed(release)
+        if not proxies and not managed:
+            return "Skip", "no managed download resources"
+        consumers = [
+            (resource, spec)
+            for resource in self._kubectl.list_all_resources(
+                ("pod", "job.batch", "deployment.apps")
+            )
+            if (spec := self._pod_spec(resource)) is not None
+        ]
+        references = {keep_proxy_url} if keep_proxy_url else set()
+        for _, spec in consumers:
+            for container in spec["containers"]:
+                references.update(
+                    argument.removeprefix(_PROXY_ARGUMENT)
+                    for argument in container.get("args", [])
+                    if argument.startswith(_PROXY_ARGUMENT)
+                )
+                references.update(
+                    variable["value"]
+                    for variable in container.get("env", [])
+                    if variable["name"] == _PROXY_ENV and variable.get("value")
+                )
+        retained = []
+        for service in proxies:
+            namespace = service["metadata"]["namespace"]
+            if self._proxy_url(namespace) in references:
+                retained.append(service)
+            else:
+                self._kubectl.delete_object(service, timeout)
+        if not managed:
+            return "Preserve", "independently managed download services"
+        if keep_release == release:
             return "Preserve", release.display_name
         daemon_ref = self._helm.dragonfly_daemonset(release)
-        daemon = self._kubectl.get_if_exists(daemon_ref.kind, daemon_ref.name, daemon_ref.namespace)
+        daemon = (
+            self._kubectl.get_if_exists(
+                daemon_ref.kind, daemon_ref.name, daemon_ref.namespace
+            )
+            if daemon_ref
+            else None
+        )
         if daemon is not None:
-            socket = self._daemon_socket(daemon, daemon_ref.namespace)
-            socket_mounts = {socket, str(PurePosixPath(socket).parent)}
-            for resource in self._kubectl.list_all_resources(("pod", "job.batch")):
-                status = resource.get("status", {})
-                if status.get("phase") in {"Succeeded", "Failed"} or any(
-                    condition["type"] in {"Complete", "Failed"} and condition["status"] == "True"
-                    for condition in status.get("conditions", [])
-                ):
-                    continue
-                if any(owner.get("uid") == daemon["metadata"]["uid"] for owner in resource["metadata"].get("ownerReferences", [])):
-                    continue
-                spec = resource["spec"]["template"]["spec"] if resource["kind"] == "Job" else resource["spec"]
-                if any(volume.get("hostPath", {}).get("path") in socket_mounts for volume in spec.get("volumes", [])):
-                    ref = resource_ref(resource)
-                    return "Preserve", f"{ref.namespace}/{ref.display_name} still uses Dragonfly"
+            if any(
+                service["metadata"]["namespace"] == daemon_ref.namespace
+                and service["spec"].get("selector")
+                == daemon["spec"]["selector"].get("matchLabels")
+                for service in retained
+            ):
+                return (
+                    "Preserve",
+                    f"download clients still reference {release.display_name}",
+                )
+            # Older namespace controllers keep their socket transport until redeployment.
+            config = self._daemon_configuration(daemon, daemon_ref.namespace)
+            if config is None:
+                raise DeploymentError(
+                    f"Cannot determine the binding of {release.display_name} before cleanup"
+                )
+            configured = ((config.get("download") or {}).get("server") or {}).get(
+                "socketPath"
+            )
+            if isinstance(configured, str):
+                spec = daemon["spec"]["template"]["spec"]
+                volumes = {volume["name"]: volume for volume in spec.get("volumes", [])}
+                for container in spec["containers"]:
+                    for mount in container.get("volumeMounts", []):
+                        host = volumes[mount["name"]].get("hostPath")
+                        if host is None or not PurePosixPath(configured).is_relative_to(
+                            mount["mountPath"]
+                        ):
+                            continue
+                        socket = PurePosixPath(host["path"]) / PurePosixPath(
+                            configured
+                        ).relative_to(mount["mountPath"])
+                        mounts = {str(socket), str(socket.parent)}
+                        argument = f"--model-distribution-dragonfly-socket={socket}"
+                        for resource, consumer in consumers:
+                            if any(
+                                owner.get("uid") == daemon["metadata"]["uid"]
+                                for owner in resource["metadata"].get(
+                                    "ownerReferences", []
+                                )
+                            ):
+                                continue
+                            if any(
+                                volume.get("hostPath", {}).get("path") in mounts
+                                for volume in consumer.get("volumes", [])
+                            ) or any(
+                                argument in item.get("args", [])
+                                for item in consumer["containers"]
+                            ):
+                                ref = resource_ref(resource)
+                                return (
+                                    "Preserve",
+                                    f"{ref.namespace}/{ref.display_name} still uses Dragonfly",
+                                )
         self._helm.uninstall(release, timeout)
         return "Removed", release.display_name

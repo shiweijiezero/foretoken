@@ -66,3 +66,11 @@ Add `storageClassName` to select a StorageClass. Add `maxSize` only when its dri
 To mount a PVC that is managed elsewhere, set `workload.cache.claimName` in platform values and create that claim in each workload namespace.
 
 Diagnostic captures use the same data root and store results below `profiles/`; see [Profiling](../../benchmarks/docs/profile/README.md).
+
+## Distribute models across nodes
+
+`foretoken install` automatically prepares or reuses shared model downloads. Models with persistent storage reuse cached files first. For anonymously accessible models on the official Hugging Face and ModelScope services, preparation uses node peers when the shared download service is available. Otherwise, files come directly from the model provider. Authenticated downloads and custom model endpoints use their provider directly.
+
+Compatible replicas automatically reuse loaded weights when their runtime has the required CUDA and RDMA support. When weight sharing is unavailable, they load the prepared model files.
+
+`foretoken uninstall` removes managed download services once no workloads or controllers use them; independently installed services are retained.

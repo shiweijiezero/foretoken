@@ -20,21 +20,8 @@ FROM ${UV_IMAGE} AS uv
 # Keep the build-time patch utility out of the inference image.
 FROM ${BASE_IMAGE_REGISTRY}/library/debian:bookworm-slim AS patch-tool
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends patch ca-certificates curl \
+    && apt-get install -y --no-install-recommends patch \
     && rm -rf /var/lib/apt/lists/*
-
-# The upstream musl binary also runs in inference images with older glibc.
-FROM patch-tool AS dragonfly-client
-ARG TARGETARCH
-ARG DRAGONFLY_CLIENT_VERSION=1.5.5
-ARG FORETOKEN_GITHUB_MIRROR
-RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac \
-    && package="dragonfly-client-v${DRAGONFLY_CLIENT_VERSION}-${arch}-unknown-linux-musl" \
-    && origin="${FORETOKEN_GITHUB_MIRROR:-https://github.com}" \
-    && curl --fail --location "${origin%/}/dragonflyoss/client/releases/download/v${DRAGONFLY_CLIENT_VERSION}/${package}.tar.gz" --output /tmp/client.tar.gz \
-    && mkdir /out \
-    && tar -xzf /tmp/client.tar.gz --strip-components=1 -C /out "$package/dfget" "$package/LICENSE" \
-    && chmod 755 /out/dfget
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
@@ -166,8 +153,6 @@ ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
-COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
 
 FROM environment AS runtime
 COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server

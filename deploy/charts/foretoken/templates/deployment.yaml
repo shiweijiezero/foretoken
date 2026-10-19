@@ -118,11 +118,8 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             {{- end }}
             - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
-            {{- if .Values.modelDistribution.modelexpress.enabled }}
-            - --model-distribution-modelexpress=true
-            {{- end }}
-            {{- if .Values.modelDistribution.dragonfly.enabled }}
-            - {{ printf "--model-distribution-dragonfly-socket=%s" .Values.modelDistribution.dragonfly.socketPath | quote }}
+            {{- with .Values.modelDistribution.proxyURL }}
+            - {{ printf "--model-distribution-download-proxy=%s" . | quote }}
             {{- end }}
             {{- with .Values.runtime.vllm.modelSource.endpoint }}
             - {{ printf "--model-source-endpoint=%s" . | quote }}

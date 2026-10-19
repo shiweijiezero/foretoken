@@ -20,6 +20,15 @@ from foretoken.platform.types import ReleaseRef
 from foretoken.tools import resolve_tool
 
 
+class HelmCommandError(DeploymentError):
+    """A completed Helm command failure, distinct from process startup or timeout errors."""
+
+    def __init__(self, command: list[str], completed: subprocess.CompletedProcess[str]) -> None:
+        self.operation = command[1]
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        super().__init__(f"{shlex.join(command)} failed: {detail}")
+
+
 class HelmClient:
     """Execute Helm commands and read release-owned metadata."""
 
@@ -55,8 +64,7 @@ class HelmClient:
         command: list[str], completed: subprocess.CompletedProcess[str]
     ) -> NoReturn:
         """Raise the shared user-facing Helm failure."""
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise DeploymentError(f"{shlex.join(command)} failed: {detail}")
+        raise HelmCommandError(command, completed)
 
     def release_exists(self, release: ReleaseRef) -> bool:
         """Return whether a release with the fixed identity exists."""

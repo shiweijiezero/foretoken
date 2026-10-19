@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path"
 	"slices"
 	"time"
 
@@ -194,13 +193,8 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 		nodeSelector = maps.Clone(group.Spec.Accelerator.NodeSelector)
 		tolerations = workload.AcceleratorTolerations(group.Spec.Accelerator.DeviceResourceName)
 	}
-	if cache != nil && distribution.DragonflySocketPath != "" {
-		// Mount the directory so daemon restarts can replace the socket without rebinding the Pod.
-		directory := path.Dir(distribution.DragonflySocketPath)
-		directoryType := corev1.HostPathDirectory
-		volumes = append(volumes, corev1.Volume{Name: "dragonfly", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: directory, Type: &directoryType}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "dragonfly", MountPath: directory, ReadOnly: true})
-		env = append(env, corev1.EnvVar{Name: runtimeconfig.DragonflySocketEnv, Value: distribution.DragonflySocketPath})
+	if cache != nil && distribution.ProxyURL != "" {
+		env = append(env, corev1.EnvVar{Name: runtimeconfig.ModelDownloadProxyEnv, Value: distribution.ProxyURL})
 	}
 	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})

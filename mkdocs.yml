@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+site_name: Foretoken
+site_url: https://shiweijiezero.github.io/foretoken/
+site_description: Generative inference orchestration and agent-driven optimization.
+repo_url: https://github.com/shiweijiezero/foretoken
+repo_name: Foretoken
+copyright: Copyright contributors to the Foretoken project
+edit_uri: edit/main/
+docs_dir: docs
+site_dir: tmp/docs-site/site
+use_directory_urls: true
+
+hooks:
+  - docs/site/hooks.py
+
+theme:
+  name: material
+  custom_dir: docs/site/overrides
+  logo: assets/foretoken.svg
+  favicon: assets/foretoken.svg
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - awesome-nav
+  - search:
+      lang:
+        - en
+        - zh
+  - i18n:
+      docs_structure: suffix
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: zh
+          name: 简体中文
+          build: true
+          theme:
+            palette:
+              - toggle:
+                  name: 切换到深色
+              - toggle:
+                  name: 切换到浅色
+          nav_translations:
+            Home: 首页
+            Get started: 快速开始
+            RSI: RSI 持续优化
+            Overview: 概览
+            Define a task: 定义优化任务
+            Example tasks: 任务示例
+            Research guidance: 研究方法
+            Technical knowledge: 技术知识
+            Attention and recurrent state: 注意力与循环状态
+            MoE execution: MoE 执行
+            Speculative decoding: 推测解码
+            Quantization: 量化
+            Multimodal and generative models: 多模态与生成模型
+            Multiple models and adapters: 多模型与适配器
+            Kernel design: 算子设计
+            Compilation and runtime: 编译与运行时
+            Parallelism and communication: 并行与通信
+            Heterogeneous hardware: 异构硬件
+            Engine scheduling: 引擎调度
+            KV caching: KV 缓存
+            Request routing and admission: 请求路由与准入
+            Disaggregated serving: 分离式服务
+            Autoscaling and placement: 扩缩容与放置
+            Model loading and storage: 模型加载与存储
+            Host and streaming paths: 主机与流式链路
+            Measurement and simulation: 测量与模拟
+            Templates: 记录模板
+            Deployment examples: 部署示例
+            Architecture: 架构与实现
+            Code of conduct: 行为准则
+            Experiment records: 实验记录与报告
+            User guide: 用户指南
+            Installation and deployment: 安装与部署
+            Existing Kubernetes: 已有 Kubernetes 集群
+            k3d GPU cluster: k3d GPU 集群
+            kind development cluster: kind 开发集群
+            MetaX preparation: 沐曦平台准备
+            MetaX model deployment: 沐曦模型部署
+            Source deployment: 源码部署与候选方案
+            Model configuration: 模型配置
+            Model sources: 模型来源
+            Model storage: 模型存储与分发
+            Inference parameters: 推理参数
+            Model recipes: 模型配方
+            Observability: 监控与运维
+            Evaluation: 评测与剖析
+            Performance benchmarks: 性能评测
+            Quality evaluation: 质量评测
+            Candidate comparison: 候选模型对比
+            Profiling: 性能剖析
+            Workload recipes: 实验命令与负载
+            W&B results: W&B 结果
+            Reference: 参考
+            CLI commands: CLI 命令
+            Frontend APIs: 前端 API
+            Performance metrics: 性能指标
+            Helm values: Helm 配置
+            Developer guide: 开发者指南
+            Contributing: 参与贡献
+            Documentation: 文档维护
+            Code style: 代码风格
+            Testing: 测试规范
+            Continuous integration: CI 规范
+            Deployment maintenance: 部署维护
+            Runtime cache: 运行时缓存
+            Releases: 版本发布
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+extra_css:
+  - assets/foretoken.css
+
+extra:
+  generator: false

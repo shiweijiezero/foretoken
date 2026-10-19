@@ -367,6 +367,15 @@ func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
 				return false
 			}
 		}
+		if name == "load-format" {
+			// ModelExpress changes weight transport, not the checkpoint used to compute KV.
+			if leftValue == "auto" || leftValue == "modelexpress" {
+				leftValue = nil
+			}
+			if rightValue == "auto" || rightValue == "modelexpress" {
+				rightValue = nil
+			}
+		}
 		if !reflect.DeepEqual(leftValue, rightValue) {
 			return false
 		}

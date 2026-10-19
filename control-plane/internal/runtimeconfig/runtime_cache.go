@@ -22,14 +22,6 @@ const (
 	CacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
 )
 
-// CacheObservationPort selects the filesystem observer port shared by preparation and serving Pods.
-func CacheObservationPort(runtimePort int32) int32 {
-	if runtimePort < 65535 {
-		return runtimePort + 1
-	}
-	return runtimePort - 1
-}
-
 // CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
 func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
 	return []corev1.EnvVar{
