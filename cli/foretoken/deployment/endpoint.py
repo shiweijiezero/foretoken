@@ -127,8 +127,6 @@ def _gateway_endpoint(
     deadline: float,
 ) -> FrontendEndpoint:
     """Resolve the Gateway selected by the frontend's controller-owned HTTPRoute."""
-    if not deployment.hostname:
-        raise DeploymentError("gateway frontend does not declare spec.hostname")
     def has_gateway_parent(value: dict[str, Any]) -> bool:
         return any(
             item.get("kind", "Gateway") == "Gateway"
@@ -149,6 +147,10 @@ def _gateway_endpoint(
     )
     if deployment.uid and route["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != deployment.uid:
         raise DeploymentError(f"HTTPRoute/{deployment.frontend} does not belong to deployment instance {deployment.name!r}")
+    hostnames = (route.get("spec") or {}).get("hostnames") or []
+    if len(hostnames) != 1:
+        raise DeploymentError(f"HTTPRoute/{deployment.frontend} has no single published routing hostname")
+    hostname = hostnames[0]
     parents = (route.get("spec") or {}).get("parentRefs") or []
     parent = next(
         (
@@ -177,9 +179,7 @@ def _gateway_endpoint(
         )
     address, scheme, port = published["address"], published["scheme"], published["port"]
     if scheme == "https":
-        return FrontendEndpoint(
-            _endpoint_url(scheme, deployment.hostname, port)
-        )
-    return FrontendEndpoint(
-        _endpoint_url(scheme, address, port), deployment.hostname
-    )
+        if not deployment.hostname:
+            raise DeploymentError("HTTPS Gateway access requires spec.hostname matching the listener certificate")
+        return FrontendEndpoint(_endpoint_url(scheme, hostname, port))
+    return FrontendEndpoint(_endpoint_url(scheme, address, port), hostname)

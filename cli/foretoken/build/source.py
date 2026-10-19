@@ -352,7 +352,7 @@ def prepare_source_images(
                     if key in {
                         "METAX_SDK_IMAGE", "UV_IMAGE_REGISTRY", "UV_IMAGE", "MACA_PATH", "UV_PYTHON",
                         "FORETOKEN_GITHUB_MIRROR", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
-                        "BUILD_JOBS", "BUILDKIT_SYNTAX_IMAGE",
+                        "BUILDKIT_SYNTAX_IMAGE",
                     }
                 }
                 if not runtime_arguments.get("METAX_SDK_IMAGE"):
@@ -363,7 +363,7 @@ def prepare_source_images(
                             key: value for key, value in arguments.items()
                             if key in {
                                 "BASE_IMAGE_REGISTRY", "UV_IMAGE_REGISTRY", "UV_IMAGE",
-                                "BUILDKIT_SYNTAX_IMAGE", "BUILD_JOBS", "FORETOKEN_GITHUB_MIRROR",
+                                "BUILDKIT_SYNTAX_IMAGE", "FORETOKEN_GITHUB_MIRROR",
                                 "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
                             }
                         },
@@ -440,7 +440,7 @@ def prepare_source_images(
                     cache_prefix = cache_scope["prefix"]
                     engine_arguments = {
                         key: value for key, value in engine_build_arguments(arguments).items()
-                        if key not in {"BUILD_JOBS", "TARGET_CUDA_ARCH_LIST"}
+                        if key != "TARGET_CUDA_ARCH_LIST"
                     }
                     engine_arguments["RUNTIME_IMAGE"] = selected["image"]
                     node_arguments = {}
@@ -616,7 +616,6 @@ def build_arguments(environment: dict[str, str]) -> dict[str, str]:
             "MOONCAKE_VERSION",
             "UV_PYTHON",
             "FORETOKEN_VLLM_PYTHON",
-            "BUILD_JOBS",
         )
         if environment.get(name)
     }

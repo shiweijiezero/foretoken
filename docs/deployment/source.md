@@ -9,7 +9,7 @@ Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster. The cluster must allow source-build workloads and provide a default StorageClass for application files.
+Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -49,7 +49,9 @@ The instance runs in your current kubeconfig namespace, with a frontend and a `Q
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
@@ -110,6 +112,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 ```
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
+
+For native engine compilation, prefix the deployment command with `BUILD_JOBS=4` to use four build jobs. This does not set Go/Rust concurrency or a memory limit.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 

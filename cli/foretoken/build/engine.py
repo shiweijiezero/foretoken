@@ -71,7 +71,7 @@ def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
         for name in (
             "UV_IMAGE_REGISTRY", "UV_IMAGE", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
             "FORETOKEN_GITHUB_MIRROR", "BUILDKIT_SYNTAX_IMAGE",
-            "BUILD_JOBS", "TARGET_CUDA_ARCH_LIST",
+            "TARGET_CUDA_ARCH_LIST",
         )
         if name in arguments
     }

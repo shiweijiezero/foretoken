@@ -123,14 +123,7 @@ To choose another instance name, add `--name candidate-a` to `deploy` and use `c
 
 ### 4.3 Gateway mode
 
-First, set the public hostname in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-Enable Gateway mode and deploy the Quick Start:
+Enable Gateway mode and deploy the Quick Start. HTTP routing assigns each instance a distinct hostname automatically:
 
 ```bash
 foretoken install -e . --frontend-mode gateway
