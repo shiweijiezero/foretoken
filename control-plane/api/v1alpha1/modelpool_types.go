@@ -6,7 +6,10 @@
 package v1alpha1
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -51,10 +54,33 @@ type NormalizedMooncakeStore struct {
 	ManagedBinding *ManagedMooncakeStoreBinding `json:"managedBinding,omitempty"`
 }
 
+// NormalizedKVOffload retains parsed capacity while preserving the Pool's quantity wire format.
+type NormalizedKVOffload struct {
+	// CPUCacheSize is the CPU tier capacity available to the inference engine.
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) >= 0",message="must be a valid non-negative Kubernetes resource quantity"
+	CPUCacheSize resource.Quantity `json:"cpuCacheSize"`
+
+	// +optional
+	Filesystem bool `json:"filesystem,omitempty"`
+}
+
+// Bytes returns exact positive byte capacity for compiler validation and runtime projection.
+func (offload NormalizedKVOffload) Bytes() (int64, error) {
+	bytes := offload.CPUCacheSize.Value()
+	if bytes <= 0 || offload.CPUCacheSize.CmpInt64(bytes) != 0 {
+		return 0, fmt.Errorf("kvCache.offload.cpuCacheSize must be a positive integer number of bytes")
+	}
+	return bytes, nil
+}
+
 // NormalizedKVCache is the controller-owned cache configuration attached to ModelPool.
 // +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one storage mode"
 type NormalizedKVCache struct {
-	Offload       *KVOffload               `json:"offload,omitempty"`
+	Offload       *NormalizedKVOffload     `json:"offload,omitempty"`
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 

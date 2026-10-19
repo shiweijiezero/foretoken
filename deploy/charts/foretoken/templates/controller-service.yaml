@@ -4,6 +4,7 @@
 {{/* Compile instance controller metrics without creating a serving Service during installation. */}}
 {{- define "foretoken.deploymentMetricsService" }}
 {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+{{- $ports := include "foretoken.controllerPorts" . | fromJson }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -17,7 +18,7 @@ spec:
     {{- include "foretoken.selectorLabels" . | nindent 4 }}
   ports:
     - name: metrics
-      port: 8080
+      port: {{ int $ports.metrics }}
       targetPort: metrics
       protocol: TCP
 {{- end }}

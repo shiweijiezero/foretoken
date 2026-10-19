@@ -95,24 +95,7 @@ func main() {
 	var runtimeClassName string
 	var gpuNodeSelectorKey string
 	var gpuNodeSelectorValue string
-	var vllmECProfileName string
-	var vllmECProfileRevision string
-	var vllmECConnector string
-	var vllmECSharedStorageClaim string
-	var vllmECSharedStoragePath string
-	var vllmPDProfileName string
-	var vllmPDProfileRevision string
-	var vllmPDProtocol string
-	var vllmPDBootstrapPort int
-	var vllmPDAbortRequestTimeoutSeconds int
-	var vllmPDRDMADeviceName string
-	var rdmaResourceName string
-	var rdmaResourceCount int
-	var vllmMooncakeStoreProfileName string
-	var vllmMooncakeStoreProfileRevision string
-	var vllmMooncakeStoreConfigMapName string
-	var vllmMooncakeStoreConfigMapKey string
-	var vllmMooncakeStorePythonHashSeed string
+	var profiles runtimeconfig.Profiles
 	var autoscalingTelemetryConfigurationPath string
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
@@ -134,7 +117,7 @@ func main() {
 	flag.StringVar(&deploymentUID, "deployment-uid", "", "Immutable deployment UID selecting this controller's resources.")
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
-	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
+	flag.StringVar(&probeAddress, "health-probe-bind-address", "0", "Health probe bind address; 0 disables probes.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
 	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from the platform application origin.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
@@ -148,7 +131,7 @@ func main() {
 	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform runtime image for video workers.")
 	flag.StringVar(&videoWorkerApplicationURL, "video-worker-application-url", "", "Published application directory containing the video worker.")
 	flag.StringVar(&applicationFilesJSON, "application-files", "{}", "JSON configuration for platform application download tools.")
-	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
+	flag.IntVar(&frontendPort, "frontend-port", 0, "Frontend runtime HTTP port supplied by the platform.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
 	flag.StringVar(&frontendGatewayNamespace, "frontend-gateway-namespace", "", "Platform Gateway namespace; defaults to the FrontendService namespace.")
 	flag.StringVar(&frontendGatewaySectionName, "frontend-gateway-section-name", "", "Platform Gateway listener section name.")
@@ -160,7 +143,7 @@ func main() {
 		return nil
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
-	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
+	flag.StringVar(&cacheMountPath, "cache-mount-path", "", "Absolute runtime cache root supplied by the platform.")
 	flag.Func("cache-directory-bindings", "JSON mapping of authorized data directories to prepared namespace claims; an empty object authorizes no directories.", func(value string) error {
 		if err := json.Unmarshal([]byte(value), &cacheDirectoryBindings); err != nil {
 			return err
@@ -188,29 +171,29 @@ func main() {
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.StringVar(&omniInferenceEngineImage, "omni-inference-engine-image", "", "Optional vLLM-Omni image containing the Foretoken Omni adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
-	flag.IntVar(&modelServerPort, "model-server-port", 9000, "Internal model-server HTTP port.")
-	flag.StringVar(&gpuResourceName, "gpu-resource-name", "nvidia.com/gpu", "Kubernetes extended resource used for accelerator devices.")
+	flag.IntVar(&modelServerPort, "model-server-port", 0, "Internal model-server HTTP port supplied by the platform.")
+	flag.StringVar(&gpuResourceName, "gpu-resource-name", "", "Kubernetes extended resource selected by the platform for accelerator devices.")
 	flag.StringVar(&runtimeClassName, "runtime-class-name", "", "Optional RuntimeClass for inference engine Pods.")
 	flag.StringVar(&gpuNodeSelectorKey, "gpu-node-selector-key", "", "Optional GPU node label key.")
 	flag.StringVar(&gpuNodeSelectorValue, "gpu-node-selector-value", "", "Optional GPU node label value.")
-	flag.StringVar(&vllmECProfileName, "vllm-ec-profile-name", "", "Platform-owned EC profile name; empty disables E/P/D.")
-	flag.StringVar(&vllmECProfileRevision, "vllm-ec-profile-revision", "", "Platform-owned EC profile revision.")
-	flag.StringVar(&vllmECConnector, "vllm-ec-connector", "", "Fixed EC connector identity for the configured vLLM adapter.")
-	flag.StringVar(&vllmECSharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the configured EC connector.")
-	flag.StringVar(&vllmECSharedStoragePath, "vllm-ec-shared-storage-path", "/var/lib/foretoken/ec", "In-container shared EC storage path.")
-	flag.StringVar(&vllmPDProfileName, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
-	flag.StringVar(&vllmPDProfileRevision, "vllm-pd-profile-revision", "", "Opaque platform-owned Mooncake P/D profile revision.")
-	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D transport: rdma or tcp.")
-	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
-	flag.IntVar(&vllmPDAbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
-	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
-	flag.StringVar(&rdmaResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
-	flag.IntVar(&rdmaResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
-	flag.StringVar(&vllmMooncakeStoreProfileName, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
-	flag.StringVar(&vllmMooncakeStoreProfileRevision, "vllm-mooncake-store-profile-revision", "", "Opaque platform-owned Mooncake Store profile revision.")
-	flag.StringVar(&vllmMooncakeStoreConfigMapName, "vllm-mooncake-store-config-map-name", "", "Mooncake Store ConfigMap name.")
-	flag.StringVar(&vllmMooncakeStoreConfigMapKey, "vllm-mooncake-store-config-map-key", "", "Mooncake Store ConfigMap key.")
-	flag.StringVar(&vllmMooncakeStorePythonHashSeed, "vllm-mooncake-store-python-hash-seed", "", "PYTHONHASHSEED for Mooncake Store.")
+	flag.StringVar(&profiles.EC.Name, "vllm-ec-profile-name", "", "Platform-owned EC profile name; empty disables E/P/D.")
+	flag.StringVar(&profiles.EC.Revision, "vllm-ec-profile-revision", "", "Platform-owned EC profile revision.")
+	flag.StringVar(&profiles.EC.Connector, "vllm-ec-connector", "", "Fixed EC connector identity for the configured vLLM adapter.")
+	flag.StringVar(&profiles.EC.SharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the configured EC connector.")
+	flag.StringVar(&profiles.EC.SharedStoragePath, "vllm-ec-shared-storage-path", "", "In-container shared EC storage path supplied by the platform.")
+	flag.StringVar(&profiles.PD.Name, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
+	flag.StringVar(&profiles.PD.Revision, "vllm-pd-profile-revision", "", "Opaque platform-owned Mooncake P/D profile revision.")
+	flag.StringVar(&profiles.PD.Protocol, "vllm-pd-protocol", "", "Mooncake P/D transport: rdma or tcp.")
+	flag.IntVar(&profiles.PD.BootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
+	flag.IntVar(&profiles.PD.AbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
+	flag.StringVar(&profiles.PD.RDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
+	flag.StringVar(&profiles.RDMA.ResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
+	flag.IntVar(&profiles.RDMA.ResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
+	flag.StringVar(&profiles.MooncakeStore.Name, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
+	flag.StringVar(&profiles.MooncakeStore.Revision, "vllm-mooncake-store-profile-revision", "", "Opaque platform-owned Mooncake Store profile revision.")
+	flag.StringVar(&profiles.MooncakeStore.ConfigMapName, "vllm-mooncake-store-config-map-name", "", "Mooncake Store ConfigMap name.")
+	flag.StringVar(&profiles.MooncakeStore.ConfigMapKey, "vllm-mooncake-store-config-map-key", "", "Mooncake Store ConfigMap key.")
+	flag.StringVar(&profiles.MooncakeStore.PythonHashSeed, "vllm-mooncake-store-python-hash-seed", "", "PYTHONHASHSEED for Mooncake Store.")
 
 	logOptions := zap.Options{Development: false}
 	logOptions.BindFlags(flag.CommandLine)
@@ -287,60 +270,25 @@ func main() {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	if err := (runtimeconfig.Profiles{
-		RDMA: runtimeconfig.RDMAProfile{ResourceName: rdmaResourceName, ResourceCount: rdmaResourceCount},
-		EC: runtimeconfig.ECProfile{
-			Name: vllmECProfileName, Revision: vllmECProfileRevision,
-			Connector:          vllmECConnector,
-			SharedStorageClaim: vllmECSharedStorageClaim,
-			SharedStoragePath:  vllmECSharedStoragePath,
-		},
-		PD: runtimeconfig.PDProfile{
-			Name:                       vllmPDProfileName,
-			Revision:                   vllmPDProfileRevision,
-			Protocol:                   vllmPDProtocol,
-			BootstrapPort:              vllmPDBootstrapPort,
-			AbortRequestTimeoutSeconds: vllmPDAbortRequestTimeoutSeconds,
-			RDMADeviceName:             vllmPDRDMADeviceName,
-		},
-		MooncakeStore: runtimeconfig.MooncakeStoreProfile{
-			Name:           vllmMooncakeStoreProfileName,
-			Revision:       vllmMooncakeStoreProfileRevision,
-			ConfigMapName:  vllmMooncakeStoreConfigMapName,
-			ConfigMapKey:   vllmMooncakeStoreConfigMapKey,
-			PythonHashSeed: vllmMooncakeStorePythonHashSeed,
-		},
-	}).Validate(); err != nil {
+	if err := profiles.Validate(); err != nil {
 		ctrl.Log.Error(err, "invalid vLLM runtime profile")
 		os.Exit(1)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if rdmaResourceName != "" {
-		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: rdmaResourceName, ResourceCount: int32(rdmaResourceCount)}
+	if profiles.RDMA.ResourceName != "" {
+		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: profiles.RDMA.ResourceName, ResourceCount: int32(profiles.RDMA.ResourceCount)}
 	}
-	var mooncakePD *resolver.MooncakePDProfile
-	var ec *resolver.ECProfile
-	var mooncakeStore *resolver.MooncakeStoreProfile
-	if vllmECProfileName != "" {
-		ec = &resolver.ECProfile{
-			Name: vllmECProfileName, Revision: vllmECProfileRevision,
-			Connector:          vllmECConnector,
-			SharedStorageClaim: vllmECSharedStorageClaim,
-			SharedStoragePath:  vllmECSharedStoragePath,
-		}
+	var mooncakePD *runtimeconfig.PDProfile
+	var ec *runtimeconfig.ECProfile
+	var mooncakeStore *runtimeconfig.MooncakeStoreProfile
+	if profiles.EC.Name != "" {
+		ec = &profiles.EC
 	}
-	if vllmMooncakeStoreProfileName != "" {
-		mooncakeStore = &resolver.MooncakeStoreProfile{Name: vllmMooncakeStoreProfileName, Revision: vllmMooncakeStoreProfileRevision, ConfigMapName: vllmMooncakeStoreConfigMapName, ConfigMapKey: vllmMooncakeStoreConfigMapKey, PythonHashSeed: vllmMooncakeStorePythonHashSeed}
+	if profiles.MooncakeStore.Name != "" {
+		mooncakeStore = &profiles.MooncakeStore
 	}
-	if vllmPDProfileName != "" {
-		mooncakePD = &resolver.MooncakePDProfile{
-			Name:                       vllmPDProfileName,
-			Revision:                   vllmPDProfileRevision,
-			Protocol:                   vllmPDProtocol,
-			BootstrapPort:              int32(vllmPDBootstrapPort),
-			AbortRequestTimeoutSeconds: int32(vllmPDAbortRequestTimeoutSeconds),
-			RDMADeviceName:             vllmPDRDMADeviceName,
-		}
+	if profiles.PD.Name != "" {
+		mooncakePD = &profiles.PD
 	}
 
 	// Register built-in and Foretoken APIs before controllers are attached to the manager.

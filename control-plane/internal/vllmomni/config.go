@@ -20,9 +20,8 @@ import (
 // Backend identifies the managed Omni execution adapter in resolved model contracts.
 const Backend = "vllm-omni"
 
-// EffectiveConfig supplies Omni-specific inputs to the shared ModelGroup projection.
+// EffectiveConfig contains the topology and native arguments resolved by the Omni adapter.
 type EffectiveConfig struct {
-	runtimeconfig.ModelArtifacts
 	Parallelism inferencev1alpha1.CompiledParallelism
 	EngineArgs  inferencev1alpha1.EngineArguments
 }
@@ -32,16 +31,10 @@ type LaunchPlanV2 struct {
 	Version      int                               `json:"version"`
 	Artifacts    runtimeconfig.ModelArtifacts      `json:"artifacts"`
 	UpstreamPort int32                             `json:"upstreamPort"`
-	Lifecycle    LaunchLifecycle                   `json:"lifecycle"`
+	Lifecycle    runtimeconfig.LaunchLifecycle     `json:"lifecycle"`
 	EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
 
 	nativeAcquisition bool
-}
-
-// LaunchLifecycle carries compiled startup and shutdown budgets, not generation deadlines.
-type LaunchLifecycle struct {
-	StartupSeconds int64 `json:"startupSeconds"`
-	DrainSeconds   int64 `json:"drainSeconds"`
 }
 
 // Compile validates the supported single-node Omni topology and normalizes engine arguments.
@@ -79,9 +72,8 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 		}
 	}
 	return EffectiveConfig{
-		ModelArtifacts: runtimeconfig.ResolveModelArtifacts(template),
-		Parallelism:    inferencev1alpha1.CompiledParallelism{TP: gpus, PP: 1, DP: 1, PCP: 1, DCP: 1},
-		EngineArgs:     args,
+		Parallelism: inferencev1alpha1.CompiledParallelism{TP: gpus, PP: 1, DP: 1, PCP: 1, DCP: 1},
+		EngineArgs:  args,
 	}, nil
 }
 
@@ -100,11 +92,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV2, erro
 	if group.Runtime.Port < 1 || group.Runtime.Port > 65533 {
 		return LaunchPlanV2{}, fmt.Errorf("vLLM-Omni model-server port must be between 1 and 65533")
 	}
-	startup, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Startup, "vLLM-Omni startup")
-	if err != nil {
-		return LaunchPlanV2{}, err
-	}
-	drain, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Drain, "vLLM-Omni drain")
+	lifecycle, err := runtimeconfig.CompileModelLifecycle(group.Timeouts)
 	if err != nil {
 		return LaunchPlanV2{}, err
 	}
@@ -112,7 +100,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV2, erro
 		Version:           2,
 		Artifacts:         runtimeconfig.ProjectModelArtifacts(group.Artifacts),
 		UpstreamPort:      group.Runtime.Port + 2,
-		Lifecycle:         LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain},
+		Lifecycle:         lifecycle,
 		EngineArgs:        group.Runtime.EngineArgs.DeepCopy(),
 		nativeAcquisition: nativeAcquisition,
 	}, nil
@@ -127,7 +115,7 @@ func (plan LaunchPlanV2) JSON() (string, error) {
 			Source       inferencev1alpha1.ModelSource     `json:"source"`
 			Revision     string                            `json:"revision"`
 			UpstreamPort int32                             `json:"upstreamPort"`
-			Lifecycle    LaunchLifecycle                   `json:"lifecycle"`
+			Lifecycle    runtimeconfig.LaunchLifecycle     `json:"lifecycle"`
 			EngineArgs   inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
 		}{
 			Version: 1, Model: plan.Artifacts.Model, Source: plan.Artifacts.Source,

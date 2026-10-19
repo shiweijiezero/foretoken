@@ -26,6 +26,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -421,7 +422,7 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 			if err := reconciler.Create(ctx, pool); err != nil {
 				return fmt.Errorf("create ModelPool %q: %w", compiled.Name, err)
 			}
-		} else if !reflect.DeepEqual(before.Spec, pool.Spec) || !reflect.DeepEqual(before.OwnerReferences, pool.OwnerReferences) {
+		} else if !apiequality.Semantic.DeepEqual(before.Spec, pool.Spec) || !reflect.DeepEqual(before.OwnerReferences, pool.OwnerReferences) {
 			if err := reconciler.Update(ctx, pool); err != nil {
 				return fmt.Errorf("update ModelPool %q: %w", compiled.Name, err)
 			}
@@ -457,7 +458,7 @@ func replacementPoolsCapacityBlocked(compiledPools []compiler.ModelPool, pools m
 		pool := pools[compiled.Name]
 		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Status.ObservedGeneration != pool.Generation ||
 			pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) ||
-			!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) {
+			!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !apiequality.Semantic.DeepEqual(pool.Spec.Template, compiled.Template) {
 			return false
 		}
 		for _, name := range []string{conditionResolved, workload.ConditionGroupsMaterialized} {
@@ -504,7 +505,7 @@ func (reconciler *ServiceReconciler) commitServingGeneration(ctx context.Context
 			}
 			continue
 		}
-		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
+		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) || !reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !apiequality.Semantic.DeepEqual(pool.Spec.Template, compiled.Template) || pool.Status.ObservedGeneration != pool.Generation || pool.Status.PreparedRevision == "" || !poolRevisionReady(groups.Items, pool, pool.Status.PreparedRevision, pool.Spec.DesiredGroups) {
 			return false, nil
 		}
 		selected = append(selected, inferencev1alpha1.ServingPoolRevision{PoolName: pool.Spec.PoolName, PoolUID: string(pool.UID), Revision: pool.Status.PreparedRevision})
@@ -573,7 +574,7 @@ func (reconciler *ServiceReconciler) targetReadiness(ctx context.Context, servic
 			pool := &pools[index]
 			if pool.Spec.PoolName != compiled.Name || !pool.DeletionTimestamp.IsZero() ||
 				pool.Spec.DesiredGroups != compiled.DesiredGroups || !ptr.Equal(pool.Spec.MaxInputTokens, compiled.MaxInputTokens) ||
-				!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) ||
+				!reflect.DeepEqual(pool.Spec.InstanceAdmission, compiled.InstanceAdmission) || !apiequality.Semantic.DeepEqual(pool.Spec.Template, compiled.Template) ||
 				pool.Status.ObservedGeneration != pool.Generation {
 				continue
 			}

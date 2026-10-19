@@ -32,7 +32,7 @@ type ModelArtifacts struct {
 	TokenizerRevision string          `json:"tokenizerRevision"`
 }
 
-// ResolveModelArtifacts applies tokenizer defaults for compilers and retained source intent.
+// ResolveModelArtifacts projects retained Pool source intent with tokenizer defaults.
 // It does not validate engine configuration, so paused Pools can retain their source independently.
 func ResolveModelArtifacts(template api.NormalizedPoolTemplate) ModelArtifacts {
 	artifacts := ModelArtifacts{

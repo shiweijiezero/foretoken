@@ -30,7 +30,6 @@ use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
 };
 use vllm_llm::Llm;
-use vllm_managed_engine::allocate_handshake_port;
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
@@ -66,10 +65,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
-    let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+    let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
+    let config = RuntimeConfig::from_env(
+        cache_config
+            .as_ref()
+            .map(runtime_cache::Config::observation_port),
+    )
+    .map_err(std::io::Error::other)?;
     let request_ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
     let cache_shutdown = Arc::new(Notify::new());
-    let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
     let profiling_config = if let Some(cache) = &cache_config {
         let workers = config.launch.parallelism.tp
             * config.launch.parallelism.pp
@@ -251,7 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || LOOPBACK_HOST.to_string(),
             |member| member.address.to_string(),
         );
-        tokio::spawn(adapter.clone().serve(host, ready_tx));
+        tokio::spawn(adapter.clone().serve(host, config.ports, ready_tx));
         if ready_rx.await != Ok(true) {
             warn!("KV event subscriber is unavailable; live engine observations remain available");
         }
@@ -648,7 +652,7 @@ async fn spawn_engine_attempt(
     if config.launch.shared_prefix_lookup() {
         environment.push((
             shared_kv::LOOKUP_ENDPOINT_ENV.into(),
-            shared_kv::lookup_endpoint("*", 0),
+            config.ports.lookup_endpoint("*", 0),
         ));
     }
     // Both cache modes consume the same mounted source publication.
@@ -675,15 +679,10 @@ async fn spawn_engine_attempt(
                 .to_string(),
         ));
     }
-    let handshake_port = if config.member.is_some() {
-        29700
-    } else {
-        allocate_handshake_port(LOOPBACK_HOST)
-            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?
-    };
+    let handshake_port = config.ports.handshake;
     let mut managed_engine = config
         .launch
-        .managed_engine(handshake_port, config.member.as_ref())
+        .managed_engine(handshake_port, config.member.as_ref(), &config.ports)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     if let Some(member) = &config.member {
         environment.push(("VLLM_HOST_IP".into(), member.address.to_string()));
@@ -793,6 +792,7 @@ async fn spawn_engine_attempt(
     let mut command = config.launch.engine_command(
         &managed_engine,
         config.member.as_ref(),
+        &config.ports,
         startup_deadline.saturating_duration_since(Instant::now()),
     );
     command.envs(environment);

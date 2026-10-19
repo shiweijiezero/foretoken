@@ -12,6 +12,25 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
+// LaunchLifecycle supplies model adapters with compiled startup and shutdown budgets.
+type LaunchLifecycle struct {
+	StartupSeconds int64 `json:"startupSeconds"`
+	DrainSeconds   int64 `json:"drainSeconds"`
+}
+
+// CompileModelLifecycle resolves the shared model lifecycle before native launch projection.
+func CompileModelLifecycle(timeouts inferencev1alpha1.ModelTimeouts) (LaunchLifecycle, error) {
+	startup, err := PositiveDurationSeconds(timeouts.Startup, "model startup")
+	if err != nil {
+		return LaunchLifecycle{}, err
+	}
+	drain, err := PositiveDurationSeconds(timeouts.Drain, "model drain")
+	if err != nil {
+		return LaunchLifecycle{}, err
+	}
+	return LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, nil
+}
+
 // WholeDurationSeconds returns a positive whole-second budget for workload and Gateway fields.
 func WholeDurationSeconds(input inferencev1alpha1.Duration) (int64, error) {
 	duration, err := time.ParseDuration(string(input))

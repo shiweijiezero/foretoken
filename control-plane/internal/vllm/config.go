@@ -20,9 +20,8 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
-// EffectiveConfig contains typed vLLM values and approved backend arguments.
+// EffectiveConfig contains the topology and native arguments resolved by the vLLM adapter.
 type EffectiveConfig struct {
-	runtimeconfig.ModelArtifacts
 	Parallelism inferencev1alpha1.CompiledParallelism
 	EngineArgs  inferencev1alpha1.EngineArguments
 }
@@ -36,7 +35,7 @@ type LaunchPlanV1 struct {
 	Parallelism                           LaunchParallelism                  `json:"parallelism"`
 	KV                                    LaunchKVPlan                       `json:"kv"`
 	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
-	Lifecycle                             LaunchLifecycle                    `json:"lifecycle"`
+	Lifecycle                             runtimeconfig.LaunchLifecycle      `json:"lifecycle"`
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
@@ -78,11 +77,6 @@ type LaunchECPlan struct {
 	SharedStoragePath string `json:"sharedStoragePath"`
 }
 
-type LaunchLifecycle struct {
-	StartupSeconds int64 `json:"startupSeconds"`
-	DrainSeconds   int64 `json:"drainSeconds"`
-}
-
 const (
 	// FilesystemOffloadMountPath is the writable volume target shared by workload and launch plan.
 	FilesystemOffloadMountPath = "/var/lib/foretoken/kv-offload"
@@ -97,7 +91,7 @@ const (
 
 // Compile resolves native engine options and topology from the normalized template.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
-	effective := EffectiveConfig{ModelArtifacts: runtimeconfig.ResolveModelArtifacts(template)}
+	var effective EffectiveConfig
 	args, err := compileEngineArgs(template)
 	if err != nil {
 		return EffectiveConfig{}, err
@@ -141,11 +135,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if group.NodeCount < 1 {
 		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan requires a positive node count")
 	}
-	startup, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Startup, "vLLM startup")
-	if err != nil {
-		return LaunchPlanV1{}, err
-	}
-	drain, err := runtimeconfig.PositiveDurationSeconds(group.Timeouts.Drain, "vLLM drain")
+	lifecycle, err := runtimeconfig.CompileModelLifecycle(group.Timeouts)
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
@@ -170,7 +160,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: runtimeconfig.ProjectModelArtifacts(group.Artifacts), Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: lifecycle, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.

@@ -5,6 +5,7 @@
 {{- define "foretoken.deploymentController" }}
 {{- include "foretoken.validateValues" . }}
 {{- $sourceMode := .Values.development.enabled }}
+{{- $ports := include "foretoken.controllerPorts" . | fromJson }}
 {{- $applications := include "foretoken.applications" . | fromJson }}
 {{- $application := index $applications "control-plane" }}
 {{- $frontendApplication := index $applications "frontend" }}
@@ -99,7 +100,7 @@ spec:
             - {{ printf "--source-mode=%t" $sourceMode | quote }}
             - --autoscaling-telemetry-config=/etc/foretoken/controller/autoscaling-telemetry.json
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
-            - --metrics-bind-address=:8080
+            - {{ printf "--metrics-bind-address=:%d" (int $ports.metrics) | quote }}
             - {{ printf "--observability-prometheus=%s" .Values.observability.prometheus | quote }}
             - {{ printf "--observability-labels=%s" (include "foretoken.observabilityLabels" . | fromYaml | toJson) | quote }}
             {{- else }}
@@ -109,7 +110,7 @@ spec:
             - {{ printf "--admission-store-url-secret-name=%s" . | quote }}
             - {{ printf "--admission-store-url-secret-key=%s" $.Values.admissionStore.externalURLSecret.key | quote }}
             {{- end }}
-            - --health-probe-bind-address=:8081
+            - {{ printf "--health-probe-bind-address=:%d" (int $ports.health) | quote }}
             - {{ printf "--video-worker-image=%s" (include "foretoken.image" .) | quote }}
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
@@ -129,11 +130,11 @@ spec:
             - {{ printf "--model-source-token-secret-name=%s" . | quote }}
             - {{ printf "--model-source-token-secret-key=%s" $.Values.runtime.vllm.modelSource.tokenSecret.key | quote }}
             {{- end }}
+            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
             {{- if .Values.frontend.enabled }}
             - --frontend-enabled=true
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
             - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
-            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
             {{- with .Values.responseStore.externalURLSecret.name }}
             - {{ printf "--response-store-url-secret-name=%s" . | quote }}
             - {{ printf "--response-store-url-secret-key=%s" $.Values.responseStore.externalURLSecret.key | quote }}
@@ -206,11 +207,11 @@ spec:
           ports:
             {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - name: metrics
-              containerPort: 8080
+              containerPort: {{ int $ports.metrics }}
               protocol: TCP
             {{- end }}
             - name: healthz
-              containerPort: 8081
+              containerPort: {{ int $ports.health }}
               protocol: TCP
           livenessProbe:
             httpGet:
