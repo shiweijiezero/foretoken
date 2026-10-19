@@ -509,8 +509,7 @@ spec:
                         x-kubernetes-map-type: atomic
                     type: object
                     x-kubernetes-validations:
-                    - message: exactly one admission store URL or Secret reference
-                        is required
+                    - message: exactly one Redis URL or Secret reference is required
                       rule: has(self.url) != has(self.urlSecretRef)
                   applicationURL:
                     type: string
@@ -529,6 +528,54 @@ spec:
                     format: int32
                     maximum: 1
                     type: integer
+                  responseStore:
+                    description: ResponseStore retains the selected connection and
+                      retention across workload recovery.
+                    properties:
+                      replayRetentionSeconds:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      retentionSeconds:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      url:
+                        description: URL is a credential-free Redis-compatible endpoint.
+                        pattern: ^rediss?://[^@]+$
+                        type: string
+                      urlSecretRef:
+                        description: URLSecretRef contains the full connection URL
+                          in a namespace-local Secret.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - replayRetentionSeconds
+                    - retentionSeconds
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one Redis URL or Secret reference is required
+                      rule: has(self.url) != has(self.urlSecretRef)
                   sourceRevision:
                     description: SourceRevision retains the admitted source intent
                       independently of source-mode defaults.

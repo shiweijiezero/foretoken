@@ -41,9 +41,8 @@ impl ResponseStreamEvent {
         self.event_type
     }
 
-    /// Serialize the full wire payload including `type` and the assigned
-    /// sequence number.
-    pub(crate) fn to_json(&self, sequence_number: u64) -> String {
+    /// Builds the wire object shared by live delivery, cached replay, and terminal snapshots.
+    pub(crate) fn to_value(&self, sequence_number: u64) -> Value {
         let mut flattened = Map::with_capacity(self.payload.len() + 2);
         flattened.insert(
             "type".to_string(),
@@ -51,8 +50,7 @@ impl ResponseStreamEvent {
         );
         flattened.insert("sequence_number".to_string(), Value::from(sequence_number));
         flattened.extend(self.payload.clone());
-        serde_json::to_string(&Value::Object(flattened))
-            .expect("stream event payload must serialize to JSON")
+        Value::Object(flattened)
     }
 }
 
@@ -216,6 +214,47 @@ impl OutputItemStreamer {
     /// Return output with the same public order and IDs, including non-dispatchable partial calls.
     pub(crate) fn final_output_items(&self) -> Vec<ResponseOutputItem> {
         self.completed_items.clone()
+    }
+
+    /// Captures the same accumulated items for progress persistence, including the open public item.
+    pub(crate) fn snapshot_output_items(&self, names: &ToolNames) -> Vec<ResponseOutputItem> {
+        let mut items = self.completed_items.clone();
+        let current = match &self.current {
+            Some(OpenItem::Reasoning { item_id, text }) => Some(ResponseOutputItem::Reasoning {
+                id: item_id.clone(),
+                summary: vec![],
+                content: Some(vec![TextPart::reasoning_text(text.clone())]),
+                status: Some(ResponseItemStatus::InProgress),
+            }),
+            Some(OpenItem::Message { item_id, text }) => Some(ResponseOutputItem::Message {
+                id: item_id.clone(),
+                role: AssistantRole,
+                status: ResponseItemStatus::InProgress,
+                content: vec![ResponseOutputContentPart::OutputText {
+                    text: text.clone(),
+                    annotations: vec![],
+                    logprobs: None,
+                }],
+            }),
+            Some(OpenItem::FunctionCall {
+                item_id,
+                call_id,
+                name,
+                arguments,
+                ..
+            }) if !names.get(name).is_some_and(|tool| tool.custom) => {
+                Some(ResponseOutputItem::FunctionCall {
+                    id: item_id.clone(),
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                    status: Some(ResponseItemStatus::InProgress),
+                })
+            }
+            _ => None,
+        };
+        items.extend(current);
+        items
     }
 
     fn open_reasoning_if_needed(&mut self) -> Vec<ResponseStreamEvent> {

@@ -15,11 +15,14 @@ use foretoken_chat::{
 };
 use foretoken_text::{SamplingParams, TextDecodeOptions};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 /// Public response metadata retained independently of the full input history.
 pub(super) struct ResponseMeta {
     pub model: String,
+    pub store: bool,
+    pub background: bool,
+    pub previous_response_id: Option<String>,
+    pub conversation: Option<ConversationReference>,
     pub instructions: Option<String>,
     pub metadata: Option<Value>,
     pub tools: Vec<Value>,
@@ -161,6 +164,14 @@ pub(super) fn prepare_responses_request(
         .map_err(|e| ApiError::invalid_request(e.to_string(), Some("input")))?;
     let meta = ResponseMeta {
         model,
+        store: request.store.unwrap_or(true),
+        background: request.background.unwrap_or(false),
+        previous_response_id: request.previous_response_id,
+        conversation: request
+            .conversation
+            .map(|reference| ConversationReference::Object {
+                id: reference.id().into(),
+            }),
         instructions: request.instructions,
         metadata: request.metadata,
         tools: request.tools,
@@ -177,25 +188,23 @@ pub(super) fn prepare_responses_request(
     Ok((chat, meta))
 }
 
-/// Reject semantic fields the stateless adapter cannot execute.
-fn validate_request(request: &ResponsesRequest) -> Result<(), ApiError> {
-    if request.store == Some(true) {
+/// Validates protocol semantics before history resolution or backend execution.
+pub(super) fn validate_request(request: &ResponsesRequest) -> Result<(), ApiError> {
+    if request.previous_response_id.is_some() && request.conversation.is_some() {
         bail_invalid_request!(
-            param = "store",
-            "Response storage is not supported; use store=false and replay the conversation"
+            param = "conversation",
+            "conversation and previous_response_id cannot be combined"
         );
     }
-    if request.background == Some(true) {
-        bail_invalid_request!(
-            param = "background",
-            "Background responses are not supported"
-        );
+    if request.model.as_deref().is_none_or(str::is_empty) {
+        bail_invalid_request!(param = "model", "model is required");
     }
-    if request.previous_response_id.is_some() {
-        bail_invalid_request!(
-            param = "previous_response_id",
-            "Server-side continuation is not supported; provide the full input history"
-        );
+    if request
+        .metadata
+        .as_ref()
+        .is_some_and(|metadata| !metadata.is_object())
+    {
+        bail_invalid_request!(param = "metadata", "metadata must be an object");
     }
     if request.prompt.is_some() {
         bail_invalid_request!(param = "prompt", "Stored prompts are not supported");
@@ -360,7 +369,7 @@ fn echo_tool_choice(tool_context: &ResolvedToolContext) -> Value {
 /// Returns the messages and whether generation should continue the final
 /// assistant message (Anthropic-style partial completion), mirroring
 /// `should_continue_final_message` in the Python frontend.
-fn convert_input(
+pub(super) fn convert_input(
     instructions: &Option<String>,
     input: ResponsesInput,
 ) -> Result<(Vec<ChatMessage>, bool), ApiError> {
@@ -472,13 +481,6 @@ fn parse_input_item(index: usize, raw: &Value) -> Result<ResponseInputItem, ApiE
         | "custom_tool_call"
         | "custom_tool_call_output"
         | "reasoning" => {}
-        "item_reference" => {
-            bail_invalid_request!(
-                param = "previous_response_id",
-                "item_reference input items require the Responses API store, which is \
-                 not supported by this frontend."
-            );
-        }
         "" => {
             bail_invalid_request!(
                 param = "input",
@@ -701,84 +703,6 @@ impl ResponseMessageContent {
     }
 }
 
-/// Build the response `output` items from the collected assistant message.
-///
-/// Mirrors `build_response_output_items` in the Python frontend: reasoning
-/// comes first when present and enabled, then visible text, then tool calls —
-/// except items here follow the structured block order, which preserves
-/// interleaved text/tool-call ordering when the parser yields it.
-pub(crate) fn build_output_items(
-    message: &foretoken_chat::AssistantMessage,
-    include_reasoning: bool,
-    status: ResponseItemStatus,
-    tool_names: &ToolNames,
-) -> Vec<ResponseOutputItem> {
-    let truncated = status == ResponseItemStatus::Incomplete;
-    message
-        .content
-        .iter()
-        .enumerate()
-        .filter_map(|(index, block)| {
-            let item_status = if truncated && index + 1 == message.content.len() {
-                ResponseItemStatus::Incomplete
-            } else {
-                ResponseItemStatus::Completed
-            };
-            match block {
-                AssistantContentBlock::Reasoning { text } if include_reasoning => {
-                    Some(ResponseOutputItem::Reasoning {
-                        id: format!("rs_{}", Uuid::new_v4().simple()),
-                        summary: vec![],
-                        content: Some(vec![TextPart::reasoning_text(text.clone())]),
-                        status: Some(item_status),
-                    })
-                }
-                AssistantContentBlock::Reasoning { .. } => None,
-                AssistantContentBlock::Text { text } if !text.is_empty() => {
-                    Some(ResponseOutputItem::Message {
-                        id: format!("msg_{}", Uuid::new_v4().simple()),
-                        role: AssistantRole,
-                        status: item_status,
-                        content: vec![ResponseOutputContentPart::OutputText {
-                            text: text.clone(),
-                            annotations: vec![],
-                            logprobs: None,
-                        }],
-                    })
-                }
-                AssistantContentBlock::Text { .. } => None,
-                AssistantContentBlock::ToolCall(call) => {
-                    let complete = tool_names.complete_arguments(&call.name, &call.arguments);
-                    if !complete && tool_names.get(&call.name).is_some_and(|tool| tool.custom) {
-                        return None;
-                    }
-                    Some(ResponseOutputItem::FunctionCall {
-                        id: format!("fc_{}", Uuid::new_v4().simple()),
-                        call_id: tool_call_id(call),
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                        status: Some(if truncated && !complete {
-                            ResponseItemStatus::Incomplete
-                        } else {
-                            ResponseItemStatus::Completed
-                        }),
-                    })
-                }
-            }
-        })
-        .collect()
-}
-
-/// Pick the wire `call_id` for one parsed tool call, generating one when the
-/// parser did not assign an ID (Python generates `make_tool_call_id`).
-fn tool_call_id(call: &AssistantToolCall) -> String {
-    if call.id.is_empty() {
-        format!("call_{}", Uuid::new_v4().simple())
-    } else {
-        call.id.clone()
-    }
-}
-
 /// Return the wire `type` name of one input content part for error messages.
 fn part_type_name(part: &ResponseInputContentPart) -> &'static str {
     match part {
@@ -842,8 +766,8 @@ pub(super) fn build_response(
         object: ResponseObject,
         created_at,
         status,
-        background: false,
-        store: false,
+        background: meta.background,
+        store: meta.store,
         error: None,
         incomplete_details: (status == ResponseItemStatus::Incomplete).then(|| IncompleteDetails {
             reason: "max_output_tokens".into(),
@@ -855,7 +779,8 @@ pub(super) fn build_response(
         model: meta.model.clone(),
         output,
         parallel_tool_calls: meta.parallel_tool_calls,
-        previous_response_id: None,
+        previous_response_id: meta.previous_response_id.clone(),
+        conversation: meta.conversation.clone(),
         prompt: None,
         reasoning: meta.reasoning.clone(),
         service_tier: "default".into(),

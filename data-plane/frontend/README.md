@@ -11,51 +11,77 @@ The frontend provides text and video generation APIs for deployed models.
 
 ## Generate text
 
-Follow the repository [Quick Start](../../README.md#quick-start) to deploy a service, then send a request from the repository root:
+Deploy a service with the repository [Quick Start](../../README.md#quick-start), then send a request from the repository root:
 
 ```bash
-DEPLOYMENT=examples/quickstart/qwen3-0.6b
-FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
-REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
 
-# OpenAI Responses
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
-  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512,"store":false}'
-
-# Anthropic Messages
-curl --fail-with-body "$FRONTEND_URL/v1/messages" \
-  -H "Host: $REQUEST_HOST" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"max_tokens":512}'
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512}'
 ```
 
-Add `"stream": true` and `curl --no-buffer` to receive output as it is generated.
+The response contains an `id` and generated `output`. Add `"stream": true` and `curl --no-buffer` to receive output as it is generated. For an authenticated service, add `-H "Authorization: Bearer $API_KEY"` with your issued key. Host-based access follows the [Gateway example](../../README.md#gateway-mode).
 
 | API | Path | Request input |
 | --- | --- | --- |
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `model`, `messages` |
-| OpenAI Responses | `POST /v1/responses` | `model`, `input`; set `store: false` and send the conversation history on each turn |
-| Anthropic Messages | `POST /v1/messages` | `model`, `messages`, and a required `max_tokens` budget |
-| Anthropic token counting | `POST /v1/messages/count_tokens` | The same model, messages, system prompt, and tools used for generation |
+| OpenAI Responses | `POST /v1/responses` | `model`, `input` |
+| Anthropic Messages | `POST /v1/messages` | `model`, `messages`, and required `max_tokens` |
+| Anthropic token counting | `POST /v1/messages/count_tokens` | The model, messages, system prompt, and tools to count |
 | Text completions | `POST /v1/completions` | `model`, `prompt` |
 
 `GET /v1/models` lists configured model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs. Image-capable text models accept base64 image `data:` URLs.
 
-Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools, but not server-hosted tools or background execution. Forced tool choice and strict tool schemas require structured-output support in the model.
+Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools. Forced tool choice and strict schemas require the model's [structured-output capability](#update-serving-settings).
 
-Some tool parsers use a structural-tag grammar to constrain forced or strict tool calls. If the model's parser and grammar backend support it, add `structuralTag` to the ModelService's existing structured-output formats:
+Output budgets include reasoning tokens. Messages uses `max_tokens`, not `thinking.budget_tokens`; thinking controls depend on the model's chat template. Budget exhaustion produces `max_tokens` in Messages or `status: "incomplete"` in Responses. Execute only complete tool calls.
 
-```yaml
-spec:
-  features:
-    structuredOutputs: [structuralTag]
+### Continue a conversation
+
+Responses saves results by default. To continue the first request, replace `resp_...` with its returned `id`:
+
+```bash
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","previous_response_id":"resp_...","input":"What did I just say?","max_output_tokens":512}'
 ```
 
-For configurations with `spec.modelPools`, declare this capability in each applicable pool's `features.structuredOutputs` instead of the top-level `features`.
+Send any `instructions` and `tools` needed for the new turn again. Use `store: false` to skip saving the new response.
 
-Output budgets include reasoning tokens. Messages uses `max_tokens`, not a separate `thinking.budget_tokens`; thinking controls depend on the model's chat template. When the budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls.
+To keep one conversation ID across turns, create it with `POST /v1/conversations` and an empty `{}` body. Pass the returned ID as `conversation` instead of `previous_response_id`. Each turn reads and updates that history; send turns sequentially. Conversation history is retained even when a turn uses `store: false`.
+
+### Run in the background
+
+Add `background: true` to a Responses request to receive an ID and let generation continue after disconnecting. Set `RESPONSE_ID` to that ID and query the result:
+
+```bash
+RESPONSE_ID=resp_...
+curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID"
+```
+
+Poll while `status` is `queued` or `in_progress`; the final status is `completed`, `incomplete`, `failed`, or `cancelled`. To cancel, send `POST /v1/responses/{id}/cancel` and wait for a final status. Deleting a response does not cancel generation.
+
+For resumable streaming, create the request with both `background: true` and `stream: true`. Reconnect with `GET /v1/responses/{id}?stream=true&starting_after=N`, using `response.id` from the `response.created` event and the last processed event's `sequence_number` for `N`. Events are available for ten minutes after generation ends by default.
+
+### Manage saved results
+
+Chat Completions saves results only when `store: true` is set. Use the returned ID to retrieve or delete a saved result:
+
+| Saved data | Endpoint | Methods |
+| --- | --- | --- |
+| Response | `/v1/responses/{id}` | `GET`, `DELETE` |
+| Response input history | `/v1/responses/{id}/input_items` | `GET` |
+| Conversation | `/v1/conversations/{id}` | `GET`, `POST` metadata, `DELETE` (keeps items) |
+| Conversation items | `/v1/conversations/{id}/items` | `GET`, `POST` items |
+| One conversation item | `/v1/conversations/{id}/items/{item_id}` | `GET`, `DELETE` |
+| Saved Chat Completions | `/v1/chat/completions` | `GET` list |
+| One Chat Completion | `/v1/chat/completions/{id}` | `GET`, `POST` metadata, `DELETE` |
+| Chat input messages | `/v1/chat/completions/{id}/messages` | `GET` |
+
+Metadata, item references, and pagination follow the [OpenAI API formats](https://platform.openai.com/docs/api-reference). Wait for an active conversation turn to finish before modifying its items.
+
+Responses and saved Chat Completions are kept for 30 days after generation ends by default. Conversations renew that period on each update. Background responses with `store: false` are kept for ten minutes after the request ends by default. Saved history is held in memory and is lost if the cache restarts; keep a copy in your application for permanent retention.
 
 ## Generate video
 
@@ -78,7 +104,6 @@ spec:
 DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
 foretoken deploy "$DEPLOYMENT" --timeout 1h
 FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
-REQUEST_HOST="$(foretoken endpoint "$DEPLOYMENT" --host)"
 mkdir -p ./data
 ```
 
@@ -86,7 +111,6 @@ This request selects the ModelService named `h3`. Input paths are relative to th
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
-  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "modelServiceRef": {"name": "h3"},
@@ -126,15 +150,13 @@ spec:
     queueTimeout: 30s
 ```
 
-The waiting limit is shared across all FrontendService replicas, separately for each model, and includes input preparation. `queueTimeout` bounds waiting and preparation before backend acceptance. Batched prompts and `best_of` count each generated sequence. These rules do not apply to video APIs.
+The waiting limit is shared across frontend replicas for each model, including input preparation. `queueTimeout` bounds waiting and preparation. Batched prompts and `best_of` count each generated sequence. These rules apply to text APIs.
 
-Apply the YAML through [Update serving settings](#update-serving-settings). Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting.
-
-For limits on accepted work at each model instance, see [Instance concurrency](../../docs/features/inference-parameters.md#instance-concurrency). Queue and dispatch metrics are described in [Observability](../../observability/README.md).
+Apply changes with `foretoken deploy`. Before a response starts, a full queue or expired admission wait returns 503, the total request timeout returns 504, and a batch exceeding capacity returns 400. Enabling limits can reject requests already waiting. For accepted work, see [Instance concurrency](../../docs/features/inference-parameters.md#instance-concurrency).
 
 ### Caller limits and priorities
 
-To give callers different limits, add `roleRules` alongside the waiting limit:
+To give callers different limits, add `roleRules`:
 
 ```yaml
 spec:
@@ -151,21 +173,19 @@ spec:
         maxConcurrentRequests: 8
 ```
 
-Each caller has separate waiting and concurrency allowances shared across frontend replicas. `maxConcurrentRequests` counts dispatched work until execution ends, including cancelled requests still finishing. Tokenization, token counting, and detokenization use waiting capacity only.
+Each caller has separate waiting and concurrency allowances shared across replicas. Concurrency includes cancelled work until execution ends; tokenization and token counting use waiting capacity only. Higher `priority` values dispatch first among eligible requests. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
 
-Higher `priority` values dispatch first among eligible requests. At equal priority, each frontend rotates between callers and preserves their request order; a caller at its concurrency limit does not block others. To prioritize the vLLM queue as well, set `scheduling-policy: priority` in the model's `engineArgs`.
-
-Role rules require an authentication gateway that overwrites `x-role` and `x-caller-id` with verified role and caller values. Use a stable, non-secret caller ID and restrict frontend access to that gateway. Requests without an authenticated identity or matching role are rejected. Configure cache sharing through [prefix cache isolation](../../docs/features/inference-parameters.md#prefix-cache-isolation).
+Role rules require an authentication gateway that overwrites `x-role` and `x-caller-id` with verified values. Use a stable, non-secret caller ID and restrict frontend access to that gateway. Requests without an authenticated identity or matching role are rejected. See also [prefix cache isolation](../../docs/features/inference-parameters.md#prefix-cache-isolation).
 
 ### Override one model
 
-`ModelService.spec.admission` and `ModelService.spec.roleRules` independently replace the corresponding frontend defaults as whole blocks. Set both `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
+`ModelService.spec.admission` and `ModelService.spec.roleRules` replace the corresponding frontend defaults as whole blocks. Set `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
 
 A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
 
 ## Update serving settings
 
-Edit the deployment YAML and run `foretoken deploy` again. For example, change logging and request budgets under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`:
+Edit the deployment's `frontend.yaml` and redeploy. For example:
 
 ```yaml
 spec:
@@ -175,13 +195,11 @@ spec:
     streamIdle: 5m
 ```
 
-Apply the Quick Start configuration:
-
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-The command waits for changes to take effect. [Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online; invalid settings leave the working configuration unchanged.
+[Routing strategies](src/router/README.md), admission rules, logging, and request timeouts update online. Timeout changes apply to new requests; invalid settings leave the working configuration unchanged.
 
 | Setting | Purpose |
 | --- | --- |
@@ -190,19 +208,27 @@ The command waits for changes to take effect. [Routing strategies](src/router/RE
 | `timeouts.drain` | Shutdown wait for accepted requests, default `10m`; changing it replaces frontend Pods |
 | `logLevel` | `trace`, `debug`, `info` (default), `warn`, `error`, or `off` |
 
-Timeout changes apply to new requests. To limit prompt length, set `ModelService.spec.maxInputTokens`, or the corresponding `spec.modelPools[].maxInputTokens`, and redeploy. This setting updates online and is separate from the engine's combined input/output context limit.
+To limit prompt length, set `ModelService.spec.maxInputTokens`, or `spec.modelPools[].maxInputTokens` for individual Pools. This updates online and is separate from the engine's combined input/output context limit.
+
+Models whose strict tool calls require structural tags must declare that capability in the model YAML:
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+With `spec.modelPools`, add it to each applicable Pool's `features.structuredOutputs` instead. Redeploy the model configuration after changing model capabilities.
 
 ## Operations
 
-Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command.
+Use `foretoken status` to inspect a deployment and `foretoken delete` to remove it, passing its configuration directory to either command. Metrics, logs, and alerts are covered by [Observability](../../observability/README.md).
 
 | Endpoint | Purpose |
 | --- | --- |
 | `/healthz` | Process liveness |
-| `/readyz` | HTTP readiness after a valid routing configuration is loaded |
-| `/statusz` | Serving and cache-index status |
+| `/readyz` | Frontend HTTP readiness |
+| `/statusz` | Serving readiness in `serving_ready` |
 | `/metrics` | Prometheus metrics |
 
-The HTTP frontend stays reachable while models start or change. A valid configuration with no models is also HTTP-ready; inference requests then return HTTP 503. Check `serving_ready` in `/statusz` for serving readiness.
-
-For gateway configuration, see [Gateway mode](../../README.md#gateway-mode). Configure TLS and authentication at the cluster ingress; network policies govern access to operator endpoints.
+Retention and external-cache options are under `responseStore` in the [Helm values](../../deploy/charts/foretoken/values.yaml). Apply platform changes with [install](../../cli/README.md#install), then redeploy the service.

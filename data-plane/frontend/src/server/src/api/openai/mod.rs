@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 
 mod async_video;
 mod output;
+mod stored;
 mod video;
 
 use self::output::{
@@ -51,6 +52,7 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/videos/sync", post(video::generate))
         .merge(async_video::router())
+        .merge(stored::router())
 }
 
 fn model_card(id: String) -> Value {
@@ -429,7 +431,11 @@ impl Stop {
 #[serde(deny_unknown_fields)]
 struct ChatCompletionRequest {
     model: String,
-    messages: Vec<OpenAiMessage>,
+    messages: Vec<Value>,
+    #[serde(default)]
+    store: Option<bool>,
+    #[serde(default)]
+    metadata: Option<Value>,
     #[serde(default)]
     stream: bool,
     #[serde(default)]
@@ -662,7 +668,7 @@ fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
     }
 }
 /// Returns a request-validation diagnostic in the OpenAI error envelope.
-fn client_error(message: impl Into<String>) -> Response {
+pub(super) fn client_error(message: impl Into<String>) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(json!({"error": {
@@ -673,7 +679,7 @@ fn client_error(message: impl Into<String>) -> Response {
 }
 
 /// Preserves extractor diagnostics and transport statuses; JSON content errors remain HTTP 400.
-fn json_error(error: JsonRejection) -> Response {
+pub(super) fn json_error(error: JsonRejection) -> Response {
     let status = match error.status() {
         StatusCode::UNPROCESSABLE_ENTITY => StatusCode::BAD_REQUEST,
         status => status,
@@ -805,6 +811,7 @@ async fn completions(
         caller: CallerIdentity::current(),
         units: units as u32,
         received_at: timing.started_at,
+        track_execution: false,
     };
     let mut admission = match state.generation.admit(&admission_request).await {
         Ok(permit) => permit,
@@ -860,6 +867,7 @@ async fn completions(
 }
 
 async fn chat_completions(
+    State(api): State<ApiState>,
     Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
@@ -870,11 +878,28 @@ async fn chat_completions(
         Err(error) => return json_error(error),
     };
     let id = server_request_id("chatcmpl");
-    if let Err(error) = validate_multimodal_input(&request.messages) {
+    let metadata = request.metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        return client_error("metadata must be a JSON object");
+    }
+    // Preserve submitted content parts independently of the shared chat representation.
+    let original_messages = request
+        .store
+        .unwrap_or(false)
+        .then(|| request.messages.clone());
+    let public_messages = match request
+        .messages
+        .into_iter()
+        .map(serde_json::from_value::<OpenAiMessage>)
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(messages) => messages,
+        Err(error) => return client_error(format!("messages: {error}")),
+    };
+    if let Err(error) = validate_multimodal_input(&public_messages) {
         return client_error(error);
     }
-    let messages = match request
-        .messages
+    let messages = match public_messages
         .iter()
         .map(openai_message)
         .collect::<Result<Vec<_>, _>>()
@@ -972,6 +997,20 @@ async fn chat_completions(
     if let Err(error) = chat.validate() {
         return client_error(error.to_string());
     }
+    let archive = match original_messages {
+        Some(messages) => {
+            let Some(store) = api.store else {
+                return crate::api::store_error(crate::store::StoreError::Disabled);
+            };
+            Some(stored::ChatArchive::new(
+                store,
+                CallerIdentity::current().caller,
+                messages,
+                metadata.clone(),
+            ))
+        }
+        None => None,
+    };
     let generated = match state
         .generate_chat(request.model, chat, include_reasoning, timing)
         .await
@@ -980,9 +1019,15 @@ async fn chat_completions(
         Err(error) => return openai_error(error),
     };
     if stream {
-        chat_stream_with_options(generated, state.stream_idle, include_usage)
+        chat_stream_with_options(
+            generated,
+            state.stream_idle,
+            include_usage,
+            metadata,
+            archive,
+        )
     } else {
-        chat_collected(generated, state.stream_idle).await
+        chat_collected(generated, state.stream_idle, metadata, archive).await
     }
 }
 

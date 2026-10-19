@@ -51,23 +51,22 @@ func (reconciler *Reconciler) reconcileApplication(ctx context.Context, frontend
 			}
 			// Adopting observed state must not consume an explicit request for a new application.
 			if deploymentRevision == "" {
-				selection = &inferencev1alpha1.ApplicationSelection{
-					Image:              current.Spec.Template.Spec.Containers[0].Image,
-					ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
-					SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
-					DeploymentRevision: deploymentRevision,
+				responseStore, err := runtimeconfig.ResponseStoreFromEnv(current.Spec.Template.Spec.Containers[0].Env)
+				if err != nil {
+					return nil, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 				}
-				for _, env := range current.Spec.Template.Spec.Containers[0].Env {
-					if env.Name != runtimeconfig.AdmissionStoreURLEnv {
-						continue
-					}
-					selection.AdmissionStore = &inferencev1alpha1.AdmissionStoreConnection{URL: env.Value}
-					if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-						selection.AdmissionStore.URLSecretRef = env.ValueFrom.SecretKeyRef.DeepCopy()
-					}
-					if err := runtimeconfig.ValidateAdmissionStore(selection.AdmissionStore); err != nil {
-						return nil, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
-					}
+				selection = &inferencev1alpha1.FrontendApplicationSelection{
+					ApplicationSelection: inferencev1alpha1.ApplicationSelection{
+						Image:              current.Spec.Template.Spec.Containers[0].Image,
+						ApplicationURL:     current.Spec.Template.Annotations["inference.foretoken.io/application-url"],
+						SourceRevision:     current.Spec.Template.Annotations[runtimeconfig.SourceRevisionAnnotation],
+						DeploymentRevision: deploymentRevision,
+					},
+					ResponseStore: responseStore,
+				}
+				selection.AdmissionStore, err = runtimeconfig.RedisConnectionFromEnv(current.Spec.Template.Spec.Containers[0].Env, runtimeconfig.AdmissionStoreURLEnv)
+				if err != nil {
+					return nil, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 				}
 				base := frontend.DeepCopy()
 				frontend.Status.Application = selection
@@ -85,7 +84,13 @@ func (reconciler *Reconciler) reconcileApplication(ctx context.Context, frontend
 	}
 	retained := selection != nil && selection.DeploymentRevision == deploymentRevision && (selection.SourceRevision == sourceRevision || (selection.SourceRevision == "" && sourceRevision != "" && selection.ApplicationURL == profile.ApplicationFiles.Ref("frontend", sourceRevision)))
 	if !retained {
-		selection = &inferencev1alpha1.ApplicationSelection{Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision, DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy()}
+		selection = &inferencev1alpha1.FrontendApplicationSelection{
+			ApplicationSelection: inferencev1alpha1.ApplicationSelection{
+				Image: profile.Image, ApplicationURL: profile.ApplicationURL, SourceRevision: sourceRevision,
+				DeploymentRevision: deploymentRevision, AdmissionStore: profile.AdmissionStore.DeepCopy(),
+			},
+			ResponseStore: profile.ResponseStore.DeepCopy(),
+		}
 		if sourceRevision != "" {
 			image, err := profile.ApplicationFiles.ResolveImage(ctx, "frontend", sourceRevision, profile.Image)
 			if err != nil {
@@ -123,6 +128,7 @@ func (reconciler *Reconciler) reconcileApplication(ctx context.Context, frontend
 	}
 	profile.Image, profile.ApplicationURL = selection.Image, selection.ApplicationURL
 	profile.AdmissionStore = selection.AdmissionStore.DeepCopy()
+	profile.ResponseStore = selection.ResponseStore.DeepCopy()
 	return &profile, nil
 }
 

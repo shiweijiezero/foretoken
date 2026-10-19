@@ -19,10 +19,21 @@ imagePullSecrets: []
 
 # Shared durable admission ledger; an external endpoint replaces the managed Valkey instance.
 admissionStore:
-  image: docker.io/valkey/valkey:8.1.10-alpine
+  image: docker.io/valkey/valkey:8.1.10-alpine # Shared Valkey image for the ledger and API cache.
   storageClass: "" # Uses the cluster's default StorageClass.
   storageSize: 1Gi
   externalURL: "" # Credential-free redis:// or rediss:// URL.
+  # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
+  externalURLSecret:
+    name: ""
+    key: url
+
+# Shared in-memory API cache, separate from the durable admission ledger.
+responseStore:
+  retention: 30d
+  replayRetention: 10m
+  # External Valkey/Redis must be a dedicated instance with maxmemory-policy noeviction.
+  externalURL: "" # Credential-free redis:// or rediss:// URL; empty prepares managed Valkey.
   # Authenticated URLs belong in the same namespace-local Secret in each serving namespace.
   externalURLSecret:
     name: ""

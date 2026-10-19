@@ -43,7 +43,7 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 		}
 		servicePools := servingconfig.OwnedRoutingPools(service, pools)
 		if config.MaxWaitingRequests != nil {
-			var store *inferencev1alpha1.AdmissionStoreConnection
+			var store *inferencev1alpha1.RedisConnection
 			if frontend.Status.Application != nil {
 				store = frontend.Status.Application.AdmissionStore
 			}

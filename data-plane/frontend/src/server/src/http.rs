@@ -22,9 +22,13 @@ const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-) -> Result<Router, Box<dyn std::error::Error>> {
+    ledger: Option<Arc<foretoken_request_ledger::RequestLedger>>,
+) -> Result<(Router, Arc<crate::ResponseTasks>), Box<dyn std::error::Error>> {
     let video_tasks = crate::video_task::VideoTaskClient::from_service_account()?;
-    Ok(Router::new()
+    let store = crate::store::ApiStore::from_env(ledger.as_deref())?;
+    let response_tasks = crate::ResponseTasks::new(store.clone(), ledger);
+    response_tasks.maintain();
+    let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/health", get(readyz))
@@ -39,10 +43,13 @@ pub fn router(
             generation: generation.clone(),
             models,
             video_tasks,
+            store,
+            response_tasks: response_tasks.clone(),
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
         .layer(middleware::from_fn_with_state(generation, observe_request))
-        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics)))
+        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics));
+    Ok((app, response_tasks))
 }
 
 // Capture the request budget before body extraction and share its origin with model admission.
@@ -65,7 +72,10 @@ async fn observe_request(
                 | "/detokenize"
                 | "/v1/videos/sync"
         );
-    if !protected {
+    let stored_api = path.starts_with("/v1/responses/")
+        || path.starts_with("/v1/conversations")
+        || path.starts_with("/v1/chat/completions");
+    if !protected && !stored_api {
         return next.run(request).await;
     }
     // Resolve owned identity synchronously; no borrow of the non-Sync request body may
@@ -97,6 +107,10 @@ async fn observe_request(
     with_caller(
         identity,
         observe_http(async move {
+            // Stored-object APIs consume the same ingress context without depending on model readiness.
+            if !protected {
+                return next.run(request).await;
+            }
             let timing = api::RequestTiming::now();
             request.extensions_mut().insert(timing);
             let snapshot = match generation.request_snapshot() {

@@ -103,7 +103,7 @@ type ApplicationSelection struct {
 	DeploymentRevision string `json:"deploymentRevision,omitempty"`
 	// AdmissionStore retains the ledger connection selected with this executable application.
 	// +optional
-	AdmissionStore *AdmissionStoreConnection `json:"admissionStore,omitempty"`
+	AdmissionStore *RedisConnection `json:"admissionStore,omitempty"`
 	// InstanceAdmissionProtocol pins the instance configuration interface of this executable.
 	// Zero retains startup-only limits; one selects live file configuration.
 	// +optional

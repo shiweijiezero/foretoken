@@ -133,6 +133,12 @@ spec:
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
             - {{ printf "--frontend-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image)) | quote }}
             - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            {{- with .Values.responseStore.externalURLSecret.name }}
+            - {{ printf "--response-store-url-secret-name=%s" . | quote }}
+            - {{ printf "--response-store-url-secret-key=%s" $.Values.responseStore.externalURLSecret.key | quote }}
+            {{- end }}
+            - {{ printf "--response-retention=%s" .Values.responseStore.retention | quote }}
+            - {{ printf "--response-replay-retention=%s" .Values.responseStore.replayRetention | quote }}
             {{- if eq .Values.frontend.mode "gateway" }}
             - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
             - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}
@@ -188,6 +194,10 @@ spec:
             {{- if not .Values.admissionStore.externalURLSecret.name }}
             - name: FORETOKEN_ADMISSION_STORE_URL
               value: {{ include "foretoken.admissionStoreURL" . | quote }}
+            {{- end }}
+            {{- if and .Values.frontend.enabled (not .Values.responseStore.externalURLSecret.name) }}
+            - name: FORETOKEN_RESPONSE_STORE_URL
+              value: {{ .Values.responseStore.externalURL | quote }}
             {{- end }}
             - name: POD_NAMESPACE
               valueFrom:

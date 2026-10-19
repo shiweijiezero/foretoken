@@ -56,7 +56,8 @@ type FrontendRuntimeProfile struct {
 	RuntimeCache         *inferencev1alpha1.RuntimeCacheBinding
 	VideoStorageIdentity *inferencev1alpha1.StorageIdentity
 	HuggingFaceAccess    *inferencev1alpha1.HuggingFaceAccess
-	AdmissionStore       *inferencev1alpha1.AdmissionStoreConnection
+	AdmissionStore       *inferencev1alpha1.RedisConnection
+	ResponseStore        *inferencev1alpha1.ResponseStoreConfig
 	Gateway              *GatewayParent
 }
 

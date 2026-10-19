@@ -321,9 +321,20 @@ class Helm(HelmClient):
             raise DeploymentError(f"Platform configuration is not owned by {release.display_name}")
         return configuration
 
+    @staticmethod
+    def _resolved_deployment_values(configuration: dict[str, Any]) -> dict[str, Any]:
+        """Decode installed defaults for namespace deployment and source admission."""
+        values = json.loads(configuration["data"]["deploymentValues"])
+        store = values.get("responseStore")
+        if not isinstance(store, dict) or "externalURL" not in store:
+            raise DeploymentError(
+                "update the installed Foretoken platform with foretoken install before deployment"
+            )
+        return values
+
     def deployment_values(self, kubectl: Kubectl | None = None) -> dict[str, Any]:
         """Read resolved runtime choices using the caller's observation deadline and cluster when supplied."""
-        return json.loads(self.platform_configuration(kubectl)["data"]["deploymentValues"])
+        return self._resolved_deployment_values(self.platform_configuration(kubectl))
 
     def deployment_release(self, namespace: str) -> ReleaseRef:
         """Return the one serving-controller release owned by a deployment namespace."""
@@ -364,13 +375,13 @@ class Helm(HelmClient):
         values = migrate_stored_platform_values(values)
         source_mode = values["development"]["enabled"]
         configuration = self.platform_configuration(kubectl)
+        installed = migrate_stored_platform_values(
+            self._resolved_deployment_values(configuration)
+        )
         with ExitStack() as charts:
             prepared = charts.enter_context(self._deployment_chart(source_root))
             # The platform owns download bindings and registry credentials; this release
             # owns the credential copies needed by its controller.
-            installed = migrate_stored_platform_values(
-                json.loads(configuration["data"]["deploymentValues"])
-            )
             credentials = []
             pull_secrets = []
             for reference in installed["imagePullSecrets"]:
@@ -925,7 +936,7 @@ class Helm(HelmClient):
                     and document["metadata"]
                     .get("labels", {})
                     .get("app.kubernetes.io/name")
-                    == "foretoken-admission-store"
+                    in {"foretoken-admission-store", "foretoken-response-store"}
                 ):
                     images["admissionStore.image"] = container["image"]
                 if container["name"] == "rdma-device-plugin":

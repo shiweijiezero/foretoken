@@ -258,7 +258,7 @@ class EditableDeployment:
             elif name.startswith("data-plane/model-server/python/"):
                 components.setdefault("model-server", set()).add("python")
             elif name.startswith("data-plane/") and (
-                name.endswith(".rs") or Path(name).name in {"Cargo.toml", "Cargo.lock"}
+                name.endswith((".rs", ".lua")) or Path(name).name in {"Cargo.toml", "Cargo.lock"}
             ):
                 targets = (
                     {"frontend"}
@@ -701,6 +701,7 @@ class EditableDeployment:
             metadata = pod["metadata"]
             if (
                 metadata.get("deletionTimestamp")
+                or pod.get("status", {}).get("phase") in {"Succeeded", "Failed"}
                 or metadata.get("annotations", {}).get(SOURCE_REVISION, "") != revision
             ):
                 continue
@@ -806,6 +807,7 @@ class EditableDeployment:
             pod
             for pod in self.kubectl.list_resources(("pods",), namespace)
             if not pod["metadata"].get("deletionTimestamp")
+            and pod.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
             and pod["metadata"]
             .get("labels", {})
             .get("inference.foretoken.io/frontend-service")

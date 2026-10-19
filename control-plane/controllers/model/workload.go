@@ -132,7 +132,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 	}
-	env = append(env, runtimeconfig.AdmissionStoreEnv(group.Spec.Runtime.AdmissionStore)...)
+	env = append(env, runtimeconfig.RedisConnectionEnv(group.Spec.Runtime.AdmissionStore, runtimeconfig.AdmissionStoreURLEnv)...)
 	if group.Spec.Runtime.InstanceAdmissionProtocol == 0 && group.Spec.Runtime.InstanceAdmission != nil {
 		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MAX_ACCEPTED_REQUESTS", Value: strconv.FormatUint(uint64(group.Spec.Runtime.InstanceAdmission.MaxConcurrentRequests), 10)})
 	}

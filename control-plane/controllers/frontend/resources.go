@@ -80,7 +80,8 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	if profile.SourceRevision != "" {
 		annotations[runtimeconfig.SourceRevisionAnnotation] = profile.SourceRevision
 	}
-	frontendEnv = append(frontendEnv, runtimeconfig.AdmissionStoreEnv(profile.AdmissionStore)...)
+	frontendEnv = append(frontendEnv, runtimeconfig.RedisConnectionEnv(profile.AdmissionStore, runtimeconfig.AdmissionStoreURLEnv)...)
+	frontendEnv = append(frontendEnv, runtimeconfig.ResponseStoreEnv(profile.ResponseStore, frontend.Namespace+"/"+frontend.Name)...)
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
