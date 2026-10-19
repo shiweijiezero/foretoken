@@ -1,0 +1,155 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project #}
+
+{% extends "main.html" %}
+
+{% macro icon(name) %}
+  <span class="md-icon ft-icon" aria-hidden="true">{% include ".icons/" ~ name ~ ".svg" %}</span>
+{% endmacro %}
+
+{% block content %}
+{% set home_anchor = (page.toc | first).id %}
+{# Links stay relative to this language's homepage; shared-asset URLs use a different base. #}
+<div class="ft-landing">
+  <section class="ft-hero" aria-labelledby="{{ home_anchor }}">
+    <div class="ft-hero-copy">
+      <h1 id="{{ home_anchor }}">
+        {% for line in home.title %}<span>{{ line }}</span>{% endfor %}
+      </h1>
+      <p class="ft-hero-description">{{ home.description }}</p>
+      <div class="ft-hero-actions" id="{% if home_locale == 'zh' %}快速开始{% else %}get-started{% endif %}">
+        <a class="md-button md-button--primary" href="{{ home.quickstart_href }}">{{ home.deploy }}</a>
+        <a class="md-button" href="{{ 'rsi-playbooks/' }}">{{ home.optimize }}</a>
+      </div>
+    </div>
+
+    <div class="ft-scene">
+      <svg class="ft-scene-art" viewBox="0 0 600 440" role="img" aria-labelledby="ft-scene-title ft-scene-description">
+        <title id="ft-scene-title">{{ home.scene_title }}</title>
+        <desc id="ft-scene-description">{{ home.scene_description }}</desc>
+        <defs>
+          <pattern id="ft-scene-grid" width="26" height="26" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="1" class="ft-scene-grid-dot" />
+          </pattern>
+          <linearGradient id="ft-chip-top" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" class="ft-chip-stop-light" />
+            <stop offset="1" class="ft-chip-stop-dark" />
+          </linearGradient>
+          <filter id="ft-chip-shadow" x="-40%" y="-50%" width="180%" height="210%">
+            <feDropShadow dx="0" dy="17" stdDeviation="18" flood-color="#183767" flood-opacity=".12" />
+          </filter>
+        </defs>
+        <rect x="34" y="25" width="540" height="385" rx="28" fill="url(#ft-scene-grid)" />
+        <ellipse cx="317" cy="350" rx="151" ry="24" class="ft-scene-ground" />
+
+        <g class="ft-scene-orbit" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M130 152 C181 68 377 40 480 126" />
+          <path d="m468 111 13 16-20-3" />
+          <path d="M494 254 C456 361 259 399 141 310" />
+          <path d="m147 330-8-21 22 2" />
+        </g>
+        <g class="ft-scene-path" fill="none" stroke-linecap="round">
+          <path d="M68 234 H145 Q164 234 178 224 L216 203" />
+          <path d="M429 186 L467 164 Q478 158 495 158 H547" />
+        </g>
+        <g class="ft-scene-token">
+          <path d="m73 211 14 8v16l-14 8-14-8v-16z" />
+          <path d="m112 212 13 7v15l-13 8-13-8v-15z" />
+          <path d="m521 135 14 8v16l-14 8-14-8v-16z" />
+          <path d="m559 136 12 7v14l-12 7-12-7v-14z" />
+        </g>
+
+        <g filter="url(#ft-chip-shadow)">
+          <path class="ft-layer-left" d="m188 262 129 73v23l-129-74z" />
+          <path class="ft-layer-right" d="m317 335 129-73v22l-129 74z" />
+          <path class="ft-layer-top" d="m188 262 129-73 129 73-129 73z" />
+          <path class="ft-layer-line" d="m214 267 103 58 103-58" />
+
+          <path class="ft-layer-left" d="m188 223 129 73v23l-129-74z" />
+          <path class="ft-layer-right" d="m317 296 129-73v22l-129 74z" />
+          <path class="ft-layer-top" d="m188 223 129-73 129 73-129 73z" />
+          <path class="ft-layer-line" d="m214 228 103 58 103-58" />
+
+          <path class="ft-chip-left" d="m188 181 129 73v25l-129-73z" />
+          <path class="ft-chip-right" d="m317 254 129-73v25l-129 73z" />
+          <path fill="url(#ft-chip-top)" d="m188 181 129-73 129 73-129 73z" />
+          <path class="ft-chip-rim" d="m207 181 110-62 110 62-110 62z" />
+          <g class="ft-chip-mark">
+            <path d="m276 162 46-26 18 10-46 26z" />
+            <path d="m297 174 46-26 18 10-46 26z" />
+            <path d="m276 185 29-16 18 10-29 17z" />
+            <path d="m255 197 18-10 18 10-18 11z" />
+          </g>
+          <path class="ft-chip-detail" d="m331 266 8-4m7-4 8-4m7-4 8-4" />
+        </g>
+      </svg>
+      <span class="ft-scene-label ft-scene-deploy">
+        {{ icon('material/cube-outline') }}<span>{{ home.scene_deploy }}</span>
+      </span>
+      <span class="ft-scene-label ft-scene-measure">
+        {{ icon('material/chart-box-outline') }}<span>{{ home.scene_measure }}</span>
+      </span>
+      <span class="ft-scene-label ft-scene-improve">
+        {{ icon('material/refresh') }}<span>{{ home.scene_improve }}</span>
+      </span>
+      <span class="ft-scene-caption">{{ home.scene_title }}</span>
+    </div>
+  </section>
+
+  <div class="ft-support">
+    {% for item in home.support %}<span>{{ icon(['material/kubernetes', 'material/api', 'material/chip'][loop.index0]) }}{{ item }}</span>{% endfor %}
+  </div>
+
+  <section class="ft-rsi-feature" id="{% if home_locale == 'zh' %}rsi-持续优化{% else %}rsi-optimization{% endif %}">
+    <div class="ft-rsi-heading">
+      <div>
+        <span class="ft-section-name">RSI</span>
+        <h2>{{ home.rsi_title }}</h2>
+      </div>
+      <div>
+        <p>{{ home.rsi_description }}</p>
+        <a class="ft-text-link" href="{{ home.rsi_start_href }}">{{ home.rsi_link }}{{ icon('material/arrow-right') }}</a>
+      </div>
+    </div>
+    <div class="ft-rsi-steps">
+      {% for step in home.rsi_steps %}
+      <a href="{{ step.path }}" class="ft-rsi-step">
+        {{ icon(step.icon) }}
+        <h3>{{ step.title }}</h3>
+        <p>{{ step.description }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="ft-workbench" id="{% if home_locale == 'zh' %}评测与性能剖析{% else %}evaluation-and-profiling{% endif %}">
+    <div class="ft-workbench-copy">
+      <h2>{{ home.code_title }}</h2>
+      <p>{{ home.code_description }}</p>
+    </div>
+    <div class="ft-terminal">
+      {{ home_examples }}
+    </div>
+  </section>
+
+  <section class="ft-resources" id="{% if home_locale == 'zh' %}用户指南{% else %}user-guide{% endif %}">
+    <h2>{{ home.resources_title }}</h2>
+    <div class="grid ft-resource-grid">
+      {% for resource in home.resources %}
+      <a class="ft-resource" href="{{ resource.path }}">
+        {{ icon(resource.icon) }}
+        <div><h3>{{ resource.title }}</h3><p>{{ resource.description }}</p></div>
+        {{ icon('material/arrow-right') }}
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="ft-home-bottom" id="{% if home_locale == 'zh' %}开发者指南{% else %}developer-guide{% endif %}">
+    <span id="{% if home_locale == 'zh' %}开发与维护-foretoken{% else %}develop-and-maintain-foretoken{% endif %}"></span>
+    <span id="{% if home_locale == 'zh' %}参考{% else %}reference{% endif %}"></span>
+    <p>{{ home.footer_text }}</p>
+    <a href="{{ 'CONTRIBUTING/' }}">{{ home.contribute }}{{ icon('material/arrow-right') }}</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Localized interface copy for the documentation site's landing page.
+en:
+  title:
+    - Deploy models.
+    - Improve inference.
+  description: Deploy models, measure their behavior, and improve the system with agents. Foretoken brings orchestration, evaluation, and profiling into one research and deployment workflow.
+  deploy: Deploy your first model
+  quickstart_href: quickstart/#quick-start
+  rsi_start_href: rsi-playbooks/#start-an-optimization-task
+  optimize: Explore RSI optimization
+  scene_title: Inference, with a feedback loop
+  scene_description: A conceptual illustration connecting model deployment, measurement, and the next improvement.
+  scene_deploy: Deploy
+  scene_measure: Measure
+  scene_improve: Improve
+  support:
+    - Kubernetes orchestration
+    - OpenAI-compatible APIs
+    - NVIDIA and MetaX GPUs
+  rsi_title: Research. Measure. Improve.
+  rsi_description: Recursive self-improvement connects research with real experiments. Agents investigate mechanisms, change code or configuration, and test their ideas against the model, workload, and resource budget you define.
+  rsi_link: Start an optimization task
+  rsi_steps:
+    - title: Define the objective
+      description: Choose the model, workload, resources, and the result you want to improve.
+      path: rsi-playbooks/templates/task-template/
+      icon: material/target
+    - title: Research and build
+      description: Understand the bottleneck and turn a hypothesis into a runnable candidate.
+      path: rsi-playbooks/guidance/
+      icon: material/source-branch
+    - title: Deploy and measure
+      description: Compare performance and answer quality, then inspect execution profiles.
+      path: benchmarks/
+      icon: material/chart-box-outline
+    - title: Learn and iterate
+      description: Keep the measurements, explain the outcome, and choose the next experiment.
+      path: rsi-playbooks/experiment-records/
+      icon: material/refresh
+  code_title: Start small. Keep the whole workflow.
+  code_description: The same CLI takes a service from deployment to measurement. Use a prepared Kubernetes cluster and run from the repository checkout.
+  examples:
+    - label: Deploy and measure
+      command: |
+        foretoken install
+        foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+        foretoken perf examples/quickstart/qwen3-0.6b \
+          --num-prompts 20 --output local
+      note: Follow the Quick Start for CLI installation, cluster preparation, and a first request.
+      guide: Open the Quick Start
+      href: quickstart/#quick-start
+    - label: Start an RSI task
+      command: |
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+          '/goal Use the RSI skill and an Agent Team to complete rsi-playbooks/tasks/qwen3.5-35b-a3b.md.'
+      note: Install and sign in to the agent tool, then review the example task's models, resources, and objectives.
+      guide: Open the RSI guide
+      href: rsi-playbooks/#start-an-optimization-task
+  resources_title: Find your next step
+  resources:
+    - title: Run model services
+      description: Choose a deployment environment, configure models, and publish an API endpoint.
+      path: docs/deployment/kubernetes/
+      icon: material/cube-outline
+    - title: Evaluate and profile
+      description: Measure latency and throughput, score answers, and inspect execution bottlenecks.
+      path: benchmarks/
+      icon: material/chart-timeline-variant
+    - title: Operate the system
+      description: Follow service metrics, query persistent logs, and configure alerts.
+      path: observability/
+      icon: material/monitor-dashboard
+    - title: Look up a command
+      description: Find supported commands, common options, and examples grouped by task.
+      path: cli/
+      icon: material/console
+  footer_text: Open source. Built for inference research and deployment.
+  contribute: Contribute to Foretoken
+
+zh:
+  title:
+    - 从推理部署，
+    - 到持续优化。
+  description: 部署模型，测量表现，再由 Agent 研究和改进。Foretoken 将推理编排、评测与性能剖析连接起来，让代码、实验和部署形成完整工作流。
+  deploy: 部署第一个模型
+  quickstart_href: quickstart/#快速开始
+  rsi_start_href: rsi-playbooks/#开始优化任务
+  optimize: 探索 RSI 持续优化
+  scene_title: 为推理系统建立改进循环
+  scene_description: 示意模型部署、实际测量与下一轮改进之间的联系。
+  scene_deploy: 部署
+  scene_measure: 测量
+  scene_improve: 改进
+  support:
+    - Kubernetes 编排
+    - OpenAI 兼容接口
+    - NVIDIA 与沐曦 GPU
+  rsi_title: 研究、实测，再改进。
+  rsi_description: RSI 从一个值得研究的问题开始。Agent 研究机制、修改代码或配置，再围绕指定模型、负载和资源预算验证想法，依据实测结果持续迭代。
+  rsi_link: 开始优化任务
+  rsi_steps:
+    - title: 明确优化目标
+      description: 选择模型、负载和可用资源，定义希望改善的指标与交付要求。
+      path: rsi-playbooks/templates/task-template/
+      icon: material/target
+    - title: 研究并实现方案
+      description: 理解瓶颈背后的机制，将研究假设转化为可运行的候选方案。
+      path: rsi-playbooks/guidance/
+      icon: material/source-branch
+    - title: 部署与实测
+      description: 比较性能和回答质量，通过执行时间线进一步定位问题。
+      path: benchmarks/
+      icon: material/chart-box-outline
+    - title: 分析并继续迭代
+      description: 保存测量结果、解释收益与取舍，再决定下一轮实验。
+      path: rsi-playbooks/experiment-records/
+      icon: material/refresh
+  code_title: 从一个模型开始，走通完整流程。
+  code_description: 同一套 CLI 完成部署和测量。在已准备好的 Kubernetes 集群上，从仓库根目录运行。
+  examples:
+    - label: 部署与评测
+      command: |
+        foretoken install
+        foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+        foretoken perf examples/quickstart/qwen3-0.6b \
+          --num-prompts 20 --output local
+      note: CLI 安装、集群准备和首个请求的完整步骤见快速开始。
+      guide: 查看快速开始
+      href: quickstart/#快速开始
+    - label: 启动 RSI 任务
+      command: |
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude \
+          '/goal 使用 RSI skill 和 Agent Team，完成 rsi-playbooks/tasks/qwen3.5-35b-a3b_zh.md 中的优化任务。'
+      note: 先安装并登录 Agent 工具，再核对示例任务中的模型、资源和优化目标。
+      guide: 查看 RSI 指南
+      href: rsi-playbooks/#开始优化任务
+  resources_title: 继续探索
+  resources:
+    - title: 运行模型服务
+      description: 选择部署环境，配置模型，并通过统一 API 提供服务。
+      path: docs/deployment/kubernetes/
+      icon: material/cube-outline
+    - title: 评测与性能剖析
+      description: 测量延迟和吞吐，评估回答质量，分析执行瓶颈。
+      path: benchmarks/
+      icon: material/chart-timeline-variant
+    - title: 监控与运维
+      description: 查看服务指标、查询持久日志，并配置告警。
+      path: observability/
+      icon: material/monitor-dashboard
+    - title: 查阅命令
+      description: 按任务找到支持的命令、常用参数和使用示例。
+      path: cli/
+      icon: material/console
+  footer_text: 开源，为推理研究与部署而构建。
+  contribute: 参与 Foretoken

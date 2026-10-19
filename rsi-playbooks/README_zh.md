@@ -1,12 +1,12 @@
-# RSI Playbooks
+# RSI 推理优化
 
 [English](README.md) | 简体中文
 
-这套手册帮助 Agent 使用 Foretoken 研究和优化推理系统：修改代码、部署方案、测量效果，再根据结果继续改进。任务文件规定模型、资源、预算和交付要求，[优化指导](guidance/README_zh.md)提供研究方法与已有经验。
+RSI（Recursive Self-Improvement，递归自我改进）让 Agent 持续研究和优化推理系统：研究方案，修改代码或配置，部署并测量效果，再根据结果开展下一轮。Foretoken 为这个过程提供部署、评测和性能剖析工具。任务文件规定模型、资源、预算和交付要求，[优化指导](guidance/README_zh.md)提供研究方法与已有经验。
 
 ## 开始优化任务
 
-先取得仓库中的任务和示例：
+安装并登录 Claude Code 或 Codex，再取得仓库中的任务和示例：
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -59,7 +59,7 @@ Experimenter 负责构建和评测这些方案，同时观察资源使用、保�
 
 团队先阅读任务、代码和已有结果，选择值得研究的问题，再通过实现和实验验证想法。一个问题可以经历多轮修改，也可能得到“不适用”的结论。主 Agent 根据结果决定继续、换方向或整合方案，并在任务结束时完成验证与交付。
 
-负载组合已经确定时，团队可以通过现有参数扫描连续运行，并按任务要求分别评估性能和回答质量。如何选择实验、解释结果和继续探索，见[探索与决策](guidance/meta-knowledge/03-exploration-and-decision_zh.md)。
+通过[源码部署](../docs/deployment/source_zh.md#并行运行候选方案)构建代码改动，在独立环境中运行候选方案。负载组合确定后，可以通过现有参数扫描进行对比，并按任务要求分别评估性能和回答质量。如何选择实验、解释结果和继续探索，见[探索与决策](guidance/meta-knowledge/03-exploration-and-decision_zh.md)。
 
 ## 选择评测
 
@@ -74,6 +74,6 @@ Experimenter 负责构建和评测这些方案，同时观察资源使用、保�
 
 ## 查看结果
 
-实验报告（`report.md`）汇总各方案的性能对比、分析结论和当前采用的方案，并随实验进展更新。详细的实验过程和原始数据可通过报告中的链接查看。
+实验报告（`report.md`）汇总各方案的性能对比、分析结论和当前采用的方案，并随实验进展更新。详细的实验过程和原始数据可通过报告中的链接查看；记录选项、结果位置和报告维护方法见[实验记录手册](experiment-records_zh.md)。
 
 更多任务见[优化任务](tasks/README_zh.md)，可复用的技术认识见[知识库](guidance/knowledge/README_zh.md)。
