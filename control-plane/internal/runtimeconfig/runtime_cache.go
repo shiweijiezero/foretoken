@@ -22,48 +22,6 @@ const (
 	CacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
 )
 
-// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
-func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
-		{Name: CacheClaimEnv, Value: cache.ClaimName},
-		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
-	}
-}
-
-// PlaceRuntimeCache keeps all consumers of a single-node writable claim together.
-// Self-affinity lets the first consumer establish placement; later preparation, serving,
-// and frontend Pods follow that node without maintaining a second attachment inventory.
-func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
-	if cache == nil {
-		return nil
-	}
-	claim := new(corev1.PersistentVolumeClaim)
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
-		return fmt.Errorf("read runtime cache access modes: %w", err)
-	}
-	for _, mode := range claim.Spec.AccessModes {
-		if mode == corev1.ReadWriteMany {
-			return nil
-		}
-	}
-	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
-	}
-	pod.Labels[claimLabel] = string(claim.UID)
-	if pod.Spec.Affinity == nil {
-		pod.Spec.Affinity = &corev1.Affinity{}
-	}
-	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
-		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
-			TopologyKey:   corev1.LabelHostname,
-			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
-		}},
-	}
-	return nil
-}
-
 // RuntimeCacheProfile configures the cache mount path and an optional existing-claim override.
 type RuntimeCacheProfile struct {
 	ClaimName string
@@ -106,6 +64,56 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	return profile.binding(cache.Status.ClaimName, owner)
 }
 
+// Validate rejects an invalid runtime cache mount path.
+func (profile RuntimeCacheProfile) Validate() error {
+	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
+		return fmt.Errorf("cache mount path must be an absolute non-root path")
+	}
+	return nil
+}
+
+// PlaceRuntimeCache keeps all consumers of a single-node writable claim together.
+// Self-affinity lets the first consumer establish placement; later preparation, serving,
+// and frontend Pods follow that node without maintaining a second attachment inventory.
+func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
+	if cache == nil {
+		return nil
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
+		return fmt.Errorf("read runtime cache access modes: %w", err)
+	}
+	for _, mode := range claim.Spec.AccessModes {
+		if mode == corev1.ReadWriteMany {
+			return nil
+		}
+	}
+	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[claimLabel] = string(claim.UID)
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &corev1.Affinity{}
+	}
+	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
+			TopologyKey:   corev1.LabelHostname,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
+		}},
+	}
+	return nil
+}
+
+// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
+func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
+		{Name: CacheClaimEnv, Value: cache.ClaimName},
+		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
+	}
+}
+
 // binding resolves the storage identity shared by preparation, serving and file readers.
 func (profile RuntimeCacheProfile) binding(claimName, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	identity, err := ParseStorageIdentity(owner)
@@ -116,12 +124,4 @@ func (profile RuntimeCacheProfile) binding(claimName, owner string) (*inferencev
 		ClaimName: claimName, MountPath: profile.MountPath,
 		DirectoryOwner: identity,
 	}, true, nil
-}
-
-// Validate rejects an invalid runtime cache mount path.
-func (profile RuntimeCacheProfile) Validate() error {
-	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
-		return fmt.Errorf("cache mount path must be an absolute non-root path")
-	}
-	return nil
 }

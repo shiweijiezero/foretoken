@@ -64,6 +64,14 @@ func Manual() *Autoscaler {
 	return autoscaler
 }
 
+// Plan evaluates scaling snapshots through the configured autoscaling pipeline.
+func (autoscaler *Autoscaler) Plan(snapshots []core.ScalingSnapshot) ([]core.ScalingDecision, error) {
+	if autoscaler == nil {
+		return nil, ErrAutoscalerRequired
+	}
+	return autoscaler.pipeline.Plan(snapshots)
+}
+
 // Automatic reports whether the Autoscaler evaluates demand-driven capacity.
 func (autoscaler *Autoscaler) Automatic() bool {
 	return autoscaler != nil && autoscaler.pipeline.Automatic
@@ -83,14 +91,6 @@ func (autoscaler *Autoscaler) TriggerAlgorithmName() string {
 		return ""
 	}
 	return autoscaler.pipeline.TriggerAlgorithm.Name()
-}
-
-// Plan evaluates scaling snapshots through the configured autoscaling pipeline.
-func (autoscaler *Autoscaler) Plan(snapshots []core.ScalingSnapshot) ([]core.ScalingDecision, error) {
-	if autoscaler == nil {
-		return nil, ErrAutoscalerRequired
-	}
-	return autoscaler.pipeline.Plan(snapshots)
 }
 
 // PollingInterval returns the selected trigger's cadence for controller scheduling; manual control has no polling.

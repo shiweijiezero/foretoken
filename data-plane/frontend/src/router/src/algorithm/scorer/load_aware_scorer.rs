@@ -53,9 +53,7 @@ impl RouteScorer for LoadAwareScorer {
                     .as_ref()
                     .and_then(|stats| stats.scheduler_waiting_requests)
                 else {
-                    return RouteScore {
-                        preference: -1.0,
-                    };
+                    return RouteScore { preference: -1.0 };
                 };
                 let waiting = waiting as f64;
                 RouteScore {

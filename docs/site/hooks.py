@@ -44,147 +44,6 @@ LANGUAGE_LINE = re.compile(
 )
 
 
-class DocumentationTree:
-    """Own generated source files for MkDocs builds and development-server reloads."""
-
-    def __init__(self) -> None:
-        temporary_root = ROOT / "tmp" / "docs-site"
-        temporary_root.mkdir(parents=True, exist_ok=True)
-        self.temporary = TemporaryDirectory(prefix="source-", dir=temporary_root)
-        self.directory = Path(self.temporary.name)
-        self.destinations: dict[PurePosixPath, PurePosixPath] = {}
-        self.repository_url = ""
-
-    def destination(self, source: PurePosixPath) -> PurePosixPath:
-        """Map a public source to the site's layout and native language suffix."""
-        if source.suffix == ".md":
-            chinese = source.stem.endswith("_zh")
-            base = source.with_name(source.stem.removesuffix("_zh") + ".md")
-            base = {
-                PurePosixPath("README.md"): PurePosixPath("quickstart.md"),
-                PurePosixPath("docs/README.md"): PurePosixPath("index.md"),
-            }.get(base, base)
-            return base.with_suffix(".zh.md") if chinese else base
-        if source.is_relative_to("docs/site/assets"):
-            return PurePosixPath("assets") / source.relative_to("docs/site/assets")
-        return source
-
-    def refresh(self) -> None:
-        """Stage public Markdown and assets without copying private or ignored trees."""
-        names = subprocess.check_output(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *PUBLIC_SOURCES],
-            cwd=ROOT,
-        ).decode().split("\0")
-        sources = {
-            PurePosixPath(name) for name in names
-            if name and (ROOT / name).is_file()
-            and (
-                Path(name).suffix == ".md"
-                or Path(name).suffix in ASSET_SUFFIXES
-            )
-        }
-        documents = {source: (ROOT / source).read_text() for source in sources if source.suffix == ".md"}
-        self.add_knowledge_indexes(documents)
-        self.destinations = {source: self.destination(source) for source in sources | documents.keys()}
-        self.destinations[PurePosixPath("docs/site/.nav.yml")] = PurePosixPath(".nav.yml")
-        retained = set()
-        for source, destination in self.destinations.items():
-            data = (
-                self.markdown(documents[source], source).encode()
-                if source.suffix == ".md" else (ROOT / source).read_bytes()
-            )
-            target = self.directory / destination
-            retained.add(target)
-            # Language builds share this tree; preserve unchanged files between passes.
-            if target.is_file() and target.read_bytes() == data:
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-        for target in self.directory.rglob("*"):
-            if target.is_file() and target not in retained:
-                target.unlink()
-
-    def add_knowledge_indexes(self, documents: dict[PurePosixPath, str]) -> None:
-        """Make the existing knowledge directory links browsable without maintaining duplicate indexes."""
-        knowledge = PurePosixPath("rsi-playbooks/guidance/knowledge")
-        entries = tuple(documents.items())
-        for suffix in ("", "_zh"):
-            index = knowledge / f"README{suffix}.md"
-            for title, directory, description in re.findall(
-                r"^- \[([^\]]+)\]\(([^)]+/)\)[:：]\s*(.+)$",
-                documents[index], re.MULTILINE,
-            ):
-                category = knowledge / directory
-                page = category / f"README{suffix}.md"
-                if page in documents:
-                    continue
-                links = []
-                for source, content in sorted(entries):
-                    if source.parent != category or source.stem.endswith("_zh") != bool(suffix):
-                        continue
-                    heading = re.search(r"^# (.+)$", content, re.MULTILINE)[1]
-                    links.append(f"- [{heading}]({source.name})")
-                documents[page] = f"# {title}\n\n{description}\n\n" + "\n".join(links) + "\n"
-
-    def link(self, value: str, source: PurePosixPath) -> str:
-        """Resolve repository links to localized pages, shared assets, or source on GitHub."""
-        angled = value.startswith("<") and value.endswith(">")
-        raw = value[1:-1] if angled else value
-        url = urlsplit(raw)
-        if url.scheme or url.netloc or not url.path:
-            return value
-        path = unquote(url.path)
-        target = PurePosixPath(posixpath.normpath(
-            path.lstrip("/") if path.startswith("/") else str(source.parent / path)
-        ))
-        if (ROOT / target).is_dir():
-            readme = target / ("README_zh.md" if source.stem.endswith("_zh") else "README.md")
-            if readme in self.destinations:
-                target = readme
-        if target in self.destinations:
-            destination = self.destinations[target]
-            # i18n resolves canonical Markdown paths to the active language or its fallback.
-            if destination.name.endswith(".zh.md"):
-                destination = destination.with_name(destination.name.removesuffix(".zh.md") + ".md")
-            relative = posixpath.relpath(destination, self.destinations[source].parent)
-            result = urlunsplit(("", "", quote(relative, safe="/"), url.query, url.fragment))
-        elif (ROOT / target).exists():
-            kind = "tree" if (ROOT / target).is_dir() else "blob"
-            result = f"{self.repository_url}/{kind}/main/{quote(str(target), safe='/')}"
-            if url.query:
-                result += "?" + url.query
-            if url.fragment:
-                result += "#" + url.fragment
-        else:
-            return value
-        return f"<{result}>" if angled else result
-
-    def markdown(self, content: str, source: PurePosixPath) -> str:
-        """Rewrite document links while leaving command and configuration examples intact."""
-        result = []
-        fence = ""
-        for line in content.splitlines(keepends=True):
-            marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-            if fence:
-                result.append(line)
-                if re.fullmatch(rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}\s*", line):
-                    fence = ""
-                continue
-            if marker:
-                fence = marker[1]
-                result.append(line)
-                continue
-            if LANGUAGE_LINE.fullmatch(line.strip()):
-                continue
-            for pattern in (INLINE_LINK, REFERENCE_LINK, HTML_LINK):
-                line = pattern.sub(lambda match: match[1] + self.link(match[2], source), line)
-            result.append(line)
-        return "".join(result)
-
-
-_tree = DocumentationTree()
-
-
 @event_priority(100)
 def on_config(config: MkDocsConfig) -> MkDocsConfig:
     """Select the generated source tree before i18n configures language builds."""
@@ -259,3 +118,144 @@ def on_page_context(
 def on_shutdown() -> None:
     """Release the generated source tree when the documentation server stops."""
     _tree.temporary.cleanup()
+
+
+class DocumentationTree:
+    """Own generated source files for MkDocs builds and development-server reloads."""
+
+    def __init__(self) -> None:
+        temporary_root = ROOT / "tmp" / "docs-site"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        self.temporary = TemporaryDirectory(prefix="source-", dir=temporary_root)
+        self.directory = Path(self.temporary.name)
+        self.destinations: dict[PurePosixPath, PurePosixPath] = {}
+        self.repository_url = ""
+
+    def refresh(self) -> None:
+        """Stage public Markdown and assets without copying private or ignored trees."""
+        names = subprocess.check_output(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *PUBLIC_SOURCES],
+            cwd=ROOT,
+        ).decode().split("\0")
+        sources = {
+            PurePosixPath(name) for name in names
+            if name and (ROOT / name).is_file()
+            and (
+                Path(name).suffix == ".md"
+                or Path(name).suffix in ASSET_SUFFIXES
+            )
+        }
+        documents = {source: (ROOT / source).read_text() for source in sources if source.suffix == ".md"}
+        self.add_knowledge_indexes(documents)
+        self.destinations = {source: self.destination(source) for source in sources | documents.keys()}
+        self.destinations[PurePosixPath("docs/site/.nav.yml")] = PurePosixPath(".nav.yml")
+        retained = set()
+        for source, destination in self.destinations.items():
+            data = (
+                self.markdown(documents[source], source).encode()
+                if source.suffix == ".md" else (ROOT / source).read_bytes()
+            )
+            target = self.directory / destination
+            retained.add(target)
+            # Language builds share this tree; preserve unchanged files between passes.
+            if target.is_file() and target.read_bytes() == data:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        for target in self.directory.rglob("*"):
+            if target.is_file() and target not in retained:
+                target.unlink()
+
+    def markdown(self, content: str, source: PurePosixPath) -> str:
+        """Rewrite document links while leaving command and configuration examples intact."""
+        result = []
+        fence = ""
+        for line in content.splitlines(keepends=True):
+            marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if fence:
+                result.append(line)
+                if re.fullmatch(rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}\s*", line):
+                    fence = ""
+                continue
+            if marker:
+                fence = marker[1]
+                result.append(line)
+                continue
+            if LANGUAGE_LINE.fullmatch(line.strip()):
+                continue
+            for pattern in (INLINE_LINK, REFERENCE_LINK, HTML_LINK):
+                line = pattern.sub(lambda match: match[1] + self.link(match[2], source), line)
+            result.append(line)
+        return "".join(result)
+
+    def destination(self, source: PurePosixPath) -> PurePosixPath:
+        """Map a public source to the site's layout and native language suffix."""
+        if source.suffix == ".md":
+            chinese = source.stem.endswith("_zh")
+            base = source.with_name(source.stem.removesuffix("_zh") + ".md")
+            base = {
+                PurePosixPath("README.md"): PurePosixPath("quickstart.md"),
+                PurePosixPath("docs/README.md"): PurePosixPath("index.md"),
+            }.get(base, base)
+            return base.with_suffix(".zh.md") if chinese else base
+        if source.is_relative_to("docs/site/assets"):
+            return PurePosixPath("assets") / source.relative_to("docs/site/assets")
+        return source
+
+    def add_knowledge_indexes(self, documents: dict[PurePosixPath, str]) -> None:
+        """Make the existing knowledge directory links browsable without maintaining duplicate indexes."""
+        knowledge = PurePosixPath("rsi-playbooks/guidance/knowledge")
+        entries = tuple(documents.items())
+        for suffix in ("", "_zh"):
+            index = knowledge / f"README{suffix}.md"
+            for title, directory, description in re.findall(
+                r"^- \[([^\]]+)\]\(([^)]+/)\)[:：]\s*(.+)$",
+                documents[index], re.MULTILINE,
+            ):
+                category = knowledge / directory
+                page = category / f"README{suffix}.md"
+                if page in documents:
+                    continue
+                links = []
+                for source, content in sorted(entries):
+                    if source.parent != category or source.stem.endswith("_zh") != bool(suffix):
+                        continue
+                    heading = re.search(r"^# (.+)$", content, re.MULTILINE)[1]
+                    links.append(f"- [{heading}]({source.name})")
+                documents[page] = f"# {title}\n\n{description}\n\n" + "\n".join(links) + "\n"
+
+    def link(self, value: str, source: PurePosixPath) -> str:
+        """Resolve repository links to localized pages, shared assets, or source on GitHub."""
+        angled = value.startswith("<") and value.endswith(">")
+        raw = value[1:-1] if angled else value
+        url = urlsplit(raw)
+        if url.scheme or url.netloc or not url.path:
+            return value
+        path = unquote(url.path)
+        target = PurePosixPath(posixpath.normpath(
+            path.lstrip("/") if path.startswith("/") else str(source.parent / path)
+        ))
+        if (ROOT / target).is_dir():
+            readme = target / ("README_zh.md" if source.stem.endswith("_zh") else "README.md")
+            if readme in self.destinations:
+                target = readme
+        if target in self.destinations:
+            destination = self.destinations[target]
+            # i18n resolves canonical Markdown paths to the active language or its fallback.
+            if destination.name.endswith(".zh.md"):
+                destination = destination.with_name(destination.name.removesuffix(".zh.md") + ".md")
+            relative = posixpath.relpath(destination, self.destinations[source].parent)
+            result = urlunsplit(("", "", quote(relative, safe="/"), url.query, url.fragment))
+        elif (ROOT / target).exists():
+            kind = "tree" if (ROOT / target).is_dir() else "blob"
+            result = f"{self.repository_url}/{kind}/main/{quote(str(target), safe='/')}"
+            if url.query:
+                result += "?" + url.query
+            if url.fragment:
+                result += "#" + url.fragment
+        else:
+            return value
+        return f"<{result}>" if angled else result
+
+
+_tree = DocumentationTree()

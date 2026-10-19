@@ -31,6 +31,67 @@ from benchmarks.results.video import (
 logger = logging.getLogger(__name__)
 
 
+async def run_video_benchmark(
+    config: VideoBenchmarkConfig,
+    *,
+    dry_run: bool = False,
+    output_dir: str | None = None,
+) -> dict[str, Any]:
+    """Send video requests and persist generated media, samples, and metrics."""
+    if dry_run:
+        logger.info(
+            "Video dry run validated config:\n%s",
+            json.dumps(config.to_dict(), indent=2, ensure_ascii=False),
+        )
+        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True, "exit_code": 0}
+
+    record = video_run_record(config)
+    result_output_dir = None
+    with ResultOutputs(
+        config,
+        None,
+        output_dir=output_dir,
+        directory_prefix=f"{config.name}_",
+        sink_factory=partial(video_result_sinks, config),
+    ) as outputs:
+        await require_health_endpoint(config.endpoint.health_url)
+        logger.info("Video server health check passed")
+        run_dir = Path(outputs.execution_dir)
+        outputs.open(record)
+        if config.warmup_requests:
+            warmup_dir = run_dir / "warmup"
+            warmup_dir.mkdir(parents=True, exist_ok=True)
+            warmup_started = time.perf_counter()
+            warmup = await _run_requests(
+                config,
+                warmup_dir,
+                outputs,
+                config.requests[: config.warmup_requests],
+                warmup=True,
+                duration_s=None,
+                respect_config_duration=False,
+            )
+            outputs.record_warmup(
+                [video_result_record(item, run_dir) for item in warmup],
+                {**aggregate_video_results(warmup), "benchmark_time": time.perf_counter() - warmup_started},
+            )
+            if not warmup or any(not item.success for item in warmup):
+                raise ValueError("Warmup requests failed; measurement was not started")
+        run: BenchmarkRun
+
+        def measured(results: list[VideoSampleResult]) -> None:
+            """Retain formal results before the request client closes."""
+            nonlocal run
+            run = create_video_benchmark_run(record, results, run_dir)
+            outputs.save_measurement(run)
+
+        await _run_requests(config, run_dir, outputs, on_complete=measured)
+        outputs.publish(run)
+        if config.outputs.saves_local:
+            result_output_dir = outputs.execution_dir
+    return {"metrics": run.metrics, "output_dir": result_output_dir, "exit_code": run.exit_code}
+
+
 async def _run_requests(
     config: VideoBenchmarkConfig,
     run_dir: Path,
@@ -142,64 +203,3 @@ async def _run_requests(
             if error is None:
                 raise
             logger.exception("Video client cleanup also failed")
-
-
-async def run_video_benchmark(
-    config: VideoBenchmarkConfig,
-    *,
-    dry_run: bool = False,
-    output_dir: str | None = None,
-) -> dict[str, Any]:
-    """Send video requests and persist generated media, samples, and metrics."""
-    if dry_run:
-        logger.info(
-            "Video dry run validated config:\n%s",
-            json.dumps(config.to_dict(), indent=2, ensure_ascii=False),
-        )
-        return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True, "exit_code": 0}
-
-    record = video_run_record(config)
-    result_output_dir = None
-    with ResultOutputs(
-        config,
-        None,
-        output_dir=output_dir,
-        directory_prefix=f"{config.name}_",
-        sink_factory=partial(video_result_sinks, config),
-    ) as outputs:
-        await require_health_endpoint(config.endpoint.health_url)
-        logger.info("Video server health check passed")
-        run_dir = Path(outputs.execution_dir)
-        outputs.open(record)
-        if config.warmup_requests:
-            warmup_dir = run_dir / "warmup"
-            warmup_dir.mkdir(parents=True, exist_ok=True)
-            warmup_started = time.perf_counter()
-            warmup = await _run_requests(
-                config,
-                warmup_dir,
-                outputs,
-                config.requests[: config.warmup_requests],
-                warmup=True,
-                duration_s=None,
-                respect_config_duration=False,
-            )
-            outputs.record_warmup(
-                [video_result_record(item, run_dir) for item in warmup],
-                {**aggregate_video_results(warmup), "benchmark_time": time.perf_counter() - warmup_started},
-            )
-            if not warmup or any(not item.success for item in warmup):
-                raise ValueError("Warmup requests failed; measurement was not started")
-        run: BenchmarkRun
-
-        def measured(results: list[VideoSampleResult]) -> None:
-            """Retain formal results before the request client closes."""
-            nonlocal run
-            run = create_video_benchmark_run(record, results, run_dir)
-            outputs.save_measurement(run)
-
-        await _run_requests(config, run_dir, outputs, on_complete=measured)
-        outputs.publish(run)
-        if config.outputs.saves_local:
-            result_output_dir = outputs.execution_dir
-    return {"metrics": run.metrics, "output_dir": result_output_dir, "exit_code": run.exit_code}

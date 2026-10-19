@@ -163,13 +163,7 @@ impl RouteScorer for NoHitLruScorer {
                     .is_some_and(|matched| matched.matched_tokens > 0)
             })
         {
-            return vec![
-                RouteScore {
-                    preference: 0.5,
-                };
-                candidates.len()
-            ]
-            .into();
+            return vec![RouteScore { preference: 0.5 }; candidates.len()].into();
         }
 
         // Rank against the entire LRU, without compacting ranks to the current candidate set.
@@ -224,9 +218,7 @@ impl RouteScorer for NoHitLruScorer {
                         .next()
                         .expect("every routable endpoint has an LRU score")
                 } else {
-                    RouteScore {
-                        preference: 0.5,
-                    }
+                    RouteScore { preference: 0.5 }
                 }
             })
             .collect();

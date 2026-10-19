@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Defines OpenAI-compatible request data transfer objects (DTOs) and HTTP handlers.
+//! OpenAI-compatible HTTP handlers over the shared generation pipeline.
 
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::JsonRejection;
@@ -15,21 +14,27 @@ use axum::{Extension, Json, Router};
 use foretoken_chat::{
     AssistantContentBlock, AssistantToolCall, ChatContent, ChatContentPart, ChatMessage,
     ChatOptions, ChatRequest, ChatTool, ChatToolChoice, GenerationPromptMode, ParserSelection,
-    ReasoningEffort, ResolvedToolContext,
+    ResolvedToolContext,
 };
 use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod async_video;
 mod output;
 mod stored;
+mod types;
 mod video;
 
 use self::output::{
     CompletionResponseOptions, chat_collected, chat_stream_with_options, text_collected_many,
     text_stream_many,
+};
+use self::types::{
+    ChatCompletionRequest, CompletionRequest, DetokenizeRequest, DetokenizeResponse,
+    OpenAiChatContent, OpenAiContentPart, OpenAiFunctionType, OpenAiMessage, OpenAiNamedToolChoice,
+    OpenAiResponseFormat, OpenAiTool, OpenAiToolCall, OpenAiToolChoice, OpenAiToolChoiceMode, Stop,
+    TokenizeRequest, TokenizeResponse,
 };
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::AdmissionOrigin;
@@ -55,711 +60,6 @@ pub(super) fn router() -> Router<ApiState> {
         .merge(stored::router())
 }
 
-fn model_card(id: String) -> Value {
-    let root = id.clone();
-    let created = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    json!({
-        "id": id,
-        "object": "model",
-        "created": created,
-        "owned_by": "vllm",
-        "root": root,
-        "parent": null,
-        "max_model_len": null,
-        "permission": [],
-    })
-}
-
-async fn list_models(State(state): State<ApiState>) -> Json<Value> {
-    Json(json!({
-        "object": "list",
-        "data": (state.models)().into_iter().map(model_card).collect::<Vec<_>>(),
-    }))
-}
-
-async fn retrieve_model(
-    State(state): State<ApiState>,
-    AxumPath(model): AxumPath<String>,
-) -> Response {
-    if (state.models)().iter().any(|candidate| candidate == &model) {
-        Json(model_card(model)).into_response()
-    } else {
-        openai_error(GenerationError::ModelNotFound)
-    }
-}
-
-fn resolve_model(
-    state: &RequestSnapshot,
-    requested: Option<String>,
-) -> Result<String, GenerationError> {
-    if let Some(model) = requested {
-        return state
-            .models
-            .iter()
-            .any(|candidate| candidate == &model)
-            .then_some(model)
-            .ok_or(GenerationError::ModelNotFound);
-    }
-    match state.models.as_ref() {
-        [model] => Ok(model.clone()),
-        _ => Err(GenerationError::InvalidRequest),
-    }
-}
-
-async fn tokenize(
-    Extension(state): Extension<RequestSnapshot>,
-    timing: Option<Extension<RequestTiming>>,
-    request: Result<Json<TokenizeRequest>, JsonRejection>,
-) -> Response {
-    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
-    let origin = AdmissionOrigin {
-        received_at: timing.started_at,
-    };
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(error) => return json_error(error),
-    };
-    let result = match request {
-        TokenizeRequest::Completion(request) => {
-            let model = match resolve_model(&state, request.model) {
-                Ok(model) => model,
-                Err(error) => return openai_error(error),
-            };
-            state
-                .generation
-                .tokenize(
-                    &model,
-                    Prompt::Text(request.prompt),
-                    request.add_special_tokens,
-                    request.return_token_strs,
-                    origin,
-                )
-                .await
-        }
-        TokenizeRequest::Chat(request) => {
-            let model = match resolve_model(&state, request.model) {
-                Ok(model) => model,
-                Err(error) => return openai_error(error),
-            };
-            if request.add_generation_prompt && request.continue_final_message {
-                return client_error(
-                    "add_generation_prompt and continue_final_message cannot both be true",
-                );
-            }
-            if let Err(error) = validate_multimodal_input(&request.messages) {
-                return client_error(error);
-            }
-            let messages = match request
-                .messages
-                .iter()
-                .map(openai_message)
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(messages) => messages,
-                Err(error) => return client_error(error),
-            };
-            let tools = match request
-                .tools
-                .iter()
-                .map(openai_tool)
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(tools) => tools,
-                Err(error) => return client_error(error),
-            };
-            let tool_context = match ResolvedToolContext::new(&messages, tools, None, true) {
-                Ok(tool_context) => tool_context,
-                Err(error) => return client_error(error.to_string()),
-            };
-            let generation_prompt_mode = if request.continue_final_message {
-                GenerationPromptMode::ContinueFinalAssistant
-            } else if request.add_generation_prompt {
-                GenerationPromptMode::StartNewAssistant
-            } else {
-                GenerationPromptMode::NoGenerationPrompt
-            };
-            let chat = ChatRequest {
-                request_id: server_request_id("tokenize"),
-                messages,
-                sampling_params: SamplingParams {
-                    max_tokens: Some(1),
-                    ..Default::default()
-                },
-                chat_options: ChatOptions {
-                    generation_prompt_mode,
-                    ..Default::default()
-                },
-                tool_context,
-                decode_options: TextDecodeOptions::default(),
-                intermediate: false,
-                priority: 0,
-                documents: None,
-                cache_salt: None,
-                add_special_tokens: request.add_special_tokens,
-                data_parallel_rank: None,
-                session_id: None,
-                lora_request: None,
-            };
-            if let Err(error) = chat.validate() {
-                return client_error(error.to_string());
-            }
-            state
-                .generation
-                .tokenize_chat(&model, chat, request.return_token_strs, origin)
-                .await
-        }
-    };
-    match result {
-        Ok(result) => Json(TokenizeResponse {
-            count: result.token_ids.len(),
-            max_model_len: result.max_model_len,
-            tokens: result.token_ids,
-            token_strs: result.token_strs,
-        })
-        .into_response(),
-        Err(error) => openai_error(error),
-    }
-}
-
-async fn detokenize(
-    Extension(state): Extension<RequestSnapshot>,
-    timing: Option<Extension<RequestTiming>>,
-    request: Result<Json<DetokenizeRequest>, JsonRejection>,
-) -> Response {
-    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
-    let origin = AdmissionOrigin {
-        received_at: timing.started_at,
-    };
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(error) => return json_error(error),
-    };
-    let model = match resolve_model(&state, request.model) {
-        Ok(model) => model,
-        Err(error) => return openai_error(error),
-    };
-    match state
-        .generation
-        .detokenize(&model, &request.tokens, origin)
-        .await
-    {
-        Ok(prompt) => Json(DetokenizeResponse { prompt }).into_response(),
-        Err(error) => openai_error(error),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum TokenizeRequest {
-    Completion(TokenizeCompletionRequest),
-    Chat(TokenizeChatRequest),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TokenizeCompletionRequest {
-    #[serde(default)]
-    model: Option<String>,
-    prompt: String,
-    #[serde(default = "default_true")]
-    add_special_tokens: bool,
-    #[serde(default)]
-    return_token_strs: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TokenizeChatRequest {
-    #[serde(default)]
-    model: Option<String>,
-    messages: Vec<OpenAiMessage>,
-    #[serde(default = "default_true")]
-    add_generation_prompt: bool,
-    #[serde(default)]
-    continue_final_message: bool,
-    #[serde(default)]
-    add_special_tokens: bool,
-    #[serde(default)]
-    return_token_strs: bool,
-    #[serde(default)]
-    tools: Vec<OpenAiTool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DetokenizeRequest {
-    #[serde(default)]
-    model: Option<String>,
-    tokens: Vec<u32>,
-}
-
-#[derive(Serialize)]
-struct TokenizeResponse {
-    count: usize,
-    max_model_len: u32,
-    tokens: Vec<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    token_strs: Option<Vec<String>>,
-}
-
-#[derive(Serialize)]
-struct DetokenizeResponse {
-    prompt: String,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn one() -> u32 {
-    1
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum CompletionPrompt {
-    Text(String),
-    TokenIds(Vec<u32>),
-    Texts(Vec<String>),
-    TokenIdBatches(Vec<Vec<u32>>),
-}
-
-impl CompletionPrompt {
-    fn into_prompts(self) -> Vec<Prompt> {
-        match self {
-            Self::Text(text) => vec![Prompt::Text(text)],
-            Self::TokenIds(token_ids) => vec![Prompt::TokenIds(token_ids)],
-            Self::Texts(texts) => texts.into_iter().map(Prompt::Text).collect(),
-            Self::TokenIdBatches(batches) => batches.into_iter().map(Prompt::TokenIds).collect(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CompletionRequest {
-    model: String,
-    prompt: CompletionPrompt,
-    #[serde(default)]
-    stream: bool,
-    #[serde(default)]
-    stream_options: OpenAiStreamOptions,
-    #[serde(default = "one")]
-    n: u32,
-    #[serde(default)]
-    best_of: Option<u32>,
-    #[serde(default)]
-    echo: bool,
-    #[serde(default)]
-    return_token_ids: bool,
-    #[serde(default)]
-    return_tokens_as_token_ids: bool,
-    #[serde(default)]
-    return_prompt_token_ids: bool,
-    #[serde(default, rename = "request_id")]
-    _client_request_id: Option<String>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    top_p: Option<f32>,
-    #[serde(default)]
-    top_k: Option<u32>,
-    #[serde(default)]
-    min_p: Option<f32>,
-    #[serde(default)]
-    seed: Option<i64>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    min_tokens: Option<u32>,
-    #[serde(default)]
-    frequency_penalty: Option<f32>,
-    #[serde(default)]
-    presence_penalty: Option<f32>,
-    #[serde(default)]
-    repetition_penalty: Option<f32>,
-    #[serde(default)]
-    stop_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    ignore_eos: bool,
-    #[serde(default)]
-    logit_bias: Option<HashMap<u32, f32>>,
-    #[serde(default)]
-    allowed_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    bad_words: Option<Vec<String>>,
-    #[serde(default)]
-    logprobs: Option<i32>,
-    #[serde(default)]
-    prompt_logprobs: Option<i32>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default)]
-    cache_salt: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    stop: Option<Stop>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiStreamOptions {
-    #[serde(default)]
-    include_usage: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-enum Stop {
-    One(String),
-    Many(Vec<String>),
-}
-impl Stop {
-    fn into_vec(self) -> Vec<String> {
-        match self {
-            Self::One(s) => vec![s],
-            Self::Many(v) => v,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChatCompletionRequest {
-    model: String,
-    messages: Vec<Value>,
-    #[serde(default)]
-    store: Option<bool>,
-    #[serde(default)]
-    metadata: Option<Value>,
-    #[serde(default)]
-    stream: bool,
-    #[serde(default)]
-    stream_options: OpenAiStreamOptions,
-    #[serde(default, rename = "request_id")]
-    _client_request_id: Option<String>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    top_p: Option<f32>,
-    #[serde(default)]
-    top_k: Option<u32>,
-    #[serde(default)]
-    min_p: Option<f32>,
-    #[serde(default)]
-    seed: Option<i64>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    min_tokens: Option<u32>,
-    #[serde(default)]
-    frequency_penalty: Option<f32>,
-    #[serde(default)]
-    presence_penalty: Option<f32>,
-    #[serde(default)]
-    repetition_penalty: Option<f32>,
-    #[serde(default)]
-    stop_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    ignore_eos: bool,
-    #[serde(default)]
-    logit_bias: Option<HashMap<u32, f32>>,
-    #[serde(default)]
-    allowed_token_ids: Option<Vec<u32>>,
-    #[serde(default)]
-    bad_words: Option<Vec<String>>,
-    #[serde(default)]
-    logprobs: bool,
-    #[serde(default)]
-    top_logprobs: Option<u32>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default)]
-    cache_salt: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    stop: Option<Stop>,
-    #[serde(default)]
-    tools: Vec<OpenAiTool>,
-    #[serde(default)]
-    tool_choice: Option<OpenAiToolChoice>,
-    #[serde(default)]
-    parallel_tool_calls: bool,
-    #[serde(default)]
-    response_format: Option<OpenAiResponseFormat>,
-    #[serde(default)]
-    reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    include_reasoning: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiMessage {
-    role: String,
-    #[serde(default)]
-    content: Option<OpenAiChatContent>,
-    #[serde(default)]
-    tool_calls: Vec<OpenAiToolCall>,
-    #[serde(default)]
-    tool_call_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiChatContent {
-    Text(String),
-    Parts(Vec<OpenAiContentPart>),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum OpenAiContentPart {
-    Text { text: String },
-    ImageUrl { image_url: OpenAiImageUrl },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiImageUrl {
-    url: String,
-    #[serde(default)]
-    detail: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiToolCall {
-    id: String,
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiFunctionCall,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OpenAiFunctionType {
-    Function,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiFunctionCall {
-    name: String,
-    arguments: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiTool {
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiToolFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiToolFunction {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    parameters: Value,
-    #[serde(default)]
-    strict: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiToolChoice {
-    Mode(OpenAiToolChoiceMode),
-    Function(OpenAiNamedToolChoice),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OpenAiToolChoiceMode {
-    None,
-    Auto,
-    Required,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiNamedToolChoice {
-    #[serde(rename = "type")]
-    kind: OpenAiFunctionType,
-    function: OpenAiNamedFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiNamedFunction {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OpenAiResponseFormat {
-    Text,
-    JsonObject,
-    JsonSchema { json_schema: OpenAiJsonSchema },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiJsonSchema {
-    name: String,
-    schema: Value,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    strict: Option<bool>,
-}
-
-fn sampling(
-    temperature: Option<f32>,
-    top_p: Option<f32>,
-    max_tokens: Option<u32>,
-) -> SamplingParams {
-    SamplingParams {
-        temperature,
-        top_p,
-        max_tokens,
-        ..Default::default()
-    }
-}
-fn completion_sampling(request: &CompletionRequest) -> SamplingParams {
-    SamplingParams {
-        temperature: request.temperature,
-        top_p: request.top_p,
-        top_k: request.top_k,
-        seed: request.seed,
-        max_tokens: if request.echo && request.max_tokens == Some(0) {
-            Some(1)
-        } else {
-            request.max_tokens
-        },
-        min_tokens: request.min_tokens,
-        logprobs: request.logprobs,
-        prompt_logprobs: request
-            .prompt_logprobs
-            .or(request.logprobs.filter(|_| request.echo)),
-        min_p: request.min_p,
-        frequency_penalty: request.frequency_penalty,
-        presence_penalty: request.presence_penalty,
-        repetition_penalty: request.repetition_penalty,
-        stop_token_ids: request.stop_token_ids.clone(),
-        ignore_eos: request.ignore_eos,
-        logit_bias: request.logit_bias.clone(),
-        allowed_token_ids: request.allowed_token_ids.clone(),
-        bad_words: request.bad_words.clone(),
-        ..Default::default()
-    }
-}
-fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
-    TextDecodeOptions {
-        stop_strings: stop.map(Stop::into_vec),
-        ..Default::default()
-    }
-}
-/// Returns a request-validation diagnostic in the OpenAI error envelope.
-pub(super) fn client_error(message: impl Into<String>) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({"error": {
-            "message": message.into(), "type": "invalid_request_error", "code": "invalid_request"
-        }})),
-    )
-        .into_response()
-}
-
-/// Preserves extractor diagnostics and transport statuses; JSON content errors remain HTTP 400.
-pub(super) fn json_error(error: JsonRejection) -> Response {
-    let status = match error.status() {
-        StatusCode::UNPROCESSABLE_ENTITY => StatusCode::BAD_REQUEST,
-        status => status,
-    };
-    let mut response = client_error(error.body_text());
-    *response.status_mut() = status;
-    response
-}
-
-/// Maps every typed pre-response generation failure to a fixed OpenAI error.
-pub(crate) fn openai_error(error: GenerationError) -> Response {
-    let (status, message, kind, code) = match error {
-        GenerationError::InvalidRequest => return client_error("invalid request"),
-        GenerationError::ModelNotFound => (
-            StatusCode::NOT_FOUND,
-            "model not found",
-            "invalid_request_error",
-            "model_not_found",
-        ),
-        GenerationError::Unavailable | GenerationError::BackendBusy => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "generation service is unavailable",
-            "server_error",
-            "unavailable",
-        ),
-        GenerationError::Overloaded => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "generation service is overloaded",
-            "server_error",
-            "overloaded",
-        ),
-        GenerationError::QueueTimeout => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "admission queue timeout exceeded",
-            "server_error",
-            "queue_timeout",
-        ),
-        GenerationError::AdmissionCapacityExceeded => (
-            StatusCode::BAD_REQUEST,
-            "request fan-out exceeds configured admission capacity",
-            "invalid_request_error",
-            "concurrency_limit_exceeded",
-        ),
-        GenerationError::DeadlineExceeded => (
-            StatusCode::GATEWAY_TIMEOUT,
-            "request deadline exceeded",
-            "server_error",
-            "request_timeout",
-        ),
-        GenerationError::BackendRejected => (
-            StatusCode::BAD_GATEWAY,
-            "model server rejected the request",
-            "server_error",
-            "backend_rejected",
-        ),
-        GenerationError::BackendProtocol => (
-            StatusCode::BAD_GATEWAY,
-            "model server protocol failed",
-            "server_error",
-            "backend_protocol",
-        ),
-        GenerationError::RequestFailed => (
-            StatusCode::BAD_GATEWAY,
-            "model server request failed",
-            "server_error",
-            "request_failed",
-        ),
-        GenerationError::Internal => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal server error",
-            "server_error",
-            "internal_error",
-        ),
-    };
-    (
-        status,
-        Json(json!({"error": {"message": message, "type": kind, "code": code}})),
-    )
-        .into_response()
-}
 async fn completions(
     Extension(state): Extension<RequestSnapshot>,
     timing: Option<Extension<RequestTiming>>,
@@ -1031,6 +331,341 @@ async fn chat_completions(
     }
 }
 
+async fn list_models(State(state): State<ApiState>) -> Json<Value> {
+    Json(json!({
+        "object": "list",
+        "data": (state.models)().into_iter().map(model_card).collect::<Vec<_>>(),
+    }))
+}
+
+async fn retrieve_model(
+    State(state): State<ApiState>,
+    AxumPath(model): AxumPath<String>,
+) -> Response {
+    if (state.models)().iter().any(|candidate| candidate == &model) {
+        Json(model_card(model)).into_response()
+    } else {
+        openai_error(GenerationError::ModelNotFound)
+    }
+}
+
+async fn tokenize(
+    Extension(state): Extension<RequestSnapshot>,
+    timing: Option<Extension<RequestTiming>>,
+    request: Result<Json<TokenizeRequest>, JsonRejection>,
+) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        received_at: timing.started_at,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return json_error(error),
+    };
+    let result = match request {
+        TokenizeRequest::Completion(request) => {
+            let model = match resolve_model(&state, request.model) {
+                Ok(model) => model,
+                Err(error) => return openai_error(error),
+            };
+            state
+                .generation
+                .tokenize(
+                    &model,
+                    Prompt::Text(request.prompt),
+                    request.add_special_tokens,
+                    request.return_token_strs,
+                    origin,
+                )
+                .await
+        }
+        TokenizeRequest::Chat(request) => {
+            let model = match resolve_model(&state, request.model) {
+                Ok(model) => model,
+                Err(error) => return openai_error(error),
+            };
+            if request.add_generation_prompt && request.continue_final_message {
+                return client_error(
+                    "add_generation_prompt and continue_final_message cannot both be true",
+                );
+            }
+            if let Err(error) = validate_multimodal_input(&request.messages) {
+                return client_error(error);
+            }
+            let messages = match request
+                .messages
+                .iter()
+                .map(openai_message)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(messages) => messages,
+                Err(error) => return client_error(error),
+            };
+            let tools = match request
+                .tools
+                .iter()
+                .map(openai_tool)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(tools) => tools,
+                Err(error) => return client_error(error),
+            };
+            let tool_context = match ResolvedToolContext::new(&messages, tools, None, true) {
+                Ok(tool_context) => tool_context,
+                Err(error) => return client_error(error.to_string()),
+            };
+            let generation_prompt_mode = if request.continue_final_message {
+                GenerationPromptMode::ContinueFinalAssistant
+            } else if request.add_generation_prompt {
+                GenerationPromptMode::StartNewAssistant
+            } else {
+                GenerationPromptMode::NoGenerationPrompt
+            };
+            let chat = ChatRequest {
+                request_id: server_request_id("tokenize"),
+                messages,
+                sampling_params: SamplingParams {
+                    max_tokens: Some(1),
+                    ..Default::default()
+                },
+                chat_options: ChatOptions {
+                    generation_prompt_mode,
+                    ..Default::default()
+                },
+                tool_context,
+                decode_options: TextDecodeOptions::default(),
+                intermediate: false,
+                priority: 0,
+                documents: None,
+                cache_salt: None,
+                add_special_tokens: request.add_special_tokens,
+                data_parallel_rank: None,
+                session_id: None,
+                lora_request: None,
+            };
+            if let Err(error) = chat.validate() {
+                return client_error(error.to_string());
+            }
+            state
+                .generation
+                .tokenize_chat(&model, chat, request.return_token_strs, origin)
+                .await
+        }
+    };
+    match result {
+        Ok(result) => Json(TokenizeResponse {
+            count: result.token_ids.len(),
+            max_model_len: result.max_model_len,
+            tokens: result.token_ids,
+            token_strs: result.token_strs,
+        })
+        .into_response(),
+        Err(error) => openai_error(error),
+    }
+}
+
+async fn detokenize(
+    Extension(state): Extension<RequestSnapshot>,
+    timing: Option<Extension<RequestTiming>>,
+    request: Result<Json<DetokenizeRequest>, JsonRejection>,
+) -> Response {
+    let timing = timing.map_or_else(RequestTiming::now, |Extension(timing)| timing);
+    let origin = AdmissionOrigin {
+        received_at: timing.started_at,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return json_error(error),
+    };
+    let model = match resolve_model(&state, request.model) {
+        Ok(model) => model,
+        Err(error) => return openai_error(error),
+    };
+    match state
+        .generation
+        .detokenize(&model, &request.tokens, origin)
+        .await
+    {
+        Ok(prompt) => Json(DetokenizeResponse { prompt }).into_response(),
+        Err(error) => openai_error(error),
+    }
+}
+
+fn model_card(id: String) -> Value {
+    let root = id.clone();
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    json!({
+        "id": id,
+        "object": "model",
+        "created": created,
+        "owned_by": "vllm",
+        "root": root,
+        "parent": null,
+        "max_model_len": null,
+        "permission": [],
+    })
+}
+
+fn resolve_model(
+    state: &RequestSnapshot,
+    requested: Option<String>,
+) -> Result<String, GenerationError> {
+    if let Some(model) = requested {
+        return state
+            .models
+            .iter()
+            .any(|candidate| candidate == &model)
+            .then_some(model)
+            .ok_or(GenerationError::ModelNotFound);
+    }
+    match state.models.as_ref() {
+        [model] => Ok(model.clone()),
+        _ => Err(GenerationError::InvalidRequest),
+    }
+}
+
+fn sampling(
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    max_tokens: Option<u32>,
+) -> SamplingParams {
+    SamplingParams {
+        temperature,
+        top_p,
+        max_tokens,
+        ..Default::default()
+    }
+}
+fn completion_sampling(request: &CompletionRequest) -> SamplingParams {
+    SamplingParams {
+        temperature: request.temperature,
+        top_p: request.top_p,
+        top_k: request.top_k,
+        seed: request.seed,
+        max_tokens: if request.echo && request.max_tokens == Some(0) {
+            Some(1)
+        } else {
+            request.max_tokens
+        },
+        min_tokens: request.min_tokens,
+        logprobs: request.logprobs,
+        prompt_logprobs: request
+            .prompt_logprobs
+            .or(request.logprobs.filter(|_| request.echo)),
+        min_p: request.min_p,
+        frequency_penalty: request.frequency_penalty,
+        presence_penalty: request.presence_penalty,
+        repetition_penalty: request.repetition_penalty,
+        stop_token_ids: request.stop_token_ids.clone(),
+        ignore_eos: request.ignore_eos,
+        logit_bias: request.logit_bias.clone(),
+        allowed_token_ids: request.allowed_token_ids.clone(),
+        bad_words: request.bad_words.clone(),
+        ..Default::default()
+    }
+}
+fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
+    TextDecodeOptions {
+        stop_strings: stop.map(Stop::into_vec),
+        ..Default::default()
+    }
+}
+/// Returns a request-validation diagnostic in the OpenAI error envelope.
+pub(super) fn client_error(message: impl Into<String>) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {
+            "message": message.into(), "type": "invalid_request_error", "code": "invalid_request"
+        }})),
+    )
+        .into_response()
+}
+
+/// Preserves extractor diagnostics and transport statuses; JSON content errors remain HTTP 400.
+pub(super) fn json_error(error: JsonRejection) -> Response {
+    let status = match error.status() {
+        StatusCode::UNPROCESSABLE_ENTITY => StatusCode::BAD_REQUEST,
+        status => status,
+    };
+    let mut response = client_error(error.body_text());
+    *response.status_mut() = status;
+    response
+}
+
+/// Maps every typed pre-response generation failure to a fixed OpenAI error.
+pub(crate) fn openai_error(error: GenerationError) -> Response {
+    let (status, message, kind, code) = match error {
+        GenerationError::InvalidRequest => return client_error("invalid request"),
+        GenerationError::ModelNotFound => (
+            StatusCode::NOT_FOUND,
+            "model not found",
+            "invalid_request_error",
+            "model_not_found",
+        ),
+        GenerationError::Unavailable | GenerationError::BackendBusy => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "generation service is unavailable",
+            "server_error",
+            "unavailable",
+        ),
+        GenerationError::Overloaded => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "generation service is overloaded",
+            "server_error",
+            "overloaded",
+        ),
+        GenerationError::QueueTimeout => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admission queue timeout exceeded",
+            "server_error",
+            "queue_timeout",
+        ),
+        GenerationError::AdmissionCapacityExceeded => (
+            StatusCode::BAD_REQUEST,
+            "request fan-out exceeds configured admission capacity",
+            "invalid_request_error",
+            "concurrency_limit_exceeded",
+        ),
+        GenerationError::DeadlineExceeded => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "request deadline exceeded",
+            "server_error",
+            "request_timeout",
+        ),
+        GenerationError::BackendRejected => (
+            StatusCode::BAD_GATEWAY,
+            "model server rejected the request",
+            "server_error",
+            "backend_rejected",
+        ),
+        GenerationError::BackendProtocol => (
+            StatusCode::BAD_GATEWAY,
+            "model server protocol failed",
+            "server_error",
+            "backend_protocol",
+        ),
+        GenerationError::RequestFailed => (
+            StatusCode::BAD_GATEWAY,
+            "model server request failed",
+            "server_error",
+            "request_failed",
+        ),
+        GenerationError::Internal => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal server error",
+            "server_error",
+            "internal_error",
+        ),
+    };
+    (
+        status,
+        Json(json!({"error": {"message": message, "type": kind, "code": code}})),
+    )
+        .into_response()
+}
 /// Checks the supported image URL form without echoing media data.
 fn validate_image_data_url(value: &str) -> Result<(), &'static str> {
     if value.split_once(',').is_some_and(|(metadata, payload)| {

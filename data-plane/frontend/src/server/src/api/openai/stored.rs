@@ -28,6 +28,22 @@ pub(crate) struct ChatArchive {
     pub(super) metadata: Value,
 }
 
+#[derive(Default, Deserialize)]
+struct ListCompletions {
+    after: Option<String>,
+    limit: Option<usize>,
+    order: Option<Order>,
+    model: Option<String>,
+    #[serde(flatten)]
+    filters: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateCompletion {
+    metadata: Map<String, Value>,
+}
+
 impl ChatArchive {
     /// Captures validated original messages with new public IDs, preserving structured content.
     pub(super) fn new(
@@ -59,22 +75,6 @@ impl ChatArchive {
             .chat_save(&self.caller, body, &self.original_messages)
             .await
     }
-}
-
-#[derive(Default, Deserialize)]
-struct ListCompletions {
-    after: Option<String>,
-    limit: Option<usize>,
-    order: Option<Order>,
-    model: Option<String>,
-    #[serde(flatten)]
-    filters: HashMap<String, String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UpdateCompletion {
-    metadata: Map<String, Value>,
 }
 
 /// Registers archive reads and metadata updates separately from the generation handler.

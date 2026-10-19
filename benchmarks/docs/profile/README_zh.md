@@ -68,9 +68,9 @@ Nsight Systems 采集 CUDA 和 NVTX 时间线。在模型启动前通过 `ModelS
 使用与模型服务匹配的 NVIDIA model-server 镜像制作 Linux x86_64 诊断镜像。将 `MODEL_SERVER_IMAGE` 设为该基础镜像，`NSIGHT_IMAGE` 设为有推送权限、且集群可以拉取的目标镜像地址：
 
 ```bash
-docker build -f deploy/inference-engines/nsight/Dockerfile \
+docker build -f deploy/profiling/nsight/Dockerfile \
   --build-arg MODEL_SERVER_IMAGE="$MODEL_SERVER_IMAGE" \
-  -t "$NSIGHT_IMAGE" deploy/inference-engines/nsight
+  -t "$NSIGHT_IMAGE" deploy/profiling/nsight
 docker push "$NSIGHT_IMAGE"
 ```
 

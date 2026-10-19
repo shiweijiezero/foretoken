@@ -58,6 +58,17 @@ class DeploymentLifecycle:
         with CommandExecution.current() or CommandExecution(timeout_seconds(timeout)):
             return self._apply(deployment, timeout, editable=editable, engine_sources=engine_sources)
 
+    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
+        """Drain an explicitly deleted deployment before removing its controller and namespace."""
+        timeout_seconds(timeout)
+        namespace = deployment.namespace or self.kubectl.current_namespace()
+        with (
+            CommandExecution.current() or CommandExecution(timeout_seconds(timeout)),
+            source_operation(self.kubectl, timeout),
+            NamespaceMutation(self.kubectl, namespace, timeout).hold(),
+        ):
+            self._delete(deployment, timeout)
+
     def _apply(
         self, deployment: ForetokenDeployment, timeout: str, *,
         editable: str | None, engine_sources: tuple[str, ...],
@@ -400,17 +411,6 @@ class DeploymentLifecycle:
                 removed.add(current["metadata"]["uid"])
                 break
         return removed
-
-    def delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
-        """Drain an explicitly deleted deployment before removing its controller and namespace."""
-        timeout_seconds(timeout)
-        namespace = deployment.namespace or self.kubectl.current_namespace()
-        with (
-            CommandExecution.current() or CommandExecution(timeout_seconds(timeout)),
-            source_operation(self.kubectl, timeout),
-            NamespaceMutation(self.kubectl, namespace, timeout).hold(),
-        ):
-            self._delete(deployment, timeout)
 
     def _delete(self, deployment: ForetokenDeployment, timeout: str) -> None:
         """Keep the finalizer owner alive until all namespace resources have retired."""

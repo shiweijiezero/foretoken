@@ -41,6 +41,11 @@ pub struct CallerCapacity {
     pub max_concurrent_requests: u32,
 }
 
+/// Invalid resolved settings; the active publication remains in effect.
+#[derive(Debug, Error)]
+#[error("invalid admission configuration: {0}")]
+pub struct AdmissionConfigError(pub String);
+
 impl AdmissionConfig {
     /// Validates a candidate without modifying the live queue or reservation ledger.
     pub(crate) fn validate(&self) -> Result<(), AdmissionConfigError> {
@@ -92,8 +97,3 @@ impl AdmissionConfig {
             .transpose()
     }
 }
-
-/// Invalid resolved settings; the active publication remains in effect.
-#[derive(Debug, Error)]
-#[error("invalid admission configuration: {0}")]
-pub struct AdmissionConfigError(pub String);

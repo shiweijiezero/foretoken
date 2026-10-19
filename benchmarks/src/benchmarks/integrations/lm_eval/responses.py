@@ -17,14 +17,6 @@ from typing import Any, NamedTuple, Self
 logger = logging.getLogger(__name__)
 
 
-def restore_progress(source: Path, native: Path) -> None:
-    """Stage a closed response archive for the new run, leaving the previous run unchanged."""
-    database = source / LmEvalResponses.filename
-    if not database.is_file():
-        raise ValueError("The previous lm-eval run has no saved evaluation progress")
-    shutil.copyfile(database, native.parent / LmEvalResponses.filename)
-
-
 class ResponseSlot(NamedTuple):
     """Pair a completion callback with its position in the harness's requested samples."""
 
@@ -147,3 +139,11 @@ class LmEvalResponses:
             else:
                 slot = req if isinstance(req, ResponseSlot) else self.claim(req)
                 self.connection.execute("INSERT INTO responses VALUES (?, ?, ?)", (*slot, res))
+
+
+def restore_progress(source: Path, native: Path) -> None:
+    """Stage a closed response archive for the new run, leaving the previous run unchanged."""
+    database = source / LmEvalResponses.filename
+    if not database.is_file():
+        raise ValueError("The previous lm-eval run has no saved evaluation progress")
+    shutil.copyfile(database, native.parent / LmEvalResponses.filename)

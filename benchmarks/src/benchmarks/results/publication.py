@@ -26,6 +26,136 @@ from benchmarks.results.wandb_sync import publication_lock
 logger = logging.getLogger(__name__)
 
 
+def result_sources(directory: Path, *others: Path) -> list[Path]:
+    """Wait for selected recorders to seal and resolve task owners for plotting and publication."""
+    from benchmarks.results.plots.saved_results import discover_result_directories
+    from benchmarks.results.tasks import task_source
+
+    ordered = []
+    visited = set()
+
+    def visit(source: Path) -> None:
+        if source in visited:
+            return
+        if not source.is_dir():
+            raise ValueError(f"Referenced result directory is missing: {source}; retain the original task results when moving a resumed run")
+        visited.add(source)
+        owned = (source / "context.json").is_file()
+        if owned and json.loads((source / "context.json").read_text()).get("status") == "running":
+            logger.info("Waiting for the result recorder to close: %s", source)
+        # A running aggregate can create more children. Discover them only after
+        # its recorder seals, then release its lock before waiting on any child.
+        with publication_lock(source) if owned else nullcontext():
+            children = {task_source(path.parent) for path in source.rglob("task.json")}
+            children.update(path.parent for path in source.rglob("publication.json"))
+            children.update(path.parent for path in source.rglob("wandb.json"))
+        for child in sorted(children - {source}):
+            visit(child)
+        if owned:
+            ordered.append(source)
+
+    for selected in discover_result_directories((directory, *others)):
+        visit(selected.directory)
+    return ordered
+
+
+def sync_results(sources: list[Path], *, figures: Path, figure_owner: Path | None) -> None:
+    """Publish resolved runs independently, attaching a plot export only to its recorded owner."""
+    recordings = [source for source in sources
+                  if (source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb"))]
+    if not recordings:
+        raise ValueError("No W&B recordings found in the selected results")
+    failures = []
+    for source in recordings:
+        try:
+            sync_publication(source, plots=figures if source == figure_owner else None, exclude_plots=figures)
+        except (OSError, ValueError, RuntimeError, wandb.errors.Error) as error:
+            logger.error("W&B publication failed for %s: %s", source, error)
+            failures.append(error)
+    if failures:
+        raise RuntimeError(f"W&B publication failed for {len(failures)} run(s)") from failures[0]
+
+
+def sync_publication(
+    directory: Path, *, native_synced: bool = False,
+    plots: Path | None = None, exclude_plots: Path | None = None,
+) -> None:
+    """Publish a sealed recording, including diagnostics from an interrupted measurement."""
+    directory = directory.resolve()
+    with publication_lock(directory):
+        context = json.loads((directory / "context.json").read_text())
+        publication = None
+        run = None
+        try:
+            saved_inputs = (directory / "publication.json").is_file() or (directory / "metrics.json").is_file()
+            if _measurement_complete(directory, context) and saved_inputs:
+                publication = _publication_inputs(directory, context)
+                run = _restore_run(directory, publication)
+            elif context["status"] == "completed":
+                raise ValueError(f"Completed results are missing metrics.json in {directory}")
+        except (OSError, ValueError) as error:
+            try:
+                _publish_wandb(directory, None, None, native_synced=native_synced)
+            except (OSError, ValueError, RuntimeError, wandb.errors.Error):
+                logger.exception("W&B diagnostic publication also failed")
+            _record_publication_error(directory, error, publication)
+            raise
+        if run is not None:
+            if exclude_plots is not None and run.artifacts.get("plots") == exclude_plots:
+                run.artifacts.pop("plots")
+            if plots is not None:
+                run.artifacts["plots"] = plots
+                if plots.is_relative_to(directory):
+                    publication["artifacts"]["plots"] = plots.relative_to(directory).as_posix()
+        _publish_wandb(directory, run, publication, native_synced=native_synced, refresh_plots=plots is not None)
+
+
+def recover_results(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
+    """Finish completed children before their aggregate, retaining each original measurement and run."""
+    directory = directory.resolve()
+    for source in result_sources(directory):
+        if source == directory:
+            continue
+        context = json.loads((source / "context.json").read_text())
+        if _measurement_complete(source, context):
+            recover_publication(source, outputs.for_child_run())
+        elif (
+            outputs.includes("wandb") and wandb.setup().settings.mode not in {"offline", "dryrun", "disabled"}
+            and ((source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb")))
+        ):
+            sync_publication(source)
+    return recover_publication(directory, outputs)
+
+
+def recover_publication(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
+    """Own saved-output finalization after any active recorder releases its measurement."""
+    directory = directory.resolve()
+    with publication_lock(directory):
+        context = json.loads((directory / "context.json").read_text())
+        if not _measurement_complete(directory, context):
+            raise ValueError(f"No completed measurement to recover in {directory}")
+        publication = _publication_inputs(directory, context)
+        run = _restore_run(directory, publication)
+        if outputs.includes("plot"):
+            from benchmarks.results.plots import render_results
+
+            render_results(directory)
+            run.artifacts["plots"] = directory / "plots"
+        publication["artifacts"] = {
+            name: Path(os.path.relpath(path, directory)).as_posix() for name, path in run.artifacts.items()
+        }
+        mode = wandb.setup().settings.mode if outputs.includes("wandb") else "disabled"
+        if mode not in {"offline", "dryrun", "disabled"}:
+            _publish_wandb(directory, run, publication)
+        else:
+            publication.update(
+                publication_pending=mode in {"offline", "dryrun"}, recovered_at=datetime.now(UTC).isoformat(),
+            )
+            write_json(str(directory), "publication.json", publication)
+        logger.info("Recovered saved results without measurement: %s", directory)
+        return run
+
+
 def _publishers() -> dict[str, Callable[[Any, BenchmarkRun], None]]:
     """Map saved result kinds to their existing destination adapters explicitly."""
     from benchmarks.results.distribution_comparison import (
@@ -341,133 +471,3 @@ def _upload_wandb(
         identity.pop("recovered", None)
         identity.pop("publication_error", None)
         write_json(str(directory), "wandb.json", identity)
-
-
-def result_sources(directory: Path, *others: Path) -> list[Path]:
-    """Wait for selected recorders to seal and resolve task owners for plotting and publication."""
-    from benchmarks.results.plots.saved_results import discover_result_directories
-    from benchmarks.results.tasks import task_source
-
-    ordered = []
-    visited = set()
-
-    def visit(source: Path) -> None:
-        if source in visited:
-            return
-        if not source.is_dir():
-            raise ValueError(f"Referenced result directory is missing: {source}; retain the original task results when moving a resumed run")
-        visited.add(source)
-        owned = (source / "context.json").is_file()
-        if owned and json.loads((source / "context.json").read_text()).get("status") == "running":
-            logger.info("Waiting for the result recorder to close: %s", source)
-        # A running aggregate can create more children. Discover them only after
-        # its recorder seals, then release its lock before waiting on any child.
-        with publication_lock(source) if owned else nullcontext():
-            children = {task_source(path.parent) for path in source.rglob("task.json")}
-            children.update(path.parent for path in source.rglob("publication.json"))
-            children.update(path.parent for path in source.rglob("wandb.json"))
-        for child in sorted(children - {source}):
-            visit(child)
-        if owned:
-            ordered.append(source)
-
-    for selected in discover_result_directories((directory, *others)):
-        visit(selected.directory)
-    return ordered
-
-
-def sync_results(sources: list[Path], *, figures: Path, figure_owner: Path | None) -> None:
-    """Publish resolved runs independently, attaching a plot export only to its recorded owner."""
-    recordings = [source for source in sources
-                  if (source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb"))]
-    if not recordings:
-        raise ValueError("No W&B recordings found in the selected results")
-    failures = []
-    for source in recordings:
-        try:
-            sync_publication(source, plots=figures if source == figure_owner else None, exclude_plots=figures)
-        except (OSError, ValueError, RuntimeError, wandb.errors.Error) as error:
-            logger.error("W&B publication failed for %s: %s", source, error)
-            failures.append(error)
-    if failures:
-        raise RuntimeError(f"W&B publication failed for {len(failures)} run(s)") from failures[0]
-
-
-def sync_publication(
-    directory: Path, *, native_synced: bool = False,
-    plots: Path | None = None, exclude_plots: Path | None = None,
-) -> None:
-    """Publish a sealed recording, including diagnostics from an interrupted measurement."""
-    directory = directory.resolve()
-    with publication_lock(directory):
-        context = json.loads((directory / "context.json").read_text())
-        publication = None
-        run = None
-        try:
-            saved_inputs = (directory / "publication.json").is_file() or (directory / "metrics.json").is_file()
-            if _measurement_complete(directory, context) and saved_inputs:
-                publication = _publication_inputs(directory, context)
-                run = _restore_run(directory, publication)
-            elif context["status"] == "completed":
-                raise ValueError(f"Completed results are missing metrics.json in {directory}")
-        except (OSError, ValueError) as error:
-            try:
-                _publish_wandb(directory, None, None, native_synced=native_synced)
-            except (OSError, ValueError, RuntimeError, wandb.errors.Error):
-                logger.exception("W&B diagnostic publication also failed")
-            _record_publication_error(directory, error, publication)
-            raise
-        if run is not None:
-            if exclude_plots is not None and run.artifacts.get("plots") == exclude_plots:
-                run.artifacts.pop("plots")
-            if plots is not None:
-                run.artifacts["plots"] = plots
-                if plots.is_relative_to(directory):
-                    publication["artifacts"]["plots"] = plots.relative_to(directory).as_posix()
-        _publish_wandb(directory, run, publication, native_synced=native_synced, refresh_plots=plots is not None)
-
-
-def recover_results(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
-    """Finish completed children before their aggregate, retaining each original measurement and run."""
-    directory = directory.resolve()
-    for source in result_sources(directory):
-        if source == directory:
-            continue
-        context = json.loads((source / "context.json").read_text())
-        if _measurement_complete(source, context):
-            recover_publication(source, outputs.for_child_run())
-        elif (
-            outputs.includes("wandb") and wandb.setup().settings.mode not in {"offline", "dryrun", "disabled"}
-            and ((source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb")))
-        ):
-            sync_publication(source)
-    return recover_publication(directory, outputs)
-
-
-def recover_publication(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
-    """Own saved-output finalization after any active recorder releases its measurement."""
-    directory = directory.resolve()
-    with publication_lock(directory):
-        context = json.loads((directory / "context.json").read_text())
-        if not _measurement_complete(directory, context):
-            raise ValueError(f"No completed measurement to recover in {directory}")
-        publication = _publication_inputs(directory, context)
-        run = _restore_run(directory, publication)
-        if outputs.includes("plot"):
-            from benchmarks.results.plots import render_results
-
-            render_results(directory)
-            run.artifacts["plots"] = directory / "plots"
-        publication["artifacts"] = {
-            name: Path(os.path.relpath(path, directory)).as_posix() for name, path in run.artifacts.items()
-        }
-        mode = wandb.setup().settings.mode if outputs.includes("wandb") else "disabled"
-        if mode not in {"offline", "dryrun", "disabled"}:
-            _publish_wandb(directory, run, publication)
-        else:
-            publication.update(
-                publication_pending=mode in {"offline", "dryrun"}, recovered_at=datetime.now(UTC).isoformat(),
-            )
-            write_json(str(directory), "publication.json", publication)
-        logger.info("Recovered saved results without measurement: %s", directory)
-        return run

@@ -54,44 +54,6 @@ pub const MODEL_METADATA_FILES: &[&str] = &[
     "vocab.txt",
 ];
 
-/// Resolves a controller-owned relative publication scope below the model root.
-/// Both model preparation and frontend metadata staging use this directory boundary.
-pub fn preparation_directory(model_root: &Path, scope: &str) -> io::Result<PathBuf> {
-    let relative = Path::new(scope);
-    if scope.is_empty()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid model preparation scope",
-        ));
-    }
-    Ok(model_root.join("prepared").join(relative))
-}
-
-/// Returns the controller-projected persistent model root.
-pub fn model_root() -> Option<PathBuf> {
-    env_path(MODEL_ROOT_ENV)
-}
-
-/// Returns the Pod-scoped model root used when persistent frontend storage is unavailable.
-pub fn temporary_model_root() -> Option<PathBuf> {
-    env_path(TEMPORARY_MODEL_ROOT_ENV)
-}
-
-/// Returns the ModelScope SDK cache below one model root.
-pub fn modelscope_cache_root(model_root: &Path) -> PathBuf {
-    model_root.join("modelscope")
-}
-
-fn env_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-}
-
 /// Resolve a directory for frontend or model-server, relative to an optional model root.
 ///
 /// A missing relative directory leaves the identifier available for Hub resolution.
@@ -140,4 +102,42 @@ pub fn resolve_directory(root: Option<&Path>, identifier: &str) -> io::Result<Op
         ));
     }
     Ok(Some(directory))
+}
+
+/// Resolves a controller-owned relative publication scope below the model root.
+/// Both model preparation and frontend metadata staging use this directory boundary.
+pub fn preparation_directory(model_root: &Path, scope: &str) -> io::Result<PathBuf> {
+    let relative = Path::new(scope);
+    if scope.is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid model preparation scope",
+        ));
+    }
+    Ok(model_root.join("prepared").join(relative))
+}
+
+/// Returns the controller-projected persistent model root.
+pub fn model_root() -> Option<PathBuf> {
+    env_path(MODEL_ROOT_ENV)
+}
+
+/// Returns the Pod-scoped model root used when persistent frontend storage is unavailable.
+pub fn temporary_model_root() -> Option<PathBuf> {
+    env_path(TEMPORARY_MODEL_ROOT_ENV)
+}
+
+/// Returns the ModelScope SDK cache below one model root.
+pub fn modelscope_cache_root(model_root: &Path) -> PathBuf {
+    model_root.join("modelscope")
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }

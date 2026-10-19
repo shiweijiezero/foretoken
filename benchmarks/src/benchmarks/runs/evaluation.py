@@ -33,104 +33,6 @@ from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_tim
 logger = logging.getLogger(__name__)
 
 
-def _poll_progress(
-    evaluator: str, native: Path, stop: Event, publish: Callable[[dict[str, Any]], None],
-) -> None:
-    """Observe durable native completions independently of evaluator stdout and flush on shutdown."""
-    started = time.monotonic()
-    previous = None
-    reader = EvalScopeProgress() if evaluator == "evalscope" else None
-    while True:
-        # A stop received during publication still requires a final snapshot read.
-        stopping = stop.is_set()
-        path = native / PROGRESS_FILENAME
-        if path.is_file():
-            snapshot = json.loads(path.read_text(encoding="utf-8"))
-            counts = reader.read(
-                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["cache_files"],
-            ) if reader else snapshot
-            if counts is not None and counts != previous:
-                publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
-                previous = counts
-        if stopping:
-            return
-        stop.wait(1)
-
-
-def _execute(
-    config: EvaluationConfig, service: ModelService, directory: Path,
-    publish_progress: Callable[[dict[str, Any]], None],
-    outputs: ResultOutputs,
-) -> int:
-    """Stream native progress into a retained log; interrupt and reap the child before service cleanup."""
-    native = directory / "native"
-    native.mkdir()
-    payload = {
-        "evaluator": config.evaluator,
-        "arguments": config.arguments,
-        "directory": str(native),
-        "resume": config.resume,
-        "service": {
-            "model": service.model,
-            "api_key": service.api_key,
-            "chat_url": service.chat_completions_url,
-            "api_root": service.api_root,
-            "headers": service.request_headers,
-            **({"tokenizer_identity": service.tokenizer_identity} if config.evaluator == "lm-eval" else {}),
-        },
-    }
-    # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
-    with (
-        (directory / "evaluator.log").open("w", encoding="utf-8") as log,
-        ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-progress") as executor,
-        subprocess.Popen(
-            [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        ) as process,
-    ):
-        stop = Event()
-        progress = executor.submit(_poll_progress, config.evaluator, native, stop, publish_progress)
-        try:
-            outputs.start_measurement()
-            process.stdin.write(json.dumps(payload))
-            process.stdin.close()
-            for line in process.stdout:
-                if progress.done():
-                    progress.result()
-                if service.api_key and service.api_key != "EMPTY":
-                    line = line.replace(service.api_key, "[redacted]")
-                log.write(line)
-                log.flush()
-                print(line, end="", flush=True)
-            code = process.wait()
-            outputs.finish_measurement(code)
-            return code
-        except BaseException:
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-            raise
-        finally:
-            error = sys.exception()
-            stop.set()
-            try:
-                progress.result()
-            except BaseException:
-                if error is None:
-                    raise
-                logger.exception("Evaluation progress cleanup also failed")
-
-
 def run_evaluation(
     config: EvaluationConfig,
     service: ModelService,
@@ -251,3 +153,101 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
             ))
         if failure:
             raise SystemExit(1)
+
+
+def _poll_progress(
+    evaluator: str, native: Path, stop: Event, publish: Callable[[dict[str, Any]], None],
+) -> None:
+    """Observe durable native completions independently of evaluator stdout and flush on shutdown."""
+    started = time.monotonic()
+    previous = None
+    reader = EvalScopeProgress() if evaluator == "evalscope" else None
+    while True:
+        # A stop received during publication still requires a final snapshot read.
+        stopping = stop.is_set()
+        path = native / PROGRESS_FILENAME
+        if path.is_file():
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+            counts = reader.read(
+                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["cache_files"],
+            ) if reader else snapshot
+            if counts is not None and counts != previous:
+                publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
+                previous = counts
+        if stopping:
+            return
+        stop.wait(1)
+
+
+def _execute(
+    config: EvaluationConfig, service: ModelService, directory: Path,
+    publish_progress: Callable[[dict[str, Any]], None],
+    outputs: ResultOutputs,
+) -> int:
+    """Stream native progress into a retained log; interrupt and reap the child before service cleanup."""
+    native = directory / "native"
+    native.mkdir()
+    payload = {
+        "evaluator": config.evaluator,
+        "arguments": config.arguments,
+        "directory": str(native),
+        "resume": config.resume,
+        "service": {
+            "model": service.model,
+            "api_key": service.api_key,
+            "chat_url": service.chat_completions_url,
+            "api_root": service.api_root,
+            "headers": service.request_headers,
+            **({"tokenizer_identity": service.tokenizer_identity} if config.evaluator == "lm-eval" else {}),
+        },
+    }
+    # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
+    with (
+        (directory / "evaluator.log").open("w", encoding="utf-8") as log,
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-progress") as executor,
+        subprocess.Popen(
+            [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        ) as process,
+    ):
+        stop = Event()
+        progress = executor.submit(_poll_progress, config.evaluator, native, stop, publish_progress)
+        try:
+            outputs.start_measurement()
+            process.stdin.write(json.dumps(payload))
+            process.stdin.close()
+            for line in process.stdout:
+                if progress.done():
+                    progress.result()
+                if service.api_key and service.api_key != "EMPTY":
+                    line = line.replace(service.api_key, "[redacted]")
+                log.write(line)
+                log.flush()
+                print(line, end="", flush=True)
+            code = process.wait()
+            outputs.finish_measurement(code)
+            return code
+        except BaseException:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            raise
+        finally:
+            error = sys.exception()
+            stop.set()
+            try:
+                progress.result()
+            except BaseException:
+                if error is None:
+                    raise
+                logger.exception("Evaluation progress cleanup also failed")

@@ -67,11 +67,6 @@ from foretoken.platform.resources import (
 from foretoken.platform.types import RuntimeOverrides
 
 
-def _print_plan(responsibility: str, action: str, detail: str) -> None:
-    """Print one stable installation lifecycle decision."""
-    print(f"{responsibility:<28} {action:<20} {detail}")
-
-
 @dataclass(frozen=True)
 class _RuntimeSelection:
     """One accelerator backend and Kubernetes resource selected for the platform."""
@@ -79,61 +74,6 @@ class _RuntimeSelection:
     backend: str
     resource_name: str
     nodes: tuple[dict[str, Any], ...]
-
-
-def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
-    """Return one node's allocatable extended-resource capacity."""
-    value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _select_runtime(
-    nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides
-) -> _RuntimeSelection | None:
-    """Select the single supported accelerator resource within the configured scope."""
-    selected_nodes = nodes
-    if overrides.gpu_node_selector is not None:
-        key, value = overrides.gpu_node_selector
-        if key:
-            selected_nodes = tuple(
-                node
-                for node in nodes
-                if ((node.get("metadata") or {}).get("labels") or {}).get(key) == value
-            )
-
-    if overrides.gpu_resource_name is not None:
-        resource_name = overrides.gpu_resource_name
-        if not resource_name:
-            return None
-    else:
-        resources = tuple(
-            resource
-            for resource in GPU_RESOURCE_BACKENDS
-            if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
-        )
-        if not resources:
-            return None
-        if len(resources) > 1:
-            raise DeploymentError(
-                "multiple accelerator resources are allocatable in the selected "
-                "cluster scope: "
-                + ", ".join(resources)
-                + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
-                "in --values"
-            )
-        resource_name = resources[0]
-    return _RuntimeSelection(
-        GPU_RESOURCE_BACKENDS.get(resource_name, "custom"),
-        resource_name,
-        tuple(
-            node
-            for node in selected_nodes
-            if _resource_capacity(node, resource_name) > 0
-        ),
-    )
 
 
 class PlatformLifecycle:
@@ -176,6 +116,11 @@ class PlatformLifecycle:
                 source_build_arguments=source_build_arguments,
                 execution=execution,
             )
+
+    def uninstall(self, command: UninstallCommand) -> None:
+        """Own command cancellation and exclusive source cleanup while removing the platform."""
+        with CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)), source_operation(self._kubectl, command.timeout):
+            self._uninstall(command)
 
     def _install(
         self,
@@ -756,11 +701,6 @@ class PlatformLifecycle:
                 )
             helm.wait_control_plane(release, command.timeout)
 
-    def uninstall(self, command: UninstallCommand) -> None:
-        """Own command cancellation and exclusive source cleanup while removing the platform."""
-        with CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)), source_operation(self._kubectl, command.timeout):
-            self._uninstall(command)
-
     def _uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
         helm = self._helm
@@ -916,3 +856,63 @@ class PlatformLifecycle:
                 *remove_build_storage(kubectl, platform.namespace, command.timeout),
             )
         forget_install(kubectl)
+
+
+def _print_plan(responsibility: str, action: str, detail: str) -> None:
+    """Print one stable installation lifecycle decision."""
+    print(f"{responsibility:<28} {action:<20} {detail}")
+
+
+def _select_runtime(
+    nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides
+) -> _RuntimeSelection | None:
+    """Select the single supported accelerator resource within the configured scope."""
+    selected_nodes = nodes
+    if overrides.gpu_node_selector is not None:
+        key, value = overrides.gpu_node_selector
+        if key:
+            selected_nodes = tuple(
+                node
+                for node in nodes
+                if ((node.get("metadata") or {}).get("labels") or {}).get(key) == value
+            )
+
+    if overrides.gpu_resource_name is not None:
+        resource_name = overrides.gpu_resource_name
+        if not resource_name:
+            return None
+    else:
+        resources = tuple(
+            resource
+            for resource in GPU_RESOURCE_BACKENDS
+            if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
+        )
+        if not resources:
+            return None
+        if len(resources) > 1:
+            raise DeploymentError(
+                "multiple accelerator resources are allocatable in the selected "
+                "cluster scope: "
+                + ", ".join(resources)
+                + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
+                "in --values"
+            )
+        resource_name = resources[0]
+    return _RuntimeSelection(
+        GPU_RESOURCE_BACKENDS.get(resource_name, "custom"),
+        resource_name,
+        tuple(
+            node
+            for node in selected_nodes
+            if _resource_capacity(node, resource_name) > 0
+        ),
+    )
+
+
+def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
+    """Return one node's allocatable extended-resource capacity."""
+    value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0

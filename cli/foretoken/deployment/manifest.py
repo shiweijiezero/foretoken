@@ -51,6 +51,20 @@ class ForetokenDeployment:
         )
 
 
+def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
+    """Render a deployment and resolve its services to the active Kubernetes namespace."""
+    path = deployment_path(path_value)
+    deployment = parse_deployment(path, kubectl.kustomize(path))
+    if deployment.namespace:
+        return deployment
+    config = json.loads(kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout)
+    namespace = config["contexts"][0]["context"].get("namespace") or "default"
+    for obj in deployment.objects:
+        if obj.get("kind") in {"ModelService", "FrontendService"}:
+            obj["metadata"]["namespace"] = namespace
+    return parse_deployment(path, yaml.safe_dump_all(deployment.objects, sort_keys=False))
+
+
 def service_requires_execution(service: dict[str, Any]) -> bool:
     """Tell deployment preparation whether a model or frontend needs running instances."""
     spec = service.get("spec") or {}
@@ -177,17 +191,3 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
         runtime_caches=tuple(runtime_caches),
         objects=tuple(documents),
     )
-
-
-def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
-    """Render a deployment and resolve its services to the active Kubernetes namespace."""
-    path = deployment_path(path_value)
-    deployment = parse_deployment(path, kubectl.kustomize(path))
-    if deployment.namespace:
-        return deployment
-    config = json.loads(kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout)
-    namespace = config["contexts"][0]["context"].get("namespace") or "default"
-    for obj in deployment.objects:
-        if obj.get("kind") in {"ModelService", "FrontendService"}:
-            obj["metadata"]["namespace"] = namespace
-    return parse_deployment(path, yaml.safe_dump_all(deployment.objects, sort_keys=False))

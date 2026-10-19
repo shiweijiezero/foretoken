@@ -73,47 +73,6 @@ class SourceImages:
     applications: dict[str, str]
 
 
-def build_arguments(environment: dict[str, str]) -> dict[str, str]:
-    """Map source mirror choices explicitly onto the existing image build interfaces."""
-    result = {
-        name: environment[name]
-        for name in (
-            "GOPROXY",
-            "GOSUMDB",
-            "FORETOKEN_GITHUB_MIRROR",
-            "FORETOKEN_CARGO_REGISTRY",
-            "CARGO_NET_GIT_FETCH_WITH_CLI",
-            "UV_DEFAULT_INDEX",
-            "UV_EXTRA_INDEX_URL",
-            "UV_IMAGE",
-            "METAX_SDK_IMAGE",
-            "MACA_PATH",
-            "MOONCAKE_VERSION",
-            "UV_PYTHON",
-            "FORETOKEN_VLLM_PYTHON",
-            "BUILD_JOBS",
-        )
-        if environment.get(name)
-    }
-    if environment.get("TORCH_CUDA_ARCH_LIST"):
-        result["TARGET_CUDA_ARCH_LIST"] = environment["TORCH_CUDA_ARCH_LIST"]
-    registry = environment.get("FORETOKEN_OCI_REGISTRY", "")
-    docker = environment.get("FORETOKEN_DOCKER_IO_REGISTRY", registry).rstrip("/")
-    ghcr = environment.get("FORETOKEN_GHCR_REGISTRY", registry).rstrip("/")
-    gcr = environment.get("FORETOKEN_GCR_REGISTRY", registry).rstrip("/")
-    if docker:
-        result.update(
-            BASE_IMAGE_REGISTRY=docker,
-            GO_IMAGE_REGISTRY=docker,
-            BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
-        )
-    if ghcr:
-        result["UV_IMAGE_REGISTRY"] = ghcr
-    if gcr:
-        result["DISTROLESS_IMAGE_REGISTRY"] = gcr
-    return result
-
-
 @contextmanager
 def prepare_source_images(
     command: InstallCommand,
@@ -500,11 +459,11 @@ def prepare_source_images(
                     pending_state["build"]["engine_caches"] = dict(engine_caches)
                     write_source_state(pending_path, pending_state)
                     selected = environments.build(
-                        "engine-source", "deploy/inference-engines/source-build.Dockerfile",
+                        "engine-source", "deploy/inference-engines/vllm/source-build.Dockerfile",
                         target="environment", arguments=engine_arguments,
                         node_arguments=node_arguments,
                         input_prefixes=(
-                            "engine/", "deploy/inference-engines/source-build.py",
+                            "engine/", "deploy/inference-engines/vllm/source-build.py",
                             "deploy/inference-engines/vllm-metax/source-environment.json",
                             "deploy/inference-engines/vllm-metax/sdk_audio.py",
                             "deploy/inference-engines/vllm-metax/patches/",
@@ -637,3 +596,44 @@ def prepare_source_images(
             },
             applications,
         )
+
+
+def build_arguments(environment: dict[str, str]) -> dict[str, str]:
+    """Map source mirror choices explicitly onto the existing image build interfaces."""
+    result = {
+        name: environment[name]
+        for name in (
+            "GOPROXY",
+            "GOSUMDB",
+            "FORETOKEN_GITHUB_MIRROR",
+            "FORETOKEN_CARGO_REGISTRY",
+            "CARGO_NET_GIT_FETCH_WITH_CLI",
+            "UV_DEFAULT_INDEX",
+            "UV_EXTRA_INDEX_URL",
+            "UV_IMAGE",
+            "METAX_SDK_IMAGE",
+            "MACA_PATH",
+            "MOONCAKE_VERSION",
+            "UV_PYTHON",
+            "FORETOKEN_VLLM_PYTHON",
+            "BUILD_JOBS",
+        )
+        if environment.get(name)
+    }
+    if environment.get("TORCH_CUDA_ARCH_LIST"):
+        result["TARGET_CUDA_ARCH_LIST"] = environment["TORCH_CUDA_ARCH_LIST"]
+    registry = environment.get("FORETOKEN_OCI_REGISTRY", "")
+    docker = environment.get("FORETOKEN_DOCKER_IO_REGISTRY", registry).rstrip("/")
+    ghcr = environment.get("FORETOKEN_GHCR_REGISTRY", registry).rstrip("/")
+    gcr = environment.get("FORETOKEN_GCR_REGISTRY", registry).rstrip("/")
+    if docker:
+        result.update(
+            BASE_IMAGE_REGISTRY=docker,
+            GO_IMAGE_REGISTRY=docker,
+            BUILDKIT_SYNTAX_IMAGE=f"{docker}/docker/dockerfile:1",
+        )
+    if ghcr:
+        result["UV_IMAGE_REGISTRY"] = ghcr
+    if gcr:
+        result["DISTROLESS_IMAGE_REGISTRY"] = gcr
+    return result

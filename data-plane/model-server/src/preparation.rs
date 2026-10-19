@@ -59,6 +59,104 @@ struct DownloadedArtifacts {
     tokenizer_files: Vec<String>,
 }
 
+/// Freezes source revisions for a controller-owned resolve-only Job without downloading weights.
+pub async fn resolve(plan: &LaunchPlanV1) -> io::Result<()> {
+    let name = std::env::var(SOURCE_CONFIG_MAP_ENV).map_err(io::Error::other)?;
+    let model_root = foretoken_artifacts::model_root().unwrap_or_else(std::env::temp_dir);
+    publish_source(plan, &model_root, &name).await?;
+    Ok(())
+}
+
+/// Publishes a source revision and materializes it under the Pool's cross-process lock.
+/// Serving processes read the mounted publication; filesystem paths are only a reusable cache.
+/// `require_publication` prevents a serving restart from choosing a new moving source revision.
+pub async fn prepare(
+    plan: &LaunchPlanV1,
+    model_root: &Path,
+    scope: &str,
+    require_publication: bool,
+    reusable_root: Option<&Path>,
+) -> io::Result<PreparedArtifacts> {
+    let directory = foretoken_artifacts::preparation_directory(model_root, scope)?;
+    let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
+        Some(publish_source(plan, model_root, &name).await?)
+    } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
+        Some(
+            read_source(Path::new(&path), &plan.artifacts)?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "mounted model source publication is missing",
+                )
+            })?,
+        )
+    } else {
+        read_source(&directory.join(SOURCE_KEY), &plan.artifacts)?
+    };
+    if let Some(source) = &source {
+        // Compile-cache write failure does not invalidate readable model snapshots.
+        // An inaccessible persistent path index is optional; acquisition uses the fixed publication.
+        if let Some(root) = reusable_root {
+            let reusable = foretoken_artifacts::preparation_directory(root, scope)?;
+            if let Ok(Some(result)) = load_result(&reusable, source) {
+                return Ok(result);
+            }
+        }
+        if let Some(result) = load_result(&directory, source)? {
+            return Ok(result);
+        }
+    } else if require_publication {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "published model source revisions are missing",
+        ));
+    }
+    fs::create_dir_all(&directory)?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(directory.join("prepare.lock"))?;
+    let _lock = tokio::task::spawn_blocking(move || {
+        lock.lock()?;
+        Ok::<_, io::Error>(lock)
+    })
+    .await
+    .map_err(io::Error::other)??;
+    let source = match source {
+        Some(source) => source,
+        None => match read_source(&directory.join(SOURCE_KEY), &plan.artifacts)? {
+            Some(source) => source,
+            None => {
+                let source = resolve_revisions(plan, model_root).await?;
+                publish_json(&directory, SOURCE_KEY, &source)?;
+                source
+            }
+        },
+    };
+    if let Some(result) = load_result(&directory, &source)? {
+        return Ok(result);
+    }
+    let mut command = provider_command(plan, model_root)?;
+    command
+        .env("FORETOKEN_PREPARE_ACTION", "download")
+        .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
+        .env(
+            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
+            &source.tokenizer_revision,
+        );
+    let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
+    let result = PreparedArtifacts {
+        source,
+        model: downloaded.model,
+        tokenizer: downloaded.tokenizer,
+        model_files: downloaded.model_files,
+        tokenizer_files: downloaded.tokenizer_files,
+    };
+    publish_json(&directory, "result.json", &result)?;
+    Ok(result)
+}
+
 impl PreparedArtifacts {
     /// Publishes the exact tokenizer source and files to frontend preparation.
     /// Only a persistent namespace/claim binding permits direct directory reuse.
@@ -287,104 +385,6 @@ async fn publish_source(
         response.error_for_status().map_err(io::Error::other)?;
         return Ok(source.clone());
     }
-}
-
-/// Freezes source revisions for a controller-owned resolve-only Job without downloading weights.
-pub async fn resolve(plan: &LaunchPlanV1) -> io::Result<()> {
-    let name = std::env::var(SOURCE_CONFIG_MAP_ENV).map_err(io::Error::other)?;
-    let model_root = foretoken_artifacts::model_root().unwrap_or_else(std::env::temp_dir);
-    publish_source(plan, &model_root, &name).await?;
-    Ok(())
-}
-
-/// Publishes a source revision and materializes it under the Pool's cross-process lock.
-/// Serving processes read the mounted publication; filesystem paths are only a reusable cache.
-/// `require_publication` prevents a serving restart from choosing a new moving source revision.
-pub async fn prepare(
-    plan: &LaunchPlanV1,
-    model_root: &Path,
-    scope: &str,
-    require_publication: bool,
-    reusable_root: Option<&Path>,
-) -> io::Result<PreparedArtifacts> {
-    let directory = foretoken_artifacts::preparation_directory(model_root, scope)?;
-    let source = if let Ok(name) = std::env::var(SOURCE_CONFIG_MAP_ENV) {
-        Some(publish_source(plan, model_root, &name).await?)
-    } else if let Some(path) = std::env::var_os(SOURCE_RECORD_ENV) {
-        Some(
-            read_source(Path::new(&path), &plan.artifacts)?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "mounted model source publication is missing",
-                )
-            })?,
-        )
-    } else {
-        read_source(&directory.join(SOURCE_KEY), &plan.artifacts)?
-    };
-    if let Some(source) = &source {
-        // Compile-cache write failure does not invalidate readable model snapshots.
-        // An inaccessible persistent path index is optional; acquisition uses the fixed publication.
-        if let Some(root) = reusable_root {
-            let reusable = foretoken_artifacts::preparation_directory(root, scope)?;
-            if let Ok(Some(result)) = load_result(&reusable, source) {
-                return Ok(result);
-            }
-        }
-        if let Some(result) = load_result(&directory, source)? {
-            return Ok(result);
-        }
-    } else if require_publication {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "published model source revisions are missing",
-        ));
-    }
-    fs::create_dir_all(&directory)?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(directory.join("prepare.lock"))?;
-    let _lock = tokio::task::spawn_blocking(move || {
-        lock.lock()?;
-        Ok::<_, io::Error>(lock)
-    })
-    .await
-    .map_err(io::Error::other)??;
-    let source = match source {
-        Some(source) => source,
-        None => match read_source(&directory.join(SOURCE_KEY), &plan.artifacts)? {
-            Some(source) => source,
-            None => {
-                let source = resolve_revisions(plan, model_root).await?;
-                publish_json(&directory, SOURCE_KEY, &source)?;
-                source
-            }
-        },
-    };
-    if let Some(result) = load_result(&directory, &source)? {
-        return Ok(result);
-    }
-    let mut command = provider_command(plan, model_root)?;
-    command
-        .env("FORETOKEN_PREPARE_ACTION", "download")
-        .env("FORETOKEN_PREPARE_MODEL_REVISION", &source.model_revision)
-        .env(
-            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
-            &source.tokenizer_revision,
-        );
-    let downloaded: DownloadedArtifacts = run_provider(&mut command).await?;
-    let result = PreparedArtifacts {
-        source,
-        model: downloaded.model,
-        tokenizer: downloaded.tokenizer,
-        model_files: downloaded.model_files,
-        tokenizer_files: downloaded.tokenizer_files,
-    };
-    publish_json(&directory, "result.json", &result)?;
-    Ok(result)
 }
 
 fn publish_json(directory: &Path, name: &str, value: &impl Serialize) -> io::Result<()> {

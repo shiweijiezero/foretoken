@@ -40,7 +40,7 @@ RUN python="${FORETOKEN_VLLM_PYTHON:-python3}" \
       'cmake>=3.26.1' ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81' \
       'setuptools-scm>=8' 'setuptools-rust>=1.9' wheel jinja2 build
 ENV PATH=/opt/foretoken-engine-build/python/bin:${PATH}
-COPY deploy/inference-engines/source-build.py /opt/foretoken-engine-build/source-build.py
+COPY deploy/inference-engines/vllm/source-build.py /opt/foretoken-engine-build/source-build.py
 COPY data-plane/patches/vllm/ /opt/foretoken-engine-build/patches/
 COPY data-plane/patches/vllm/vllm_patches.py /opt/foretoken-engine-build/
 COPY deploy/inference-engines/vllm-metax/source-environment.json \

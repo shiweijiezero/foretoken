@@ -79,97 +79,6 @@ class SweepAdapter(Protocol, Generic[ConfigT]):
     ) -> BenchmarkRun: ...
 
 
-def _axis_label(value: object) -> str:
-    """Use a named compound choice's label rather than its full configuration in paths."""
-    if isinstance(value, dict) and "name" in value:
-        return str(value["name"])
-    if isinstance(value, list) and all(isinstance(group, dict) for group in value):
-        return "-".join(
-            "+".join(f"{metric}{criterion}" for metric, criterion in group.items())
-            for group in value
-        )
-    return str(value)
-
-
-def sweep_point_name(point: SweepPoint) -> str:
-    """Return the explicit name or build a point name in JSONL parameter order."""
-    if _BENCHMARK_NAME in point:
-        return str(point[_BENCHMARK_NAME])
-    return (
-        "-".join(
-            f"{key}={_axis_label(value)}"
-            for key, value in point.items()
-            if key not in {_BENCHMARK_NAME, _PARAMETER_GROUP}
-        )
-        or "default"
-    )
-
-
-def sweep_directory_name(name: str) -> str:
-    """Convert a point name into a safe result directory name."""
-    return name.replace("/", "_").replace("..", "__").strip("'\"")
-
-
-def expand_sweep_point(
-    record: SweepPoint,
-    axis_fields: Mapping[str, Callable[[Any], Any]],
-) -> list[SweepPoint]:
-    """Expand adapter-owned list fields; each JSONL row remains a separate parameter group."""
-    active: dict[str, list[Any]] = {}
-    for key, caster in axis_fields.items():
-        if key not in record:
-            continue
-        value = record[key]
-        values = value if isinstance(value, list) else [value]
-        if not values:
-            raise ValueError(f"Sweep axis {key!r} cannot be empty")
-        active[key] = [caster(item) for item in values]
-    rest = {
-        key: value
-        for key, value in record.items()
-        if key not in axis_fields and key not in {_BENCHMARK_NAME, _PARAMETER_GROUP}
-    }
-    base_name = record.get(_BENCHMARK_NAME)
-    parameter_group = (
-        str(base_name) if base_name is not None else sweep_point_name(rest)
-    )
-    points = []
-    for values in itertools.product(*active.values()):
-        point = {**rest, **dict(zip(active, values)), _PARAMETER_GROUP: parameter_group}
-        if base_name is not None:
-            suffix = "-".join(f"{key}={_axis_label(point[key])}" for key in active)
-            point[_BENCHMARK_NAME] = (
-                f"{base_name}-{suffix}" if suffix else str(base_name)
-            )
-        points.append(point)
-    return points
-
-
-def load_sweep_points(
-    definition: SweepDefinition, adapter: SweepAdapter
-) -> list[SweepPoint]:
-    """Read JSONL, validate domain keys, and expand all sweep combinations."""
-    if not definition.path:
-        raise ValueError("Parameter sweep requires --sweep PATH")
-    points: list[SweepPoint] = []
-    for _, line_no, _, record in iter_jsonl_rows(definition.path, allow_comments=True):
-        if not isinstance(record, dict):
-            raise TypeError(
-                f"Each sweep JSONL line must be an object, got {type(record)} on line {line_no}"
-            )
-        adapter.validate_record(record, line_no)
-        points.extend(expand_sweep_point(record, adapter.axis_fields))
-    names = [sweep_directory_name(sweep_point_name(point)) for point in points]
-    duplicates = {name for name, count in Counter(names).items() if count > 1}
-    if duplicates:
-        raise ValueError(
-            "Duplicate sweep output directories: " + ", ".join(sorted(duplicates))
-        )
-    if not points:
-        raise ValueError("Parameter sweep contains no combinations")
-    return points
-
-
 def run_sweep(
     config: ConfigT,
     definition: SweepDefinition,
@@ -318,6 +227,97 @@ def run_sweep(
                            exit_code=0 if totals["sweep"]["status"] == "completed" else 1)
         outputs.publish(run)
     return SweepExecution(run, all_points, experiment_dir)
+
+
+def _axis_label(value: object) -> str:
+    """Use a named compound choice's label rather than its full configuration in paths."""
+    if isinstance(value, dict) and "name" in value:
+        return str(value["name"])
+    if isinstance(value, list) and all(isinstance(group, dict) for group in value):
+        return "-".join(
+            "+".join(f"{metric}{criterion}" for metric, criterion in group.items())
+            for group in value
+        )
+    return str(value)
+
+
+def sweep_point_name(point: SweepPoint) -> str:
+    """Return the explicit name or build a point name in JSONL parameter order."""
+    if _BENCHMARK_NAME in point:
+        return str(point[_BENCHMARK_NAME])
+    return (
+        "-".join(
+            f"{key}={_axis_label(value)}"
+            for key, value in point.items()
+            if key not in {_BENCHMARK_NAME, _PARAMETER_GROUP}
+        )
+        or "default"
+    )
+
+
+def sweep_directory_name(name: str) -> str:
+    """Convert a point name into a safe result directory name."""
+    return name.replace("/", "_").replace("..", "__").strip("'\"")
+
+
+def expand_sweep_point(
+    record: SweepPoint,
+    axis_fields: Mapping[str, Callable[[Any], Any]],
+) -> list[SweepPoint]:
+    """Expand adapter-owned list fields; each JSONL row remains a separate parameter group."""
+    active: dict[str, list[Any]] = {}
+    for key, caster in axis_fields.items():
+        if key not in record:
+            continue
+        value = record[key]
+        values = value if isinstance(value, list) else [value]
+        if not values:
+            raise ValueError(f"Sweep axis {key!r} cannot be empty")
+        active[key] = [caster(item) for item in values]
+    rest = {
+        key: value
+        for key, value in record.items()
+        if key not in axis_fields and key not in {_BENCHMARK_NAME, _PARAMETER_GROUP}
+    }
+    base_name = record.get(_BENCHMARK_NAME)
+    parameter_group = (
+        str(base_name) if base_name is not None else sweep_point_name(rest)
+    )
+    points = []
+    for values in itertools.product(*active.values()):
+        point = {**rest, **dict(zip(active, values)), _PARAMETER_GROUP: parameter_group}
+        if base_name is not None:
+            suffix = "-".join(f"{key}={_axis_label(point[key])}" for key in active)
+            point[_BENCHMARK_NAME] = (
+                f"{base_name}-{suffix}" if suffix else str(base_name)
+            )
+        points.append(point)
+    return points
+
+
+def load_sweep_points(
+    definition: SweepDefinition, adapter: SweepAdapter
+) -> list[SweepPoint]:
+    """Read JSONL, validate domain keys, and expand all sweep combinations."""
+    if not definition.path:
+        raise ValueError("Parameter sweep requires --sweep PATH")
+    points: list[SweepPoint] = []
+    for _, line_no, _, record in iter_jsonl_rows(definition.path, allow_comments=True):
+        if not isinstance(record, dict):
+            raise TypeError(
+                f"Each sweep JSONL line must be an object, got {type(record)} on line {line_no}"
+            )
+        adapter.validate_record(record, line_no)
+        points.extend(expand_sweep_point(record, adapter.axis_fields))
+    names = [sweep_directory_name(sweep_point_name(point)) for point in points]
+    duplicates = {name for name, count in Counter(names).items() if count > 1}
+    if duplicates:
+        raise ValueError(
+            "Duplicate sweep output directories: " + ", ".join(sorted(duplicates))
+        )
+    if not points:
+        raise ValueError("Parameter sweep contains no combinations")
+    return points
 
 
 def _scalar_metrics(value: Any, prefix: str = "") -> dict[str, float | int | None]:

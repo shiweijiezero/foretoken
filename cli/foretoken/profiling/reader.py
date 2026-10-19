@@ -28,6 +28,13 @@ CAPTURE_FORMATS: Final = {
 }
 
 
+def main() -> None:
+    """Run the packaged reader inside the temporary read-only PVC Pod."""
+    secret = os.environ[READER_SECRET_ENV]
+    with CaptureReader(("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret) as server:
+        server.serve_forever()
+
+
 def _capture_format(name: str) -> str | None:
     return next(
         (file_format for suffix, file_format in CAPTURE_FORMATS.items() if name.endswith(suffix)),
@@ -206,13 +213,6 @@ class CaptureHandler(BaseHTTPRequestHandler):
             except OSError:
                 # Headers already describe the trace; never append a JSON error to its bytes.
                 self.close_connection = True
-
-
-def main() -> None:
-    """Run the packaged reader inside the temporary read-only PVC Pod."""
-    secret = os.environ[READER_SECRET_ENV]
-    with CaptureReader(("0.0.0.0", READER_PORT), CAPTURE_MOUNT_PATH, secret) as server:
-        server.serve_forever()
 
 
 if __name__ == "__main__":

@@ -83,6 +83,21 @@ class DeploymentSubmission:
         with self.mutation.hold():
             self._begin()
 
+    def apply(self, rendered: str, *, patch_services: bool = False) -> None:
+        """Submit configuration or suspension without interleaving temporary retirement."""
+        with self.mutation.hold():
+            self._begin()
+            self._submit(rendered, patch_services=patch_services)
+
+    def check(self) -> None:
+        """Confirm namespace ownership and every expected service before further writes or observation."""
+        if not self.owns_namespace():
+            raise DeploymentError(
+                f"DeploymentSuperseded: Namespace/{self.namespace} was changed by another operation"
+            )
+        for ref in self.expected:
+            self._current(ref)
+
     def _begin(self) -> None:
         """Record actual namespace creation and advance ownership under the mutation lock."""
         if self._namespace is not None:
@@ -187,12 +202,6 @@ class DeploymentSubmission:
             == self.operation
         )
 
-    def apply(self, rendered: str, *, patch_services: bool = False) -> None:
-        """Submit configuration or suspension without interleaving temporary retirement."""
-        with self.mutation.hold():
-            self._begin()
-            self._submit(rendered, patch_services=patch_services)
-
     def _submit(self, rendered: str, *, patch_services: bool) -> None:
         """Record actual creations while applying service and dependency intent under one lock."""
         services = []
@@ -243,15 +252,6 @@ class DeploymentSubmission:
             self._apply_service(ref, value)
             if not suspended:
                 self._apply_service(ref, value, patch=True)
-
-    def check(self) -> None:
-        """Confirm namespace ownership and every expected service before further writes or observation."""
-        if not self.owns_namespace():
-            raise DeploymentError(
-                f"DeploymentSuperseded: Namespace/{self.namespace} was changed by another operation"
-            )
-        for ref in self.expected:
-            self._current(ref)
 
     def _current(self, ref: ResourceRef) -> dict[str, Any] | None:
         """Read current service intent and reject operations superseded during preparation."""

@@ -20,6 +20,11 @@ const (
 	ModelExpressMetadataPort int32 = 5555
 )
 
+// ModelDistributionProfile identifies the optional internal model-download service.
+type ModelDistributionProfile struct {
+	ProxyURL string
+}
+
 // ValidateModelExpressPorts checks the loader's native ports for selection and Pod projection.
 func ValidateModelExpressPorts(runtimePort, gpuCount int32, pd *api.ModelGroupPDRuntimeConfig) error {
 	reservedPorts := []int32{runtimePort, CacheObservationPort(runtimePort)}
@@ -40,11 +45,6 @@ func ValidateModelExpressPorts(runtimePort, gpuCount int32, pd *api.ModelGroupPD
 		return fmt.Errorf("ModelExpress metadata and worker ports overlap")
 	}
 	return nil
-}
-
-// ModelDistributionProfile identifies the optional internal model-download service.
-type ModelDistributionProfile struct {
-	ProxyURL string
 }
 
 // Validate checks the internal endpoint before preparation workers receive it.

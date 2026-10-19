@@ -31,88 +31,10 @@ struct BoundaryHistogram {
     sum_seconds: f64,
 }
 
-impl BoundaryHistogram {
-    fn new(boundaries: &'static [f64]) -> Self {
-        Self {
-            boundaries,
-            cumulative_counts: vec![0; boundaries.len()],
-            count: 0,
-            sum_seconds: 0.0,
-        }
-    }
-
-    fn observe(&mut self, seconds: f64) {
-        self.count += 1;
-        self.sum_seconds += seconds;
-        for (boundary, count) in self.boundaries.iter().zip(&mut self.cumulative_counts) {
-            if seconds <= *boundary {
-                *count += 1;
-            }
-        }
-    }
-
-    fn snapshot(&self) -> CumulativeHistogram {
-        CumulativeHistogram {
-            count: self.count,
-            sum_seconds: self.sum_seconds,
-            buckets: self
-                .boundaries
-                .iter()
-                .zip(&self.cumulative_counts)
-                .map(|(le_seconds, count)| CumulativeHistogramBucket {
-                    le_seconds: *le_seconds,
-                    count: *count,
-                })
-                .collect(),
-        }
-    }
-}
-
 pub(crate) struct BoundaryLatencyMetrics {
     ttft: BoundaryHistogram,
     tpot: BoundaryHistogram,
     e2e: BoundaryHistogram,
-}
-
-impl BoundaryLatencyMetrics {
-    /// Creates empty latency accumulators owned by the vLLM backend adapter.
-    pub(crate) fn new() -> Self {
-        Self {
-            ttft: BoundaryHistogram::new(TTFT_BUCKETS_SECONDS),
-            tpot: BoundaryHistogram::new(TPOT_BUCKETS_SECONDS),
-            e2e: BoundaryHistogram::new(E2E_BUCKETS_SECONDS),
-        }
-    }
-
-    /// Records one engine-boundary TTFT sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_ttft(&mut self, seconds: f64) {
-        self.ttft.observe(seconds);
-    }
-
-    /// Records one engine-boundary TPOT sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_tpot(&mut self, seconds: f64) {
-        self.tpot.observe(seconds);
-    }
-
-    /// Records one engine-boundary end-to-end sample for the stream adapter's telemetry snapshot.
-    pub(crate) fn observe_e2e(&mut self, seconds: f64) {
-        self.e2e.observe(seconds);
-    }
-
-    /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
-    pub(crate) fn snapshot(
-        &self,
-    ) -> (
-        CumulativeHistogram,
-        CumulativeHistogram,
-        CumulativeHistogram,
-    ) {
-        (
-            self.ttft.snapshot(),
-            self.tpot.snapshot(),
-            self.e2e.snapshot(),
-        )
-    }
 }
 
 pub(crate) struct VllmMetricsSnapshot {
@@ -207,6 +129,84 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
                 .get(labels)
                 .map(|metric| metric.get())
         }),
+    }
+}
+
+impl BoundaryLatencyMetrics {
+    /// Creates empty latency accumulators owned by the vLLM backend adapter.
+    pub(crate) fn new() -> Self {
+        Self {
+            ttft: BoundaryHistogram::new(TTFT_BUCKETS_SECONDS),
+            tpot: BoundaryHistogram::new(TPOT_BUCKETS_SECONDS),
+            e2e: BoundaryHistogram::new(E2E_BUCKETS_SECONDS),
+        }
+    }
+
+    /// Records one engine-boundary TTFT sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_ttft(&mut self, seconds: f64) {
+        self.ttft.observe(seconds);
+    }
+
+    /// Records one engine-boundary TPOT sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_tpot(&mut self, seconds: f64) {
+        self.tpot.observe(seconds);
+    }
+
+    /// Records one engine-boundary end-to-end sample for the stream adapter's telemetry snapshot.
+    pub(crate) fn observe_e2e(&mut self, seconds: f64) {
+        self.e2e.observe(seconds);
+    }
+
+    /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
+    pub(crate) fn snapshot(
+        &self,
+    ) -> (
+        CumulativeHistogram,
+        CumulativeHistogram,
+        CumulativeHistogram,
+    ) {
+        (
+            self.ttft.snapshot(),
+            self.tpot.snapshot(),
+            self.e2e.snapshot(),
+        )
+    }
+}
+
+impl BoundaryHistogram {
+    fn new(boundaries: &'static [f64]) -> Self {
+        Self {
+            boundaries,
+            cumulative_counts: vec![0; boundaries.len()],
+            count: 0,
+            sum_seconds: 0.0,
+        }
+    }
+
+    fn observe(&mut self, seconds: f64) {
+        self.count += 1;
+        self.sum_seconds += seconds;
+        for (boundary, count) in self.boundaries.iter().zip(&mut self.cumulative_counts) {
+            if seconds <= *boundary {
+                *count += 1;
+            }
+        }
+    }
+
+    fn snapshot(&self) -> CumulativeHistogram {
+        CumulativeHistogram {
+            count: self.count,
+            sum_seconds: self.sum_seconds,
+            buckets: self
+                .boundaries
+                .iter()
+                .zip(&self.cumulative_counts)
+                .map(|(le_seconds, count)| CumulativeHistogramBucket {
+                    le_seconds: *le_seconds,
+                    count: *count,
+                })
+                .collect(),
+        }
     }
 }
 

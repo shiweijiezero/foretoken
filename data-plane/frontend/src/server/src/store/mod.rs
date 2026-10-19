@@ -72,6 +72,23 @@ struct CachedItem {
     body: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Order {
+    Asc,
+    Desc,
+}
+
+/// Cursor parameters shared by stored-object and item listings.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PageQuery {
+    pub after: Option<String>,
+    pub before: Option<String>,
+    pub limit: Option<usize>,
+    pub order: Option<Order>,
+}
+
 impl ApiStore {
     /// Opens the controller-projected connection lazily; stateless requests need no API cache.
     pub(crate) fn from_env(
@@ -115,6 +132,37 @@ impl ApiStore {
             retention_seconds: seconds("FORETOKEN_RESPONSE_RETENTION_SECONDS")?,
             replay_seconds: seconds("FORETOKEN_RESPONSE_REPLAY_RETENTION_SECONDS")?,
         })))
+    }
+
+    /// Resolves a public item reference under the same caller scope as saved responses.
+    pub(crate) async fn item(&self, caller: &Caller, id: &str) -> Result<Value, StoreError> {
+        let body = self.transition("item", caller, json!({"id":id})).await?;
+        let mut value = decode_json(body)?;
+        value["id"] = json!(id);
+        Ok(value)
+    }
+
+    /// Identifies this cache's completion consumers without exposing its connection credentials.
+    pub(crate) fn completion_prefix(&self) -> &str {
+        &self.completion_prefix
+    }
+
+    /// Locates a response in this service's cache partition for completion and recovery.
+    pub(crate) fn response_ref(&self, id: &str) -> ResponseRef {
+        ResponseRef {
+            scope_prefix: self.prefix.clone(),
+            id: id.to_owned(),
+        }
+    }
+
+    /// Associates retained execution evidence with the cached response that consumes it.
+    pub(crate) fn completion_consumer(&self, id: &str) -> String {
+        format!("{}{}", self.completion_prefix, json!(self.response_ref(id)))
+    }
+
+    /// Checks physical record ownership before reclaiming a completed receipt after cache loss.
+    pub(crate) async fn has_response(&self, response: &ResponseRef) -> Result<bool, StoreError> {
+        self.transition("exists", &None, json!(response)).await
     }
 
     /// Runs a service-scoped atomic transition using the shared upstream Redis connection.
@@ -174,37 +222,6 @@ impl ApiStore {
             "stream_expired" => Err(StoreError::StreamExpired),
             _ => Err(StoreError::Corrupt),
         }
-    }
-
-    /// Resolves a public item reference under the same caller scope as saved responses.
-    pub(crate) async fn item(&self, caller: &Caller, id: &str) -> Result<Value, StoreError> {
-        let body = self.transition("item", caller, json!({"id":id})).await?;
-        let mut value = decode_json(body)?;
-        value["id"] = json!(id);
-        Ok(value)
-    }
-
-    /// Identifies this cache's completion consumers without exposing its connection credentials.
-    pub(crate) fn completion_prefix(&self) -> &str {
-        &self.completion_prefix
-    }
-
-    /// Locates a response in this service's cache partition for completion and recovery.
-    pub(crate) fn response_ref(&self, id: &str) -> ResponseRef {
-        ResponseRef {
-            scope_prefix: self.prefix.clone(),
-            id: id.to_owned(),
-        }
-    }
-
-    /// Associates retained execution evidence with the cached response that consumes it.
-    pub(crate) fn completion_consumer(&self, id: &str) -> String {
-        format!("{}{}", self.completion_prefix, json!(self.response_ref(id)))
-    }
-
-    /// Checks physical record ownership before reclaiming a completed receipt after cache loss.
-    pub(crate) async fn has_response(&self, response: &ResponseRef) -> Result<bool, StoreError> {
-        self.transition("exists", &None, json!(response)).await
     }
 }
 
@@ -279,23 +296,6 @@ pub(crate) fn input_items(input: Value) -> Result<Vec<Value>, StoreError> {
             Ok(item)
         })
         .collect()
-}
-
-/// Cursor parameters shared by stored-object and item listings.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct PageQuery {
-    pub after: Option<String>,
-    pub before: Option<String>,
-    pub limit: Option<usize>,
-    pub order: Option<Order>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Order {
-    Asc,
-    Desc,
 }
 
 impl PageQuery {

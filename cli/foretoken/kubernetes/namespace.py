@@ -42,27 +42,6 @@ class NamespaceMutation:
             / "foretoken/deployment-operations"
         )
 
-    def _recover_local(self, name: str, namespace: str) -> None:
-        """Release an abandoned local record only after its CLI and inherited subprocess locks exit."""
-        import fcntl
-
-        current = self.kubectl.get_if_exists("configmap", name, namespace)
-        if current is None:
-            return
-        owner = uuid.UUID(current["data"]["operation"]).hex
-        path = self.directory / owner
-        try:
-            stream = path.open("r+")
-        except FileNotFoundError:
-            return
-        with stream:
-            try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return
-            self.kubectl.delete_object(current, f"{self.timeout:g}s")
-            path.unlink(missing_ok=True)
-
     @contextmanager
     def hold(self) -> Iterator[None]:
         """Serialize mutations without expiring a holder that may still be executing Helm."""
@@ -130,3 +109,24 @@ class NamespaceMutation:
                 # An unresolved create may still reach the API after this process exits.
                 if not acquired and not uncertain_create:
                     path.unlink(missing_ok=True)
+
+    def _recover_local(self, name: str, namespace: str) -> None:
+        """Release an abandoned local record only after its CLI and inherited subprocess locks exit."""
+        import fcntl
+
+        current = self.kubectl.get_if_exists("configmap", name, namespace)
+        if current is None:
+            return
+        owner = uuid.UUID(current["data"]["operation"]).hex
+        path = self.directory / owner
+        try:
+            stream = path.open("r+")
+        except FileNotFoundError:
+            return
+        with stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            self.kubectl.delete_object(current, f"{self.timeout:g}s")
+            path.unlink(missing_ok=True)

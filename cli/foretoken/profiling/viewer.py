@@ -21,6 +21,25 @@ from foretoken.profiling.reader import CAPTURE_DIRECTORY
 from foretoken.profiling.storage import ProfileStorage
 
 
+def view(command: ProfileViewCommand) -> None:
+    """Print a loopback viewer URL and retain readers until the user exits."""
+    if timeout_seconds(command.timeout) <= 0:
+        raise DeploymentError("--timeout must be positive")
+    kubectl = Kubectl()
+    # A long-lived viewer must not switch clusters when another terminal changes context.
+    context = kubectl.run(["config", "current-context"]).stdout.strip()
+    kubectl = Kubectl(context=context)
+    history = CaptureDirectories(kubectl, command.namespace)
+    history.refresh()
+    with (
+        ProfileStorage(kubectl, timeout=command.timeout) as storage,
+        ProfileViewer(history, storage) as server,
+    ):
+        print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
+        print("Press Ctrl+C to stop.", flush=True)
+        server.serve_forever()
+
+
 class CaptureDirectories:
     """Discover capture storage; retained run records enrich files but do not gate access."""
 
@@ -281,22 +300,3 @@ class ProfileHandler(BaseHTTPRequestHandler):
                     404 if isinstance(error, FileNotFoundError) else 503,
                     {"error": str(error)},
                 )
-
-
-def view(command: ProfileViewCommand) -> None:
-    """Print a loopback viewer URL and retain readers until the user exits."""
-    if timeout_seconds(command.timeout) <= 0:
-        raise DeploymentError("--timeout must be positive")
-    kubectl = Kubectl()
-    # A long-lived viewer must not switch clusters when another terminal changes context.
-    context = kubectl.run(["config", "current-context"]).stdout.strip()
-    kubectl = Kubectl(context=context)
-    history = CaptureDirectories(kubectl, command.namespace)
-    history.refresh()
-    with (
-        ProfileStorage(kubectl, timeout=command.timeout) as storage,
-        ProfileViewer(history, storage) as server,
-    ):
-        print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
-        print("Press Ctrl+C to stop.", flush=True)
-        server.serve_forever()

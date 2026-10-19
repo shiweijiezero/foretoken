@@ -36,6 +36,14 @@ use error::ApiError;
 use execution::{Disconnect, ResponseReady};
 use types::ResponsesRequest;
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetrieveQuery {
+    #[serde(default)]
+    stream: bool,
+    starting_after: Option<i64>,
+}
+
 /// Registers creation, stored response access, cancellation, input history and replay.
 pub(super) fn router() -> Router<ApiState> {
     Router::new()
@@ -93,14 +101,6 @@ async fn create(
         Ok(Err(error)) => error.into_response(),
         Err(_) => ApiError::generation(GenerationError::RequestFailed).into_response(),
     }
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetrieveQuery {
-    #[serde(default)]
-    stream: bool,
-    starting_after: Option<i64>,
 }
 
 async fn retrieve(

@@ -15,6 +15,8 @@ import (
 
 const ConditionRoutingReady = "RoutingReady"
 
+const SnapshotKey = "serving.json"
+
 // Serving configuration protocol selected with the frontend application.
 const (
 	ModelRoutingProtocol   uint32 = 5
@@ -75,5 +77,3 @@ func ContainsRouteTarget(snapshot Snapshot, routeTargetID string) bool {
 	}
 	return false
 }
-
-const SnapshotKey = "serving.json"

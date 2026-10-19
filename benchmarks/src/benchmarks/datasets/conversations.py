@@ -46,6 +46,144 @@ class Task:
         ]
 
 
+def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
+    """Read enough conversation scripts to cover the request budget."""
+    workload = benchmark.resolved_workload
+    request_budget = benchmark.load.request_count
+    row_offset = int(workload.row_offset)
+    if workload.fixed_prompt and not workload.dataset_selectors:
+        count = request_budget if request_budget is not None else 1
+        return [
+            Task(
+                id=f"prompt:{index}",
+                turns=(Turn(role="user", content=workload.fixed_prompt),),
+            )
+            for index in range(count)
+        ]
+
+    if not workload.dataset_selectors:
+        raise ValueError("A conversation workload requires a dataset source")
+    if "random" in workload.dataset_selectors:
+        raise ValueError("EvalScope owns standard random dataset generation")
+
+    tasks: list[Task] = []
+    request_count = 0
+    for dataset_selector in workload.dataset_selectors:
+        for dataset_path, line_number, row_index, row in iter_dataset_rows(
+            dataset_selector
+        ):
+            if row_index < row_offset:
+                continue
+            if dataset_path.suffix == ".json" and isinstance(row, dict) and "conversations" in row and "messages" not in row:
+                # Unfiltered conversation arrays include empty and non-chat records.
+                try:
+                    messages = _sharegpt_messages(row, dataset_path, line_number)
+                except ValueError:
+                    continue
+                if not any(message["role"] == "user" for message in messages):
+                    continue
+                row = {**row, "messages": messages}
+            task = _conversation_task(row, dataset_path, line_number, row_index)
+            turn_count = 1 if task.prompt_token_ids is not None else len(split_chat_conversation(task.messages()))
+            if workload.max_turns is not None and workload.max_turns > 0:
+                turn_count = min(turn_count, workload.max_turns)
+            if request_budget is not None and request_count + turn_count > request_budget:
+                # The final conversation must not consume requests reserved for other sources.
+                keep = request_budget - request_count
+                if keep:
+                    scripts = split_chat_conversation(task.messages())[:keep]
+                    messages = [message for turn, answer in scripts for message in (turn + ([answer] if answer else []))]
+                    tasks.append(replace(task, turns=parse_message_turns(messages, dataset_path, line_number)))
+                return tasks
+            tasks.append(task)
+            request_count += turn_count
+            if request_budget is not None and request_count == request_budget:
+                return tasks
+    if request_budget is None:
+        return tasks
+    raise ValueError(
+        f"Loaded {request_count} conversation requests, need {request_budget}"
+    )
+
+
+def load_indexed_request_tasks(
+    dataset_selector: str,
+    row_indexes: list[int],
+) -> list[Task]:
+    """Read request tasks by dataset row index while preserving ``row_indexes`` order."""
+    if not row_indexes:
+        return []
+    if dataset_selector == "random":
+        raise ValueError("Indexed request loading does not support random data")
+
+    requested_indexes = set(row_indexes)
+    loaded: dict[int, Task] = {}
+    for dataset_label, line_number, row_index, row in iter_dataset_rows(
+        dataset_selector
+    ):
+        if row_index in requested_indexes:
+            loaded[row_index] = _request_task(
+                row, dataset_label, line_number, row_index
+            )
+            if len(loaded) == len(requested_indexes):
+                break
+
+    missing_indexes = sorted(requested_indexes - loaded.keys())
+    if missing_indexes:
+        raise ValueError(
+            f"Dataset {dataset_selector!r} is missing row indexes "
+            f"{missing_indexes[:10]}"
+        )
+    return [loaded[row_index] for row_index in row_indexes]
+
+
+def load_request_tasks(
+    benchmark: BenchmarkConfig,
+    *,
+    dataset_selector: str | None = None,
+    request_count: int | None = None,
+) -> list[Task]:
+    """Read the independent Chat Completions requests required by one HTTP workload."""
+    workload: ChatRequestDataset = benchmark.resolved_workload
+    count = (
+        benchmark.load.request_count
+        if request_count is None
+        else request_count
+    )
+    row_offset = int(workload.row_offset)
+
+    if workload.fixed_prompt and dataset_selector is None:
+        prompt_count = count if count is not None else 1
+        return [
+            Task(
+                id=f"prompt:{index}",
+                turns=(Turn(role="user", content=workload.fixed_prompt),),
+            )
+            for index in range(prompt_count)
+        ]
+
+    if dataset_selector is None:
+        if not workload.dataset_selectors:
+            raise ValueError(
+                "No workload source. Pass --prompt or --dataset "
+                "(random | local JSONL | org/name[:split] | "
+                "hf://datasets/...)."
+            )
+        if len(workload.dataset_selectors) != 1:
+            raise ValueError(
+                "load_request_tasks requires dataset_selector= when multiple "
+                "--dataset values are configured"
+            )
+        dataset_selector = workload.dataset_selectors[0]
+
+    if dataset_selector == "random":
+        raise ValueError("EvalScope owns standard random dataset generation")
+
+    return _load_dataset_tasks(
+        dataset_selector, count, row_offset, _request_task, "requests"
+    )
+
+
 def iter_jsonl_rows(
     path: Path | str, *, allow_comments: bool = False
 ) -> Iterator[tuple[Path, int, int, Any]]:
@@ -358,141 +496,3 @@ def _load_dataset_tasks(
             f"(offset={row_offset}), need {requested_count}"
         )
     return tasks
-
-
-def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
-    """Read enough conversation scripts to cover the request budget."""
-    workload = benchmark.resolved_workload
-    request_budget = benchmark.load.request_count
-    row_offset = int(workload.row_offset)
-    if workload.fixed_prompt and not workload.dataset_selectors:
-        count = request_budget if request_budget is not None else 1
-        return [
-            Task(
-                id=f"prompt:{index}",
-                turns=(Turn(role="user", content=workload.fixed_prompt),),
-            )
-            for index in range(count)
-        ]
-
-    if not workload.dataset_selectors:
-        raise ValueError("A conversation workload requires a dataset source")
-    if "random" in workload.dataset_selectors:
-        raise ValueError("EvalScope owns standard random dataset generation")
-
-    tasks: list[Task] = []
-    request_count = 0
-    for dataset_selector in workload.dataset_selectors:
-        for dataset_path, line_number, row_index, row in iter_dataset_rows(
-            dataset_selector
-        ):
-            if row_index < row_offset:
-                continue
-            if dataset_path.suffix == ".json" and isinstance(row, dict) and "conversations" in row and "messages" not in row:
-                # Unfiltered conversation arrays include empty and non-chat records.
-                try:
-                    messages = _sharegpt_messages(row, dataset_path, line_number)
-                except ValueError:
-                    continue
-                if not any(message["role"] == "user" for message in messages):
-                    continue
-                row = {**row, "messages": messages}
-            task = _conversation_task(row, dataset_path, line_number, row_index)
-            turn_count = 1 if task.prompt_token_ids is not None else len(split_chat_conversation(task.messages()))
-            if workload.max_turns is not None and workload.max_turns > 0:
-                turn_count = min(turn_count, workload.max_turns)
-            if request_budget is not None and request_count + turn_count > request_budget:
-                # The final conversation must not consume requests reserved for other sources.
-                keep = request_budget - request_count
-                if keep:
-                    scripts = split_chat_conversation(task.messages())[:keep]
-                    messages = [message for turn, answer in scripts for message in (turn + ([answer] if answer else []))]
-                    tasks.append(replace(task, turns=parse_message_turns(messages, dataset_path, line_number)))
-                return tasks
-            tasks.append(task)
-            request_count += turn_count
-            if request_budget is not None and request_count == request_budget:
-                return tasks
-    if request_budget is None:
-        return tasks
-    raise ValueError(
-        f"Loaded {request_count} conversation requests, need {request_budget}"
-    )
-
-
-def load_indexed_request_tasks(
-    dataset_selector: str,
-    row_indexes: list[int],
-) -> list[Task]:
-    """Read request tasks by dataset row index while preserving ``row_indexes`` order."""
-    if not row_indexes:
-        return []
-    if dataset_selector == "random":
-        raise ValueError("Indexed request loading does not support random data")
-
-    requested_indexes = set(row_indexes)
-    loaded: dict[int, Task] = {}
-    for dataset_label, line_number, row_index, row in iter_dataset_rows(
-        dataset_selector
-    ):
-        if row_index in requested_indexes:
-            loaded[row_index] = _request_task(
-                row, dataset_label, line_number, row_index
-            )
-            if len(loaded) == len(requested_indexes):
-                break
-
-    missing_indexes = sorted(requested_indexes - loaded.keys())
-    if missing_indexes:
-        raise ValueError(
-            f"Dataset {dataset_selector!r} is missing row indexes "
-            f"{missing_indexes[:10]}"
-        )
-    return [loaded[row_index] for row_index in row_indexes]
-
-
-def load_request_tasks(
-    benchmark: BenchmarkConfig,
-    *,
-    dataset_selector: str | None = None,
-    request_count: int | None = None,
-) -> list[Task]:
-    """Read the independent Chat Completions requests required by one HTTP workload."""
-    workload: ChatRequestDataset = benchmark.resolved_workload
-    count = (
-        benchmark.load.request_count
-        if request_count is None
-        else request_count
-    )
-    row_offset = int(workload.row_offset)
-
-    if workload.fixed_prompt and dataset_selector is None:
-        prompt_count = count if count is not None else 1
-        return [
-            Task(
-                id=f"prompt:{index}",
-                turns=(Turn(role="user", content=workload.fixed_prompt),),
-            )
-            for index in range(prompt_count)
-        ]
-
-    if dataset_selector is None:
-        if not workload.dataset_selectors:
-            raise ValueError(
-                "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL | org/name[:split] | "
-                "hf://datasets/...)."
-            )
-        if len(workload.dataset_selectors) != 1:
-            raise ValueError(
-                "load_request_tasks requires dataset_selector= when multiple "
-                "--dataset values are configured"
-            )
-        dataset_selector = workload.dataset_selectors[0]
-
-    if dataset_selector == "random":
-        raise ValueError("EvalScope owns standard random dataset generation")
-
-    return _load_dataset_tasks(
-        dataset_selector, count, row_offset, _request_task, "requests"
-    )

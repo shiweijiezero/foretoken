@@ -20,6 +20,21 @@ from benchmarks.results.output import ResultOutputs
 from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
 
 
+def main(argv: Sequence[str] | None = None) -> None:
+    """Select evaluation and retain one experiment record across service preparation and execution."""
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    try:
+        config, help_requested = parse_evaluation_arguments(arguments)
+        if help_requested:
+            _run(config, help_requested=True)
+            return
+        configure_logging(not config.outputs.includes("quiet"))
+        with experiment_output(config, "eval", arguments) as config:
+            _run(config)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
+
 def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
     """Execute the selected evaluation adapter after validating its native options."""
     if config.evaluator is None:
@@ -78,18 +93,3 @@ def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
             run = run_evaluation(config, service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    """Select evaluation and retain one experiment record across service preparation and execution."""
-    arguments = tuple(sys.argv[1:] if argv is None else argv)
-    try:
-        config, help_requested = parse_evaluation_arguments(arguments)
-        if help_requested:
-            _run(config, help_requested=True)
-            return
-        configure_logging(not config.outputs.includes("quiet"))
-        with experiment_output(config, "eval", arguments) as config:
-            _run(config)
-    except ValueError as error:
-        raise SystemExit(str(error)) from error
