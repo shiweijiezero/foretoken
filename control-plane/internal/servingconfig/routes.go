@@ -461,14 +461,13 @@ func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {
 }
 
 func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
-	return vllmconfig.CompletePDRuntime(left) && vllmconfig.CompletePDRuntime(right) && left.ServiceUID == right.ServiceUID && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort && left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName
+	return vllmconfig.CompletePDRuntime(left) && vllmconfig.CompletePDRuntime(right) && left.ServiceUID == right.ServiceUID && left.Connector == right.Connector && left.Protocol == right.Protocol
 }
 
 func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, pipelineScopeID string) PDComponent {
 	pd := group.Spec.PDRuntime
 	features := group.Spec.Features
-	// No P/D runtime profile currently verifies multimodal support. Never publish
-	// it from P/D routes, including objects created before API validation existed.
+	// Standalone P/D routes advertise text input; encoder scopes own multimodal input.
 	features.Multimodal = nil
 	component := PDComponent{
 		RouteTargetID:        string(group.UID),
@@ -484,8 +483,6 @@ func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferenc
 		TokenizerRevision:    group.Spec.Artifacts.TokenizerRevision,
 		PrefixCacheIsolation: group.Spec.Runtime.PrefixCacheIsolation,
 		MaxInputTokens:       copyOptionalInt32(pool.Spec.MaxInputTokens),
-		ProfileName:          pd.ProfileName,
-		ProfileRevision:      pd.ProfileRevision,
 		Connector:            pd.Connector,
 		Protocol:             pd.Protocol,
 		Capabilities:         RoutingCapabilities(features),

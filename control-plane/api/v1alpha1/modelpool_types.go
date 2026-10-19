@@ -223,6 +223,10 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
 
+	// KVTransfer carries the service's transport selection for prefill and decode Pools.
+	// +optional
+	KVTransfer *KVTransfer `json:"kvTransfer,omitempty"`
+
 	// Features is the normalized explicit capabilities for this Pool.
 	Features ModelFeatures `json:"features"`
 

@@ -238,8 +238,6 @@ pub(crate) fn project_registry(
             || component.route_target_id.as_str().is_empty()
             || component.pipeline_scope_id.is_empty()
             || component.endpoint.is_empty()
-            || component.profile_name.is_empty()
-            || component.profile_revision.is_empty()
             || component.kv_scope_id.is_empty()
         {
             return Err(SnapshotError::IncompletePdComponent(

@@ -17,7 +17,8 @@ The same boundary applies to model identity and runtime paths. The compiler reso
 | --- | --- | --- |
 | Installation defaults and shared dependency bindings | Platform Chart and installer | Namespace controller configuration |
 | Model identity, user quantities and Pool overrides | Model compiler | Pool resolution and frontend catalog |
-| EC, P/D and external Store profile validation | Shared runtime configuration | Controller startup and Group resolution |
+| P/D connector and protocol intent | Model compiler | Engine-specific transport resolution |
+| EC and external Store profile validation | Shared runtime configuration | Controller startup and Group resolution |
 | Model startup and drain budget conversion | Shared lifecycle compiler | vLLM and Omni launch plans |
 | Mounted model/cache locations | Workload projection | Preparation, serving and cache recovery |
 | Native execution topology and arguments | Inference-engine adapter | The selected engine process |

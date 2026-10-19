@@ -4,11 +4,7 @@
 // Validates the control-plane runtime profile before manager startup.
 package runtimeconfig
 
-import (
-	"errors"
-
-	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-)
+import "errors"
 
 const (
 	ecConnector = "ECExampleConnector"
@@ -22,17 +18,6 @@ type ECProfile struct {
 	Connector          string
 	SharedStorageClaim string
 	SharedStoragePath  string
-}
-
-// PDProfile contains the platform-owned P/D connector settings.
-type PDProfile struct {
-	Name                       string
-	Revision                   string
-	Connector                  string
-	Protocol                   string
-	BootstrapPort              int
-	AbortRequestTimeoutSeconds int
-	RDMADeviceName             string
 }
 
 // MooncakeStoreProfile contains the platform-owned external Store settings.
@@ -53,7 +38,6 @@ type RDMAProfile struct {
 // Profiles contains the startup values for optional vLLM runtime profiles.
 type Profiles struct {
 	EC            ECProfile
-	PD            PDProfile
 	RDMA          RDMAProfile
 	MooncakeStore MooncakeStoreProfile
 }
@@ -63,13 +47,7 @@ func (profiles Profiles) Validate() error {
 	if profiles.RDMA.ResourceName != "" && (profiles.RDMA.ResourceCount < 1 || int64(profiles.RDMA.ResourceCount) > maxInt32) {
 		return errors.New("RDMA resource count must be a positive int32")
 	}
-	if profiles.PD.Name != "" && profiles.PD.Protocol == "rdma" && profiles.RDMA.ResourceName == "" {
-		return errors.New("vLLM P/D with RDMA transport requires an RDMA allocation")
-	}
 	if err := profiles.EC.Validate(); err != nil {
-		return err
-	}
-	if err := profiles.PD.Validate(); err != nil {
 		return err
 	}
 	return profiles.MooncakeStore.Validate()
@@ -85,26 +63,6 @@ func (profile ECProfile) Validate() error {
 	}
 	if profile.Revision == "" || profile.Connector != ecConnector || profile.SharedStorageClaim == "" || profile.SharedStoragePath == "" {
 		return errors.New("vLLM EC profile is incomplete")
-	}
-	return nil
-}
-
-// Validate checks transport settings before narrowing them to the Group's runtime fields.
-func (profile PDProfile) Validate() error {
-	if profile.Name == "" {
-		if profile.Revision != "" || profile.Protocol != "" || profile.BootstrapPort != 0 || profile.AbortRequestTimeoutSeconds != 0 || profile.RDMADeviceName != "" {
-			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
-		}
-		return nil
-	}
-	if profile.Revision == "" ||
-		(profile.Connector != inferencev1alpha1.MooncakeConnector && profile.Connector != inferencev1alpha1.NixlConnector) ||
-		(profile.Protocol != "rdma" && profile.Protocol != "tcp") ||
-		profile.BootstrapPort < 1 ||
-		profile.BootstrapPort > 65535 ||
-		profile.AbortRequestTimeoutSeconds < 1 ||
-		int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
-		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil
 }

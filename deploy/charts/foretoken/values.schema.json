@@ -562,46 +562,6 @@
                 }
               ]
             },
-            "pd": {
-              "type": "object",
-              "required": [
-                "connector",
-                "protocol",
-                "bootstrapPort",
-                "abortRequestTimeoutSeconds",
-                "rdmaDeviceName"
-              ],
-              "properties": {
-                "connector": {
-                  "type": "string",
-                  "enum": [
-                    "mooncake",
-                    "nixl"
-                  ]
-                },
-                "protocol": {
-                  "type": "string",
-                  "enum": [
-                    "rdma",
-                    "tcp"
-                  ]
-                },
-                "bootstrapPort": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535
-                },
-                "abortRequestTimeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2147483647
-                },
-                "rdmaDeviceName": {
-                  "type": "string"
-                }
-              },
-              "additionalProperties": false
-            },
             "mooncakeStore": {
               "type": "object",
               "required": [

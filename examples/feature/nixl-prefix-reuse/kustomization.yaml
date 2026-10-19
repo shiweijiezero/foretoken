@@ -18,6 +18,11 @@ patches:
         path: /spec/model
         value: Qwen/Qwen2.5-0.5B-Instruct
       - op: add
+        path: /spec/kvTransfer
+        value:
+          connector: nixl
+          protocol: tcp
+      - op: add
         path: /spec/modelPools
         value:
           - name: prefill

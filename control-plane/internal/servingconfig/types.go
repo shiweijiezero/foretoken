@@ -105,8 +105,6 @@ type PDComponent struct {
 	TokenizerRevision        string                        `json:"tokenizer_revision"`
 	PrefixCacheIsolation     *bool                         `json:"prefix_cache_isolation,omitempty"`
 	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
-	ProfileName              string                        `json:"profile_name"`
-	ProfileRevision          string                        `json:"profile_revision"`
 	Connector                string                        `json:"connector"`
 	Protocol                 string                        `json:"protocol"`
 	Capabilities             []string                      `json:"capabilities"`

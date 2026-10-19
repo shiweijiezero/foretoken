@@ -192,9 +192,10 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 
 
 def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
-    """Update saved Foretoken release values while retaining their runtime and image selections."""
+    """Migrate saved Helm values to the current platform configuration."""
     migrated = deepcopy(values)
-    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
+    vllm = migrated.get("runtime", {}).get("vllm", {})
+    pd = vllm.get("pd", {})
     for old, new in (
         ("rdmaResourceName", "resourceName"),
         ("rdmaResourceCount", "resourceCount"),
@@ -202,6 +203,7 @@ def migrate_stored_platform_values(values: dict[str, Any]) -> dict[str, Any]:
         if old in pd:
             value = pd.pop(old)
             migrated.setdefault("rdma", {}).setdefault(new, value)
+    vllm.pop("pd", None)
     distribution = migrated.get("modelDistribution", {})
     distribution.pop("modelexpress", None)
     distribution.pop("dragonfly", None)

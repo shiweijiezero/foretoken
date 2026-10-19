@@ -83,6 +83,14 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		return nil, fmt.Errorf("internalGenerateRequestBodyLimitBytes must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
 	}
 	spec.InternalGenerateRequestBodyLimitBytes = &internalGenerateRequestBodyLimitBytes
+	if hasPoolRole(spec.ModelPools, inferencev1alpha1.ModelRolePrefill) {
+		spec.KVTransfer, err = normalizeKVTransfer(spec.KVTransfer)
+		if err != nil {
+			return nil, err
+		}
+	} else if spec.KVTransfer != nil {
+		return nil, fmt.Errorf("kvTransfer requires prefill and decode modelPools")
+	}
 	if len(spec.ModelPools) == 0 {
 		entry := inferencev1alpha1.ModelPoolTemplate{
 			Name:           defaultPoolName,
@@ -103,10 +111,10 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if err := validateModelPoolRoles(spec.ModelPools); err != nil {
 		return nil, err
 	}
-	if hasEncoderRole(spec.ModelPools) && (spec.ECProfile == nil || spec.ECProfile.Profile == "") {
+	if hasPoolRole(spec.ModelPools, inferencev1alpha1.ModelRoleEncoder) && (spec.ECProfile == nil || spec.ECProfile.Profile == "") {
 		return nil, fmt.Errorf("E/P/D modelPools require an EC profile")
 	}
-	if !hasEncoderRole(spec.ModelPools) && spec.ECProfile != nil {
+	if !hasPoolRole(spec.ModelPools, inferencev1alpha1.ModelRoleEncoder) && spec.ECProfile != nil {
 		return nil, fmt.Errorf("EC profile requires E/P/D modelPools")
 	}
 
@@ -202,6 +210,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, entry inferencev1alpha
 	if tokenizer == "" {
 		tokenizer = spec.Model
 	}
+	var kvTransfer *inferencev1alpha1.KVTransfer
+	if role == inferencev1alpha1.ModelRolePrefill || role == inferencev1alpha1.ModelRoleDecode {
+		kvTransfer = spec.KVTransfer.DeepCopy()
+	}
 	// Match the API's omitted representation after resolving an explicit empty Pool override.
 	if len(engineArgs) == 0 {
 		engineArgs = nil
@@ -229,6 +241,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, entry inferencev1alpha
 			ECProfile:                             ecProfileForRole(spec.ECProfile, role),
 			Timeouts:                              spec.Timeouts,
 			KVCache:                               normalizedKVCache,
+			KVTransfer:                            kvTransfer,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
 			Env:                                   env,
@@ -405,6 +418,29 @@ func normalizeQuantity(field string, input inferencev1alpha1.ResourceQuantity) (
 	return inferencev1alpha1.ResourceQuantity(quantity.String()), nil
 }
 
+// normalizeKVTransfer resolves the shared connector and protocol before they are copied to P/D Pools.
+func normalizeKVTransfer(input *inferencev1alpha1.KVTransfer) (*inferencev1alpha1.KVTransfer, error) {
+	output := inferencev1alpha1.KVTransfer{}
+	if input != nil {
+		output = *input
+	}
+	switch output.Connector {
+	case "":
+		output.Connector = "mooncake"
+	case "mooncake", "nixl":
+	default:
+		return nil, fmt.Errorf("kvTransfer.connector must be mooncake or nixl")
+	}
+	switch output.Protocol {
+	case "":
+		output.Protocol = "tcp"
+	case "tcp", "rdma":
+	default:
+		return nil, fmt.Errorf("kvTransfer.protocol must be tcp or rdma")
+	}
+	return &output, nil
+}
+
 func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.NormalizedKVCache, error) {
 	if input == nil {
 		return nil, nil
@@ -503,9 +539,9 @@ func ecProfileForRole(profile *inferencev1alpha1.ECProfileReference, role infere
 	return profile.Profile
 }
 
-func hasEncoderRole(pools []inferencev1alpha1.ModelPoolTemplate) bool {
+func hasPoolRole(pools []inferencev1alpha1.ModelPoolTemplate, role inferencev1alpha1.ModelRole) bool {
 	for _, pool := range pools {
-		if pool.Role == inferencev1alpha1.ModelRoleEncoder {
+		if pool.Role == role {
 			return true
 		}
 	}

@@ -75,14 +75,17 @@ const (
 
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.
 type ModelGroupPDRuntimeConfig struct {
-	// ProfileName and ProfileRevision are opaque platform-owned identifiers.
+	// ProfileName and ProfileRevision preserve existing cohorts for older namespace controllers.
+	// New cohorts use Connector and Protocol directly.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
-	ProfileName string `json:"profileName"`
+	ProfileName string `json:"profileName,omitempty"`
 
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
-	ProfileRevision string `json:"profileRevision"`
+	ProfileRevision string `json:"profileRevision,omitempty"`
 
 	// ServiceUID bounds transfer side channels to Pools owned by one ModelService.
 	// +kubebuilder:validation:MinLength=1
@@ -100,8 +103,11 @@ type ModelGroupPDRuntimeConfig struct {
 	// +kubebuilder:validation:Maximum=65535
 	BootstrapPort int32 `json:"bootstrapPort"`
 
+	// AbortRequestTimeoutSeconds retains an explicit Mooncake timeout for this cohort.
+	// Omission uses the native connector default.
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds"`
+	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds,omitempty"`
 
 	// RDMADeviceName optionally selects a comma-separated connector-native device list.
 	// Mooncake uses HCA names; NIXL uses UCX device:port identifiers such as mlx5_0:1.

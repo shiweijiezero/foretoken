@@ -439,6 +439,9 @@ spec:
                 description: PDRuntime is the controller-owned P/D transport configuration.
                 properties:
                   abortRequestTimeoutSeconds:
+                    description: |-
+                      AbortRequestTimeoutSeconds retains an explicit Mooncake timeout for this cohort.
+                      Omission uses the native connector default.
                     format: int32
                     minimum: 1
                     type: integer
@@ -456,8 +459,9 @@ spec:
                     - NixlConnector
                     type: string
                   profileName:
-                    description: ProfileName and ProfileRevision are opaque platform-owned
-                      identifiers.
+                    description: |-
+                      ProfileName and ProfileRevision preserve existing cohorts for older namespace controllers.
+                      New cohorts use Connector and Protocol directly.
                     maxLength: 256
                     minLength: 1
                     type: string
@@ -482,11 +486,8 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - abortRequestTimeoutSeconds
                 - bootstrapPort
                 - connector
-                - profileName
-                - profileRevision
                 - protocol
                 - serviceUID
                 type: object

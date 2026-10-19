@@ -15,7 +15,7 @@
 docker build -f examples/feature/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备；不具备该条件时，可按下文选择 TCP。
+集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。选择 RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备，默认的 TCP 传输无需这些条件。
 
 将镜像选择和共享编码缓存设置保存为 `deploy/platform-values.yaml`：
 
@@ -27,17 +27,6 @@ runtime:
       sharedStorageClaim: encoder-cache
 ```
 
-P/D 默认使用 RDMA。如需选择 Mooncake TCP，将以下设置合并到同一份 `runtime.vllm` 配置中：
-
-```yaml
-runtime:
-  vllm:
-    pd:
-      protocol: tcp
-```
-
-TCP 不需要 RDMA 设备，GPU KV 数据会经过主机内存暂存。
-
 从当前源码安装平台：
 
 ```bash
@@ -47,6 +36,14 @@ foretoken install -e . --values deploy/platform-values.yaml
 远程集群还需通过 `--registry REGISTRY` 指定节点能够访问的容器仓库。其他安装选项见 [CLI 指南](../../../cli/README_zh.md#当前源码)。
 
 ## 部署
+
+P/D 默认使用 Mooncake TCP，通过主机内存暂存 GPU KV 数据。要使用已分配的 RDMA 设备，在 `model.yaml` 中添加：
+
+```yaml
+spec:
+  kvTransfer:
+    protocol: rdma
+```
 
 从仓库根目录执行：
 
@@ -90,7 +87,7 @@ PY
 
 每个阶段各有一个 Pool，其 `replicas`、资源请求和 `engineArgs` 可以独立调整。Pool 的 `engineArgs` 会整体替换服务级字典，示例通过 YAML anchor 复用共同设置。GPU 请求数量与并行参数的对应关系见[推理参数](../../../docs/features/inference-parameters_zh.md)。
 
-修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/feature/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过平台选择的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
+修改后重新运行 `foretoken deploy`，通过 `foretoken status examples/feature/encoder-prefill-decode` 查看就绪状态。编码结果经共享卷传递，Prefill 的 KV Cache 通过模型配置的 Mooncake 传输交给 Decode；客户端不需要填写传输地址或传递中间结果。
 
 ## 清理
 

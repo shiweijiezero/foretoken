@@ -28,7 +28,6 @@ type RuntimeProfile struct {
 	RuntimeClassName   string
 	NodeSelectorKey    string
 	NodeSelectorValue  string
-	PD                 *runtimeconfig.PDProfile
 	RDMA               *inferencev1alpha1.RDMAAllocation
 	EC                 *runtimeconfig.ECProfile
 	MooncakeStore      *runtimeconfig.MooncakeStoreProfile
@@ -97,7 +96,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.ModelRevision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
 	}
-	pdRuntime, err := resolvePDRuntime(template, profile.PD)
+	pdRuntime, err := vllmconfig.ResolvePDRuntime(template, effective.Parallelism, profile.ModelServerPort)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
@@ -355,32 +354,6 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		Connector: profile.Connector, Role: role,
 		SharedStorageClaim: profile.SharedStorageClaim,
 		SharedStoragePath:  profile.SharedStoragePath,
-	}, nil
-}
-
-// resolvePDRuntime resolves the platform P/D connector profile for split serving roles.
-func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *runtimeconfig.PDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
-	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
-		return nil, nil
-	}
-	if profile == nil || profile.Name == "" {
-		return nil, fmt.Errorf("P/D runtime profile is incomplete")
-	}
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
-	rdmaDeviceName := profile.RDMADeviceName
-	if profile.Protocol == "tcp" {
-		rdmaDeviceName = ""
-	}
-	return &inferencev1alpha1.ModelGroupPDRuntimeConfig{
-		ProfileName:                profile.Name,
-		ProfileRevision:            profile.Revision,
-		Connector:                  profile.Connector,
-		Protocol:                   profile.Protocol,
-		BootstrapPort:              int32(profile.BootstrapPort),
-		AbortRequestTimeoutSeconds: int32(profile.AbortRequestTimeoutSeconds),
-		RDMADeviceName:             rdmaDeviceName,
 	}, nil
 }
 

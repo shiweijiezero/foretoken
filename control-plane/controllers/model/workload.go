@@ -164,8 +164,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			env = append(env,
 				forceTransport,
 				corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(pd.BootstrapPort))},
-				corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(pd.AbortRequestTimeoutSeconds))},
 			)
+			if pd.AbortRequestTimeoutSeconds > 0 {
+				env = append(env, corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(pd.AbortRequestTimeoutSeconds))})
+			}
 			if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 				ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: pd.BootstrapPort, Protocol: corev1.ProtocolTCP})
 			}
@@ -352,7 +354,9 @@ func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container 
 			managed["MC_FORCE_TCP"] = true
 		case inferencev1alpha1.NixlConnector:
 			managed["UCX_TLS"] = true
-			managed["UCX_NET_DEVICES"] = true
+			if pd.Protocol == "rdma" && pd.RDMADeviceName != "" {
+				managed["UCX_NET_DEVICES"] = true
+			}
 		}
 	}
 	if spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight" {

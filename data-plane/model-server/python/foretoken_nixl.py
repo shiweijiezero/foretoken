@@ -16,7 +16,6 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorRole
 from vllm.distributed.kv_transfer.kv_connector.v1.nixl.connector import (
     NixlConnector as UpstreamNixlConnector,
 )
-from vllm.platforms import current_platform
 from vllm.v1.kv_cache_interface import is_full_attention_spec
 
 
@@ -68,7 +67,6 @@ class NixlConnector(UpstreamNixlConnector):
             self.kv_transfer_config.get_from_extra_config(
                 "bidirectional_kv_xfer", False
             )
-            and current_platform.is_cuda()
             and not native.use_host_buffer
             and all(
                 is_full_attention_spec(group.kv_cache_spec)

@@ -122,8 +122,6 @@ pub struct SnapshotPdComponent {
     pub tokenizer_revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_cache_isolation: Option<bool>,
-    pub profile_name: String,
-    pub profile_revision: String,
     pub connector: KvConnector,
     pub protocol: String,
     #[serde(default)]

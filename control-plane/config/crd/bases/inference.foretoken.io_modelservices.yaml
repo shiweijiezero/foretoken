@@ -293,6 +293,24 @@ spec:
                 - message: kvCache.offload and kvCache.mooncakeStore are mutually
                     exclusive
                   rule: '!(has(self.offload) && has(self.mooncakeStore))'
+              kvTransfer:
+                description: KVTransfer selects one transport for this service's prefill
+                  and decode Pools.
+                properties:
+                  connector:
+                    description: Connector defaults to mooncake when omitted.
+                    enum:
+                    - mooncake
+                    - nixl
+                    type: string
+                  protocol:
+                    description: Protocol defaults to TCP. RDMA requires devices allocated
+                      by the platform.
+                    enum:
+                    - tcp
+                    - rdma
+                    type: string
+                type: object
               maxInputTokens:
                 description: MaxInputTokens is the prompt admission limit for requests
                   routed to the default Pool.
@@ -1024,6 +1042,10 @@ spec:
             - timeouts
             type: object
             x-kubernetes-validations:
+            - message: kvTransfer requires prefill and decode modelPools
+              rule: '!has(self.kvTransfer) || (has(self.modelPools) && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''prefill'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''decode''))'
             - message: spec.modelPools is mutually exclusive with top-level replicas,
                 nodes, resources, maxInputTokens, kvCache, and features
               rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)

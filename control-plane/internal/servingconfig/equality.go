@@ -42,7 +42,6 @@ func equalRoutingPDComponent(left, right PDComponent) bool {
 		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
 		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&
 		ptr.Equal(left.MaxInputTokens, right.MaxInputTokens) &&
-		left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
 		left.Connector == right.Connector && left.Protocol == right.Protocol &&
 		left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint &&
 		left.KVScopeID == right.KVScopeID && left.KVLookupScope == right.KVLookupScope &&

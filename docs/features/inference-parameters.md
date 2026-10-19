@@ -142,10 +142,22 @@ Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP r
 
 Prefill processes the input; Decode generates the answer. With NIXL, a later request can also reuse the KV cache retained by a previous Decode instance. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
 
-The [NIXL example](../../examples/feature/nixl-prefix-reuse) serves `Qwen/Qwen2.5-0.5B-Instruct` on two NVIDIA GPUs, one per stage, with two frontend replicas. It uses the default vLLM 0.31 source environment, reuses the Quick Start's model storage and chooses TCP, so RDMA devices are not required. From the repository root, on a cluster prepared for [source deployment](../deployment/source.md):
+For a service with `prefill` and `decode` entries in `modelPools`, select their shared transport in the model YAML:
+
+```yaml
+spec:
+  kvTransfer:
+    connector: nixl
+    protocol: tcp
+```
+
+The defaults are `connector: mooncake` and `protocol: tcp`. Choose `protocol: rdma` to use RDMA devices allocated by the platform. Apply changes with `foretoken deploy <directory>`; this replaces the model's P/D instances while other services keep their own transport choices.
+
+The engine environment must include NIXL and UCX built for the selected accelerator. Decode-to-Prefill reuse requires a Foretoken-supported vLLM release of 0.31 or later and native device-buffer transfer support. Foretoken enables it automatically for full-attention text models without LoRA; other supported configurations retain ordinary P/D behavior. NIXL currently requires one node per model replica, matching P/D TP sizes and KV layouts, and PP/PCP/DCP of 1. Encoder separation and Mooncake Store use Mooncake.
+
+The [NIXL example](../../examples/feature/nixl-prefix-reuse) serves `Qwen/Qwen2.5-0.5B-Instruct`, requesting one GPU per stage and two frontend replicas. It selects TCP in the model configuration and reuses the Quick Start's storage. On a prepared Foretoken cluster, run from the repository root:
 
 ```bash
-foretoken install -e . --values examples/feature/nixl-prefix-reuse/platform-values.yaml
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint examples/feature/nixl-prefix-reuse)"
 
@@ -177,11 +189,9 @@ for question in (
 PY
 ```
 
-Retain any registry options required by your installation. For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
+For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
 
-Foretoken automatically enables Decode-to-Prefill transfer with vLLM 0.31, CUDA device-resident KV and full attention. This reuse covers plain text without LoRA; other supported engine versions and requests keep ordinary P/D behavior. NIXL currently requires one node per model replica, matching Prefill/Decode TP sizes and KV layouts, and PP/PCP/DCP of 1. Encoder separation and Mooncake Store use the existing Mooncake path.
-
-Mooncake remains the default connector. To select NIXL for another P/D service, set `runtime.vllm.pd.connector: nixl` in its platform values, reapply the installation with those values, then redeploy its model and frontend. The example also sets `protocol: tcp`; an RDMA deployment uses `protocol: rdma` and allocated RDMA devices. If selecting RDMA interfaces explicitly, NIXL's `rdmaDeviceName` uses UCX identifiers such as `mlx5_0:1,mlx5_1:1`.
+NIXL selects network devices automatically. If explicit selection is needed, set `spec.env.UCX_NET_DEVICES` to UCX identifiers such as `mlx5_0:1,mlx5_1:1`.
 
 Remove the example when finished:
 
@@ -208,6 +218,6 @@ Methods and child fields follow vLLM. For methods using draft weights, `model` a
 
 ## Platform-managed options
 
-Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache` and `ecProfile` for model selection, placement and cache transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.
+Use `spec.model`, `spec.tokenizer`, `nodes`, `kvCache`, `kvTransfer` and `ecProfile` for model selection, placement, cache storage and transfer. Foretoken supplies the corresponding startup settings. Profiling owns its native configuration when a runtime cache is enabled; mcTracer also selects its worker class. Multi-node replicas use the `mp` executor.
 
 Other native options, including `ec-manager-config` and custom workers outside mcTracer, are passed to vLLM. See the [vLLM argument reference](https://docs.vllm.ai/en/latest/configuration/engine_args/).

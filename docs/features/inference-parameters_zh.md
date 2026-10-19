@@ -142,10 +142,22 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 预填充（Prefill）计算输入，解码（Decode）生成回答。使用 NIXL 时，后续请求还可以复用上一轮 Decode 保留的 KV 缓存。两轮请求可以经过不同的前端和 Prefill 实例；能否复用取决于输入 token 前缀和缓存隔离身份是否匹配，无需提供会话标识。
 
-[NIXL 示例](../../examples/feature/nixl-prefix-reuse) 需要两张 NVIDIA GPU，分别运行 `Qwen/Qwen2.5-0.5B-Instruct` 的预填充和解码阶段，并配置两个前端副本。它使用默认的 vLLM 0.31 源码环境，沿用 Quick Start 的模型存储，选择不需要 RDMA 设备的 TCP 传输。在已经准备好[源码部署](../deployment/source_zh.md)的集群上，从仓库根目录执行：
+在 `modelPools` 中配置 `prefill` 和 `decode` 后，通过模型 YAML 为两端统一选择传输方式：
+
+```yaml
+spec:
+  kvTransfer:
+    connector: nixl
+    protocol: tcp
+```
+
+默认使用 `connector: mooncake` 和 `protocol: tcp`。需要 RDMA 时设置 `protocol: rdma`，由平台为模型分配 RDMA 设备。修改后执行 `foretoken deploy <配置目录>`，替换该模型的 P/D 实例，其他模型继续使用各自的传输配置。
+
+引擎环境需要包含适配所用加速器的 NIXL 和 UCX。Decode 到 Prefill 的复用要求 Foretoken 已支持的 vLLM 版本不低于 0.31，且原生传输支持设备内存 KV。对使用完整 attention、不带 LoRA 的文本模型，Foretoken 自动启用该能力；其他受支持的配置继续使用普通 P/D。当前 NIXL 要求每个模型副本位于单个节点，P/D 的 TP 大小和 KV 布局一致，PP/PCP/DCP 均为 1。Encoder 分离和 Mooncake Store 使用 Mooncake。
+
+[NIXL 示例](../../examples/feature/nixl-prefix-reuse) 使用 `Qwen/Qwen2.5-0.5B-Instruct`，P/D 各申请一张 GPU，并部署两个前端副本。示例在模型配置中选择 TCP，沿用快速开始的存储配置。在已准备好的 Foretoken 集群上，从仓库根目录执行：
 
 ```bash
-foretoken install -e . --values examples/feature/nixl-prefix-reuse/platform-values.yaml
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint examples/feature/nixl-prefix-reuse)"
 
@@ -177,11 +189,9 @@ for question in (
 PY
 ```
 
-安装时保留原有的镜像仓库选项。后续对话继续通过同一 API 提交完整历史；聊天模板若删除历史思考内容，token 前缀也会改变，需要重新计算。匹配的 Decode 前缀比 Prefill 本地缓存更长、且引擎判断值得传输时，才使用远端缓存，否则正常计算。仅按负载选路也会使用这条复用路径，[路由权重](../../data-plane/frontend/src/router/README_zh.md)只影响目标偏好。
+后续对话继续通过同一 API 提交完整历史；聊天模板若删除历史思考内容，token 前缀也会改变，需要重新计算。匹配的 Decode 前缀比 Prefill 本地缓存更长、且引擎判断值得传输时，才使用远端缓存，否则正常计算。仅按负载选路也会使用这条复用路径，[路由权重](../../data-plane/frontend/src/router/README_zh.md)只影响目标偏好。
 
-在 vLLM 0.31、CUDA 设备内存 KV 和完整 attention 布局下，Foretoken 自动开启 Decode 到 Prefill 的传输，覆盖不带 LoRA 的普通文本请求；其他已支持的引擎版本和请求仍走普通 P/D。当前 NIXL 要求每个模型副本位于单个节点，Prefill 与 Decode 的 TP 大小和 KV 布局相同，PP/PCP/DCP 均为 1。Encoder 分离和 Mooncake Store 继续使用 Mooncake 路径。
-
-平台默认仍选择 Mooncake。其他 P/D 服务选择 NIXL 时，在平台 values 中设置 `runtime.vllm.pd.connector: nixl`，使用该 values 重新执行安装命令，再部署模型与前端。示例同时设置了 `protocol: tcp`；有已分配 RDMA 设备的部署可选择 `protocol: rdma`。显式指定 RDMA 网卡时，NIXL 的 `rdmaDeviceName` 使用 `mlx5_0:1,mlx5_1:1` 这样的 UCX 设备与端口标识。
+NIXL 默认自动选择网络设备。需要指定设备时，通过 `spec.env.UCX_NET_DEVICES` 填写 `mlx5_0:1,mlx5_1:1` 这样的 UCX 设备与端口标识。
 
 使用完后删除示例：
 
@@ -208,6 +218,6 @@ spec:
 
 ## 平台管理的选项
 
-模型、tokenizer、节点数量和缓存传输分别通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
+模型、tokenizer、节点数量、缓存存储与传输通过 `spec.model`、`spec.tokenizer`、`nodes`、`kvCache`、`kvTransfer` 和 `ecProfile` 配置，Foretoken 据此设置启动参数。启用运行时缓存时，原生 profiler 配置由性能剖析功能管理；mcTracer 还会选择对应的 worker。多节点副本使用 `mp` executor。
 
 其余原生选项交给 vLLM，包括 `ec-manager-config`，以及未使用 mcTracer 时的自定义 worker。完整选项见 [vLLM 参数文档](https://docs.vllm.ai/en/latest/configuration/engine_args/)。

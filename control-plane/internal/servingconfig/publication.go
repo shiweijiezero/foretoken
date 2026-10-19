@@ -17,8 +17,9 @@ const ConditionRoutingReady = "RoutingReady"
 
 // Serving configuration protocol selected with the frontend application.
 const (
+	PDTransportProtocol    uint32 = 6
+	CurrentProtocol               = PDTransportProtocol
 	ModelRoutingProtocol   uint32 = 5
-	CurrentProtocol               = ModelRoutingProtocol
 	CacheIsolationProtocol uint32 = 4
 	AdmissionProtocol      uint32 = 3
 	ProtocolAnnotation            = "inference.foretoken.io/serving-config-protocol"

@@ -433,15 +433,14 @@ impl LaunchPlanV1 {
             ..
         } = &self.kv
         {
-            // Select the profile's UCX network transport while retaining native GPU transfers.
+            // Exclude the other network family without filtering native memory transports.
             command.env(
                 "UCX_TLS",
                 match protocol {
-                    PdProtocol::Tcp => "tcp,cuda,rocm",
-                    PdProtocol::Rdma => "rc,cuda,rocm",
+                    PdProtocol::Tcp => "^ib",
+                    PdProtocol::Rdma => "^tcp",
                 },
             );
-            command.env_remove("UCX_NET_DEVICES");
             if *protocol == PdProtocol::Rdma && !device_name.is_empty() {
                 command.env("UCX_NET_DEVICES", device_name);
             }
@@ -597,7 +596,7 @@ impl KvPlan {
                     connector: KvConnector::Nixl,
                     ..
                 }
-            ) && vllm_minor == 31
+            ) && vllm_minor >= 31
                 && node_count == 1
                 && parallelism.pp == 1
                 && parallelism.pcp == 1

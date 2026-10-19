@@ -147,13 +147,6 @@ func main() {
 	flag.StringVar(&profiles.EC.Connector, "vllm-ec-connector", "", "Fixed EC connector identity for the configured vLLM adapter.")
 	flag.StringVar(&profiles.EC.SharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the configured EC connector.")
 	flag.StringVar(&profiles.EC.SharedStoragePath, "vllm-ec-shared-storage-path", "", "In-container shared EC storage path supplied by the platform.")
-	flag.StringVar(&profiles.PD.Name, "vllm-pd-profile-name", "", "Opaque platform-owned P/D profile name; empty disables P/D.")
-	flag.StringVar(&profiles.PD.Revision, "vllm-pd-profile-revision", "", "Opaque platform-owned P/D profile revision.")
-	flag.StringVar(&profiles.PD.Connector, "vllm-pd-connector", inferencev1alpha1.MooncakeConnector, "P/D connector class: MooncakeConnector or NixlConnector.")
-	flag.StringVar(&profiles.PD.Protocol, "vllm-pd-protocol", "", "P/D transport: rdma or tcp.")
-	flag.IntVar(&profiles.PD.BootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port or NIXL side-channel base port.")
-	flag.IntVar(&profiles.PD.AbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
-	flag.StringVar(&profiles.PD.RDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated RDMA devices: Mooncake HCA names or NIXL UCX device:port identifiers; empty selects allocated devices.")
 	flag.StringVar(&profiles.RDMA.ResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
 	flag.IntVar(&profiles.RDMA.ResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
 	flag.StringVar(&profiles.MooncakeStore.Name, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
@@ -245,7 +238,6 @@ func main() {
 	if profiles.RDMA.ResourceName != "" {
 		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: profiles.RDMA.ResourceName, ResourceCount: int32(profiles.RDMA.ResourceCount)}
 	}
-	var pd *runtimeconfig.PDProfile
 	var ec *runtimeconfig.ECProfile
 	var mooncakeStore *runtimeconfig.MooncakeStoreProfile
 	if profiles.EC.Name != "" {
@@ -253,9 +245,6 @@ func main() {
 	}
 	if profiles.MooncakeStore.Name != "" {
 		mooncakeStore = &profiles.MooncakeStore
-	}
-	if profiles.PD.Name != "" {
-		pd = &profiles.PD
 	}
 
 	// Register built-in and Foretoken APIs before controllers are attached to the manager.
@@ -419,7 +408,6 @@ func main() {
 			RuntimeClassName:   runtimeClassName,
 			NodeSelectorKey:    gpuNodeSelectorKey,
 			NodeSelectorValue:  gpuNodeSelectorValue,
-			PD:                 pd,
 			RDMA:               rdma,
 			EC:                 ec,
 			MooncakeStore:      mooncakeStore,

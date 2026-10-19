@@ -491,6 +491,24 @@ spec:
                     - message: kvCache must select exactly one storage mode
                       rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                         && has(self.mooncakeStore))
+                  kvTransfer:
+                    description: KVTransfer carries the service's transport selection
+                      for prefill and decode Pools.
+                    properties:
+                      connector:
+                        description: Connector defaults to mooncake when omitted.
+                        enum:
+                        - mooncake
+                        - nixl
+                        type: string
+                      protocol:
+                        description: Protocol defaults to TCP. RDMA requires devices
+                          allocated by the platform.
+                        enum:
+                        - tcp
+                        - rdma
+                        type: string
+                    type: object
                   memberCount:
                     format: int32
                     minimum: 1

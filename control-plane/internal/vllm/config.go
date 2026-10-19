@@ -413,7 +413,7 @@ func compileEngineArgs(template inferencev1alpha1.NormalizedPoolTemplate) (infer
 		"nnodes":                               "select the node count with nodes",
 		"node-rank":                            "member discovery assigns each node rank",
 		"kv-events-config":                     "the model-server owns the publisher and subscriber configuration",
-		"kv-transfer-config":                   "select KV transfer through kvCache or split modelPools so routing and storage share the same configuration",
+		"kv-transfer-config":                   "select P/D transport through kvTransfer and cache storage through kvCache",
 		"ec-transfer-config":                   "select encoder transfer through ecProfile and E/P/D modelPools",
 	}
 	if template.RuntimeCache != nil {

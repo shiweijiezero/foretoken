@@ -26,7 +26,6 @@ import (
 // reconcileServingSnapshot publishes routing, settings, and membership at one version boundary.
 // It reports whether all protocol views were published; preserved configuration still refreshes membership.
 func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (bool, error) {
-	name := servingconfig.ConfigMapName(frontend, frontend.Status.ServingConfigVersion)
 	protocols := servingconfig.ProtocolVersions(frontend)
 	type servingPublication struct {
 		snapshot  servingconfig.Snapshot
@@ -155,15 +154,20 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 	if frontend.Status.ServingConfigVersion < servingconfig.CacheIsolationProtocol && !preserveConfiguration && slices.ContainsFunc(models, func(model servingconfig.Model) bool { return model.PrefixCacheIsolation != nil }) {
 		projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
 	}
+	if frontend.Status.ServingConfigVersion < servingconfig.PDTransportProtocol && !preserveConfiguration && slices.ContainsFunc(services, func(service inferencev1alpha1.ModelService) bool {
+		return service.DeletionTimestamp.IsZero() && service.Spec.Backend == "vllm" && service.Spec.KVTransfer != nil && service.Spec.KVTransfer.Connector == "nixl"
+	}) {
+		projectionErr = errors.Join(projectionErr, errFrontendNixlUnsupported)
+	}
 
 	snapshot = servingSnapshotForProtocol(snapshot, frontend.Status.ServingConfigVersion)
 	// A restored payload below the durable floor cannot prove what consumers applied
 	// at that version. Allocate a fresh version even when it matches current intent.
 	version := max(frontend.Status.ServingSnapshotVersion, previous.Version)
 	contentsChanged := true
-	if previousValid {
-		previousView := servingSnapshotForProtocol(previous, frontend.Status.ServingConfigVersion)
-		contentsChanged = !previousView.SameConfiguration(snapshot)
+	if published, exists := publications[frontend.Status.ServingConfigVersion]; previousValid && exists {
+		// Compare the actual view, so a protocol migration cannot hide a route withdrawal.
+		contentsChanged = !published.snapshot.SameConfiguration(snapshot)
 	}
 	if contentsChanged || missingConsumedView || primaryVersion < version || version == 0 {
 		version++
@@ -194,11 +198,11 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 			view.FrontendInstances = frontendInstances
 			view.BackendInstances = backendInstances
 		}
-		if err := reconciler.publishServingSnapshot(ctx, frontend, servingconfig.ConfigMapName(frontend, protocol), servingSnapshotForProtocol(view, protocol), publication.configMap); err != nil {
+		if err := reconciler.publishServingSnapshot(ctx, frontend, protocol, servingSnapshotForProtocol(view, protocol), publication.configMap); err != nil {
 			return false, err
 		}
 	}
-	if err := reconciler.publishServingSnapshot(ctx, frontend, name, snapshot, publications[frontend.Status.ServingConfigVersion].configMap); err != nil {
+	if err := reconciler.publishServingSnapshot(ctx, frontend, frontend.Status.ServingConfigVersion, snapshot, publications[frontend.Status.ServingConfigVersion].configMap); err != nil {
 		return false, err
 	}
 	// Updating Pod metadata prompts kubelet to refresh the projected ConfigMap.
@@ -225,6 +229,20 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 // servingSnapshotForProtocol projects only settings and routes understood by the selected application.
 // All protocol views retain the same publication version and admission membership.
 func servingSnapshotForProtocol(snapshot servingconfig.Snapshot, protocol uint32) servingconfig.Snapshot {
+	if protocol < servingconfig.PDTransportProtocol {
+		blockedScopes := make(map[string]bool)
+		for _, component := range snapshot.PDComponents {
+			if component.Connector != inferencev1alpha1.MooncakeConnector {
+				blockedScopes[component.PipelineScopeID] = true
+			}
+		}
+		snapshot.PDComponents = slices.DeleteFunc(slices.Clone(snapshot.PDComponents), func(component servingconfig.PDComponent) bool {
+			return blockedScopes[component.PipelineScopeID]
+		})
+		snapshot.PDPipelineScopes = slices.DeleteFunc(slices.Clone(snapshot.PDPipelineScopes), func(scope servingconfig.PDPipelineScope) bool {
+			return blockedScopes[scope.PipelineScopeID]
+		})
+	}
 	if protocol < servingconfig.ModelRoutingProtocol {
 		snapshot.Models = slices.Clone(snapshot.Models)
 		for index := range snapshot.Models {
@@ -237,7 +255,10 @@ func servingSnapshotForProtocol(snapshot servingconfig.Snapshot, protocol uint32
 	return snapshot
 }
 
-var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
+var (
+	errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
+	errFrontendNixlUnsupported           = errors.New("redeploy the frontend with the current application to use NIXL P/D")
+)
 
 // admissionOnlyServingSnapshot excludes routes whose cache policy an admission-only application cannot enforce.
 // Catalog provenance and ledger inputs stay identical to the current protocol's publication.
@@ -272,8 +293,27 @@ func admissionOnlyServingSnapshot(snapshot servingconfig.Snapshot) servingconfig
 
 // publishServingSnapshot writes one protocol view against the object read for this candidate.
 // The FrontendService owns each view; a deleted or concurrently changed view must be reconciled again.
-func (reconciler *Reconciler) publishServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, name string, snapshot servingconfig.Snapshot, current *corev1.ConfigMap) error {
-	payload, err := json.Marshal(snapshot)
+func (reconciler *Reconciler) publishServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, protocol uint32, snapshot servingconfig.Snapshot, current *corev1.ConfigMap) error {
+	name := servingconfig.ConfigMapName(frontend, protocol)
+	var publication any = snapshot
+	if protocol < servingconfig.PDTransportProtocol && len(snapshot.PDComponents) > 0 {
+		// Older readers require a nonempty profile identity. Derive it only in
+		// their wire representation from the resolved connector and protocol.
+		type legacyPDComponent struct {
+			servingconfig.PDComponent
+			ProfileName     string `json:"profile_name"`
+			ProfileRevision string `json:"profile_revision"`
+		}
+		components := make([]legacyPDComponent, 0, len(snapshot.PDComponents))
+		for _, component := range snapshot.PDComponents {
+			components = append(components, legacyPDComponent{component, component.Connector, component.Protocol})
+		}
+		publication = struct {
+			servingconfig.Snapshot
+			PDComponents []legacyPDComponent `json:"pd_components,omitempty"`
+		}{snapshot, components}
+	}
+	payload, err := json.Marshal(publication)
 	if err != nil {
 		return fmt.Errorf("encode routing snapshot: %w", err)
 	}
