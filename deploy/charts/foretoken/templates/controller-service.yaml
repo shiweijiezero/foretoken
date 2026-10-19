@@ -3,6 +3,7 @@
 
 {{/* Exposes controller-runtime metrics to the Prometheus Operator. */}}
 {{- if and (eq .Values.scope "deployment") (eq (include "foretoken.observabilityEnabled" .) "true") }}
+{{- $ports := include "foretoken.controllerPorts" . | fromJson }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,7 +17,7 @@ spec:
     {{- include "foretoken.selectorLabels" . | nindent 4 }}
   ports:
     - name: metrics
-      port: 8080
+      port: {{ int $ports.metrics }}
       targetPort: metrics
       protocol: TCP
 {{- end }}

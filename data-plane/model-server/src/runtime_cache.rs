@@ -51,6 +51,7 @@ impl Mode {
 pub struct Config {
     pub(crate) claim_name: String,
     pub(crate) mount_path: PathBuf,
+    model_root: PathBuf,
     cache_directories: Vec<(&'static str, PathBuf)>,
     temporary_root: PathBuf,
     pub(crate) pod_uid: String,
@@ -113,6 +114,7 @@ impl Config {
         Ok(Some(Self {
             claim_name,
             mount_path,
+            model_root,
             cache_directories,
             temporary_root: Path::new(TEMPORARY_CACHE_ROOT).join(&pod_uid),
             pod_uid,
@@ -121,9 +123,14 @@ impl Config {
         }))
     }
 
-    /// Returns the model root for the selected persistent or temporary cache mode.
+    /// Retains the projected model root, relocating cache-owned paths during temporary recovery.
     pub fn model_root(&self, mode: Mode) -> PathBuf {
-        self.root(mode).join("models")
+        if mode == Mode::Temporary
+            && let Ok(relative) = self.model_root.strip_prefix(&self.mount_path)
+        {
+            return self.temporary_root.join(relative);
+        }
+        self.model_root.clone()
     }
 
     /// Returns the controller-selected private observation port.

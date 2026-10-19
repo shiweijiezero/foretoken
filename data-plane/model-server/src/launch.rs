@@ -17,7 +17,7 @@ use foretoken_model_protocol::{
     RuntimeKvTransferMetadata,
 };
 
-use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
+use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, RuntimePorts};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
 const DEFAULT_VLLM_PYTHON: &str = "python3";
@@ -361,6 +361,7 @@ impl LaunchPlanV1 {
         handshake_port: u16,
         member: Option<&crate::config::MemberContext>,
         vllm_minor: u64,
+        ports: &RuntimePorts,
     ) -> Result<(ManagedEngineConfig, Option<RuntimeKvTransferMetadata>), String> {
         let kv_transfer = self
             .kv
@@ -371,7 +372,7 @@ impl LaunchPlanV1 {
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
-            python_args: self.render_vllm_args(member, kv_transfer.as_ref())?,
+            python_args: self.render_vllm_args(member, kv_transfer.as_ref(), ports)?,
         };
         if let Some(member) = member {
             config.handshake_host = member.leader_address.clone();
@@ -379,7 +380,13 @@ impl LaunchPlanV1 {
                 format!("--nnodes={}", self.node_count),
                 format!("--node-rank={}", member.index),
                 format!("--master-addr={}", member.leader_address),
-                "--master-port=29800".into(),
+                format!(
+                    "--master-port={}",
+                    ports
+                        .distributed
+                        .expect("distributed member requires transport ports")
+                        .master
+                ),
             ]);
         }
         Ok((config, kv_transfer))
@@ -392,10 +399,14 @@ impl LaunchPlanV1 {
         &self,
         engine: &ManagedEngineConfig,
         member: Option<&crate::config::MemberContext>,
+        ports: &RuntimePorts,
         startup_remaining: Duration,
     ) -> Command {
         let command = engine.to_command();
         let mut command = if let Some(member) = member {
+            let distributed = ports
+                .distributed
+                .expect("distributed launcher requires transport ports");
             let mut launcher = Command::new(command.get_program());
             launcher
                 .args(["-m", "foretoken_mccl", "launch"])
@@ -404,7 +415,8 @@ impl LaunchPlanV1 {
                         "member_index": member.index,
                         "member_count": self.node_count,
                         "leader": member.leader_address,
-                        "port": 29600,
+                        "port": distributed.calibration,
+                        "probe_port": distributed.calibration_probe,
                         "startup_seconds": startup_remaining.as_secs_f64(),
                     })
                     .to_string(),
@@ -444,6 +456,7 @@ impl LaunchPlanV1 {
         &self,
         member: Option<&crate::config::MemberContext>,
         kv_transfer: Option<&RuntimeKvTransferMetadata>,
+        ports: &RuntimePorts,
     ) -> Result<Vec<String>, String> {
         self.validate()?;
         let p = &self.parallelism;
@@ -479,7 +492,7 @@ impl LaunchPlanV1 {
             append_engine_arg(&mut args, name, value)?;
         }
         if self.kv.events() {
-            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
+            args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":ports.kv_event_endpoint(member.map_or(LOOPBACK_HOST, |member| member.leader_address.as_str()), 0),"topic":KV_EVENT_TOPIC,"enable_kv_cache_events":true,"hwm":4096,"max_queue_size":4096})));
         }
         if let Some(config) = self.kv.transfer_config(
             self.shared_prefix_lookup(),

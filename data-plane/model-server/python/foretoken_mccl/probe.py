@@ -28,7 +28,7 @@ def _measure_worker(local_rank: int, options: dict, results) -> None:
     timeout = timedelta(seconds=options["timeout"])
     store = dist.TCPStore(
         options["leader"],
-        options["port"] + 1,
+        options["port"],
         options["world_size"],
         rank == 0,
         timeout=timeout,
