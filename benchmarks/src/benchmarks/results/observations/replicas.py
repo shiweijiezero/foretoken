@@ -63,10 +63,15 @@ class KubernetesReplicaObserver:
     Both observations share one bounded kubectl sampling lifecycle.
     """
 
-    def __init__(self, resources: tuple[ResourceRef, ...], model: str, applications: ApplicationSources) -> None:
+    def __init__(
+        self, resources: tuple[ResourceRef, ...], model: str, applications: ApplicationSources,
+        *, kubectl: Kubectl,
+    ) -> None:
+        """Bind result-output sampling to the command's selected Kubernetes client."""
         self._resources = resources
         self._model = model
         self._applications = applications
+        self._kubectl = kubectl
         self._stop = threading.Event()
         self._stop_deadline: float | None = None
         self._thread: threading.Thread | None = None
@@ -191,9 +196,10 @@ class KubernetesReplicaObserver:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._stop_deadline is not None:
             deadline = min(deadline, self._stop_deadline)
-        kubectl = Kubectl(deadline=deadline)
+        kubectl = self._kubectl
         try:
-            values = kubectl.get_resources(self._resources)
+            with kubectl.until(deadline):
+                values = kubectl.get_resources(self._resources)
             identities = {(item["metadata"]["name"], item["metadata"]["uid"]) for item in values}
             if {ref.name for ref in self._resources} != {name for name, _ in identities}:
                 raise DeploymentError("kubectl omitted a selected ModelService")
@@ -215,12 +221,15 @@ class KubernetesReplicaObserver:
             self._errors += 1
             self._last_error = str(exc)
         try:
-            self._gpu_samples.append(self._read_gpu_sample(identities, kubectl))
+            with kubectl.until(deadline):
+                self._gpu_samples.append(self._read_gpu_sample(identities, kubectl))
         except (DeploymentError, KeyError, TypeError, ValueError) as exc:
             self._gpu_failures.append(time.perf_counter())
             self._last_gpu_error = str(exc)
         if self._workload_samples:
-            self._applications.capture(self._workload_samples[-1][1], deadline=deadline)
+            self._applications.capture(
+                self._workload_samples[-1][1], kubectl=kubectl, deadline=deadline,
+            )
 
     def _read_observations(
         self, values: tuple[dict[str, Any], ...], observed_at: float,

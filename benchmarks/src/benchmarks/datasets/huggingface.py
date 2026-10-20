@@ -20,7 +20,7 @@ from datasets import (
     load_dataset_builder,
 )
 from foretoken.network_sources import select_huggingface_endpoint
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download, parse_hf_uri, snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,6 @@ _TOKENIZER_ALLOW_PATTERNS = (
     "tokenization*",
     "config.json",
 )
-
-_HF_DATASETS_PREFIX = "hf://datasets/"
-_HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
 
 
 def find_local_tokenizer_path(
@@ -160,51 +157,22 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
 
 
 def is_hf_file_uri(source: str) -> bool:
-    """Return whether a source is a canonical Hugging Face dataset file URI."""
-    return source.startswith(_HF_DATASETS_PREFIX)
-
-
-def parse_hf_file_uri(uri: str) -> tuple[str, str | None, str]:
-    """Parse a Hugging Face dataset file URI into repository, revision, and path."""
-    if not is_hf_file_uri(uri):
-        raise ValueError(
-            f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-        )
-    remainder = uri[len(_HF_DATASETS_PREFIX) :]
-    if not remainder or remainder.startswith("/"):
-        raise ValueError(
-            f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-        )
-    if "@" in remainder:
-        repo_id, after_at = remainder.split("@", 1)
-        if not repo_id or "/" not in after_at:
-            raise ValueError(
-                f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-            )
-        revision, filename = after_at.split("/", 1)
-        if not revision or not filename:
-            raise ValueError(
-                f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-            )
-        return repo_id, revision, filename
-    parts = remainder.split("/")
-    if len(parts) >= 3 and all(parts):
-        return f"{parts[0]}/{parts[1]}", None, "/".join(parts[2:])
-    if len(parts) == 2 and all(parts):
-        return parts[0], None, parts[1]
-    raise ValueError(
-        f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-    )
+    """Return whether a source uses a Hugging Face dataset file URI."""
+    return source.startswith("hf://datasets/")
 
 
 def resolve_hf_file_uri(uri: str) -> str:
-    """Download a Hugging Face dataset file and return its local cache path."""
-    repo_id, revision, filename = parse_hf_file_uri(uri)
+    """Download a namespaced dataset URI and return its local Hugging Face cache path."""
+    location = parse_hf_uri(uri)
+    if location.type != "dataset" or not location.path_in_repo:
+        raise ValueError(
+            f"Expected a dataset file URI: hf://datasets/<org>/<repo>[@<revision>]/<path>; got {uri!r}"
+        )
     return hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
+        repo_id=location.id,
+        filename=location.path_in_repo,
         repo_type="dataset",
-        revision=revision,
+        revision=location.revision,
     )
 
 

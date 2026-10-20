@@ -52,6 +52,7 @@ def main() -> None:
         shutil.copytree(root / "data-plane/model-server/python", destination)
     if arguments.component in {"control-plane", "model-server"}:
         shutil.copyfile(root / "LICENSE", output / "LICENSE")
+    (output / "complete.json").write_text(json.dumps({"component": arguments.component}) + "\n")
 
 
 def prepare_workspace(source: Path, workspace: Path, versions: Path, component: str) -> Path:

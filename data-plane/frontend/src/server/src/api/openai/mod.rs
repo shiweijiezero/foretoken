@@ -35,7 +35,7 @@ use self::output::{
 };
 use self::types::{
     ChatCompletionRequest, CompletionRequest, DetokenizeRequest, DetokenizeResponse,
-    TokenizeRequest, TokenizeResponse,
+    TokenizeRequest, TokenizeResponse, completion_prompts,
 };
 use super::{ApiState, RequestTiming, server_request_id};
 use crate::AdmissionOrigin;
@@ -74,7 +74,7 @@ async fn completions(
     let stream = request.stream;
     let include_usage = request.stream_options.include_usage;
     let mut sampling_params = completion_sampling(&request);
-    let prompts = request.prompt.into_prompts();
+    let prompts = completion_prompts(request.prompt);
     let best_of = request.best_of.unwrap_or(request.n);
     if include_usage && !stream {
         return client_error("stream_options.include_usage requires stream=true");

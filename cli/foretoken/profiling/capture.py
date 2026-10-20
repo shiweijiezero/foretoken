@@ -21,13 +21,14 @@ class ProfileRun:
     """CLI client for one retained capture; the controller owns native execution and storage."""
 
     def __init__(
-        self, command: ProfileCommand, *, deployment: ForetokenDeployment | None = None
+        self, command: ProfileCommand, *, deployment: ForetokenDeployment | None = None,
+        kubectl: Kubectl | None = None,
     ) -> None:
         self.command = command
         self.wait_seconds = timeout_seconds(command.timeout)
         if self.wait_seconds <= 0:
             raise DeploymentError("capture wait timeout must be positive")
-        self.kubectl = Kubectl()
+        self.kubectl = kubectl or Kubectl()
         if deployment is None:
             deployment = load_deployment(command.kustomize_path, self.kubectl)
         selected = [

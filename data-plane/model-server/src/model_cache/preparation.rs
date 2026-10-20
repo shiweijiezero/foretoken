@@ -7,7 +7,6 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 
 use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::PreparedTokenizer;
@@ -15,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use crate::engine::PYTHON_MODULE_PATH;
 use crate::model_cache::kubernetes::Kubernetes;
@@ -125,7 +124,7 @@ pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result
         environment: &[],
     };
     let scope = std::env::var(PREPARATION_SCOPE_ENV).map_err(io::Error::other)?;
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let mut observer =
         if let Some(cache) = runtime_cache::Config::from_env().map_err(io::Error::other)? {
             let listener = TcpListener::bind(("0.0.0.0", cache.observation_port())).await?;
@@ -139,15 +138,12 @@ pub async fn prepare_job(artifacts: &ModelArtifacts, python: &str) -> io::Result
         };
     let result = tokio::select! {
         result = prepare(artifacts, python, &storage, &scope, false) => result.map(|_| ()),
-        reason = runtime_cache::wait_for_server(&mut observer) => {
-            observer.take();
-            Err(io::Error::other(reason))
-        },
+        reason = runtime_cache::wait_for_server(&mut observer) => Err(io::Error::other(reason)),
         signal = crate::shutdown_signal() => signal.and_then(|()| {
             Err(io::Error::new(io::ErrorKind::Interrupted, "model preparation cancelled"))
         }),
     };
-    shutdown.notify_one();
+    shutdown.cancel();
     if let Some(observer) = observer {
         observer.await.map_err(io::Error::other)??;
     }
@@ -576,17 +572,17 @@ async fn publish_source(
         if let Some(identity) = cache_identity {
             data[CACHE_ROOT_KEY] = json!(identity);
         }
-        let response = client
+        match client
             .patch(
                 &path,
                 &json!({"metadata": {"resourceVersion": resource_version}, "data": data}),
             )
-            .await?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
-            continue;
+            .await
+        {
+            Ok(_) => return Ok(source),
+            Err(kube::Error::Api(error)) if error.code == 409 => continue,
+            Err(error) => return Err(io::Error::other(error)),
         }
-        response.error_for_status().map_err(io::Error::other)?;
-        return Ok(source);
     }
 }
 

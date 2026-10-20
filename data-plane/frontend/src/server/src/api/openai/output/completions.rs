@@ -290,6 +290,7 @@ pub(crate) fn text_stream_many(
                         }
                     }
                     Ok(DecodedTextEvent::TextDelta { delta, token_ids, logprobs, finished }) => {
+                        let delta = delta.text;
                         let logprobs = completion_logprobs(
                             &token_ids,
                             logprobs,

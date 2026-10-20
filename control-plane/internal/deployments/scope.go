@@ -209,13 +209,18 @@ func (c *scopedClient) prepare(object client.Object) error {
 	return nil
 }
 
-// checkWrite uses the direct API so filtered-cache absence cannot authorize takeover of a peer's object.
+// checkWrite reads fresh API metadata so desired labels and filtered-cache absence cannot authorize takeover.
 func (c *scopedClient) checkWrite(ctx context.Context, object client.Object) error {
-	current := object.DeepCopyObject().(client.Object)
+	gvk, err := c.GroupVersionKindFor(object)
+	if err != nil {
+		return err
+	}
+	current := &metav1.PartialObjectMetadata{}
+	current.SetGroupVersionKind(gvk)
 	if err := c.reader.Reader.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
 		return err
 	}
-	if current.GetNamespace() != c.scope.Namespace || !sharedCredential(current) && current.GetLabels()[api.DeploymentUIDLabel] != c.scope.UID {
+	if current.GetNamespace() != c.scope.Namespace || !sharedCredential(object) && current.GetLabels()[api.DeploymentUIDLabel] != c.scope.UID {
 		return fmt.Errorf("resource %s/%s is not owned by this deployment", current.GetNamespace(), current.GetName())
 	}
 	if object.GetUID() != "" && object.GetUID() != current.GetUID() {

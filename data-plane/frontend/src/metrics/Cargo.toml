@@ -11,5 +11,6 @@ license.workspace = true
 foretoken-admission = { path = "../admission" }
 axum.workspace = true
 foretoken-router = { path = "../router" }
+prometheus-client.workspace = true
 serde.workspace = true
 vllm-metrics.workspace = true

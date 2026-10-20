@@ -80,102 +80,102 @@ def serving_environment(service: ModelService, *, deadline: float | None = None)
     snapshot["namespace"] = service.model_service_refs[0].namespace
     if deadline is None:
         deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
-    kubectl = Kubectl(deadline=deadline)
+    kubectl = service.kubectl
     try:
-        snapshot["context"] = kubectl.current_context()
-        kubectl = Kubectl(context=snapshot["context"], deadline=deadline)
-        resources = kubectl.list_resources(
-            ("modelservices", "frontendservices", "modelpools", "modelgroups", "deployments", "replicasets", "pods"),
-            snapshot["namespace"],
-        )
-        names = {ref.name for ref in service.model_service_refs}
-        models = [r for r in resources if r["kind"] == "ModelService" and r["metadata"]["name"] in names]
-        frontends = [r for r in resources if r["kind"] == "FrontendService"
-                     and service.deployment is not None and r["metadata"]["name"] == service.deployment.frontend]
-        # Namespace membership does not establish ownership of another instance's controller.
-        deployment_uid = service.deployment.uid if service.deployment is not None else ""
-        controllers = [r for r in resources if r["kind"] == "Deployment"
-                       and deployment_uid
-                       and r["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) == deployment_uid
-                       and r["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-control-plane"]
-        owners = {r["metadata"]["uid"] for r in models + frontends + controllers}
-        snapshot["controllers"] = [{
-            "name": r["metadata"]["name"], "uid": r["metadata"]["uid"],
-            "generation": r["metadata"]["generation"],
-            "application": {
-                "image": next(c["image"] for c in r["spec"]["template"]["spec"]["containers"] if c["name"] == "manager"),
-                "applicationURL": r["spec"]["template"].get("metadata", {}).get("annotations", {}).get("inference.foretoken.io/application-url", ""),
-            },
-        } for r in controllers]
-        descendants = {}
-        # Runtime Pods belong to ReplicaSets created by the group's Deployment.
-        for kind in ("ModelPool", "ModelGroup", "Deployment", "ReplicaSet", "Pod"):
-            selected = [r for r in resources if r["kind"] == kind and any(
-                owner["uid"] in owners and owner.get("controller")
-                for owner in r["metadata"].get("ownerReferences", [])
-            )]
-            descendants[kind] = selected
-            owners.update(r["metadata"]["uid"] for r in selected)
-        snapshot["services"] = [{
-            "name": r["metadata"]["name"],
-            "uid": r["metadata"]["uid"],
-            "generation": r["metadata"]["generation"],
-            "observed_generation": r.get("status", {}).get("observedGeneration"),
-            "spec": r["spec"],
-            "pool_applications": r.get("status", {}).get("poolApplications", {}),
-            "serving_pool_revisions": r.get("status", {}).get("servingPoolRevisions", []),
-        } for r in models]
-        snapshot["frontends"] = [{
-            "name": r["metadata"]["name"], "uid": r["metadata"]["uid"],
-            "spec": r["spec"], "application": r.get("status", {}).get("application"),
-        } for r in frontends]
-        snapshot["groups"] = [{
-            "name": r["metadata"]["name"],
-            "uid": r["metadata"]["uid"],
-            "revision": r["spec"]["revision"],
-            "phase": r.get("status", {}).get("phase"),
-            "artifacts": {key: r["spec"]["artifacts"][key] for key in (
-                "model", "source", "modelRevision", "tokenizer", "tokenizerRevision",
-            ) if key in r["spec"]["artifacts"]},
-            "runtime": r["spec"]["runtime"],
-            "resources": r["spec"]["resources"],
-            "parallelism": r["spec"]["parallelism"],
-        } for r in descendants["ModelGroup"]]
-        # Distributed member Pods are owned by LeaderWorkerSets rather than Deployments.
-        # Their launch identity ties them to the already-verified Group UID.
-        group_uids = {group["uid"] for group in snapshot["groups"]}
-        selected_pods = {pod["metadata"]["uid"]: pod for pod in descendants["Pod"]}
-        for pod in resources:
-            if pod["kind"] == "Pod" and any(
-                env.get("name") == "FORETOKEN_MODEL_GROUP_UID" and env.get("value") in group_uids
-                for container in pod["spec"]["containers"] if container["name"] == "model-server"
-                for env in container.get("env", [])
-            ):
-                selected_pods[pod["metadata"]["uid"]] = pod
-        snapshot["pods"] = [{
-            "name": r["metadata"]["name"],
-            "uid": r["metadata"]["uid"],
-            "node": r["spec"].get("nodeName"),
-            "phase": r.get("status", {}).get("phase"),
-            "application_url": r["metadata"].get("annotations", {}).get("inference.foretoken.io/application-url", ""),
-            "containers": [{
-                "name": c["name"], "image": c["image"], "resources": c.get("resources", {}),
-            } for c in r["spec"]["containers"]],
-            "container_statuses": [{key: c.get(key) for key in (
-                "name", "imageID", "containerID", "ready", "restartCount",
-            )} for c in r.get("status", {}).get("containerStatuses", [])],
-        } for r in selected_pods.values()]
-        snapshot["nodes"] = []
-        for name in sorted({p["node"] for p in snapshot["pods"] if p["node"]}):
-            node = kubectl.get("node", name)
-            snapshot["nodes"].append({
-                "name": name,
-                "node_info": {key: node["status"]["nodeInfo"][key] for key in (
-                    "operatingSystem", "architecture", "osImage", "kernelVersion",
-                    "containerRuntimeVersion", "kubeletVersion",
-                )},
-                "allocatable": node["status"].get("allocatable", {}),
-            })
+        with kubectl.until(deadline):
+            snapshot["context"] = kubectl.context
+            resources = kubectl.list_resources(
+                ("modelservices", "frontendservices", "modelpools", "modelgroups", "deployments", "replicasets", "pods"),
+                snapshot["namespace"],
+            )
+            names = {ref.name for ref in service.model_service_refs}
+            models = [r for r in resources if r["kind"] == "ModelService" and r["metadata"]["name"] in names]
+            frontends = [r for r in resources if r["kind"] == "FrontendService"
+                         and service.deployment is not None and r["metadata"]["name"] == service.deployment.frontend]
+            # Namespace membership does not establish ownership of another instance's controller.
+            deployment_uid = service.deployment.uid if service.deployment is not None else ""
+            controllers = [r for r in resources if r["kind"] == "Deployment"
+                           and deployment_uid
+                           and r["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) == deployment_uid
+                           and r["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-control-plane"]
+            owners = {r["metadata"]["uid"] for r in models + frontends + controllers}
+            snapshot["controllers"] = [{
+                "name": r["metadata"]["name"], "uid": r["metadata"]["uid"],
+                "generation": r["metadata"]["generation"],
+                "application": {
+                    "image": next(c["image"] for c in r["spec"]["template"]["spec"]["containers"] if c["name"] == "manager"),
+                    "applicationURL": r["spec"]["template"].get("metadata", {}).get("annotations", {}).get("inference.foretoken.io/application-url", ""),
+                },
+            } for r in controllers]
+            descendants = {}
+            # Runtime Pods belong to ReplicaSets created by the group's Deployment.
+            for kind in ("ModelPool", "ModelGroup", "Deployment", "ReplicaSet", "Pod"):
+                selected = [r for r in resources if r["kind"] == kind and any(
+                    owner["uid"] in owners and owner.get("controller")
+                    for owner in r["metadata"].get("ownerReferences", [])
+                )]
+                descendants[kind] = selected
+                owners.update(r["metadata"]["uid"] for r in selected)
+            snapshot["services"] = [{
+                "name": r["metadata"]["name"],
+                "uid": r["metadata"]["uid"],
+                "generation": r["metadata"]["generation"],
+                "observed_generation": r.get("status", {}).get("observedGeneration"),
+                "spec": r["spec"],
+                "pool_applications": r.get("status", {}).get("poolApplications", {}),
+                "serving_pool_revisions": r.get("status", {}).get("servingPoolRevisions", []),
+            } for r in models]
+            snapshot["frontends"] = [{
+                "name": r["metadata"]["name"], "uid": r["metadata"]["uid"],
+                "spec": r["spec"], "application": r.get("status", {}).get("application"),
+            } for r in frontends]
+            snapshot["groups"] = [{
+                "name": r["metadata"]["name"],
+                "uid": r["metadata"]["uid"],
+                "revision": r["spec"]["revision"],
+                "phase": r.get("status", {}).get("phase"),
+                "artifacts": {key: r["spec"]["artifacts"][key] for key in (
+                    "model", "source", "modelRevision", "tokenizer", "tokenizerRevision",
+                ) if key in r["spec"]["artifacts"]},
+                "runtime": r["spec"]["runtime"],
+                "resources": r["spec"]["resources"],
+                "parallelism": r["spec"]["parallelism"],
+            } for r in descendants["ModelGroup"]]
+            # Distributed member Pods are owned by LeaderWorkerSets rather than Deployments.
+            # Their launch identity ties them to the already-verified Group UID.
+            group_uids = {group["uid"] for group in snapshot["groups"]}
+            selected_pods = {pod["metadata"]["uid"]: pod for pod in descendants["Pod"]}
+            for pod in resources:
+                if pod["kind"] == "Pod" and any(
+                    env.get("name") == "FORETOKEN_MODEL_GROUP_UID" and env.get("value") in group_uids
+                    for container in pod["spec"]["containers"] if container["name"] == "model-server"
+                    for env in container.get("env", [])
+                ):
+                    selected_pods[pod["metadata"]["uid"]] = pod
+            snapshot["pods"] = [{
+                "name": r["metadata"]["name"],
+                "uid": r["metadata"]["uid"],
+                "node": r["spec"].get("nodeName"),
+                "phase": r.get("status", {}).get("phase"),
+                "application_url": r["metadata"].get("annotations", {}).get("inference.foretoken.io/application-url", ""),
+                "containers": [{
+                    "name": c["name"], "image": c["image"], "resources": c.get("resources", {}),
+                } for c in r["spec"]["containers"]],
+                "container_statuses": [{key: c.get(key) for key in (
+                    "name", "imageID", "containerID", "ready", "restartCount",
+                )} for c in r.get("status", {}).get("containerStatuses", [])],
+            } for r in selected_pods.values()]
+            snapshot["nodes"] = []
+            for name in sorted({p["node"] for p in snapshot["pods"] if p["node"]}):
+                node = kubectl.get("node", name)
+                snapshot["nodes"].append({
+                    "name": name,
+                    "node_info": {key: node["status"]["nodeInfo"][key] for key in (
+                        "operatingSystem", "architecture", "osImage", "kernelVersion",
+                        "containerRuntimeVersion", "kubeletVersion",
+                    )},
+                    "allocatable": node["status"].get("allocatable", {}),
+                })
     except DeploymentError as error:
         snapshot["error"] = str(error)
         logger.warning("Serving environment snapshot incomplete: %s", error)
@@ -189,11 +189,15 @@ class ApplicationSources:
         self.directory = directory
         self.records: dict[str, dict[str, Any]] = {}
         self._archives: dict[str, dict[str, str]] = {}
-        self._context: str | None = None
+        self._kubectl: Kubectl | None = None
 
-    def capture(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
-        """Capture lightweight application provenance without transferring source archives in samplers."""
-        self._context = snapshot.get("context", self._context)
+    def capture(
+        self, snapshot: dict[str, Any], *, kubectl: Kubectl | None,
+        deadline: float | None = None,
+    ) -> None:
+        """Read live application provenance with the service's client, deferring archive transfers."""
+        if kubectl is not None:
+            self._kubectl = kubectl
         references = {
             group["runtime"]["applicationURL"]
             for group in snapshot.get("groups", []) if group["runtime"].get("applicationURL")
@@ -219,12 +223,10 @@ class ApplicationSources:
         origin = None
         for reference in sorted(references - self.records.keys()):
             try:
-                if origin is None:
-                    origin = ApplicationFiles(
-                        Kubectl(context=self._context, deadline=deadline),
-                        default_platform_config().namespace,
-                    )
-                sources = origin.read_sources(reference)
+                with self._kubectl.until(deadline):
+                    if origin is None:
+                        origin = ApplicationFiles(self._kubectl, default_platform_config().namespace)
+                    sources = origin.read_sources(reference)
             except DeploymentError as error:
                 self.records[reference] = {"sources": None, "error": str(error)}
                 continue
@@ -244,14 +246,12 @@ class ApplicationSources:
             if "path" in self._archives.get(archive, {}):
                 continue
             try:
-                if origin is None:
-                    origin = ApplicationFiles(
-                        Kubectl(context=self._context, deadline=deadline),
-                        default_platform_config().namespace,
+                with self._kubectl.until(deadline):
+                    if origin is None:
+                        origin = ApplicationFiles(self._kubectl, default_platform_config().namespace)
+                    path = origin.download_source_archive(
+                        archive, self.directory / "sources", timeout=f"{OBSERVATION_TIMEOUT_SECONDS:g}s",
                     )
-                path = origin.download_source_archive(
-                    archive, self.directory / "sources", timeout=f"{OBSERVATION_TIMEOUT_SECONDS:g}s",
-                )
                 self._archives[archive] = {"path": str(path.relative_to(self.directory))}
             except DeploymentError as error:
                 self._archives[archive] = {"error": str(error)}

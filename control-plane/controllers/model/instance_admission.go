@@ -133,13 +133,14 @@ func (reconciler *PoolReconciler) reconcileInstanceAdmission(ctx context.Context
 		if !pod.DeletionTimestamp.IsZero() || pod.Labels[workload.ModelGroupLabel] == "" || pod.Annotations[instanceAdmissionRefreshAnnotation] == refreshToken {
 			continue
 		}
-		group, err := workload.ModelGroupForPod(ctx, reader, pod)
+		ownership, err := workload.ModelGroupForPod(ctx, reader, pod)
 		if apierrors.IsNotFound(err) || errors.Is(err, workload.ErrUnprovenBackendOwner) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
+		group := ownership.Group
 		if !servingconfig.ModelGroupOwnedBy(group, pool) || !groupUsesLiveInstanceAdmission(group) || !labels.SelectorFromSet(workload.ModelGroupServiceSelector(group)).Matches(labels.Set(pod.Labels)) {
 			continue
 		}
@@ -330,8 +331,12 @@ func (reconciler *PoolReconciler) poolsForInstancePod(ctx context.Context, objec
 		reader = reconciler.Client
 	}
 	pod := object.(*corev1.Pod)
-	group, err := workload.ModelGroupForPod(ctx, reader, pod)
-	if err != nil || !groupUsesLiveInstanceAdmission(group) || !labels.SelectorFromSet(workload.ModelGroupServiceSelector(group)).Matches(labels.Set(pod.Labels)) {
+	ownership, err := workload.ModelGroupForPod(ctx, reader, pod)
+	if err != nil {
+		return nil
+	}
+	group := ownership.Group
+	if !groupUsesLiveInstanceAdmission(group) || !labels.SelectorFromSet(workload.ModelGroupServiceSelector(group)).Matches(labels.Set(pod.Labels)) {
 		return nil
 	}
 	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}}}

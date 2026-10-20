@@ -136,7 +136,7 @@ class Helm(HelmClient):
             with application_files.adopt(self.render_chart(args, input_text=input_text), timeout):
                 self.run(args, input_text=input_text)
                 self.set_platform_retiring(
-                    kubectl, self.platform_configuration(kubectl), retiring=False,
+                    kubectl, self.platform_configuration(), retiring=False,
                     clear_source_build=not source_mode,
                 )
 
@@ -144,10 +144,10 @@ class Helm(HelmClient):
         """Return the Foretoken release identity shared by installation and source consumers."""
         return ReleaseRef(self.config.platform.release_name, self.config.namespace)
 
-    def platform_configuration(self, kubectl: Kubectl | None = None) -> dict[str, Any]:
+    def platform_configuration(self) -> dict[str, Any]:
         """Read the installed platform identity and resolved defaults for deployment and source owners."""
         release = self.platform_release()
-        configuration = (kubectl or Kubectl()).get_if_exists(
+        configuration = self._kubectl.get_if_exists(
             "configmap", f"{release.name}-platform", release.namespace,
         )
         if configuration is None:

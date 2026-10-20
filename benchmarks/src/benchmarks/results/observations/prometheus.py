@@ -42,7 +42,6 @@ class PrometheusObserver:
     def __init__(self, service: ModelService, resources: KubernetesReplicaObserver) -> None:
         self._service = service
         self._resources = resources
-        self._context: str | None = None
         self._prometheus: PrometheusRef | None = None
         self._api_path: str | None = None
         self._stop = threading.Event()
@@ -60,17 +59,16 @@ class PrometheusObserver:
             raise RuntimeError("Prometheus observer is already active")
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
-        kubectl = Kubectl(deadline=deadline)
-        kubectl = Kubectl(context=kubectl.current_context(), deadline=deadline)
-        config = default_platform_config()
-        platform = Helm(config).platform_configuration(kubectl)
-        values = json.loads(platform["data"]["deploymentValues"])
-        requested = values["observability"]["prometheus"] or None
-        prometheus = select_prometheus(kubectl, config.namespace, requested)
-        if prometheus is None:
-            raise DeploymentError("no compatible Prometheus is available")
-        self._api_path = prometheus_api_path(kubectl, prometheus)
-        self._context = kubectl.context
+        kubectl = self._service.kubectl
+        platform = default_platform_config()
+        with kubectl.until(deadline):
+            configuration = Helm(platform, kubectl).platform_configuration()
+            values = json.loads(configuration["data"]["deploymentValues"])
+            requested = values["observability"]["prometheus"] or None
+            prometheus = select_prometheus(kubectl, platform.namespace, requested)
+            if prometheus is None:
+                raise DeploymentError("no compatible Prometheus is available")
+            self._api_path = prometheus_api_path(kubectl, prometheus)
         self._prometheus = prometheus
         self._thread = threading.Thread(
             target=self._run,
@@ -89,19 +87,21 @@ class PrometheusObserver:
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         self.close(deadline=deadline)
-        kubectl = Kubectl(context=self._context, deadline=deadline)
+        kubectl = self._service.kubectl
         prometheus = self._prometheus
         summary = None
         resources = None
         if ended_at is not None and duration_seconds is not None:
             try:
-                summary = self._measure_spec_window(duration_seconds, ended_at, kubectl)
+                with kubectl.until(deadline):
+                    summary = self._measure_spec_window(duration_seconds, ended_at, kubectl)
             except (DeploymentError, KeyError, TypeError, ValueError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
         if ended_at is not None and duration_seconds is not None:
             try:
-                resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
+                with kubectl.until(deadline):
+                    resources = self._measure_resource_window(time_origin, duration_seconds, ended_at, kubectl)
             except DeploymentError as exc:
                 self._errors += 1
                 self._last_error = str(exc)
@@ -190,12 +190,12 @@ class PrometheusObserver:
 
     def _read_sample(self) -> dict[str, Any]:
         """Read one bounded set of serving-scoped queries, retaining expressions, labels, and device identities."""
-        if self._context is None or self._prometheus is None:
+        if self._prometheus is None:
             raise RuntimeError("Prometheus observer is not active")
         deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._stop_deadline is not None:
             deadline = min(deadline, self._stop_deadline)
-        kubectl = Kubectl(context=self._context, deadline=deadline)
+        kubectl = self._service.kubectl
         namespace = self._service.model_service_refs[0].namespace
         namespace_label = json.dumps(namespace)
         model_filter = f",model_name={json.dumps(self._service.model)}" if self._service.model else ""
@@ -274,14 +274,15 @@ class PrometheusObserver:
         })
         observed_at = time.time()
         queries = {}
-        for name, expression in expressions.items():
-            if self._stop.is_set():
-                break
-            result = self._query(kubectl, expression)
-            queries[name] = {"expression": expression, "result": list(result or ())}
-            if result is None:
-                queries[name]["error"] = self._last_error
-                break
+        with kubectl.until(deadline):
+            for name, expression in expressions.items():
+                if self._stop.is_set():
+                    break
+                result = self._query(kubectl, expression)
+                queries[name] = {"expression": expression, "result": list(result or ())}
+                if result is None:
+                    queries[name]["error"] = self._last_error
+                    break
         # Zero utilization still identifies an allocated device. Preserve the exporter
         # identity rather than interpreting missing samples as zero allocated GPUs.
         device_keys = ("namespace", "pod", "container", "node", "model_group", "vendor", "device_id")
@@ -360,7 +361,7 @@ class PrometheusObserver:
 
     def _measure_spec_window(self, duration_seconds: float, ended_at: float, kubectl: Kubectl) -> dict[str, Any] | None:
         """Estimate measured-window counters for observed Pods, including counter resets."""
-        if self._context is None or self._prometheus is None or not self._resources.pod_names:
+        if self._prometheus is None or not self._resources.pod_names:
             return None
         _, raw = self._spec_selectors()
         window_ms = round(duration_seconds * 1000)

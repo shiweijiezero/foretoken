@@ -21,7 +21,8 @@ use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
 use foretoken_model_server::{profiling, runtime_cache, shutdown_signal};
 use futures::future::BoxFuture;
 use tokio::net::TcpListener;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use vllm_engine_core_client::EngineCoreClient;
 use vllm_llm::Llm;
@@ -39,9 +40,9 @@ pub(super) struct Leader {
     engine: ManagedEngine,
     instance_admission: Option<InstanceAdmissionWatcher>,
     health: Arc<RuntimeHealth>,
-    shutdown: Arc<Notify>,
+    shutdown: CancellationToken,
     cache_server: Option<tokio::task::JoinHandle<io::Result<()>>>,
-    cache_shutdown: Arc<Notify>,
+    cache_shutdown: CancellationToken,
     config: RuntimeConfig,
 }
 
@@ -61,7 +62,8 @@ impl Leader {
         profiling_config: Option<profiling::Config>,
         request_ledger: Option<Arc<foretoken_request_ledger::RequestLedger>>,
         mut cache_server: Option<tokio::task::JoinHandle<io::Result<()>>>,
-        cache_shutdown: Arc<Notify>,
+        cache_shutdown: CancellationToken,
+        background: &super::BackgroundTasks,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Validate initial limits before engine allocation. The same watcher adopts later updates.
         let health = Arc::new(RuntimeHealth::new());
@@ -108,7 +110,8 @@ impl Leader {
         let client_health = client.subscribe_health();
         let (max_concurrent_requests, metadata) =
             runtime_metadata(&config, &client, prepared_tokenizer)?;
-        let kv_events = start_kv_events(kv_events, &config, &client, startup_deadline).await;
+        let kv_events =
+            start_kv_events(kv_events, &config, &client, startup_deadline, background).await;
         if !*client_health.borrow() {
             let reason = client.health_error().map_or_else(
                 || "EngineCore client became unhealthy during startup".to_string(),
@@ -131,7 +134,7 @@ impl Leader {
             profiling.map(|config| profiling::Supervisor::new(config, Some(backend.clone())));
 
         // HTTP borrows the same health and execution owners; creating its future does not accept traffic.
-        let shutdown = Arc::new(Notify::new());
+        let shutdown = CancellationToken::new();
         let server_shutdown = shutdown.clone();
         let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
         if let Some((ledger, pod_uid, epoch)) = execution_store {
@@ -161,7 +164,7 @@ impl Leader {
                     config.launch.internal_generate_request_body_limit_bytes,
                 ),
             )
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(server_shutdown.cancelled_owned())
             .into_future(),
         );
         Ok(Self {
@@ -236,9 +239,8 @@ impl Leader {
         }
         self.health.set_accepting(false);
         self.health.set_client_healthy(false);
-        // Each server has one shutdown waiter, which may not have been polled before an early failure.
-        self.shutdown.notify_one();
-        self.cache_shutdown.notify_one();
+        self.shutdown.cancel();
+        self.cache_shutdown.cancel();
         let deadline = Instant::now() + self.config.launch.drain_timeout();
         // Preparing diagnostics alone must not force-stop requests; only an active native capture does.
         let mut engine_stopped = matches!(stop, Stop::Engine(_))
@@ -344,6 +346,7 @@ async fn start_kv_events(
     config: &RuntimeConfig,
     client: &EngineCoreClient,
     startup_deadline: Instant,
+    background: &super::BackgroundTasks,
 ) -> Option<Arc<KvEventAdapter>> {
     let adapter = adapter?;
     let remaining = startup_deadline.saturating_duration_since(Instant::now());
@@ -359,7 +362,14 @@ async fn start_kv_events(
         || LOOPBACK_HOST.to_string(),
         |member| member.address.to_string(),
     );
-    tokio::spawn(adapter.clone().serve(host, config.ports, ready_tx));
+    let events = adapter.clone();
+    let ports = config.ports;
+    let stopped = background.shutdown.clone();
+    background.tracker.spawn(async move {
+        stopped
+            .run_until_cancelled(events.serve(host, ports, ready_tx))
+            .await;
+    });
     if ready_rx.await != Ok(true) {
         warn!("KV event subscriber is unavailable; live engine observations remain available");
     }

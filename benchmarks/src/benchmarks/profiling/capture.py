@@ -34,7 +34,9 @@ def create_benchmark_profile(
         profile_duration=options.duration,
         timeout=benchmark.service.wait_timeout,
     )
-    return BenchmarkProfile(ProfileRun(command, deployment=service.deployment), directory)
+    return BenchmarkProfile(
+        ProfileRun(command, deployment=service.deployment, kubectl=service.kubectl), directory,
+    )
 
 
 class BenchmarkProfile:

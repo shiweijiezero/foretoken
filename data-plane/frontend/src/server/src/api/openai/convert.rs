@@ -12,9 +12,8 @@ use foretoken_text::{SamplingParams, TextDecodeOptions};
 use serde_json::{Value, json};
 
 use super::types::{
-    ChatCompletionRequest, CompletionRequest, OpenAiChatContent, OpenAiContentPart,
-    OpenAiFunctionType, OpenAiMessage, OpenAiNamedToolChoice, OpenAiResponseFormat, OpenAiTool,
-    OpenAiToolCall, OpenAiToolChoice, OpenAiToolChoiceMode, Stop,
+    ChatCompletionRequest, CompletionRequest, OpenAiChatContent, OpenAiContentPart, OpenAiMessage,
+    OpenAiResponseFormat, OpenAiTool, OpenAiToolCall, OpenAiToolChoice, OpenAiToolChoiceMode, Stop,
 };
 
 type LoweredResponseFormat = (Option<Value>, Option<StructuredOutputsParams>);
@@ -65,7 +64,11 @@ pub(super) fn prepare_chat(
     if !request.logprobs && request.top_logprobs.is_some() {
         return Err("top_logprobs requires logprobs=true".into());
     }
-    let mut sampling_params = sampling(request.temperature, request.top_p, request.max_tokens);
+    let mut sampling_params = sampling(
+        request.temperature,
+        request.top_p,
+        request.max_completion_tokens.or(request.max_tokens),
+    );
     sampling_params.top_k = request.top_k;
     sampling_params.min_p = request.min_p;
     sampling_params.seed = request.seed;
@@ -149,7 +152,10 @@ pub(super) fn completion_sampling(request: &CompletionRequest) -> SamplingParams
 /// Normalizes OpenAI stop strings for the shared generation and tokenization decoders.
 pub(super) fn decode_options(stop: Option<Stop>) -> TextDecodeOptions {
     TextDecodeOptions {
-        stop_strings: stop.map(Stop::into_vec),
+        stop_strings: stop.map(|stop| match stop {
+            Stop::String(value) => vec![value],
+            Stop::StringArray(values) => values,
+        }),
         ..Default::default()
     }
 }
@@ -159,13 +165,22 @@ pub(super) fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<()
     for part in messages
         .iter()
         .filter_map(|message| match &message.content {
-            Some(OpenAiChatContent::Parts(parts)) => Some(parts.as_slice()),
+            Some(OpenAiChatContent::Array(parts)) => Some(parts.as_slice()),
             Some(OpenAiChatContent::Text(_)) | None => None,
         })
         .flatten()
     {
-        if let OpenAiContentPart::ImageUrl { image_url } = part {
-            validate_image_data_url(&image_url.url)?;
+        match part {
+            OpenAiContentPart::Text(part) if part.prompt_cache_breakpoint.is_none() => {}
+            OpenAiContentPart::ImageUrl(part) if part.prompt_cache_breakpoint.is_none() => {
+                validate_image_data_url(&part.image_url.url)?;
+            }
+            OpenAiContentPart::Text(_) | OpenAiContentPart::ImageUrl(_) => {
+                return Err("prompt_cache_breakpoint is not supported");
+            }
+            OpenAiContentPart::InputAudio(_) | OpenAiContentPart::File(_) => {
+                return Err("only text and base64 image content are supported");
+            }
         }
     }
     Ok(())
@@ -173,26 +188,31 @@ pub(super) fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<()
 
 /// Validates and lowers an OpenAI function tool.
 pub(super) fn openai_tool(tool: &OpenAiTool) -> Result<ChatTool, &'static str> {
-    let OpenAiTool {
-        kind: OpenAiFunctionType::Function,
-        function,
-    } = tool;
+    let OpenAiTool::Function(tool) = tool else {
+        return Err("Chat Completions supports function tools only");
+    };
+    let function = &tool.function;
     if function.name.is_empty() {
         return Err("tools[].function.name must not be empty");
     }
-    if !function.parameters.is_object() {
-        return Err("tools[].function.parameters must be a JSON object");
-    }
+    let parameters = function
+        .parameters
+        .as_ref()
+        .filter(|value| value.is_object())
+        .ok_or("tools[].function.parameters must be a JSON object")?;
     Ok(ChatTool {
         name: function.name.clone(),
         description: function.description.clone(),
-        parameters: function.parameters.clone(),
+        parameters: parameters.clone(),
         strict: function.strict,
     })
 }
 
 /// Enforces role-specific fields before constructing the shared chat representation.
 pub(super) fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, String> {
+    if message.role != "assistant" && message.reasoning.is_some() {
+        return Err("reasoning is only supported for assistant messages".into());
+    }
     let content = message.content.as_ref().map(openai_content).transpose()?;
     Ok(match message.role.as_str() {
         "system" if message.tool_calls.is_empty() && message.tool_call_id.is_none() => {
@@ -215,29 +235,36 @@ pub(super) fn openai_message(message: &OpenAiMessage) -> Result<ChatMessage, Str
             if message.tool_call_id.is_some() {
                 return Err("assistant messages must not include tool_call_id".into());
             }
-            let mut blocks = content
-                .map(|content| {
-                    content
-                        .try_flatten_to_text()
-                        .map(|text| AssistantContentBlock::Text { text })
-                })
-                .transpose()
-                .map_err(|error| format!("assistant content: {error}"))?
+            let mut blocks = message
+                .reasoning
+                .clone()
+                .map(|text| AssistantContentBlock::Reasoning { text })
                 .into_iter()
                 .collect::<Vec<_>>();
-            blocks.extend(message.tool_calls.iter().map(|call| match call {
-                OpenAiToolCall {
-                    id,
-                    kind: OpenAiFunctionType::Function,
-                    function,
-                } => AssistantContentBlock::ToolCall(AssistantToolCall {
-                    id: id.clone(),
-                    name: function.name.clone(),
-                    arguments: function.arguments.clone(),
-                }),
-            }));
+            blocks.extend(
+                content
+                    .map(|content| {
+                        content
+                            .try_flatten_to_text()
+                            .map(|text| AssistantContentBlock::Text { text })
+                    })
+                    .transpose()
+                    .map_err(|error| format!("assistant content: {error}"))?,
+            );
+            for call in &message.tool_calls {
+                let OpenAiToolCall::Function(call) = call else {
+                    return Err("Chat Completions supports function tool calls only".into());
+                };
+                blocks.push(AssistantContentBlock::ToolCall(AssistantToolCall {
+                    id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    arguments: call.function.arguments.clone(),
+                }));
+            }
             if blocks.is_empty() {
-                return Err("assistant messages must include content or tool_calls".into());
+                return Err(
+                    "assistant messages must include content, reasoning, or tool_calls".into(),
+                );
             }
             ChatMessage::assistant_blocks(blocks)
         }
@@ -291,38 +318,26 @@ fn validate_image_data_url(value: &str) -> Result<(), &'static str> {
 fn response_format(
     format: Option<OpenAiResponseFormat>,
 ) -> Result<LoweredResponseFormat, &'static str> {
-    match format {
-        None => Ok((None, None)),
-        Some(OpenAiResponseFormat::Text) => Ok((Some(json!({"type":"text"})), None)),
-        Some(OpenAiResponseFormat::JsonObject) => Ok((
-            Some(json!({"type":"json_object"})),
-            Some(StructuredOutputsParams::json_object()),
-        )),
-        Some(OpenAiResponseFormat::JsonSchema { json_schema }) => {
-            // Preserve OpenAI's named schema envelope when lowering the grammar.
+    let Some(format) = format else {
+        return Ok((None, None));
+    };
+    let constraint = match &format {
+        OpenAiResponseFormat::Text => None,
+        OpenAiResponseFormat::JsonObject => Some(StructuredOutputsParams::json_object()),
+        OpenAiResponseFormat::JsonSchema { json_schema } => {
             if json_schema.name.is_empty() {
                 return Err("response_format.json_schema.name must not be empty");
             }
             if !json_schema.schema.is_object() {
                 return Err("response_format.json_schema.schema must be a JSON object");
             }
-            let mut envelope = serde_json::Map::from_iter([
-                ("name".into(), Value::String(json_schema.name)),
-                ("schema".into(), json_schema.schema.clone()),
-            ]);
-            if let Some(description) = json_schema.description {
-                envelope.insert("description".into(), Value::String(description));
-            }
-            if let Some(strict) = json_schema.strict {
-                envelope.insert("strict".into(), Value::Bool(strict));
-            }
-            let value = Value::Object(envelope);
-            Ok((
-                Some(json!({"type":"json_schema", "json_schema": value})),
-                Some(StructuredOutputsParams::json(json_schema.schema)),
-            ))
+            Some(StructuredOutputsParams::json(json_schema.schema.clone()))
         }
-    }
+    };
+    Ok((
+        Some(serde_json::to_value(format).expect("OpenAI response format serialization")),
+        constraint,
+    ))
 }
 
 /// Resolves an OpenAI tool selection, rejecting empty function names.
@@ -331,13 +346,15 @@ fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, &'sta
         OpenAiToolChoice::Mode(OpenAiToolChoiceMode::None) => ChatToolChoice::None,
         OpenAiToolChoice::Mode(OpenAiToolChoiceMode::Auto) => ChatToolChoice::Auto,
         OpenAiToolChoice::Mode(OpenAiToolChoiceMode::Required) => ChatToolChoice::Required,
-        OpenAiToolChoice::Function(OpenAiNamedToolChoice {
-            kind: OpenAiFunctionType::Function,
-            function,
-        }) if !function.name.is_empty() => ChatToolChoice::Function {
-            name: function.name.clone(),
-        },
+        OpenAiToolChoice::Function(choice) if !choice.function.name.is_empty() => {
+            ChatToolChoice::Function {
+                name: choice.function.name.clone(),
+            }
+        }
         OpenAiToolChoice::Function(_) => return Err("tool_choice.function.name must not be empty"),
+        OpenAiToolChoice::Custom(_) | OpenAiToolChoice::AllowedTools(_) => {
+            return Err("Chat Completions supports function tool choices only");
+        }
     })
 }
 
@@ -345,16 +362,19 @@ fn openai_tool_choice(choice: &OpenAiToolChoice) -> Result<ChatToolChoice, &'sta
 fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, String> {
     match content {
         OpenAiChatContent::Text(text) => Ok(ChatContent::Text(text.clone())),
-        OpenAiChatContent::Parts(parts) => parts
+        OpenAiChatContent::Array(parts) => parts
             .iter()
             .map(|part| match part {
-                OpenAiContentPart::Text { text } => Ok(ChatContentPart::text(text.clone())),
-                OpenAiContentPart::ImageUrl { image_url } => serde_json::from_value(json!({
+                OpenAiContentPart::Text(part) => Ok(ChatContentPart::text(part.text.clone())),
+                OpenAiContentPart::ImageUrl(part) => serde_json::from_value(json!({
                     "type": "image_url",
-                    "image_url": image_url.url.clone(),
-                    "detail": image_url.detail.clone(),
+                    "image_url": part.image_url.url,
+                    "detail": part.image_url.detail,
                 }))
                 .map_err(|error| format!("messages[].content: {error}")),
+                OpenAiContentPart::InputAudio(_) | OpenAiContentPart::File(_) => {
+                    Err("only text and base64 image content are supported".into())
+                }
             })
             .collect::<Result<Vec<_>, _>>()
             .map(ChatContent::Parts),

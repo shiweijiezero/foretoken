@@ -27,7 +27,7 @@ Write the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<
 
 ## Prepare candidates while evaluations run
 
-When different members develop and evaluate an approach, record them as two tasks with a dependency between them. The Worker provides a reproducible version, explains the change and expected effect, and supplies the reference results, workload and execution requirements. These inputs let the Experimenter determine how to deploy and evaluate the candidate.
+When different members develop and evaluate an approach, record them as two tasks with a dependency between them. The Worker provides a reproducible version, explains the change and expected effect, and supplies the reference results, workload and execution requirements. The handoff identifies which components should rebuild or restart and which model processes and caches should remain in use. These inputs let the Experimenter determine how to deploy and evaluate the candidate.
 
 The delivered checkout and execution environment stay unchanged while the candidate waits, builds or runs. Reuse the checkout after evaluation; create a separate development or evaluation copy only when further implementation needs to overlap those stages.
 

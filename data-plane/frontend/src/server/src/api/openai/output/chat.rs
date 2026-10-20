@@ -6,6 +6,12 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
+use async_openai::types::chat::{
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCallChunk as ToolCallDelta,
+    ChatCompletionMessageToolCalls as ToolCall, ChatCompletionTokenLogprob as ChatLogprobContent,
+    FunctionCall, FunctionCallStream as FunctionCallDelta, FunctionType,
+    TopLogprobs as ChatLogprob,
+};
 use axum::Json;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -31,21 +37,6 @@ struct ChatLogprobs {
     content: Vec<ChatLogprobContent>,
 }
 
-#[derive(Clone, Serialize)]
-struct ChatLogprobContent {
-    token: String,
-    logprob: f32,
-    bytes: Option<Vec<u8>>,
-    top_logprobs: Vec<ChatLogprob>,
-}
-
-#[derive(Clone, Serialize)]
-struct ChatLogprob {
-    token: String,
-    logprob: f32,
-    bytes: Option<Vec<u8>>,
-}
-
 #[derive(Default, Serialize)]
 struct ChatDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,25 +47,6 @@ struct ChatDelta {
     reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ToolCallDelta>>,
-}
-
-#[derive(Serialize)]
-struct ToolCallDelta {
-    index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    kind: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    function: Option<FunctionCallDelta>,
-}
-
-#[derive(Serialize)]
-struct FunctionCallDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    arguments: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -97,20 +69,6 @@ struct ChatStreamResponse {
     choices: Vec<ChatStreamChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<Usage>,
-}
-
-#[derive(Serialize)]
-struct ToolCall {
-    id: String,
-    #[serde(rename = "type")]
-    kind: &'static str,
-    function: FunctionCall,
-}
-
-#[derive(Serialize)]
-struct FunctionCall {
-    name: String,
-    arguments: String,
 }
 
 #[derive(Serialize)]
@@ -210,9 +168,9 @@ pub(crate) fn chat_stream_with_options(
                         index: 0,
                         delta: ChatDelta {
                             tool_calls: Some(vec![ToolCallDelta {
-                                index,
+                                index: index as u32,
                                 id: Some(id),
-                                kind: Some("function"),
+                                r#type: Some(FunctionType::Function),
                                 function: Some(FunctionCallDelta { name: Some(name), arguments: None }),
                             }]),
                             ..Default::default()
@@ -230,9 +188,9 @@ pub(crate) fn chat_stream_with_options(
                         index: 0,
                         delta: ChatDelta {
                             tool_calls: Some(vec![ToolCallDelta {
-                                index,
+                                index: index as u32,
                                 id: None,
-                                kind: None,
+                                r#type: None,
                                 function: Some(FunctionCallDelta { name: None, arguments: Some(delta) }),
                             }]),
                             ..Default::default()
@@ -407,13 +365,14 @@ fn build_chat_response(
 ) -> Result<ChatResponse, GenerationError> {
     let tool_calls = message
         .tool_calls()
-        .map(|call| ToolCall {
-            id: call.id.clone(),
-            kind: "function",
-            function: FunctionCall {
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            },
+        .map(|call| {
+            ToolCall::Function(ChatCompletionMessageToolCall {
+                id: call.id.clone(),
+                function: FunctionCall {
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                },
+            })
         })
         .collect::<Vec<_>>();
     let finish = chat_finish_reason(finish_reason, !tool_calls.is_empty())
@@ -444,6 +403,7 @@ fn build_chat_response(
     })
 }
 
+/// Separates the sampled-token score from the engine's ordered top-k candidates.
 fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option<ChatLogprobs> {
     let logprobs = logprobs?;
     let content = token_ids
@@ -460,6 +420,7 @@ fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option
             let top_logprobs = position
                 .entries
                 .into_iter()
+                .skip(1)
                 .map(|entry| ChatLogprob {
                     bytes: Some(entry.token.as_bytes().to_vec()),
                     token: entry.token,

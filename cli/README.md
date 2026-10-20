@@ -39,7 +39,7 @@ cd foretoken
 
 For CLI development, use `pip install -e .` in this directory. For uv, create and activate a virtual environment with `uv venv` and `source .venv/bin/activate`, then use `uv pip install foretoken`.
 
-Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Benchmarking an existing URL and plotting local results do not require Kubernetes.
+Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Each platform or service command keeps its initial Kubernetes context. Benchmarking an existing URL and plotting local results do not require Kubernetes.
 
 ## Environment and platform
 

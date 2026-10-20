@@ -140,8 +140,8 @@ class PlatformLifecycle:
 
     def __init__(self, oci_registry: str | None = None) -> None:
         config = default_platform_config(oci_registry)
-        self._helm = Helm(config)
         self._kubectl = Kubectl()
+        self._helm = Helm(config, self._kubectl)
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)

@@ -26,8 +26,8 @@ use vllm_metrics::{EngineLabels, METRICS};
 
 use self::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 use super::{
-    Backend, BackendError, BackendGeneration, BackendTelemetry, GenerateInput, MetricsError,
-    TokenErrorCode, TokenEvent, TokenStream,
+    Backend, BackendError, BackendGeneration, BackendTelemetry, GenerateInput, TokenErrorCode,
+    TokenEvent, TokenStream,
 };
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -235,8 +235,8 @@ impl Backend for VllmBackend {
         }
     }
 
-    fn render_openmetrics(&self) -> Result<String, MetricsError> {
-        METRICS.render().map_err(|_| MetricsError)
+    fn encode_metrics(&self, output: &mut String) -> Result<(), std::fmt::Error> {
+        prometheus_client::encoding::text::encode_registry(output, METRICS.registry())
     }
 
     async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {

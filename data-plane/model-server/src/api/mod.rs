@@ -19,6 +19,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use futures::StreamExt;
+use prometheus_client::encoding::text::{encode_eof, encode_registry};
+use prometheus_client::registry::Registry;
 use serde::Serialize;
 
 use self::execution::{ExecutionStore, start_execution};
@@ -292,24 +294,26 @@ async fn readyz(State(state): State<AppState>) -> StatusCode {
 
 /// Publishes backend and optional filesystem metrics as one OpenMetrics response.
 async fn metrics(State(state): State<AppState>) -> Response {
-    match state.backend.render_openmetrics() {
-        Ok(mut body) => {
-            if let Some(cache) = &state.runtime_cache {
-                if let Some(without_eof) = body.strip_suffix("# EOF\n") {
-                    body = without_eof.to_owned();
-                }
-                body.push_str(&cache.render_openmetrics());
-                body.push_str("# EOF\n");
-            }
-            (
-                [(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
-                )],
-                body,
-            )
-                .into_response()
+    let encoded = (|| {
+        let mut body = String::new();
+        state.backend.encode_metrics(&mut body)?;
+        if let Some(cache) = state.runtime_cache {
+            let mut registry = Registry::default();
+            registry.register_collector(Box::new(cache));
+            encode_registry(&mut body, &registry)?;
         }
+        encode_eof(&mut body)?;
+        Ok::<_, std::fmt::Error>(body)
+    })();
+    match encoded {
+        Ok(body) => (
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
+            )],
+            body,
+        )
+            .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

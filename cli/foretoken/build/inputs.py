@@ -19,6 +19,7 @@ from typing import Any
 
 from foretoken.build.engine_sources import generated_engine_file
 from foretoken.errors import DeploymentError
+from foretoken.working_directory import find_source_directory
 
 _SOURCE_METADATA = ".foretoken-sources.json"
 SNAPSHOT_METADATA = frozenset({"engine/manifest.json", _SOURCE_METADATA})
@@ -147,11 +148,10 @@ class BuildInputs:
 def source_checkout(explicit: str | None = None) -> Path:
     """Find the selected Foretoken source root using its build files, not Git metadata."""
     root = Path(explicit).expanduser().resolve() if explicit is not None else Path.cwd().resolve()
-    candidates = (root,) if explicit is not None else (root, *root.parents)
-    for directory in candidates:
-        if (directory / "Makefile").is_file() and (directory / "deploy/charts/foretoken/Chart.yaml").is_file():
-            return directory
-    raise DeploymentError(f"not a Foretoken source directory: {root}; pass --editable PATH")
+    directory = find_source_directory(root)
+    if directory is None or explicit is not None and directory != root:
+        raise DeploymentError(f"not a Foretoken source directory: {root}; pass --editable PATH")
+    return directory
 
 
 def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:

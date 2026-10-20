@@ -13,12 +13,14 @@ import shlex
 import sys
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 from typing import Any, Self
+from urllib.parse import urlsplit
 
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
 from foretoken.build.cluster.images import (
@@ -948,8 +950,10 @@ def remove_build_pods(kubectl: Kubectl, timeout: str, *, binding: str) -> None:
     ])
 
 
-def registry_credentials(images: list[str]) -> dict[str, Any]:
-    """Resolve workstation login helpers only for registries used by this build."""
+def registry_credentials(
+    images: Iterable[str], *, registries: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Resolve native Docker login helpers for this build's images and registry prefixes."""
     path = (
         Path(os.environ.get("DOCKER_CONFIG", str(Path.home() / ".docker")))
         / "config.json"
@@ -957,33 +961,58 @@ def registry_credentials(images: list[str]) -> dict[str, Any]:
     if not path.is_file():
         return {}
     configuration = json.loads(path.read_text())
-    hosts = {image.split("/", 1)[0] for image in images if image}
-    aliases = {"docker.io": "https://index.docker.io/v1/"}
+    hosts = {
+        _registry_host(_image_reference(image).split("/", 1)[0])
+        for image in images if image
+    }
+    hosts.update(_registry_host(registry) for registry in registries if registry)
+    entries = configuration.get("auths", {})
+    helpers = configuration.get("credHelpers", {})
     auths = {}
-    for host in hosts:
-        key = aliases.get(host, host)
-        entries = configuration.get("auths", {})
-        helper = configuration.get("credHelpers", {}).get(host)
-        if not helper and (key in entries or host in entries):
-            helper = configuration.get("credsStore")
+    for host in sorted(hosts):
+        key = "https://index.docker.io/v1/" if host == "docker.io" else host
+        helper = _registry_entry(helpers, host) or configuration.get("credsStore")
         if helper:
-            result = run_command(
-                ["docker-credential-" + helper, "get"],
-                input=key,
-                text=True,
-                capture_output=True,
-            )
+            try:
+                result = run_command(
+                    ["docker-credential-" + helper, "get"],
+                    input=key,
+                    text=True,
+                    capture_output=True,
+                )
+            except FileNotFoundError as error:
+                raise DeploymentError(f"Docker credential helper {helper!r} is not installed") from error
             if result.returncode:
-                raise DeploymentError(f"could not read login credentials for {host}")
-            credentials = json.loads(result.stdout)
-            if credentials["Username"] == "<token>":
-                auths[host] = {"identitytoken": credentials["Secret"]}
+                # Native helpers use this sentinel for an anonymous registry;
+                # other failures must not be mistaken for missing credentials.
+                detail = result.stdout.strip() or result.stderr.strip()
+                if result.returncode != 1 or detail != "credentials not found in native keychain":
+                    raise DeploymentError(f"could not read login credentials for {host}")
             else:
-                token = f"{credentials['Username']}:{credentials['Secret']}".encode()
-                auths[host] = {"auth": base64.b64encode(token).decode()}
-        elif key in entries or host in entries:
-            auths[host] = entries.get(key, entries.get(host))
+                credentials = json.loads(result.stdout)
+                if credentials["Username"] == "<token>":
+                    auths[host] = {"identitytoken": credentials["Secret"]}
+                else:
+                    token = f"{credentials['Username']}:{credentials['Secret']}".encode()
+                    auths[host] = {"auth": base64.b64encode(token).decode()}
+                continue
+        entry = entries[key] if key in entries else _registry_entry(entries, host)
+        if entry:
+            auths[host] = entry
     return {"auths": auths} if auths else {}
+
+
+def _registry_entry(entries: dict[str, Any], host: str) -> Any:
+    """Prefer exact registry configuration before accepting an equivalent URL or Hub alias."""
+    if host in entries:
+        return entries[host]
+    return next((value for key, value in entries.items() if _registry_host(key) == host), None)
+
+
+def _registry_host(value: str) -> str:
+    """Match Docker config URL keys and Hub aliases to their registry authority."""
+    host = urlsplit(value if "://" in value else "//" + value).netloc.lower()
+    return "docker.io" if host in {"docker.io", "index.docker.io", "registry-1.docker.io"} else host
 
 
 def _image_reference(image: str) -> str:

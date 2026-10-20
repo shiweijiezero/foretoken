@@ -21,7 +21,7 @@ from foretoken.errors import DeploymentError
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
 from benchmarks.config.video_cli import parse_video_arguments
-from benchmarks.model_service import ModelService, resolve_benchmark_service
+from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.logs import configure_logging
@@ -61,10 +61,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 run = ParameterSweepBenchmark(benchmark).run()
             else:
                 benchmark.validate()
+                resolver = ModelServiceResolver()
                 with ResultOutputs(benchmark, None) as outputs, ExitStack() as services:
                     def prepare_service() -> ModelService:
                         """Keep serving resources in the command scope, including deferred SLO probes."""
-                        service = services.enter_context(resolve_benchmark_service(benchmark))
+                        service = services.enter_context(resolver.benchmark(benchmark))
                         if benchmark.service.kustomize_path and not quiet:
                             print_model_service(service)
                         logger.info("%s", format_benchmark_config(benchmark, service))

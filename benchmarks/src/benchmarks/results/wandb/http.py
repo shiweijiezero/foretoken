@@ -133,11 +133,20 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         stats = metrics.get(key)
         if not isinstance(stats, dict):
             continue
-        for percentile, value in stats.items():
+        for statistic in ("mean", "max", "p50", "p95", "p99"):
+            value = stats.get(statistic)
             if value is not None:
-                message[f"{name}/{percentile}"] = round(
+                message[f"{name}/{statistic}"] = round(
                     float(value) * scale, 4
                 )
+        if key == "itl":
+            for statistic, label in (
+                ("count", "ITL/Interval count"),
+                ("relative_error", "ITL/Quantile relative error"),
+            ):
+                value = stats.get(statistic)
+                if value is not None:
+                    message[label] = value
     slo = metrics.get("slo")
     if isinstance(slo, dict):
         for source, destination in (

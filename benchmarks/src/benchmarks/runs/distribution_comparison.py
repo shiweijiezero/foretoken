@@ -25,7 +25,7 @@ from benchmarks.integrations.distributions import (
     CompletionComparisonClient,
     compare_logprobs,
 )
-from benchmarks.model_service import ModelService, resolve_model_service
+from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.observations.environment import serving_environment
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.distribution_comparison_checkpoint import (
@@ -52,6 +52,7 @@ def run_distribution_comparison(
     """
 
     reference_source = comparison.reference_source(config.service)
+    resolver = ModelServiceResolver()
     record = {"mode": "distribution_comparison"}
     points: list[dict[str, Any]] = []
     positions: list[dict[str, Any]] = []
@@ -89,7 +90,7 @@ def run_distribution_comparison(
             with DistributionComparisonCheckpoint(
                 directory, config.resume, comparison.checkpoint_settings(config.service),
             ) as checkpoint:
-                reference = _score_reference(reference_source, comparison, checkpoint, outputs)
+                reference = _score_reference(reference_source, comparison, checkpoint, outputs, resolver)
                 reference_model = reference["model"]
                 protocol = reference["protocol"]
                 windows = reference["windows"]
@@ -101,7 +102,7 @@ def run_distribution_comparison(
                     completed = checkpoint.candidate_windows(candidate_index)
                     with ExitStack() as resources:
                         if len(completed) < len(windows):
-                            service = resources.enter_context(resolve_model_service(candidate.service))
+                            service = resources.enter_context(resolver.resolve(candidate.service))
                             metadata = candidate.metadata(service.model)
                             if not candidate.method and service.deployment is not None:
                                 methods = set()
@@ -115,7 +116,7 @@ def run_distribution_comparison(
                                 raise ValueError("Candidate model or method differs from the saved comparison")
                             saved = {"metadata": metadata, "environment": serving_environment(service)}
                             checkpoint.put(f"candidate/{candidate_index}", saved)
-                            outputs.capture_source_evidence(saved["environment"])
+                            outputs.capture_source_evidence(saved["environment"], kubectl=service.kubectl)
                             logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
                             client = resources.enter_context(CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds))
                             for window_index, tokens in enumerate(windows):
@@ -132,8 +133,6 @@ def run_distribution_comparison(
                                     })
                                 checkpoint.save_candidate(candidate_index, window_index, rows)
                                 completed[window_index] = rows
-                        else:
-                            outputs.capture_source_evidence(saved["environment"])
                         metadata = saved["metadata"]
                         if metadata["label"] in labels:
                             raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
@@ -165,6 +164,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
     if config.resume:
         raise ValueError("--resume is not supported for greedy generation comparisons")
     reference_source = comparison.reference_source(config.service)
+    resolver = ModelServiceResolver()
     record = {"mode": "greedy_comparison"}
     samples: list[dict[str, Any]] = []
     points: list[dict[str, Any]] = []
@@ -209,14 +209,14 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
         try:
             from transformers import AutoTokenizer
 
-            with resolve_model_service(reference_source) as reference:
+            with resolver.resolve(reference_source) as reference:
                 tokenizer_path, _, tokenizer_id = _reference_text_files(reference, comparison.tokenizer)
                 tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
                 prompt_windows = _token_windows(comparison, tokenizer)
                 reference_model = reference.model
                 protocol = {**protocol, "tokenizer": tokenizer_id, "bos_token_id": tokenizer.bos_token_id}
                 environments["reference"] = serving_environment(reference)
-                outputs.capture_source_evidence(environments["reference"])
+                outputs.capture_source_evidence(environments["reference"], kubectl=reference.kubectl)
                 outputs.start_measurement()
                 with CompletionComparisonClient(reference, timeout=reference_source.timeout_seconds) as client:
                     reference_samples = []
@@ -228,13 +228,13 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
 
             labels: set[str] = set()
             for candidate in comparison.candidates:
-                with resolve_model_service(candidate.service) as service:
+                with resolver.resolve(candidate.service) as service:
                     metadata = candidate.metadata(service.model)
                     if metadata["label"] in labels:
                         raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
                     labels.add(metadata["label"])
                     environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
-                    outputs.capture_source_evidence(environments["candidates"][-1])
+                    outputs.capture_source_evidence(environments["candidates"][-1], kubectl=service.kubectl)
                     with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
                         for index, (tokens, reference_sample) in enumerate(zip(prompt_windows, reference_samples)):
                             if "error" in reference_sample:
@@ -386,6 +386,7 @@ def _score_reference(
     comparison: DistributionComparisonConfig,
     checkpoint: DistributionComparisonCheckpoint,
     outputs: ResultOutputs,
+    resolver: ModelServiceResolver,
 ) -> dict[str, Any]:
     """Prepare fixed corpus windows once and complete their reference probabilities before candidates."""
     from transformers import AutoConfig, AutoTokenizer
@@ -394,10 +395,9 @@ def _score_reference(
     completed = checkpoint.reference_done()
     if len(completed) == comparison.num_windows:
         logger.info("Reusing all %d reference windows", len(completed))
-        outputs.capture_source_evidence(saved["environment"])
         outputs.start_measurement()
         return saved
-    with resolve_model_service(source) as reference:
+    with resolver.resolve(source) as reference:
         if saved is None:
             tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, comparison.tokenizer)
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
@@ -419,7 +419,7 @@ def _score_reference(
             checkpoint.put("reference", saved)
         elif reference.model != saved["model"]:
             raise ValueError("Reference model differs from the saved comparison")
-        outputs.capture_source_evidence(saved["environment"])
+        outputs.capture_source_evidence(saved["environment"], kubectl=reference.kubectl)
         vocabulary_size = saved["protocol"]["model_vocab_size"]
         score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
         logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)

@@ -19,7 +19,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
@@ -128,11 +128,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(state);
     eprintln!("Foretoken vLLM-Omni adapter ready on {listen}");
 
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let server_shutdown = shutdown.clone();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, app)
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(server_shutdown.cancelled_owned())
             .await
     });
     enum Stop {
@@ -162,18 +162,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     eprintln!("Stopping Foretoken vLLM-Omni adapter: {stop_reason}");
     health.set_accepting(false);
-    if graceful {
-        drain(&health, Duration::from_secs(plan.lifecycle.drain_seconds)).await;
+    if graceful
+        && tokio::time::timeout(
+            Duration::from_secs(plan.lifecycle.drain_seconds),
+            health.wait_drained(),
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("Accepted requests did not finish before the drain deadline");
     }
     health.set_process_alive(false);
-    // Retain shutdown for the single HTTP task even if it has not polled its signal yet.
-    shutdown.notify_one();
+    shutdown.cancel();
     if !server.is_finished()
         && tokio::time::timeout(Duration::from_secs(5), &mut server)
             .await
             .is_err()
     {
         server.abort();
+        let _ = server.await;
     }
     child.shutdown(Duration::from_secs(10)).await?;
     if let Stop::Error(error) = stop {
@@ -415,14 +422,6 @@ async fn wait_until_ready(
             return Err("vLLM-Omni startup deadline elapsed".into());
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-/// Wait for admitted video streams to finish within the serving shutdown budget.
-async fn drain(health: &RuntimeHealth, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while health.running_requests() != 0 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 

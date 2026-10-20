@@ -124,7 +124,7 @@ class EditableDeployment:
         """Resolve explicit source development from the installed platform, independent of workstation history."""
         if editable is None and not engine_sources:
             return None
-        platform = Helm(default_platform_config()).platform_configuration(kubectl)
+        platform = Helm(default_platform_config(), kubectl).platform_configuration()
         if platform["metadata"].get("annotations", {}).get("inference.foretoken.io/retiring") == "true":
             raise DeploymentError("The Foretoken platform is being uninstalled")
         if platform["metadata"].get("annotations", {}).get(SOURCE_INSTALL_ANNOTATION) != "source":
@@ -592,7 +592,7 @@ class EditableDeployment:
             is None
         }
         snapshot = self.directory / self.state["inputs"]
-        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]))
+        helm = Helm(default_platform_config(self.state["command"]["oci_registry"]), self.kubectl)
         # A completed application no longer depends on its partial-publication base.
         for component in pending - missing:
             if bundle := self.state["bundles"].get(component):

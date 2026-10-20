@@ -7,46 +7,38 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use axum::http::{Request, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use reqwest::{Client, Method, Response, Url};
+use kube::api::{ListParams, ObjectList};
+use kube::{Client, Config};
 use serde_json::Value;
 
-/// Uses the worker's projected account, reloading its token for every API request.
+/// Uses the worker's projected account through kube-rs; callers own publication retries.
 pub(crate) struct Kubernetes {
     client: Client,
-    endpoint: Url,
     token: PathBuf,
 }
 
 impl Kubernetes {
-    /// Loads the in-cluster endpoint and certificate without forwarding credentials through proxies.
+    /// Loads only in-cluster configuration; kube-rs owns TLS and projected-token rotation.
     pub(crate) fn in_cluster() -> io::Result<Self> {
-        let host = std::env::var("KUBERNETES_SERVICE_HOST").map_err(io::Error::other)?;
-        let port = std::env::var("KUBERNETES_SERVICE_PORT_HTTPS").map_err(io::Error::other)?;
-        let host = if host.contains(':') {
-            format!("[{host}]")
-        } else {
-            host
-        };
-        let account = PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount");
-        let client = Client::builder()
-            .no_proxy()
-            .add_root_certificate(
-                reqwest::Certificate::from_pem(&fs::read(account.join("ca.crt"))?)
-                    .map_err(io::Error::other)?,
-            )
-            .build()
-            .map_err(io::Error::other)?;
+        let mut config = Config::incluster().map_err(io::Error::other)?;
+        config.default_retry = false;
+        let token = config
+            .auth_info
+            .token_file
+            .as_ref()
+            .map(PathBuf::from)
+            .ok_or_else(|| io::Error::other("in-cluster configuration has no projected token"))?;
         Ok(Self {
-            client,
-            endpoint: Url::parse(&format!("https://{host}:{port}")).map_err(io::Error::other)?,
-            token: account.join("token"),
+            client: Client::try_from(config).map_err(io::Error::other)?,
+            token,
         })
     }
 
     /// Reads the projected account identity used to match collection-resource ownership.
-    /// The API server authenticates requests made with this same token.
+    /// The API server authenticates requests made by the same Pod service account.
     pub(crate) fn service_account_identity(&self) -> io::Result<String> {
         let token = fs::read_to_string(&self.token)?;
         let claims = token.split('.').nth(1).ok_or_else(|| {
@@ -74,79 +66,41 @@ impl Kubernetes {
         Ok(format!("{}/{}", account.0, account.1))
     }
 
-    fn request(&self, method: Method, path: &str) -> io::Result<reqwest::RequestBuilder> {
-        let mut url = self.endpoint.clone();
-        url.set_path(path);
-        Ok(self
-            .client
-            .request(method, url)
-            .bearer_auth(fs::read_to_string(&self.token)?.trim()))
-    }
-
     /// Reads an API object directly rather than relying on a controller's informer snapshot.
     pub(crate) async fn get(&self, path: &str) -> io::Result<Value> {
-        self.request(Method::GET, path)?
-            .send()
-            .await
-            .map_err(io::Error::other)?
-            .error_for_status()
-            .map_err(io::Error::other)?
-            .json()
-            .await
-            .map_err(io::Error::other)
+        let request = Request::get(path)
+            .body(Vec::new())
+            .map_err(io::Error::other)?;
+        self.client.request(request).await.map_err(io::Error::other)
     }
 
     /// Sends a merge patch while leaving conflict handling with the publishing owner.
-    pub(crate) async fn patch(&self, path: &str, value: &Value) -> io::Result<Response> {
-        self.request(Method::PATCH, path)?
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/merge-patch+json",
-            )
-            .json(value)
-            .send()
-            .await
-            .map_err(io::Error::other)
+    pub(crate) async fn patch(&self, path: &str, value: &Value) -> Result<Value, kube::Error> {
+        let request = Request::patch(path)
+            .header(header::CONTENT_TYPE, "application/merge-patch+json")
+            .body(serde_json::to_vec(value).map_err(kube::Error::SerdeError)?)
+            .map_err(kube::Error::HttpError)?;
+        self.client.request(request).await
     }
 
     /// Reads every returned page so omitted resources cannot be mistaken for released cache references.
     pub(crate) async fn list(&self, path: &str, selector: Option<&str>) -> io::Result<Vec<Value>> {
+        let requests = kube::core::Request::new(path);
+        let mut parameters = ListParams {
+            label_selector: selector.map(str::to_owned),
+            ..Default::default()
+        };
         let mut items = Vec::new();
-        let mut continuation = String::new();
         loop {
-            let mut request = self.request(Method::GET, path)?;
-            if let Some(selector) = selector {
-                request = request.query(&[("labelSelector", selector)]);
-            }
-            if !continuation.is_empty() {
-                request = request.query(&[("continue", &continuation)]);
-            }
-            let page: Value = request
-                .send()
-                .await
-                .map_err(io::Error::other)?
-                .error_for_status()
-                .map_err(io::Error::other)?
-                .json()
+            let request = requests.list(&parameters).map_err(io::Error::other)?;
+            let page: ObjectList<Value> = self
+                .client
+                .request(request)
                 .await
                 .map_err(io::Error::other)?;
-            items.extend(
-                page["items"]
-                    .as_array()
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Kubernetes list response has no items",
-                        )
-                    })?
-                    .iter()
-                    .cloned(),
-            );
-            continuation = page["metadata"]["continue"]
-                .as_str()
-                .unwrap_or_default()
-                .into();
-            if continuation.is_empty() {
+            items.extend(page.items);
+            parameters.continue_token = page.metadata.continue_.filter(|value| !value.is_empty());
+            if parameters.continue_token.is_none() {
                 return Ok(items);
             }
         }

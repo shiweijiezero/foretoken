@@ -313,10 +313,7 @@ func (reconciler *GroupReconciler) reconcileDeployment(ctx context.Context, grou
 	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
 		return nil, fmt.Errorf("apply Deployment: %w", err)
 	}
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
-		return nil, fmt.Errorf("get applied Deployment: %w", err)
-	}
-	return current, nil
+	return desired, nil
 }
 
 // configureModelEnvironment appends ordered model variables after platform configuration.

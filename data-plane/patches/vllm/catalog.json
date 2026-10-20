@@ -336,6 +336,10 @@
       "python": {
         "versions": ">=0.30.0.dev0"
       }
+    },
+    {
+      "path": "rust/chat-token-metadata.patch",
+      "rust": true
     }
   ]
 }

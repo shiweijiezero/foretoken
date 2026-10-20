@@ -21,7 +21,7 @@ import yaml
 
 from foretoken.command_execution import CommandExecution, run_command
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import ResourceRef
+from foretoken.kubernetes.client import Kubectl, ResourceRef
 from foretoken.kubernetes.documents import decode_resources
 from foretoken.network_sources import (
     select_github_download,
@@ -45,15 +45,20 @@ class HelmCommandError(DeploymentError):
 class HelmClient:
     """Share command execution and chart lifetimes across platform component owners."""
 
-    def __init__(self, config: PlatformConfig) -> None:
+    def __init__(self, config: PlatformConfig, kubectl: Kubectl | None = None) -> None:
         self._helm = resolve_tool("helm", "FORETOKEN_HELM")
         self.config = config
+        self._kubectl = kubectl or Kubectl()
+
+    def command(self, args: Iterable[str]) -> list[str]:
+        """Address the same kubeconfig context as the owning platform or source operation."""
+        return [self._helm, *args, "--kube-context", self._kubectl.current_context()]
 
     def run(
         self, args: Iterable[str], *, input_text: str | None = None, check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """Execute Helm; optional-component callers may handle a completed failure themselves."""
-        command = [self._helm, *args]
+        command = self.command(args)
         completed = run_command(command, input=input_text, text=True, capture_output=True)
         if completed.returncode and check:
             raise HelmCommandError(command, completed)

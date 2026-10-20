@@ -19,6 +19,8 @@ The Experimenter takes evaluations in the agreed priority order and keeps the de
 
 The Experimenter uses existing tools to synchronize, build, deploy, diagnose and measure each candidate. Fixed workload groups and repetitions can run through sweeps without a new instruction for each point. Each run retains its commands, code version, service configuration, logs and results, including failures and interruptions, so later analysis and recovery have the necessary evidence.
 
+For source candidates, use the first real iteration to follow a small intended change through deployment and a request. Compare the observed update with its declared scope: changing only frontend code should leave model Pod UIDs unchanged. Record environment preparation, compilation, publication and service readiness separately in the iteration notes. Report unexpected rebuilds or restarts, with the deployment plan and stage timings, to the Worker and lead so later iterations do not repeat an unnecessarily expensive path.
+
 Result analysis distinguishes measurement completion, request success and acceptance against the task requirements. A command's exit alone does not establish all three, so the Experimenter also checks request records and aggregate metrics.
 
 GPU collection continues throughout the experiment. The Experimenter reuses [collectors](../SKILL.md#collect-gpu-usage) covering the assigned devices, with one collection owner chosen by the lead for each device set. Utilization is interpreted alongside build, measurement and waiting periods, and missing intervals are reported. When collection spans several experiments, it is handed over with the resources and stopped when no longer needed.

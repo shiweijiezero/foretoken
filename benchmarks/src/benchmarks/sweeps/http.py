@@ -19,7 +19,7 @@ from benchmarks.config.benchmark import (
     normalize_output_token_limit,
     parse_duration_seconds,
 )
-from benchmarks.model_service import ModelService, resolve_benchmark_service
+from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.reporting.http import format_benchmark_config, log_sweep_results
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.results.wandb.recording import wandb_run_timestamp
@@ -170,6 +170,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
 
     def __init__(self, resources: ExitStack) -> None:
         self.resources = resources
+        self.resolver = ModelServiceResolver()
         self.service = None
         self.selection = None
 
@@ -234,7 +235,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             """Reuse the service across adjacent sweep points with the same selection."""
             if selection != self.selection:
                 self.resources.close()
-                self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
+                self.service = self.resources.enter_context(self.resolver.benchmark(point_config))
                 self.selection = selection
             logger.info("%s", format_benchmark_config(point_config, self.service))
             return self.service

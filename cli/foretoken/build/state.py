@@ -37,11 +37,12 @@ from foretoken.build.cluster.images import (
     node_containerd_socket,
 )
 from foretoken.build.cluster.storage import SOURCE_BUILD_CACHE_LABEL
-from foretoken.build.inputs import BuildInputs, engine_source_roots
+from foretoken.build.inputs import BuildInputs
 from foretoken.build.records import (
     SOURCE_BUILD_KEY,
     WORKSPACE_LABEL,
     WORKSPACE_SELECTION_KEY,
+    retain_workspace,
 )
 from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
@@ -60,10 +61,7 @@ def _source_home() -> Path:
 
 def context_identity(kubectl: Kubectl) -> dict[str, str]:
     """Read connection identity locally without adding API permissions to release deploys."""
-    config = json.loads(
-        kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout
-    )
-    return {"server": config["clusters"][0]["cluster"]["server"]}
+    return {"server": kubectl.server}
 
 
 def cluster_state_directory(kubectl: Kubectl) -> Path:
@@ -222,7 +220,7 @@ def capture_build_inputs(
 
 @contextmanager
 def local_candidates(directory: Path) -> Iterator[None]:
-    """Retire artifacts outside committed or pending state under the owning source lock.
+    """Retire inputs outside workspace and installed-platform selections under the owning source lock.
 
     Running workloads consume independent publications rather than local snapshots.
     """
@@ -234,6 +232,14 @@ def local_candidates(directory: Path) -> Iterator[None]:
             for name in ("install.json", "build.json")
             if (path := directory / name).is_file()
         }
+        selection = directory.parent.parent / "install.json"
+        if (
+            directory.parent.name == "checkouts" and selection.is_file()
+            and (installed := json.loads(selection.read_text()).get("inputs"))
+        ):
+            selected = Path(installed)
+            if selected.parent == Path("checkouts") / directory.name:
+                retained.add(selected.name)
         for snapshot in directory.glob("inputs-*"):
             if snapshot.name not in retained:
                 shutil.rmtree(snapshot)
@@ -282,12 +288,13 @@ def resolve_source_base_image(
     if saved_image is not None:
         return saved_image
     directory = cluster_state_directory(kubectl)
-    for name in ("install.json", "build.json"):
-        path = directory / name
-        if path.is_file():
-            state = json.loads(path.read_text())
-            if state.get("root") == str(root):
-                return state.get("base_image")
+    for parent in [*(directory / "checkouts").glob("*"), directory]:
+        for name in ("install.json", "build.json"):
+            path = parent / name
+            if path.is_file():
+                state = json.loads(path.read_text())
+                if state.get("root") == str(root):
+                    return state.get("base_image")
     return None
 
 
@@ -297,16 +304,16 @@ def record_install(
     base_image: str | None,
     snapshot: Path,
     *,
-    build_state: dict[str, Any] | None = None,
+    build_state: dict[str, Any],
 ) -> None:
-    """Associate a successful editable installation with its checkout on this workstation."""
+    """Commit the directory's completed workspace and the platform's installed default selection."""
     if command.editable is None:
         return
     root = Path(command.editable).expanduser().resolve()
     directory = cluster_state_directory(kubectl)
-    directory.mkdir(parents=True, exist_ok=True)
+    workspace = snapshot.parent
+    engines = json.loads((workspace / "build.json").read_text())["engines"]
     settings = asdict(command)
-    engines = engine_source_roots(command.engine_sources)
     settings.update(
         editable=str(root),
         values=[],
@@ -315,59 +322,65 @@ def record_install(
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
-    platform = Helm(default_platform_config(command.oci_registry)).platform_configuration(kubectl)
+    platform = Helm(default_platform_config(command.oci_registry), kubectl).platform_configuration()
     if platform["metadata"].get("annotations", {}).get(SOURCE_INSTALL_ANNOTATION) != "source":
         raise DeploymentError("expected a source-installed Foretoken platform")
-    if build_state is not None:
-        # Developers on another workstation need build choices, not this machine's
-        # paths, credentials, compiler volumes or captured installation history.
-        recipe = {
-            "registry": build_state["registry"],
-            "ociRegistry": command.oci_registry,
-            "baseImage": base_image,
-            "runtimeBackend": build_state["runtime_backend"],
-            "buildMetaXRuntime": build_state["build_metax_runtime"],
-            "configuration": build_state["configuration"],
-            "completedBuild": build_state["completed"],
-        }
-        metadata = platform["metadata"]
-        kubectl.run([
-            "patch", "configmap", metadata["name"], "--namespace", metadata["namespace"],
-            "--type=merge", "--patch", json.dumps({
-                "metadata": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
-                "data": {SOURCE_BUILD_KEY: json.dumps(recipe)},
-            }),
-        ])
-    path = directory / "install.json"
-    previous = json.loads(path.read_text()) if path.is_file() else {}
-    applications = (build_state or {}).get("applications", {})
-    # Keep service-level source selections when installation adopts the same publication.
-    # Removing them would change immutable Group specs on the next unchanged deploy.
-    bundles = {
-        component: bundle
-        for component, bundle in previous.get("bundles", {}).items()
-        if previous.get("root") == str(root)
-        and bundle["revision"] == applications.get(component, {}).get("revision")
+    # Other workstations adopt immutable outputs, never this directory's compiler volume.
+    recipe = {
+        "registry": build_state["registry"],
+        "ociRegistry": command.oci_registry,
+        "baseImage": base_image,
+        "runtimeBackend": build_state["runtime_backend"],
+        "buildMetaXRuntime": build_state["build_metax_runtime"],
+        "configuration": build_state["configuration"],
+        "completedBuild": build_state["completed"],
     }
+    metadata = platform["metadata"]
+    kubectl.run([
+        "patch", "configmap", metadata["name"], "--namespace", metadata["namespace"],
+        "--type=merge", "--patch", json.dumps({
+            "metadata": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
+            "data": {SOURCE_BUILD_KEY: json.dumps(recipe)},
+        }),
+    ])
+    path = workspace / "install.json"
+    previous = json.loads(path.read_text()) if path.is_file() else {}
+    applications = build_state["applications"]
+    # Preserve matching service selections without retaining partial-build metadata.
+    bundles = {
+        component: {"revision": bundle["revision"]}
+        for component, bundle in previous.get("bundles", {}).items()
+        if bundle["revision"] == applications.get(component, {}).get("revision")
+    }
+    state = {
+        "root": str(root),
+        "engines": engines,
+        "build": build_state,
+        "context": context_identity(kubectl),
+        "inputs": snapshot.name,
+        "platform_uid": platform["metadata"]["uid"],
+        "base_image": base_image,
+        "runtime": runtime_settings(platform),
+        "command": settings,
+        "bundles": bundles,
+    }
+    with local_candidates(workspace):
+        write_source_state(path, state)
+        (workspace / "build.json").unlink(missing_ok=True)
+    # The platform record selects a completed workspace; it does not own another
+    # source tree, compiler binding, or incremental target directory.
     with local_candidates(directory):
-        destination = directory / snapshot.name
-        snapshot.rename(destination)
-        write_source_state(
-            path,
-            {
-                "root": str(root),
-                "engines": engines,
-                "build": build_state or {},
-                "context": context_identity(kubectl),
-                "inputs": destination.name,
-                "platform_uid": platform["metadata"]["uid"],
-                "base_image": base_image,
-                "runtime": runtime_settings(platform),
-                "command": settings,
-                "bundles": bundles,
-            },
-        )
+        write_source_state(directory / "install.json", {
+            **state, "inputs": str(snapshot.relative_to(directory)),
+        })
         (directory / "build.json").unlink(missing_ok=True)
+    origin = ApplicationFiles(kubectl, metadata["namespace"])
+    origin.prepare(command.timeout)
+    retain_workspace(
+        origin, build_state["binding"],
+        (origin.reference(component, value["revision"]) for component, value in applications.items()),
+        build_state["images"].values(),
+    )
 
 
 def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
@@ -486,7 +499,7 @@ def reconcile_source_resources(
     for node in kubectl.list_resources(("nodes",), ""):
         for socket in sockets:
             access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
-    history = Helm(config).image_history()
+    history = Helm(config, kubectl).image_history()
     if history is None:
         return
     consumers = application_consumers(kubectl)
@@ -636,7 +649,7 @@ def source_uninstall(
                 tools = spec["containers"][0]["image"]
                 secrets = tuple(secret["name"] for secret in spec.get("imagePullSecrets", []))
                 break
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        context = kubectl.current_context()
         for node in kubectl.list_resources(("nodes",), ""):
             socket = node_containerd_socket(context, node)
             if socket:

@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -108,8 +108,12 @@ async fn create(
 async fn retrieve(
     State(api): State<ApiState>,
     Path(id): Path<String>,
-    Query(query): Query<RetrieveQuery>,
+    query: Result<Query<RetrieveQuery>, QueryRejection>,
 ) -> Response {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(error) => return ApiError::invalid_request(error.body_text(), None).into_response(),
+    };
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
     };
@@ -192,8 +196,12 @@ async fn cancel(State(api): State<ApiState>, Path(id): Path<String>) -> Response
 async fn input_items(
     State(api): State<ApiState>,
     Path(id): Path<String>,
-    Query(page): Query<PageQuery>,
+    page: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
+    let page = match page {
+        Ok(Query(page)) => page,
+        Err(error) => return ApiError::invalid_request(error.body_text(), None).into_response(),
+    };
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
     };

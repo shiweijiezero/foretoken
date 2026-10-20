@@ -4,6 +4,8 @@
 //! HTTP model-server transport, NDJSON decoding, and endpoint helpers.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use foretoken_model_protocol::{
@@ -12,17 +14,22 @@ use foretoken_model_protocol::{
 use foretoken_request_ledger::ReservationRef;
 use futures::StreamExt;
 use serde::Deserialize;
+use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
+use tokio_util::io::StreamReader;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
 use crate::{LlmFacade, LlmFacadeError, TokenStream};
 
 pub(crate) const MODEL_SERVER_REQUEST_START_TIMEOUT: Duration = Duration::from_secs(10);
 
+// Every workflow stage uses the same transport settings and shares its connection pool.
+pub(crate) static MODEL_SERVER_CLIENT: LazyLock<reqwest::Client> =
+    LazyLock::new(reqwest::Client::new);
+
 #[derive(Clone)]
 pub struct HttpFacade {
     endpoint: String,
     client: reqwest::Client,
-    request_start_timeout: Duration,
 }
 impl HttpFacade {
     /// Creates the transport resolved by the backend registry for one model-server endpoint.
@@ -30,16 +37,9 @@ impl HttpFacade {
     /// Returns a validated facade that lives with its registry entry, or a configuration error
     /// before that endpoint can enter a serving generation.
     pub fn new(endpoint: String) -> Result<Self, LlmFacadeError> {
-        Self::with_request_start_timeout(endpoint, MODEL_SERVER_REQUEST_START_TIMEOUT)
-    }
-    fn with_request_start_timeout(
-        endpoint: String,
-        request_start_timeout: Duration,
-    ) -> Result<Self, LlmFacadeError> {
         Ok(Self {
             endpoint: validate_endpoint(endpoint)?,
-            client: reqwest::Client::new(),
-            request_start_timeout,
+            client: MODEL_SERVER_CLIENT.clone(),
         })
     }
     fn url(&self, path: &str) -> String {
@@ -66,7 +66,7 @@ impl HttpFacade {
         input.reservation = reservation;
         let body = rmp_serde::to_vec_named(&input).map_err(|_| LlmFacadeError::RequestFailed)?;
         let response = tokio::time::timeout(
-            self.request_start_timeout,
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
             self.client
                 .post(self.url("/v1/internal/generate"))
                 .header(reqwest::header::CONTENT_TYPE, "application/msgpack")
@@ -99,15 +99,15 @@ impl HttpFacade {
             return Err(LlmFacadeError::Protocol);
         }
         Ok(Box::pin(async_stream::stream! {
-            let mut body = Box::pin(response.bytes_stream()); let mut pending = Vec::new();
-            while let Some(chunk) = body.next().await {
-                match chunk { Ok(chunk) => pending.extend_from_slice(&chunk), Err(error) => { yield Err(classify_reqwest(error)); return; } }
-                while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-                    let line: Vec<_> = pending.drain(..=newline).collect();
-                    match decode_event(&line[..line.len() - 1]) { Ok(output) => yield Ok(output), Err(error) => { yield Err(error); return; } }
-                }
+            let body = response.bytes_stream().map(|chunk| chunk.map_err(io::Error::other));
+            let mut lines = FramedRead::new(StreamReader::new(body), LinesCodec::new());
+            while let Some(line) = lines.next().await {
+                let output = line.map_err(classify_line_error)
+                    .and_then(|line| decode_event(line.as_bytes()));
+                let failed = output.is_err();
+                yield output;
+                if failed { return; }
             }
-            if !pending.is_empty() { yield decode_event(&pending); }
         }))
     }
     /// Asks this model server to cancel admitted work after its consumer ends early.
@@ -116,7 +116,7 @@ impl HttpFacade {
     /// abort exchange; the backend retains responsibility for final request termination.
     pub(crate) async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError> {
         let response = tokio::time::timeout(
-            self.request_start_timeout,
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
             self.client
                 .post(self.url("/v1/internal/abort"))
                 .json(&AbortInput {
@@ -163,6 +163,17 @@ pub(crate) fn validate_endpoint(endpoint: String) -> Result<String, LlmFacadeErr
     }
     Ok(endpoint)
 }
+/// Retains transport failure categories through the codec; malformed frames remain protocol errors.
+fn classify_line_error(error: LinesCodecError) -> LlmFacadeError {
+    match error {
+        LinesCodecError::Io(error) => error
+            .into_inner()
+            .and_then(|error| error.downcast::<reqwest::Error>().ok())
+            .map_or(LlmFacadeError::Protocol, |error| classify_reqwest(*error)),
+        LinesCodecError::MaxLineLengthExceeded => LlmFacadeError::Protocol,
+    }
+}
+
 fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
     if error.is_timeout() || error.is_connect() {
         LlmFacadeError::Unavailable
