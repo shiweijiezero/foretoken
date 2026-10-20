@@ -16,9 +16,11 @@ import (
 	"path"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,11 +34,9 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
-const (
-	profileFinalizer    = "inference.foretoken.io/profile-stop"
-	profilePath         = "/v1/internal/profiling"
-	profileArtifactRoot = "profiles/runs"
-)
+const profileFinalizer = "inference.foretoken.io/profile-stop"
+const profilePath = "/v1/internal/profiling"
+const profileLegacyArtifactRoot = "profiles/runs"
 
 // Reconciler owns capture coordination, never serving resources or artifact storage.
 type Reconciler struct {
@@ -64,13 +64,6 @@ type profileObservation struct {
 	GroupUID          string         `json:"groupUid"`
 	RuntimeCacheClaim string         `json:"runtimeCacheClaim"`
 	Capture           *profileRecord `json:"capture"`
-}
-
-// SetupWithManager registers the existing manager as the sole capture coordinator.
-func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
-	r.APIReader = manager.GetAPIReader()
-	r.HTTPClient = &http.Client{Timeout: 5 * time.Second}
-	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.ProfileRun{}).Complete(r)
 }
 
 // Reconcile persists recovery state before starting work, then observes the same runtime identities.
@@ -106,6 +99,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		return ctrl.Result{Requeue: true}, r.writeProfileStatus(ctx, run)
 	}
 	plan := *run.Status.Plan
+	if plan.ArtifactDirectory == "" {
+		// Plans persisted before scoped capture storage keep their original directory.
+		plan.ArtifactDirectory = path.Join(profileLegacyArtifactRoot, string(run.UID))
+	}
 
 	action := run.Spec.Action
 	if !run.DeletionTimestamp.IsZero() || run.Status.Reason != "" {
@@ -210,7 +207,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		if record == nil || record.RunUID != string(run.UID) {
 			return ctrl.Result{}, fmt.Errorf("runtime returned an invalid capture identity")
 		}
-		expectedArtifact := profileParticipantArtifactPath(string(run.UID), participant.RuntimeID)
+		expectedArtifact := path.Join(plan.ArtifactDirectory, participant.RuntimeID)
 		if record.ArtifactDir != nil && *record.ArtifactDir == expectedArtifact {
 			hasArtifacts = true
 		}
@@ -276,7 +273,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
 		}
 		if hasArtifacts {
-			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: profileRunArtifactPath(string(run.UID))}
+			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: plan.ArtifactDirectory}
 		}
 	}
 	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
@@ -356,6 +353,14 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 				if err := r.verifyProfilePod(ctx, &pod, &group); err != nil {
 					return plan, err
 				}
+				directory, err := profileRunArtifactPath(&pod, cache.MountPath, string(run.UID), group.Spec.Runtime.PreparationVersion)
+				if err != nil {
+					return plan, err
+				}
+				if plan.ArtifactDirectory != "" && plan.ArtifactDirectory != directory {
+					return plan, fmt.Errorf("serving runtimes use different profiling directory layouts; redeploy ModelService %s before profiling", service.Name)
+				}
+				plan.ArtifactDirectory = directory
 				member := inferencev1alpha1.ProfileMember{GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID)}
 				for _, container := range pod.Status.ContainerStatuses {
 					if container.Name == "model-server" && container.State.Running != nil {
@@ -403,100 +408,54 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 	return plan, nil
 }
 
-// verifyProfilePod checks the complete workload ownership chain rather than trusting a Pod label.
+// verifyProfilePod shares membership provenance and checks the selected diagnostic workload's topology.
 func (r *Reconciler) verifyProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount > 1 {
-		return r.verifyLeaderWorkerSetProfilePod(ctx, pod, group)
+	ownership, err := workload.ModelGroupForPod(ctx, r.APIReader, pod)
+	if err != nil {
+		return err
 	}
-	return r.verifyDeploymentProfilePod(ctx, pod, group)
-}
+	if ownership.Group.UID != group.UID {
+		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup")
+	}
+	if group.Spec.NodeCount == 1 {
+		deployment, ok := ownership.Workload.(*appsv1.Deployment)
+		if !ok || deployment.Name != group.Name {
+			return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup Deployment")
+		}
+		return nil
+	}
 
-// verifyDeploymentProfilePod preserves the single-node Deployment ownership contract.
-func (r *Reconciler) verifyDeploymentProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	owner := metav1.GetControllerOf(pod)
-	if owner == nil || owner.Kind != "ReplicaSet" {
-		return fmt.Errorf("diagnostic Pod is not owned by a ReplicaSet")
-	}
-	replicaSet := new(appsv1.ReplicaSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, replicaSet); err != nil {
-		return err
-	}
-	deployment := new(appsv1.Deployment)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: group.Name}, deployment); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(pod, replicaSet) || !metav1.IsControlledBy(replicaSet, deployment) || !metav1.IsControlledBy(deployment, group) {
-		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup Deployment")
-	}
-	return nil
-}
-
-// verifyLeaderWorkerSetProfilePod follows the distinct leader and worker ownership chains
-// back to the single LWS execution group controlled by the ModelGroup.
-func (r *Reconciler) verifyLeaderWorkerSetProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	workloadName := workload.ModelGroupLeaderWorkerSetName(group)
-	executionWorkload := new(lwsv1.LeaderWorkerSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: workloadName}, executionWorkload); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(executionWorkload, group) {
+	executionWorkload, ok := ownership.Workload.(*lwsv1.LeaderWorkerSet)
+	if !ok || executionWorkload.Name != workload.ModelGroupLeaderWorkerSetName(group) {
 		return fmt.Errorf("diagnostic LeaderWorkerSet ownership does not match ModelGroup")
 	}
 	if executionWorkload.Spec.Replicas == nil || *executionWorkload.Spec.Replicas != 1 || executionWorkload.Spec.LeaderWorkerTemplate.Size == nil || *executionWorkload.Spec.LeaderWorkerTemplate.Size != group.Spec.MemberCount {
 		return fmt.Errorf("diagnostic LeaderWorkerSet must contain one complete ModelGroup")
 	}
-	if pod.Labels[workload.ModelGroupLabel] != group.Name || pod.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || pod.Labels[lwsv1.GroupIndexLabelKey] != "0" {
+	if pod.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || pod.Labels[lwsv1.GroupIndexLabelKey] != "0" {
 		return fmt.Errorf("diagnostic Pod identity does not match ModelGroup LeaderWorkerSet")
 	}
 	workerIndex, err := strconv.Atoi(pod.Labels[lwsv1.WorkerIndexLabelKey])
 	if err != nil || workerIndex < 0 || int32(workerIndex) >= group.Spec.MemberCount {
 		return fmt.Errorf("diagnostic Pod has an invalid LeaderWorkerSet worker index")
 	}
-
 	owner := metav1.GetControllerOf(pod)
-	if owner == nil || owner.Kind != "StatefulSet" {
-		return fmt.Errorf("diagnostic LeaderWorkerSet Pod is not owned by a StatefulSet")
-	}
-	statefulSet := new(appsv1.StatefulSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, statefulSet); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(pod, statefulSet) {
-		return fmt.Errorf("diagnostic Pod ownership does not match its StatefulSet")
-	}
+	leader := ownership.Leader
 	if workerIndex == 0 {
-		statefulSetOwner := metav1.GetControllerOf(statefulSet)
-		if statefulSet.Name != executionWorkload.Name || statefulSetOwner == nil || statefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(statefulSet, executionWorkload) {
+		if owner.Name != executionWorkload.Name || leader.UID != pod.UID {
 			return fmt.Errorf("diagnostic leader Pod ownership does not match ModelGroup LeaderWorkerSet")
 		}
 		return nil
 	}
 
 	leaderName := pod.Annotations[lwsv1.LeaderPodNameAnnotationKey]
-	if leaderName == "" || statefulSet.Name != leaderName {
+	if leaderName == "" || owner.Name != leaderName || leader.Name != leaderName || leader.UID == pod.UID {
 		return fmt.Errorf("diagnostic worker Pod does not identify its LeaderWorkerSet leader")
-	}
-	leader := new(corev1.Pod)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: leaderName}, leader); err != nil {
-		return err
 	}
 	if leader.Labels[workload.ModelGroupLabel] != group.Name || leader.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || leader.Labels[lwsv1.GroupIndexLabelKey] != "0" || leader.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
 		return fmt.Errorf("diagnostic worker Pod leader identity does not match ModelGroup LeaderWorkerSet")
 	}
-	statefulSetOwner := metav1.GetControllerOf(statefulSet)
-	if statefulSetOwner == nil || statefulSetOwner.Kind != "Pod" || !metav1.IsControlledBy(statefulSet, leader) {
-		return fmt.Errorf("diagnostic worker StatefulSet ownership does not match its LeaderWorkerSet leader")
-	}
-	leaderOwner := metav1.GetControllerOf(leader)
-	if leaderOwner == nil || leaderOwner.Kind != "StatefulSet" {
-		return fmt.Errorf("diagnostic LeaderWorkerSet leader is not owned by a StatefulSet")
-	}
-	leaderStatefulSet := new(appsv1.StatefulSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: leader.Namespace, Name: leaderOwner.Name}, leaderStatefulSet); err != nil {
-		return err
-	}
-	leaderStatefulSetOwner := metav1.GetControllerOf(leaderStatefulSet)
-	if leaderStatefulSet.Name != executionWorkload.Name || leaderStatefulSetOwner == nil || leaderStatefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(leader, leaderStatefulSet) || !metav1.IsControlledBy(leaderStatefulSet, executionWorkload) {
+	if metav1.GetControllerOf(leader).Name != executionWorkload.Name {
 		return fmt.Errorf("diagnostic leader ownership does not match ModelGroup LeaderWorkerSet")
 	}
 	return nil
@@ -539,12 +498,27 @@ func profileTerminal(phase string) bool {
 	return phase == "Succeeded" || phase == "Failed" || phase == "Cancelled"
 }
 
-func profileRunArtifactPath(runUID string) string {
-	return path.Join(profileArtifactRoot, runUID)
-}
-
-func profileParticipantArtifactPath(runUID, runtimeID string) string {
-	return path.Join(profileRunArtifactPath(runUID), runtimeID)
+// profileRunArtifactPath retains the selected Pod's actual output layout in a new execution plan.
+func profileRunArtifactPath(pod *corev1.Pod, dataRoot, runUID string, preparationVersion int32) (string, error) {
+	if preparationVersion < runtimeconfig.SharedModelCachePreparationVersion {
+		return path.Join(profileLegacyArtifactRoot, runUID), nil
+	}
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "model-server" {
+			continue
+		}
+		for _, variable := range container.Env {
+			if variable.Name != runtimeconfig.ProfileRootEnv {
+				continue
+			}
+			root, within := strings.CutPrefix(path.Clean(variable.Value), path.Clean(dataRoot)+"/")
+			if !within {
+				return "", fmt.Errorf("diagnostic Pod %s has profiling storage outside its RuntimeCache", pod.Name)
+			}
+			return path.Join(root, "runs", runUID), nil
+		}
+	}
+	return "", fmt.Errorf("diagnostic Pod %s has no profiling storage root", pod.Name)
 }
 
 // writeProfileStatus publishes only observed progress while preserving user-owned intent.
@@ -564,4 +538,11 @@ func (r *Reconciler) removeProfileFinalizer(ctx context.Context, run *inferencev
 	base := run.DeepCopy()
 	controllerutil.RemoveFinalizer(run, profileFinalizer)
 	return r.Patch(ctx, run, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+// SetupWithManager registers the existing manager as the sole capture coordinator.
+func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
+	r.APIReader = manager.GetAPIReader()
+	r.HTTPClient = &http.Client{Timeout: 5 * time.Second}
+	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.ProfileRun{}).Complete(r)
 }

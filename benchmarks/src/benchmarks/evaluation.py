@@ -13,11 +13,26 @@ from benchmarks.config.evaluation import (
     native_arguments,
     parse_evaluation_arguments,
 )
-from benchmarks.model_service import resolve_model_service
-from benchmarks.results.console import configure_logging
+from benchmarks.model_service import ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.logs import configure_logging
 from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Select evaluation and retain one experiment record across service preparation and execution."""
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    try:
+        config, help_requested = parse_evaluation_arguments(arguments)
+        if help_requested:
+            _run(config, help_requested=True)
+            return
+        configure_logging(not config.outputs.includes("quiet"))
+        with experiment_output(config, "eval", arguments) as config:
+            _run(config)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
@@ -73,23 +88,8 @@ def _run(config: EvaluationConfig, *, help_requested: bool = False) -> None:
     else:
         with (
             ResultOutputs(config, None, directory_prefix="eval-") as outputs,
-            resolve_model_service(config.service) as service,
+            ModelServiceResolver().resolve(config.service) as service,
         ):
             run = run_evaluation(config, service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    """Select evaluation and retain one experiment record across service preparation and execution."""
-    arguments = tuple(sys.argv[1:] if argv is None else argv)
-    try:
-        config, help_requested = parse_evaluation_arguments(arguments)
-        if help_requested:
-            _run(config, help_requested=True)
-            return
-        configure_logging(not config.outputs.includes("quiet"))
-        with experiment_output(config, "eval", arguments) as config:
-            _run(config)
-    except ValueError as error:
-        raise SystemExit(str(error)) from error

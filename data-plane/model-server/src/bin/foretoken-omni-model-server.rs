@@ -19,15 +19,18 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
-use foretoken_artifacts::ModelSource;
+use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
     CumulativeHistogram, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_model_server::api::{AdmissionPermit, RuntimeHealth};
-use foretoken_model_server::launch::{Lifecycle, append_engine_arg};
-use foretoken_model_server::managed_engine::ManagedEngine;
+use foretoken_model_server::engine::{
+    Lifecycle, ManagedEngine, append_engine_arg, python_executable,
+};
+use foretoken_model_server::model_cache::preparation::{self, PreparationStorage};
+use foretoken_model_server::shutdown_signal;
 
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_OMNI_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
@@ -37,9 +40,7 @@ const EXECUTABLE_ENV: &str = "FORETOKEN_OMNI_EXECUTABLE";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LaunchPlan {
     version: u8,
-    model: String,
-    source: ModelSource,
-    revision: String,
+    artifacts: ModelArtifacts,
     upstream_port: u16,
     lifecycle: Lifecycle,
     #[serde(default)]
@@ -55,8 +56,20 @@ struct AppState {
     health: Arc<RuntimeHealth>,
 }
 
+/// Dispatch model preparation or serve video requests while owning the native engine lifetime.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let python = python_executable();
+    if let Some(action @ ("prepare" | "resolve")) = std::env::args().nth(1).as_deref() {
+        let artifacts = ModelArtifacts::from_env()?;
+        if action == "prepare" {
+            preparation::prepare_job(&artifacts, None, &python).await?;
+        } else {
+            preparation::resolve(&artifacts, None, &python).await?;
+        }
+        return Ok(());
+    }
+
     let plan: LaunchPlan = serde_json::from_str(&required_env(LAUNCH_PLAN_ENV)?)?;
     validate_plan(&plan)?;
     let listen: SocketAddr = required_env(LISTEN_ENV)?.parse()?;
@@ -69,15 +82,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_timeout(Duration::from_secs(5))
         .build()?;
     let listener = TcpListener::bind(listen).await?;
-    let child = ManagedEngine::spawn(engine_command(&plan)?, None).await?;
-    if let Err(error) = wait_until_ready(
-        &client,
-        &upstream,
-        &child,
-        Duration::from_secs(plan.lifecycle.startup_seconds),
-    )
-    .await
-    {
+    let deadline = Instant::now() + Duration::from_secs(plan.lifecycle.startup_seconds);
+    // Remote sources consume the fixed publication through the shared preparation lifecycle.
+    let model = if plan.artifacts.source == ModelSource::Local {
+        preparation::local_artifact_path(&plan.artifacts.model)?
+    } else {
+        let model_root = foretoken_artifacts::model_cache_root()
+            .ok_or("FORETOKEN_MODEL_CACHE_ROOT must be set for model preparation")?;
+        let state_root = foretoken_artifacts::preparation_root()
+            .ok_or("FORETOKEN_MODEL_PREPARATION_ROOT must be set for model preparation")?;
+        let storage = PreparationStorage {
+            model_root: &model_root,
+            state_root: &state_root,
+            reusable_roots: None,
+            environment: &[],
+        };
+        let scope = required_env(preparation::PREPARATION_SCOPE_ENV)?;
+        tokio::time::timeout_at(
+            deadline.into(),
+            preparation::prepare(&plan.artifacts, None, &python, &storage, &scope, true),
+        )
+        .await
+        .map_err(|_| "model preparation exceeded the startup deadline")??
+        .model
+        .display()
+        .to_string()
+    };
+    let child = ManagedEngine::spawn(engine_command(&plan, &model)?, None).await?;
+    if let Err(error) = wait_until_ready(&client, &upstream, &child, deadline).await {
         child.shutdown(Duration::from_secs(10)).await?;
         return Err(error);
     }
@@ -89,18 +121,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         client,
         upstream,
-        model: plan.model.clone(),
-        revision: plan.revision.clone(),
+        model: plan.artifacts.model.clone(),
+        revision: plan.artifacts.revision.clone(),
         health: health.clone(),
     };
     let app = router(state);
     eprintln!("Foretoken vLLM-Omni adapter ready on {listen}");
 
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let server_shutdown = shutdown.clone();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, app)
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(server_shutdown.cancelled_owned())
             .await
     });
     enum Stop {
@@ -130,17 +162,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     eprintln!("Stopping Foretoken vLLM-Omni adapter: {stop_reason}");
     health.set_accepting(false);
-    if graceful {
-        drain(&health, Duration::from_secs(plan.lifecycle.drain_seconds)).await;
+    if graceful
+        && tokio::time::timeout(
+            Duration::from_secs(plan.lifecycle.drain_seconds),
+            health.wait_drained(),
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("Accepted requests did not finish before the drain deadline");
     }
     health.set_process_alive(false);
-    shutdown.notify_waiters();
+    shutdown.cancel();
     if !server.is_finished()
         && tokio::time::timeout(Duration::from_secs(5), &mut server)
             .await
             .is_err()
     {
         server.abort();
+        let _ = server.await;
     }
     child.shutdown(Duration::from_secs(10)).await?;
     if let Stop::Error(error) = stop {
@@ -149,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Build video and control routes sharing the adapter's execution-admission state.
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(healthz))
@@ -264,6 +305,7 @@ async fn proxy_video(State(state): State<AppState>, request: Request<Body>) -> R
     .await
 }
 
+/// Proxy one upstream request, retaining its admission permit until the response stream ends.
 async fn proxy_request(
     state: &AppState,
     method: Method,
@@ -324,12 +366,9 @@ fn hop_by_hop(name: &HeaderName) -> bool {
     )
 }
 
-fn engine_command(plan: &LaunchPlan) -> Result<Command, Box<dyn std::error::Error>> {
+/// Build the native Omni command from the model snapshot supplied by shared preparation.
+fn engine_command(plan: &LaunchPlan, model: &str) -> Result<Command, Box<dyn std::error::Error>> {
     let executable = std::env::var(EXECUTABLE_ENV).unwrap_or_else(|_| "vllm".into());
-    let model = match plan.source {
-        ModelSource::Local => local_artifact_path(&plan.model)?,
-        ModelSource::Hf | ModelSource::ModelScope => plan.model.clone(),
-    };
     let mut command = Command::new(executable);
     command
         .arg("serve")
@@ -338,38 +377,11 @@ fn engine_command(plan: &LaunchPlan) -> Result<Command, Box<dyn std::error::Erro
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", plan.upstream_port))
         .args(render_engine_args(&plan.engine_args)?);
-    match plan.source {
-        ModelSource::Local => {}
-        ModelSource::Hf | ModelSource::ModelScope => {
-            command.arg(format!("--revision={}", plan.revision));
-        }
+    if !plan.engine_args.contains_key("served-model-name") {
+        command.arg(format!("--served-model-name={}", plan.artifacts.model));
     }
-    command.env(
-        "VLLM_USE_MODELSCOPE",
-        if matches!(plan.source, ModelSource::ModelScope) {
-            "true"
-        } else {
-            "false"
-        },
-    );
+    command.env("VLLM_USE_MODELSCOPE", "false");
     Ok(command)
-}
-
-fn local_artifact_path(identifier: &str) -> std::io::Result<String> {
-    let root = foretoken_artifacts::model_root();
-    let path =
-        foretoken_artifacts::resolve_directory(root.as_deref(), identifier)?.ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("local artifact {identifier:?} was not found"),
-            )
-        })?;
-    path.into_os_string().into_string().map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "local artifact path is not UTF-8",
-        )
-    })
 }
 
 fn render_engine_args(args: &BTreeMap<String, Value>) -> Result<Vec<String>, String> {
@@ -386,13 +398,13 @@ fn render_engine_args(args: &BTreeMap<String, Value>) -> Result<Vec<String>, Str
     Ok(output)
 }
 
+/// Observe native health and child exit until the startup budget is exhausted.
 async fn wait_until_ready(
     client: &reqwest::Client,
     upstream: &str,
     child: &ManagedEngine,
-    timeout: Duration,
+    deadline: Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let deadline = Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait().await {
             return Err(format!("vLLM-Omni exited during startup: {status}").into());
@@ -414,22 +426,23 @@ async fn wait_until_ready(
     }
 }
 
-async fn drain(health: &RuntimeHealth, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while health.running_requests() != 0 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
+/// Validate the controller's Omni launch contract before allocating serving resources.
 fn validate_plan(plan: &LaunchPlan) -> Result<(), String> {
-    if plan.version != 1 {
+    if plan.version != 2 {
         return Err(format!(
             "unsupported vLLM-Omni launch plan version {}",
             plan.version
         ));
     }
-    if plan.model.is_empty() || plan.revision.is_empty() {
-        return Err("model and revision must be nonempty".into());
+    for (name, value) in [
+        ("model", &plan.artifacts.model),
+        ("revision", &plan.artifacts.revision),
+        ("tokenizer", &plan.artifacts.tokenizer),
+        ("tokenizerRevision", &plan.artifacts.tokenizer_revision),
+    ] {
+        if value.is_empty() {
+            return Err(format!("artifacts.{name} must be nonempty"));
+        }
     }
     if plan.upstream_port == 0 {
         return Err("upstreamPort must be positive".into());
@@ -453,19 +466,4 @@ fn status(value: bool) -> StatusCode {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() -> Result<(), std::io::Error> {
-    use tokio::signal::unix::{SignalKind, signal};
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        _ = terminate.recv() => Ok(()),
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() -> Result<(), std::io::Error> {
-    tokio::signal::ctrl_c().await
 }

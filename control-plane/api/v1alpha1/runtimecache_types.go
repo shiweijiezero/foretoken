@@ -30,7 +30,7 @@ const (
 	RuntimeCacheRetentionPolicyRetain RuntimeCacheRetentionPolicy = "Retain"
 )
 
-// RuntimeCacheSpec defines one platform-managed persistent cache volume.
+// RuntimeCacheSpec selects persistent model and runtime storage for one deployment.
 // +kubebuilder:validation:XValidation:rule="!has(self.initialSize) || quantity(self.initialSize).compareTo(quantity('0')) > 0",message="initialSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity('0')) > 0",message="maxSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || !has(self.initialSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize)) > 0",message="maxSize must be greater than initialSize"
@@ -39,9 +39,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.maxSize) || (has(self.maxSize) && quantity(self.maxSize).compareTo(quantity(oldSelf.maxSize)) >= 0)",message="maxSize cannot be removed or decreased"
 // +kubebuilder:validation:XValidation:rule="!has(self.directory) || (!has(self.maxSize) && !has(self.initialSize) && !has(self.storageClassName))",message="directory cannot be combined with PVC size or storageClassName"
 type RuntimeCacheSpec struct {
-	// Directory is a deployment-root-relative directory for a static hostPath PV.
-	// Declaring it means the resolved path is already shared at the same location on every target node.
-	// The deploy command resolves the path but never uploads its contents or installs shared storage.
+	// Directory selects an administrator-authorized data directory.
+	// The CLI resolves relative paths from the deployment root without uploading files.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
@@ -50,8 +49,7 @@ type RuntimeCacheSpec struct {
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	// InitialSize is the first PVC request for dynamic storage. Directory mode uses
-	// an internal bookkeeping capacity when this field is omitted.
+	// InitialSize is the first PVC request for dynamic storage; omit it when selecting a directory.
 	// +optional
 	InitialSize ResourceQuantity `json:"initialSize,omitempty"`
 

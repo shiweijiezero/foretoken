@@ -43,4 +43,4 @@ foretoken status "$RECIPE"
 foretoken delete "$RECIPE"
 ```
 
-删除会回收该命名空间中的模型、前端和内存 Store；共享目录内的 checkpoint 保留，内存 KV 不保留。
+删除只回收该实例的模型、前端和内存 Store，命名空间保留。共享目录内的 checkpoint 保留，内存 KV 不保留。

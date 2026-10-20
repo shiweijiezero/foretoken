@@ -14,11 +14,15 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
-	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"k8s.io/utils/ptr"
 )
+
+type backendDeploymentRequiredError struct{ service string }
+
+type modelCatalogProjectionError struct{ service, reason string }
 
 // projectConfiguredModels resolves model discovery and admission together, independently of capacity.
 // Missing selected artifacts exclude only their service unless its published provenance still matches.
@@ -161,8 +165,6 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 	return models, admission, projectionErr
 }
 
-type backendDeploymentRequiredError struct{ service string }
-
 // Error identifies bounded admission that cannot yet share the selected backend ledger.
 func (err *backendDeploymentRequiredError) Error() string {
 	return fmt.Sprintf("ModelService %q and its frontend must be redeployed with the same admission ledger before bounded admission can be applied", err.service)
@@ -170,27 +172,25 @@ func (err *backendDeploymentRequiredError) Error() string {
 
 // configuredTemplateIdentity uses the runtime's backend compiler for pre-serving discovery.
 func configuredTemplateIdentity(template inferencev1alpha1.NormalizedPoolTemplate) (servingconfig.Group, error) {
-	identity := servingconfig.Group{PrefixCacheIsolation: template.PrefixCacheIsolation}
+	identity := servingconfig.Group{
+		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
+		Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
+		PrefixCacheIsolation: template.PrefixCacheIsolation,
+	}
 	features := template.Features
 	if template.Role == inferencev1alpha1.ModelRolePrefill || template.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
 	}
 	identity.Capabilities = servingconfig.RoutingCapabilities(features)
 	if template.Backend == "vllm-omni" {
-		effective, err := vllmomniconfig.Compile(template)
-		if err != nil {
+		if _, err := vllmomniconfig.Compile(template); err != nil {
 			return servingconfig.Group{}, err
 		}
-		identity.Model, identity.Source, identity.Revision = effective.Model, effective.Source, effective.Revision
-		identity.Tokenizer, identity.TokenizerRevision = effective.Tokenizer, effective.TokenizerRevision
 		identity.Capabilities = []string{"video"}
 	} else {
-		effective, err := vllmconfig.Compile(template)
-		if err != nil {
+		if _, err := vllmconfig.Compile(template); err != nil {
 			return servingconfig.Group{}, err
 		}
-		identity.Model, identity.Source, identity.Revision = effective.Model, effective.Source, effective.Revision
-		identity.Tokenizer, identity.TokenizerRevision = effective.Tokenizer, effective.TokenizerRevision
 	}
 	return identity, nil
 }

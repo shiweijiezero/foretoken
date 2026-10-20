@@ -8,6 +8,7 @@ package frontend
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 
@@ -63,15 +64,39 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		cacheMountPath = profile.RuntimeCache.MountPath
 	}
 	modelRoot := runtimeconfig.ModelDirectory(cacheMountPath)
+	modelCache := runtimeconfig.ModelCacheDirectory(cacheMountPath)
+	deploymentUID := frontend.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	runtimeRoot := runtimeconfig.DeploymentCacheDirectory(cacheMountPath, deploymentUID)
+	var application *inferencev1alpha1.ApplicationSelection
+	if frontend.Status.Application != nil {
+		application = &frontend.Status.Application.ApplicationSelection
+	}
+	preparationVersion := runtimeconfig.ModelPreparationVersion(application, "")
+	sharedCache := preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion
+	huggingFaceHome := modelRoot
+	if sharedCache {
+		huggingFaceHome = path.Join(runtimeRoot, "huggingface")
+	}
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
 		{Name: "FORETOKEN_FRONTEND_UID", Value: string(frontend.UID)},
+		{Name: runtimeconfig.DeploymentUIDEnv, Value: deploymentUID},
 		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
-		{Name: "HF_HOME", Value: modelRoot},
+		{Name: "HF_HOME", Value: huggingFaceHome},
 		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
 		{Name: "FORETOKEN_DRAIN_SECONDS", Value: strconv.FormatInt(drainSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: servingconfig.KVIndexerKeyPath},
+	}
+	if sharedCache {
+		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: "HOME", Value: runtimeRoot},
+			corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: path.Join(runtimeRoot, ".cache")},
+			corev1.EnvVar{Name: "XDG_CONFIG_HOME", Value: path.Join(runtimeRoot, ".config")},
+			corev1.EnvVar{Name: "HF_HUB_CACHE", Value: path.Join(huggingFaceHome, "hub")},
+			corev1.EnvVar{Name: runtimeconfig.ModelCacheRootEnv, Value: modelCache},
+			corev1.EnvVar{Name: runtimeconfig.PreparationRootEnv, Value: path.Join(runtimeRoot, "prepared")},
+		)
 	}
 	annotations := map[string]string{servingconfig.ProtocolAnnotation: fmt.Sprint(frontend.Status.ServingConfigVersion)}
 	if profile.ApplicationURL != "" {
@@ -86,7 +111,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,
-			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: frontend.Namespace + "/" + profile.RuntimeCache.ClaimName},
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: runtimeconfig.RuntimeCacheIdentity(frontend.Namespace, profile.RuntimeCache.ClaimName, preparationVersion)},
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
 			corev1.EnvVar{Name: runtimeconfig.TemporaryModelRootEnv, Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache")},
 		)
@@ -166,7 +191,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		},
 	}
 	profile.ApplicationFiles.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], profile.ApplicationURL, "foretoken-frontend")
-	cacheAccess := runtimeconfig.CacheStorageAccess(profile.RuntimeCache)
+	cacheAccess := runtimeconfig.WorkloadCacheAccess(&deployment.Spec.Template, profile.RuntimeCache, preparationVersion)
 	accesses := []runtimeconfig.VolumeAccess{cacheAccess}
 	if frontend.Spec.VideoTasks != nil {
 		if profile.VideoStorageIdentity == nil {
@@ -193,9 +218,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	if profile.Gateway == nil {
 		return deployment, service, nil, nil
-	}
-	if frontend.Spec.Hostname == "" {
-		return nil, nil, nil, fmt.Errorf("frontend hostname is required in gateway mode")
 	}
 	return deployment, service, desiredHTTPRoute(frontend, profile, requestTimeout), nil
 }
@@ -231,7 +253,12 @@ func frontendResources(resources inferencev1alpha1.FrontendResources) (corev1.Re
 	return requests, limits, nil
 }
 
+// desiredHTTPRoute exposes public API paths under the explicit host or the frontend's own Service identity.
 func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile, requestTimeout gatewayv1.Duration) *gatewayv1.HTTPRoute {
+	hostname := frontend.Spec.Hostname
+	if hostname == "" {
+		hostname = fmt.Sprintf("%s.%s.svc", frontend.Name, frontend.Namespace)
+	}
 	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
 	gatewayKind := gatewayv1.Kind("Gateway")
 	pathType := gatewayv1.PathMatchPathPrefix
@@ -256,7 +283,7 @@ func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile Front
 		ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: map[string]string{workload.FrontendServiceLabel: frontend.Name}},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
-			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(frontend.Spec.Hostname)},
+			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
 			Rules: []gatewayv1.HTTPRouteRule{{
 				Matches:  matches,
 				Timeouts: &gatewayv1.HTTPRouteTimeouts{Request: &requestTimeout},

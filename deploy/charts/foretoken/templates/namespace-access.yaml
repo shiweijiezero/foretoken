@@ -1,0 +1,56 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Map administrator-authorized directories to namespace-local claim names. */}}
+{{- define "foretoken.cacheDirectoryBindings" -}}
+{{- $bindings := dict -}}
+{{- range $claim, $directory := .Values.workload.cache.directories -}}
+{{- if hasKey $bindings $directory.directory -}}
+{{- fail (printf "directory %s has more than one claim binding" $directory.directory) -}}
+{{- end -}}
+{{- $_ := set $bindings $directory.directory $claim -}}
+{{- end -}}
+{{- $bindings | toJson -}}
+{{- end -}}
+
+{{/* Administrators bind this role within a namespace; installation never grants it to a person. */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: foretoken-operator
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [inference.foretoken.io]
+    resources: [inferencedeployments, modelservices, frontendservices, runtimecaches, kvservices, profileruns, videotasks]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [inference.foretoken.io]
+    resources: [modelpools, modelgroups, kvpools, kvgroups]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps, pods, services, persistentvolumeclaims, events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [leaderworkerset.x-k8s.io]
+    resources: [leaderworkersets]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch]

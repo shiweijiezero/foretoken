@@ -17,10 +17,10 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
-	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
-	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,42 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
-
-// groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
-func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfig.ApplicationFiles) string {
-	if group.Spec.Runtime.ApplicationURL != "" {
-		return group.Spec.Runtime.ApplicationURL
-	}
-	return files.Ref("model-server", group.Spec.Runtime.SourceRevision)
-}
-
-// reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
-func (reconciler *GroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return nil, fmt.Errorf("set Deployment owner: %w", err)
-	}
-	current := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
-		if !metav1.IsControlledBy(current, group) {
-			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
-		}
-		if group.Spec.Runtime.Backend == "vllm" && group.Spec.Runtime.PreparationVersion == 0 {
-			return current, nil
-		}
-	} else if !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("get Deployment: %w", err)
-	}
-	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
-		return nil, err
-	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
-		return nil, fmt.Errorf("apply Deployment: %w", err)
-	}
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
-		return nil, fmt.Errorf("get applied Deployment: %w", err)
-	}
-	return current, nil
-}
 
 const modelGroupDTServiceLabel = "inference.foretoken.io/dt-service-uid"
 
@@ -157,7 +121,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	if groupApplicationURL(group, files) != "" {
 		env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: files.Directory()})
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Spec.Runtime.TritonCacheDirectory)...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
@@ -219,6 +183,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 		if group.Spec.Runtime.Backend == "vllm" {
 			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeconfig.CacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 			env = append(env, runtimeconfig.CacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
+			if group.Spec.Runtime.PreparationVersion >= runtimeconfig.SharedModelCachePreparationVersion {
+				env = append(env, corev1.EnvVar{Name: runtimeconfig.ProfileRootEnv, Value: path.Join(runtimeconfig.DeploymentCacheDirectory(cache.MountPath, group.Labels[inferencev1alpha1.DeploymentUIDLabel]), "profiles")})
+			}
 		} else {
 			env = append(env,
 				corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
@@ -306,7 +273,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	if err := configureModelEnvironment(group.Spec, container); err != nil {
 		return nil, err
 	}
-	access := runtimeconfig.CacheStorageAccess(group.Spec.Artifacts.Cache)
+	access := runtimeconfig.WorkloadCacheAccess(&deployment.Spec.Template, group.Spec.Artifacts.Cache, group.Spec.Runtime.PreparationVersion)
 	accesses := []runtimeconfig.VolumeAccess{access}
 	if ec := group.Spec.ECRuntime; ec != nil {
 		identity := runtimeconfig.DefaultStorageIdentity()
@@ -320,6 +287,39 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alp
 	}
 	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
+}
+
+// groupApplicationURL reads the immutable selection, including pre-selection source cohorts.
+func groupApplicationURL(group *inferencev1alpha1.ModelGroup, files runtimeconfig.ApplicationFiles) string {
+	if group.Spec.Runtime.ApplicationURL != "" {
+		return group.Spec.Runtime.ApplicationURL
+	}
+	return files.Ref("model-server", group.Spec.Runtime.SourceRevision)
+}
+
+// reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
+func (reconciler *GroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, desired *appsv1.Deployment) (*appsv1.Deployment, error) {
+	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
+		return nil, fmt.Errorf("set Deployment owner: %w", err)
+	}
+	current := new(appsv1.Deployment)
+	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+		if !metav1.IsControlledBy(current, group) {
+			return nil, fmt.Errorf("Deployment %q is not controlled by ModelGroup", current.Name)
+		}
+		if group.Spec.Runtime.PreparationVersion == 0 {
+			return current, nil
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("get Deployment: %w", err)
+	}
+	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &desired.Spec.Template); err != nil {
+		return nil, err
+	}
+	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
+		return nil, fmt.Errorf("apply Deployment: %w", err)
+	}
+	return desired, nil
 }
 
 // configureModelEnvironment appends ordered model variables after platform configuration.
@@ -425,9 +425,23 @@ func modelServerProbe(path string, periodSeconds, failureThreshold int32) *corev
 	}
 }
 
-// reconcileNetworkPolicy allows the frontend, control plane, runtime peers, and trusted metrics-scraper namespaces to reach a ModelGroup.
+// reconcileNetworkPolicy permits deployment-local traffic, runtime peers, and trusted metrics scrapers to reach a ModelGroup.
 func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
+	deploymentUID := group.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	if deploymentUID == "" {
+		return fmt.Errorf("ModelGroup %q has no deployment UID", group.Name)
+	}
 	labels := workload.ModelGroupLabels(group)
+	deploymentLabels := map[string]string{inferencev1alpha1.DeploymentUIDLabel: deploymentUID}
+	frontendSelector := &metav1.LabelSelector{
+		MatchLabels: deploymentLabels,
+		MatchExpressions: []metav1.LabelSelectorRequirement{{
+			Key: workload.FrontendServiceLabel, Operator: metav1.LabelSelectorOpExists,
+		}},
+	}
+	controllerLabels := maps.Clone(deploymentLabels)
+	controllerLabels[workload.ControlPlanePodLabel] = workload.ControlPlanePodLabelValue
+	controllerSelector := &metav1.LabelSelector{MatchLabels: controllerLabels}
 	protocol := corev1.ProtocolTCP
 	modelServerPort := intstr.FromString("model-server")
 	if reconciler.ControlPlaneNamespace == "" {
@@ -436,14 +450,11 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 	ingress := []networkingv1.NetworkPolicyIngressRule{{
 		From: []networkingv1.NetworkPolicyPeer{
 			{
-				PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-					Key:      workload.FrontendServiceLabel,
-					Operator: metav1.LabelSelectorOpExists,
-				}}},
+				PodSelector: frontendSelector,
 			},
 			{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{workload.ControlPlanePodLabel: workload.ControlPlanePodLabelValue}},
+				PodSelector:       controllerSelector,
 			},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
@@ -454,7 +465,7 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 		preparationIngress = []networkingv1.NetworkPolicyIngressRule{{
 			From: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": reconciler.ControlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{workload.ControlPlanePodLabel: workload.ControlPlanePodLabelValue}},
+				PodSelector:       controllerSelector,
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &cacheObservationPort}},
 		}}
@@ -491,10 +502,7 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
 			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-				From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
-					Key:      workload.FrontendServiceLabel,
-					Operator: metav1.LabelSelectorOpExists,
-				}}}}},
+				From:  []networkingv1.NetworkPolicyPeer{{PodSelector: frontendSelector}},
 				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &bootstrapPort}},
 			})
 		}

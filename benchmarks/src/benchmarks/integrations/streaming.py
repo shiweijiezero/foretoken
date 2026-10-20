@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from benchmarks.results.itl import ITLStatistics
+from benchmarks.results.measurements.itl import ITLStatistics
 
 
 @dataclass

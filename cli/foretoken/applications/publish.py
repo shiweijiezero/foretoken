@@ -31,80 +31,6 @@ class _ReleaseRedirectHandler(HTTPRedirectHandler):
         return redirect
 
 
-def import_release(
-    source: str,
-    destination: Path,
-    revision: str,
-    binding: str,
-    previous: dict[str, str],
-    keep: set[str] | None,
-) -> None:
-    """Import or reuse release files while the caller holds the origin's unique release Job."""
-    # Exclusive release ownership makes interrupted staging recoverable even on reuse.
-    for component in ("control-plane", "frontend", "model-server"):
-        for abandoned in (destination / component).glob(_RELEASE_STAGING_PREFIX + "*"):
-            shutil.rmtree(abandoned)
-    missing = [
-        component
-        for component in ("control-plane", "frontend", "model-server")
-        if not (destination / component / revision / "manifest.json").is_file()
-    ]
-    if missing:
-        request = Request(source)
-        if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
-            request.add_header("Authorization", credential)
-        opener = build_opener(_ReleaseRedirectHandler())
-        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
-            archive = Path(temporary) / "applications.tar.gz"
-            with opener.open(request) as response, archive.open("wb") as output:
-                shutil.copyfileobj(response, output)
-            payload = Path(temporary) / "payload"
-            with tarfile.open(archive) as package:
-                package.extractall(payload, filter="data")
-            for component in missing:
-                prior = previous.get(component)
-                publish(
-                    payload / component,
-                    destination / component / revision,
-                    binding,
-                    destination / component / prior if prior else None,
-                    release_owned=True,
-                )
-    if keep is not None:
-        for component in ("control-plane", "frontend", "model-server"):
-            retire(
-                destination / component, binding, keep | {revision}, release_owned=True
-            )
-
-
-def _application_part(path: Path, component: str) -> str:
-    """Assign each application file to the build output that replaces it as a group."""
-    if component == "control-plane":
-        return "go"
-    if path.parts[0] == "python":
-        return "python"
-    if path.parts[0] in {"engine", "engine-environment.json"}:
-        return "engine"
-    return "rust"
-
-
-def archive_inputs(workspace: Path, destination: Path) -> None:
-    """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
-    inputs = json.loads((workspace.parent / "inputs.json").read_text())
-    # The init container owns this temporary volume; failure discards it with the Job.
-    # Include only synchronized inputs, retaining their original bytes and modes.
-    with tarfile.open(destination, "w:gz", dereference=True) as package:
-        for name in sorted(inputs):
-            package.add(workspace / name, arcname=name, recursive=False)
-    destination.chmod(0o444)
-
-
-def _clear_source_staging(directory: Path, binding: str) -> None:
-    """Remove one stopped publisher's staging files before reuse or retirement."""
-    for abandoned in directory.glob(f".{binding}.staging-*"):
-        shutil.rmtree(abandoned)
-
-
 def publish(
     source: Path,
     destination: Path,
@@ -296,6 +222,80 @@ def retire(
             else:
                 shutil.rmtree(version)
     return retained
+
+
+def import_release(
+    source: str,
+    destination: Path,
+    revision: str,
+    binding: str,
+    previous: dict[str, str],
+    keep: set[str] | None,
+) -> None:
+    """Import or reuse release files while the caller holds the origin's unique release Job."""
+    # Exclusive release ownership makes interrupted staging recoverable even on reuse.
+    for component in ("control-plane", "frontend", "model-server"):
+        for abandoned in (destination / component).glob(_RELEASE_STAGING_PREFIX + "*"):
+            shutil.rmtree(abandoned)
+    missing = [
+        component
+        for component in ("control-plane", "frontend", "model-server")
+        if not (destination / component / revision / "manifest.json").is_file()
+    ]
+    if missing:
+        request = Request(source)
+        if credential := os.environ.get("FORETOKEN_RELEASE_AUTHORIZATION"):
+            request.add_header("Authorization", credential)
+        opener = build_opener(_ReleaseRedirectHandler())
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            archive = Path(temporary) / "applications.tar.gz"
+            with opener.open(request) as response, archive.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            payload = Path(temporary) / "payload"
+            with tarfile.open(archive) as package:
+                package.extractall(payload, filter="data")
+            for component in missing:
+                prior = previous.get(component)
+                publish(
+                    payload / component,
+                    destination / component / revision,
+                    binding,
+                    destination / component / prior if prior else None,
+                    release_owned=True,
+                )
+    if keep is not None:
+        for component in ("control-plane", "frontend", "model-server"):
+            retire(
+                destination / component, binding, keep | {revision}, release_owned=True
+            )
+
+
+def archive_inputs(workspace: Path, destination: Path) -> None:
+    """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
+    inputs = json.loads((workspace.parent / "inputs.json").read_text())
+    # The init container owns this temporary volume; failure discards it with the Job.
+    # Include only synchronized inputs, retaining their original bytes and modes.
+    with tarfile.open(destination, "w:gz", dereference=True) as package:
+        for name in sorted(inputs):
+            package.add(workspace / name, arcname=name, recursive=False)
+    destination.chmod(0o444)
+
+
+def _application_part(path: Path, component: str) -> str:
+    """Assign each application file to the build output that replaces it as a group."""
+    if component == "control-plane":
+        return "go"
+    if path.parts[0] == "python":
+        return "python"
+    if path.parts[0] in {"engine", "engine-environment.json"}:
+        return "engine"
+    return "rust"
+
+
+def _clear_source_staging(directory: Path, binding: str) -> None:
+    """Remove one stopped publisher's staging files before reuse or retirement."""
+    for abandoned in directory.glob(f".{binding}.staging-*"):
+        shutil.rmtree(abandoned)
 
 
 if __name__ == "__main__":

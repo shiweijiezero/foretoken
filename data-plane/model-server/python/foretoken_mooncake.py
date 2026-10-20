@@ -17,29 +17,35 @@ from vllm.v1.request import Request
 logger = logging.getLogger(__name__)
 
 
-class _CheckedStore:
-    """Preserve native lookup failures that the connector otherwise treats as misses."""
+class MooncakeStoreConnector(UpstreamMooncakeStoreConnector):
+    """Expose read-only prefix observations from each DP rank's native connector."""
 
-    def __init__(self, store):
-        self.store = store
-        self.failed = False
+    def __init__(self, vllm_config, role, kv_cache_config=None):
+        self._prefix_server = None
+        self._config = vllm_config
+        # Reuse the controller's model/layout scope for both transfers and observations.
+        vllm_config.kv_transfer_config.kv_connector_extra_config.setdefault(
+            "cache_prefix", os.environ["FORETOKEN_KV_SCOPE_ID"]
+        )
+        super().__init__(vllm_config, role, kv_cache_config)
 
-    def batch_is_exist(self, keys):
-        self.failed = True
-        results = self.store.batch_is_exist(keys)
-        self.failed = len(results) != len(keys) or any(value < 0 for value in results)
-        return results
+    def register_kv_caches(self, kv_caches):
+        super().register_kv_caches(kv_caches)
+        self._start_prefix_server()
 
+    def register_cross_layers_kv_cache(self, kv_cache, attn_backend):
+        super().register_cross_layers_kv_cache(kv_cache, attn_backend)
+        self._start_prefix_server()
 
-class _LookupView:
-    """Use upstream key construction and hit alignment without replacing its Store handle."""
+    def shutdown(self):
+        if self._prefix_server is not None:
+            self._prefix_server.close()
+            self._prefix_server = None
+        super().shutdown()
 
-    def __init__(self, worker):
-        self.worker = worker
-        self.store = _CheckedStore(worker.store)
-
-    def __getattr__(self, name):
-        return getattr(self.worker, name)
+    def _start_prefix_server(self):
+        if self._config.parallel_config.rank == 0 and self._prefix_server is None:
+            self._prefix_server = _PrefixServer(self.connector_worker, self._config)
 
 
 class _PrefixServer:
@@ -58,6 +64,9 @@ class _PrefixServer:
             os.environ["FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT"], self.dp_rank
         )
         self.server = PrefixLookupServer(endpoint, self._lookup)
+
+    def close(self):
+        self.server.close()
 
     def _lookup(self, query):
         """Observe the native Store's reusable prefix without scheduling a load."""
@@ -83,36 +92,27 @@ class _PrefixServer:
             logger.exception("vLLM shared KV prefix lookup failed")
             return {"matchedTokens": None}
 
-    def close(self):
-        self.server.close()
+
+class _LookupView:
+    """Use upstream key construction and hit alignment without replacing its Store handle."""
+
+    def __init__(self, worker):
+        self.worker = worker
+        self.store = _CheckedStore(worker.store)
+
+    def __getattr__(self, name):
+        return getattr(self.worker, name)
 
 
-class MooncakeStoreConnector(UpstreamMooncakeStoreConnector):
-    """Expose read-only prefix observations from each DP rank's native connector."""
+class _CheckedStore:
+    """Preserve native lookup failures that the connector otherwise treats as misses."""
 
-    def __init__(self, vllm_config, role, kv_cache_config=None):
-        self._prefix_server = None
-        self._config = vllm_config
-        # Reuse the controller's model/layout scope for both transfers and observations.
-        vllm_config.kv_transfer_config.kv_connector_extra_config.setdefault(
-            "cache_prefix", os.environ["FORETOKEN_KV_SCOPE_ID"]
-        )
-        super().__init__(vllm_config, role, kv_cache_config)
+    def __init__(self, store):
+        self.store = store
+        self.failed = False
 
-    def _start_prefix_server(self):
-        if self._config.parallel_config.rank == 0 and self._prefix_server is None:
-            self._prefix_server = _PrefixServer(self.connector_worker, self._config)
-
-    def register_kv_caches(self, kv_caches):
-        super().register_kv_caches(kv_caches)
-        self._start_prefix_server()
-
-    def register_cross_layers_kv_cache(self, kv_cache, attn_backend):
-        super().register_cross_layers_kv_cache(kv_cache, attn_backend)
-        self._start_prefix_server()
-
-    def shutdown(self):
-        if self._prefix_server is not None:
-            self._prefix_server.close()
-            self._prefix_server = None
-        super().shutdown()
+    def batch_is_exist(self, keys):
+        self.failed = True
+        results = self.store.batch_is_exist(keys)
+        self.failed = len(results) != len(keys) or any(value < 0 for value in results)
+        return results

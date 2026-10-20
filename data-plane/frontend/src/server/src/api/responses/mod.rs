@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -35,6 +35,14 @@ use crate::store::{ApiStore, Caller, PageQuery, StoreError};
 use error::ApiError;
 use execution::{Disconnect, ResponseReady};
 use types::ResponsesRequest;
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetrieveQuery {
+    #[serde(default)]
+    stream: bool,
+    starting_after: Option<i64>,
+}
 
 /// Registers creation, stored response access, cancellation, input history and replay.
 pub(super) fn router() -> Router<ApiState> {
@@ -57,6 +65,7 @@ pub(crate) fn validate_stored_items(items: &[Value]) -> Result<(), String> {
         })
 }
 
+/// Starts one response execution and selects JSON, live SSE, or cached replay delivery.
 async fn create(
     State(api): State<ApiState>,
     Extension(snapshot): Extension<RequestSnapshot>,
@@ -95,19 +104,16 @@ async fn create(
     }
 }
 
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetrieveQuery {
-    #[serde(default)]
-    stream: bool,
-    starting_after: Option<i64>,
-}
-
+/// Reads a saved response or replays committed events without acquiring inference capacity.
 async fn retrieve(
     State(api): State<ApiState>,
     Path(id): Path<String>,
-    Query(query): Query<RetrieveQuery>,
+    query: Result<Query<RetrieveQuery>, QueryRejection>,
 ) -> Response {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(error) => return ApiError::invalid_request(error.body_text(), None).into_response(),
+    };
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
     };
@@ -157,6 +163,7 @@ async fn retrieve(
     ))
 }
 
+/// Hides a saved response without cancelling execution or deleting other history views.
 async fn delete(State(api): State<ApiState>, Path(id): Path<String>) -> Response {
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
@@ -170,6 +177,7 @@ async fn delete(State(api): State<ApiState>, Path(id): Path<String>) -> Response
     }
 }
 
+/// Commits background cancellation intent before waking an executor in this frontend process.
 async fn cancel(State(api): State<ApiState>, Path(id): Path<String>) -> Response {
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
@@ -184,11 +192,16 @@ async fn cancel(State(api): State<ApiState>, Path(id): Path<String>) -> Response
     }
 }
 
+/// Lists the response's retained expanded input without changing its history membership.
 async fn input_items(
     State(api): State<ApiState>,
     Path(id): Path<String>,
-    Query(page): Query<PageQuery>,
+    page: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
+    let page = match page {
+        Ok(Query(page)) => page,
+        Err(error) => return ApiError::invalid_request(error.body_text(), None).into_response(),
+    };
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
     };

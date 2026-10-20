@@ -85,8 +85,9 @@ spec:
                   on an explicit deployment.
                 type: string
               hostname:
-                description: Hostname is required when the platform exposes frontends
-                  through a Gateway.
+                description: |-
+                  Hostname selects a custom Gateway host. HTTP access derives an instance-local
+                  routing host when omitted; HTTPS requires a hostname covered by its certificate.
                 maxLength: 253
                 pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$
                 type: string
@@ -527,6 +528,12 @@ spec:
                       Zero retains startup-only limits; one selects live file configuration.
                     format: int32
                     maximum: 1
+                    type: integer
+                  preparationVersion:
+                    description: |-
+                      PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                      Absence retains the backend's earlier acquisition protocol.
+                    format: int32
                     type: integer
                   responseStore:
                     description: ResponseStore retains the selected connection and

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Frontend replicas share one ephemeral API cache, separate from the durable admission ledger.
-{{- if and (eq .Values.scope "platform") (eq (include "foretoken.responseStoreManaged" .) "true") }}
+{{- if eq (include "foretoken.responseStoreManaged" .) "true" }}
 {{- $name := include "foretoken.responseStoreName" . }}
 apiVersion: v1
 kind: Service

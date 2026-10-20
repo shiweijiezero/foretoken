@@ -19,9 +19,10 @@ from benchmarks.config.benchmark import (
     normalize_output_token_limit,
     parse_duration_seconds,
 )
-from benchmarks.model_service import ModelService, resolve_benchmark_service
-from benchmarks.results.console import format_benchmark_config, log_sweep_results
-from benchmarks.results.output import BenchmarkRun, wandb_run_timestamp
+from benchmarks.model_service import ModelService, ModelServiceResolver
+from benchmarks.results.reporting.http import format_benchmark_config, log_sweep_results
+from benchmarks.results.types import BenchmarkRun
+from benchmarks.results.wandb.recording import wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
 from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.sweeps.core import (
@@ -95,129 +96,6 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
 }
 
 
-def _service_choice(value: Any) -> dict[str, str]:
-    """Normalize a Kustomize path or named endpoint choice for one sweep method."""
-    if isinstance(value, str):
-        path = value.strip()
-        if not path:
-            raise ValueError("sweep service paths cannot be empty")
-        return {"name": Path(path).name, "path": path}
-    if not isinstance(value, dict):
-        raise ValueError(  # noqa: TRY004 - CLI callers render sweep input errors.
-            "sweep service must be a path or an object with name and path or url"
-        )
-    unknown = set(value) - {"name", "path", "url", "model", "health_url"}
-    if unknown:
-        raise ValueError("Unsupported sweep service fields: " + ", ".join(sorted(unknown)))
-    if not all(isinstance(item, str) for item in value.values()):
-        raise ValueError("sweep service fields must be strings")
-    if not value.get("name", "").strip() or bool(value.get("path")) == bool(value.get("url")):
-        raise ValueError("sweep service requires a non-empty name and exactly one path or url")
-    return value
-
-
-class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
-    """Apply and execute HTTP points while the core owns sweep orchestration."""
-
-    axis_fields: ClassVar[dict[str, Callable[[Any], Any]]] = {
-        "service": _service_choice,
-        **{key: field[2] for key, field in _SWEEP_FIELDS.items()},
-    }
-
-    def __init__(self, resources: ExitStack) -> None:
-        self.resources = resources
-        self.service = None
-        self.selection = None
-
-    def validate_record(self, record: SweepPoint, line_no: int) -> None:
-        unknown = set(record) - set(self.axis_fields) - {_BENCHMARK_NAME, _PARAMETER_GROUP}
-        if unknown:
-            raise ValueError(f"Unsupported sweep keys on line {line_no}: " + ", ".join(sorted(unknown)))
-
-    def apply_point(self, config: BenchmarkConfig, point: SweepPoint) -> BenchmarkConfig:
-        section_updates: dict[str, dict[str, Any]] = {}
-        for raw_key, raw_value in point.items():
-            if raw_key in {_BENCHMARK_NAME, _PARAMETER_GROUP, "service"}:
-                continue
-            section, attribute, _ = _SWEEP_FIELDS[raw_key]
-            section_updates.setdefault(section, {})[attribute] = raw_value
-        updated = config
-        for section, updates in section_updates.items():
-            updated = replace(
-                updated,
-                **{section: replace(getattr(updated, section), **updates)},
-            )
-        if "service" in point:
-            choice = _service_choice(point["service"])
-            path = choice.get("path", "")
-            if path:
-                path = str((Path.cwd() / Path(path).expanduser()).resolve())
-            updated = replace(updated, service=replace(
-                config.service, name=choice["name"], kustomize_path=path,
-                url=choice.get("url", ""), model=choice.get("model", config.service.model),
-                health_url=choice.get("health_url", ""),
-            ))
-        return updated
-
-    def validate_point(self, config: BenchmarkConfig) -> None:
-        config.validate()
-
-    def plan_base(self, config: BenchmarkConfig) -> dict[str, Any]:
-        return config.to_dict()
-
-    def group_name(self, config: BenchmarkConfig) -> str:
-        return config.wandb.group.strip() or f"{config.sweep.experiment_name or 'sweep'}_{wandb_run_timestamp()}"
-
-    def execute_point(
-        self,
-        config: BenchmarkConfig,
-        *,
-        output_dir: str,
-        label: str,
-        wandb_group: str,
-        dry_run: bool,
-    ) -> BenchmarkRun:
-        point_config = replace(
-            config, sweep=ParameterSweepConfig(),
-            wandb=replace(config.wandb, group=wandb_group),
-        )
-        selection = (config.service, bool(config.trace.trace_selector or config.is_multi_turn))
-
-        def prepare_service() -> ModelService:
-            """Reuse the service across adjacent sweep points with the same selection."""
-            if selection != self.selection:
-                self.resources.close()
-                self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
-                self.selection = selection
-            logger.info("%s", format_benchmark_config(point_config, self.service))
-            return self.service
-
-        if point_config.slo.search:
-            result = SloAutoTuneBenchmark(
-                point_config,
-                prepare_service,
-                label=label,
-                output_dir=output_dir,
-            ).run()
-        else:
-            result = HttpBenchmark(
-                point_config,
-                prepare_service(),
-                label=label,
-                output_dir=output_dir,
-                wandb_group=wandb_group,
-            ).run()
-        metrics = dict(result.metrics)
-        metrics["gpu_count"] = (
-            self.service.gpu_count
-            if self.service is not None and self.selection == selection
-            and metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
-            else metrics.get("gpu_count")
-        )
-        metrics["label"] = label
-        return replace(result, metrics=metrics)
-
-
 class ParameterSweepBenchmark:
     """Own sequential service selection while the shared sweep executes and publishes points."""
 
@@ -259,3 +137,130 @@ class ParameterSweepBenchmark:
         if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
             log_sweep_results(execution.points)
         return execution.run
+
+
+def _service_choice(value: Any) -> dict[str, str]:
+    """Normalize a Kustomize path or named endpoint choice for one sweep method."""
+    if isinstance(value, str):
+        path = value.strip()
+        if not path:
+            raise ValueError("sweep service paths cannot be empty")
+        return {"name": Path(path).name, "path": path}
+    if not isinstance(value, dict):
+        raise ValueError(  # noqa: TRY004 - CLI callers render sweep input errors.
+            "sweep service must be a path or an object with name and path or url"
+        )
+    unknown = set(value) - {"name", "path", "url", "model", "health_url"}
+    if unknown:
+        raise ValueError("Unsupported sweep service fields: " + ", ".join(sorted(unknown)))
+    if not all(isinstance(item, str) for item in value.values()):
+        raise ValueError("sweep service fields must be strings")
+    if not value.get("name", "").strip() or bool(value.get("path")) == bool(value.get("url")):
+        raise ValueError("sweep service requires a non-empty name and exactly one path or url")
+    return value
+
+
+class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
+    """Apply and execute HTTP points while the core owns sweep orchestration."""
+
+    axis_fields: ClassVar[dict[str, Callable[[Any], Any]]] = {
+        "service": _service_choice,
+        **{key: field[2] for key, field in _SWEEP_FIELDS.items()},
+    }
+
+    def __init__(self, resources: ExitStack) -> None:
+        self.resources = resources
+        self.resolver = ModelServiceResolver()
+        self.service = None
+        self.selection = None
+
+    def validate_record(self, record: SweepPoint, line_no: int) -> None:
+        unknown = set(record) - set(self.axis_fields) - {_BENCHMARK_NAME, _PARAMETER_GROUP}
+        if unknown:
+            raise ValueError(f"Unsupported sweep keys on line {line_no}: " + ", ".join(sorted(unknown)))
+
+    def apply_point(self, config: BenchmarkConfig, point: SweepPoint) -> BenchmarkConfig:
+        """Apply explicit workload axes and the selected service without mutating the base benchmark."""
+        section_updates: dict[str, dict[str, Any]] = {}
+        for raw_key, raw_value in point.items():
+            if raw_key in {_BENCHMARK_NAME, _PARAMETER_GROUP, "service"}:
+                continue
+            section, attribute, _ = _SWEEP_FIELDS[raw_key]
+            section_updates.setdefault(section, {})[attribute] = raw_value
+        updated = config
+        for section, updates in section_updates.items():
+            updated = replace(
+                updated,
+                **{section: replace(getattr(updated, section), **updates)},
+            )
+        if "service" in point:
+            choice = _service_choice(point["service"])
+            path = choice.get("path", "")
+            if path:
+                path = str((Path.cwd() / Path(path).expanduser()).resolve())
+            updated = replace(updated, service=replace(
+                config.service, name=choice["name"], kustomize_path=path,
+                instance_name="" if choice.get("url") else config.service.instance_name,
+                url=choice.get("url", ""), model=choice.get("model", config.service.model),
+                health_url=choice.get("health_url", ""),
+            ))
+        return updated
+
+    def validate_point(self, config: BenchmarkConfig) -> None:
+        config.validate()
+
+    def plan_base(self, config: BenchmarkConfig) -> dict[str, Any]:
+        return config.to_dict()
+
+    def group_name(self, config: BenchmarkConfig) -> str:
+        return config.wandb.group.strip() or f"{config.sweep.experiment_name or 'sweep'}_{wandb_run_timestamp()}"
+
+    def execute_point(
+        self,
+        config: BenchmarkConfig,
+        *,
+        output_dir: str,
+        label: str,
+        wandb_group: str,
+        dry_run: bool,
+    ) -> BenchmarkRun:
+        """Run one HTTP or SLO point while reusing adjacent service selections owned by the sweep stack."""
+        point_config = replace(
+            config, sweep=ParameterSweepConfig(),
+            wandb=replace(config.wandb, group=wandb_group),
+        )
+        selection = (config.service, bool(config.trace.trace_selector or config.is_multi_turn))
+
+        def prepare_service() -> ModelService:
+            """Reuse the service across adjacent sweep points with the same selection."""
+            if selection != self.selection:
+                self.resources.close()
+                self.service = self.resources.enter_context(self.resolver.benchmark(point_config))
+                self.selection = selection
+            logger.info("%s", format_benchmark_config(point_config, self.service))
+            return self.service
+
+        if point_config.slo.search:
+            result = SloAutoTuneBenchmark(
+                point_config,
+                prepare_service,
+                label=label,
+                output_dir=output_dir,
+            ).run()
+        else:
+            result = HttpBenchmark(
+                point_config,
+                prepare_service(),
+                label=label,
+                output_dir=output_dir,
+                wandb_group=wandb_group,
+            ).run()
+        metrics = dict(result.metrics)
+        metrics["gpu_count"] = (
+            self.service.gpu_count
+            if self.service is not None and self.selection == selection
+            and metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
+            else metrics.get("gpu_count")
+        )
+        metrics["label"] = label
+        return replace(result, metrics=metrics)

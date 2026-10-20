@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Publishes platform-selected native viewer images without starting a viewing session.
-{{- if eq .Values.scope "platform" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,4 +18,3 @@ data:
   {{- else }}
   nsightImage: ""
   {{- end }}
-{{- end }}

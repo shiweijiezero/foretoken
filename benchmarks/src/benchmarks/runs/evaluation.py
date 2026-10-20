@@ -22,15 +22,140 @@ from typing import Any
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
 from benchmarks.integrations.evalscope.evaluation import EvalScopeProgress
 from benchmarks.integrations.quality import PROGRESS_FILENAME
-from benchmarks.model_service import ModelService, resolve_model_service
-from benchmarks.results.evaluation import (
+from benchmarks.model_service import ModelService, ModelServiceResolver
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.quality import read_quality_metrics
+from benchmarks.results.reporting.evaluation import (
     evaluation_comparison_sinks,
     evaluation_sinks,
-    read_quality_metrics,
 )
-from benchmarks.results.output import BenchmarkRun, ResultOutputs, wandb_run_timestamp
+from benchmarks.results.types import BenchmarkRun
+from benchmarks.results.wandb.recording import wandb_run_timestamp
 
 logger = logging.getLogger(__name__)
+
+
+def run_evaluation(
+    config: EvaluationConfig,
+    service: ModelService,
+    *,
+    output_dir: str | None = None,
+    outputs: ResultOutputs | None = None,
+) -> BenchmarkRun:
+    """Publish one evaluation, borrowing entered outputs when the caller owns service cleanup."""
+    record: dict[str, Any] = {
+        "mode": "evaluation",
+        "evaluator": config.evaluator,
+        "model": service.model,
+    }
+    output_context = (
+        nullcontext(outputs)
+        if outputs is not None
+        else ResultOutputs(config, service, directory_prefix="eval-", output_dir=output_dir)
+    )
+    with output_context as active_outputs:
+        active_outputs.service = service
+        active_outputs.sink_factory = lambda directory: evaluation_sinks(config, record, directory)
+        active_outputs.open(record)
+        directory = Path(active_outputs.execution_dir).resolve()
+        logger.info(
+            "Evaluation: %s | model=%s | artifacts=%s",
+            config.evaluator,
+            service.model,
+            directory,
+        )
+        progress_writer = active_outputs.create_request_writer("evaluation_progress")
+
+        def publish_progress(row: dict[str, Any]) -> None:
+            """Retain each measured snapshot before sending it to live destinations."""
+            progress_writer.write(row)
+            active_outputs.publish_progress(row, axis="Evaluation/Elapsed (s)")
+
+        started = time.monotonic()
+        code = _execute(config, service, directory, publish_progress, active_outputs)
+        metrics = read_quality_metrics(config.evaluator, directory / "native")
+        run = BenchmarkRun(
+            record=record,
+            metrics={**metrics, "duration_seconds": time.monotonic() - started},
+            measurements=None,
+            artifacts={
+                "native": directory / "native",
+                "log": directory / "evaluator.log",
+            },
+            exit_code=code,
+        )
+        active_outputs.publish(run)
+        if code:
+            logger.error(
+                "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"
+            )
+        return run
+
+
+def run_evaluation_comparison(config: EvaluationConfig) -> None:
+    """Score each deployment sequentially and publish one aligned task comparison."""
+    config = replace(config, wandb=replace(
+        config.wandb, group=config.wandb.group or f"eval-comparison_{wandb_run_timestamp()}"
+    ))
+    record = {"mode": "evaluation_comparison", "evaluator": config.evaluator}
+    scores: list[dict[str, Any]] = []
+    execution: dict[str, Any] = {}
+    methods = [
+        {"label": label, "model": source.model or None, "directory": f"method-{index + 1}",
+         "exit_code": None, "status": "not_started"}
+        for index, (source, label) in enumerate(zip(config.services, deployment_labels(config.services)))
+    ]
+    started = time.monotonic()
+    with ResultOutputs(
+        config, None, directory_prefix="eval-comparison-",
+        sink_factory=lambda directory: evaluation_comparison_sinks(config, record, directory),
+    ) as outputs:
+        outputs.open(record)
+        directory = Path(outputs.execution_dir)
+        child_config = replace(config, outputs=config.outputs.for_child_run())
+        complete = False
+        resolver = ModelServiceResolver()
+        try:
+            for source, method in zip(config.services, methods):
+                method["status"] = "running"
+                with resolver.resolve(source) as service:
+                    method["model"] = service.model
+                    run = run_evaluation(child_config, service, output_dir=str(directory / method["directory"]))
+                    method["exit_code"] = run.exit_code
+                    method["status"] = "failed" if run.exit_code else "completed"
+                    execution[method["label"]] = run.metrics["execution"]
+                    scores.extend({"method": method["label"], **row} for row in run.metrics["scores"])
+            complete = True
+        finally:
+            for method in methods:
+                if method["status"] == "running":
+                    method["status"] = "incomplete"
+            failure = not complete or any(method["exit_code"] for method in methods)
+            metrics = {
+                "duration_seconds": time.monotonic() - started,
+                "scores": scores,
+                "execution": {
+                    "evaluation_comparison": {
+                        "requested": len(config.services),
+                        "succeeded": sum(method["status"] == "completed" for method in methods),
+                        "errored": sum(method["status"] == "failed" for method in methods),
+                        "incomplete": failure or any(
+                            task.get("incomplete")
+                            for native in execution.values() for task in native.values()
+                        ),
+                    },
+                    "methods": execution,
+                },
+                "evaluation_comparison": {"methods": methods, "scores": scores},
+            }
+            outputs.publish(BenchmarkRun(
+                record, metrics, None,
+                {f"method-{index + 1}": path for index, method in enumerate(methods)
+                 if (path := directory / method["directory"] / "native").is_dir()},
+                exit_code=int(failure),
+            ))
+        if failure:
+            raise SystemExit(1)
 
 
 def _poll_progress(
@@ -129,125 +254,3 @@ def _execute(
                 if error is None:
                     raise
                 logger.exception("Evaluation progress cleanup also failed")
-
-
-def run_evaluation(
-    config: EvaluationConfig,
-    service: ModelService,
-    *,
-    output_dir: str | None = None,
-    outputs: ResultOutputs | None = None,
-) -> BenchmarkRun:
-    """Publish one evaluation, borrowing entered outputs when the caller owns service cleanup."""
-    record: dict[str, Any] = {
-        "mode": "evaluation",
-        "evaluator": config.evaluator,
-        "model": service.model,
-    }
-    output_context = (
-        nullcontext(outputs)
-        if outputs is not None
-        else ResultOutputs(config, service, directory_prefix="eval-", output_dir=output_dir)
-    )
-    with output_context as active_outputs:
-        active_outputs.service = service
-        active_outputs.sink_factory = lambda directory: evaluation_sinks(config, record, directory)
-        active_outputs.open(record)
-        directory = Path(active_outputs.execution_dir).resolve()
-        logger.info(
-            "Evaluation: %s | model=%s | artifacts=%s",
-            config.evaluator,
-            service.model,
-            directory,
-        )
-        progress_writer = active_outputs.create_request_writer("evaluation_progress")
-
-        def publish_progress(row: dict[str, Any]) -> None:
-            """Retain each measured snapshot before sending it to live destinations."""
-            progress_writer.write(row)
-            active_outputs.publish_progress(row, axis="Evaluation/Elapsed (s)")
-
-        started = time.monotonic()
-        code = _execute(config, service, directory, publish_progress, active_outputs)
-        metrics = read_quality_metrics(config.evaluator, directory / "native")
-        run = BenchmarkRun(
-            record=record,
-            metrics={**metrics, "duration_seconds": time.monotonic() - started},
-            measurements=None,
-            artifacts={
-                "native": directory / "native",
-                "log": directory / "evaluator.log",
-            },
-            exit_code=code,
-        )
-        active_outputs.publish(run)
-        if code:
-            logger.error(
-                "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"
-            )
-        return run
-
-
-def run_evaluation_comparison(config: EvaluationConfig) -> None:
-    """Score each deployment sequentially and publish one aligned task comparison."""
-    config = replace(config, wandb=replace(
-        config.wandb, group=config.wandb.group or f"eval-comparison_{wandb_run_timestamp()}"
-    ))
-    record = {"mode": "evaluation_comparison", "evaluator": config.evaluator}
-    scores: list[dict[str, Any]] = []
-    execution: dict[str, Any] = {}
-    methods = [
-        {"label": label, "model": source.model or None, "directory": f"method-{index + 1}",
-         "exit_code": None, "status": "not_started"}
-        for index, (source, label) in enumerate(zip(config.services, deployment_labels(config.services)))
-    ]
-    started = time.monotonic()
-    with ResultOutputs(
-        config, None, directory_prefix="eval-comparison-",
-        sink_factory=lambda directory: evaluation_comparison_sinks(config, record, directory),
-    ) as outputs:
-        outputs.open(record)
-        directory = Path(outputs.execution_dir)
-        child_config = replace(config, outputs=config.outputs.for_child_run())
-        complete = False
-        try:
-            for source, method in zip(config.services, methods):
-                method["status"] = "running"
-                with resolve_model_service(source) as service:
-                    method["model"] = service.model
-                    run = run_evaluation(child_config, service, output_dir=str(directory / method["directory"]))
-                    method["exit_code"] = run.exit_code
-                    method["status"] = "failed" if run.exit_code else "completed"
-                    execution[method["label"]] = run.metrics["execution"]
-                    scores.extend({"method": method["label"], **row} for row in run.metrics["scores"])
-            complete = True
-        finally:
-            for method in methods:
-                if method["status"] == "running":
-                    method["status"] = "incomplete"
-            failure = not complete or any(method["exit_code"] for method in methods)
-            metrics = {
-                "duration_seconds": time.monotonic() - started,
-                "scores": scores,
-                "execution": {
-                    "evaluation_comparison": {
-                        "requested": len(config.services),
-                        "succeeded": sum(method["status"] == "completed" for method in methods),
-                        "errored": sum(method["status"] == "failed" for method in methods),
-                        "incomplete": failure or any(
-                            task.get("incomplete")
-                            for native in execution.values() for task in native.values()
-                        ),
-                    },
-                    "methods": execution,
-                },
-                "evaluation_comparison": {"methods": methods, "scores": scores},
-            }
-            outputs.publish(BenchmarkRun(
-                record, metrics, None,
-                {f"method-{index + 1}": path for index, method in enumerate(methods)
-                 if (path := directory / method["directory"] / "native").is_dir()},
-                exit_code=int(failure),
-            ))
-        if failure:
-            raise SystemExit(1)

@@ -3,6 +3,15 @@
 
 {{/* Defines shared naming, labeling, and image-rendering helpers. */}}
 
+{{/* These listeners belong to the controller deployment, independently of workload ports. */}}
+{{- define "foretoken.controllerPorts" -}}
+{{- dict "metrics" 8080 "health" 8081 | toJson -}}
+{{- end }}
+
+{{- define "foretoken.applicationFilesPort" -}}
+8080
+{{- end }}
+
 {{- define "foretoken.compactName" -}}
 {{- if gt (len .) 63 -}}
 {{- printf "%s-%s" (. | trunc 54 | trimSuffix "-") (. | sha256sum | trunc 8) -}}
@@ -21,7 +30,7 @@
 {{- end }}
 
 {{- define "foretoken.applicationFilesOrigin" -}}
-{{- default (printf "http://%s.%s.svc:8080" (include "foretoken.applicationFilesName" .) .Release.Namespace) .Values.applicationFiles.origin -}}
+{{- default (printf "http://%s.%s.svc:%s" (include "foretoken.applicationFilesName" .) .Release.Namespace (include "foretoken.applicationFilesPort" .)) .Values.applicationFiles.origin -}}
 {{- end }}
 
 {{- define "foretoken.platformName" -}}

@@ -5,7 +5,7 @@
 
 [English](kubernetes.md) | [中文](kubernetes_zh.md)
 
-K3s、RKE2、KubeSphere、云上 Kubernetes 或其他不属于本地 kind/k3d 指南的集群，使用本指南。
+管理员在 K3s、RKE2、KubeSphere、云上 Kubernetes 或其他不属于本地 kind/k3d 指南的集群中安装 Foretoken 时，使用本指南。平台安装后，可以为成员准备[部署命名空间](../../cli/README_zh.md#为成员准备命名空间)，让其使用服务而无需平台管理权限。
 
 ## 1. 准备集群
 
@@ -50,6 +50,7 @@ foretoken install -e . --registry "$REGISTRY"
 
 ```bash
 docker login registry.example.com:5000
+kubectl create namespace foretoken-platform --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic registry-auth \
   --namespace foretoken-platform \
   --from-file=.dockerconfigjson="$HOME/.docker/config.json" \
@@ -86,20 +87,32 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. 部署与更新代码
 
-快速开始示例在本地 k3d 使用仓库中的 `data/` 目录；在远程集群上，Foretoken 会自动为这个相对目录创建动态 PVC，因此无需修改示例 YAML。多节点集群使用 `ReadWriteMany`，单节点集群会自动使用 `ReadWriteOnce`。集群需要其他存储策略时，在 `cache.yaml` 中设置 `initialSize`、`storageClassName`、`accessMode` 或 `maxSize`。
+快速开始示例选择仓库中的 `data/` 目录。目标节点能访问该目录时可保留配置，跨节点部署应使用共享文件系统。成员使用的目录访问由[管理员提前准备](../features/model-storage_zh.md#跨命名空间复用模型文件)。
+
+如果希望由集群提供存储，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
+
+```yaml
+spec:
+  initialSize: 10Gi
+  accessMode: ReadWriteOnce
+```
+
+这会使用默认 StorageClass 申请单节点卷。驱动支持跨节点访问时，可选择 `ReadWriteMany`；需要其他存储类时添加 `storageClassName`。共享和保留行为见[模型存储](../features/model-storage_zh.md)。
 
 部署并更新代码：
 
 ```bash
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
+foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 ```
 
-修改控制器、前端或模型服务代码后，继续执行同一条命令，更新该部署命名空间。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
+不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。实例使用当前 kubeconfig 的命名空间。添加 `--name candidate-a` 则使用 `candidate-a`，后续操作也用这个名字。
+
+修改控制器、前端或模型服务代码后，继续执行同一条部署命令，只更新该实例。共享 CRD 变更需先执行 `foretoken install -e . --registry "$REGISTRY"`，并保留原有安装选项。引擎源码和运行环境设置见[从源码部署 Foretoken](source_zh.md#部署模型服务)。
 
 ## 4. 删除 Foretoken
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 foretoken uninstall
 ```
 

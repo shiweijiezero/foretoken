@@ -5,16 +5,109 @@
 # Prepares the selected official Mooncake source in the repository submodule.
 set -euo pipefail
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo_root=$(git -C "${script_dir}/../.." rev-parse --show-toplevel)
-source_dir="${repo_root}/third_party/mooncake"
-mirror=${FORETOKEN_GITHUB_MIRROR:-}
-requested_version=${MOONCAKE_VERSION:-}
-operation=${1:-prepare}
-if [[ $# -gt 1 ]] || [[ "${operation}" != prepare && "${operation}" != --describe && "${operation}" != --check ]]; then
-    printf 'Usage: %s [--describe|--check]\n' "$0" >&2
-    exit 2
-fi
+main() {
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    repo_root=$(git -C "${script_dir}/../.." rev-parse --show-toplevel)
+    source_dir="${repo_root}/third_party/mooncake"
+    mirror=${FORETOKEN_GITHUB_MIRROR:-}
+    requested_version=${MOONCAKE_VERSION:-}
+    operation=${1:-prepare}
+    if [[ $# -gt 1 ]] || [[ "${operation}" != prepare && "${operation}" != --describe && "${operation}" != --check ]]; then
+        printf 'Usage: %s [--describe|--check]\n' "$0" >&2
+        exit 2
+    fi
+
+    if [[ -z "${requested_version}" ]]; then
+        gitlink_record=$(git -C "${repo_root}" ls-files --stage -- third_party/mooncake)
+        read -r _ requested_revision _ <<<"${gitlink_record}"
+        if [[ -z "${requested_revision:-}" ]]; then
+            printf '%s\n' 'third_party/mooncake has no recorded gitlink revision.' >&2
+            exit 1
+        fi
+        target_record=$(release_for "${requested_revision}") || {
+            printf 'Default Mooncake gitlink %s is not supported by this source preparer.\n' \
+                "${requested_revision}" >&2
+            exit 1
+        }
+    else
+        target_record=$(release_for "${requested_version}") || {
+            printf 'Unsupported MOONCAKE_VERSION=%s; expected 0.3.12, 0.3.12.post1, 0.3.13, or 0.3.13.post1.\n' \
+                "${requested_version}" >&2
+            exit 1
+        }
+    fi
+    IFS='|' read -r target_version target_revision _ <<<"${target_record}"
+
+    # Source selection and reuse checks share the preparation recipe without fetching.
+    if [[ "${operation}" == --describe ]]; then
+        load_patch_series "${target_revision}" current
+        printf '%s\n' "${target_revision}"
+        for patch in "${patches[@]}"; do
+            printf '%s\n' "${patch#"${repo_root}/"}"
+        done
+        exit 0
+    fi
+
+    source_top=$(git -C "${source_dir}" rev-parse --show-toplevel 2>/dev/null || true)
+    if [[ "${operation}" == --check ]]; then
+        [[ "${source_top}" == "${source_dir}" ]] || exit 1
+        [[ "$(git -C "${source_dir}" rev-parse HEAD)" == "${target_revision}" ]] || exit 1
+        tree_matches_patch_series "${target_revision}" current
+        exit $?
+    fi
+    if [[ "${source_top}" != "${source_dir}" ]]; then
+        if [[ -d "${source_dir}" ]] &&
+            [[ -n "$(find "${source_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+            printf '%s\n' 'third_party/mooncake exists but is not an initialized Git submodule.' >&2
+            exit 1
+        fi
+        git_cmd -C "${repo_root}" submodule update --init third_party/mooncake
+    fi
+
+    current_revision=$(git -C "${source_dir}" rev-parse HEAD)
+    source_state=unknown
+    if source_matches_head; then
+        source_state=clean
+    elif tree_matches_patch_series "${current_revision}" current; then
+        source_state=current
+    elif tree_matches_patch_series "${current_revision}" legacy; then
+        source_state=legacy
+    else
+        fail_dirty_source
+    fi
+
+    if [[ "${current_revision}" == "${target_revision}" && "${source_state}" == current ]]; then
+        git_cmd -C "${source_dir}" submodule update --init --recursive
+        printf 'Prepared Mooncake %s at %s.\n' \
+            "${target_version}" "${target_revision}"
+        exit 0
+    fi
+
+    if [[ "${source_state}" == current || "${source_state}" == legacy ]]; then
+        reverse_patch_series "${current_revision}" "${source_state}"
+    fi
+    if ! source_matches_head; then
+        fail_dirty_source
+    fi
+
+    if [[ "${current_revision}" != "${target_revision}" ]]; then
+        if ! git -C "${source_dir}" cat-file -e "${target_revision}^{commit}" 2>/dev/null; then
+            git_cmd -C "${source_dir}" fetch --depth=1 origin "${target_revision}"
+        fi
+        git -C "${source_dir}" submodule deinit --force --all >/dev/null 2>&1
+        git -C "${source_dir}" checkout --detach "${target_revision}"
+    fi
+    git_cmd -C "${source_dir}" submodule update --init --recursive
+
+    load_patch_series "${target_revision}" current
+    for patch in "${patches[@]}"; do
+        git -C "${source_dir}" apply --check "${patch}"
+        git -C "${source_dir}" apply "${patch}"
+    done
+
+    printf 'Prepared Mooncake %s at %s.\n' \
+        "${target_version}" "${target_revision}"
+}
 
 git_cmd() {
     if [[ -n "${mirror}" ]]; then
@@ -83,18 +176,6 @@ load_patch_series() {
     fi
 }
 
-nested_submodules_are_clean() {
-    git -C "${source_dir}" submodule foreach --quiet --recursive '
-        index=$(mktemp)
-        trap '\''rm -f "$index"'\'' EXIT
-        rm -f "$index"
-        GIT_INDEX_FILE="$index" git read-tree HEAD &&
-        GIT_INDEX_FILE="$index" git -c core.filemode=true diff --quiet --ignore-submodules=none &&
-        git diff --cached --quiet HEAD -- &&
-        test -z "$(git ls-files --others --exclude-standard)"
-    '
-}
-
 # Private indexes compare actual files even when the working index hides changes.
 source_matches_head() (
     local expected_index patch
@@ -132,93 +213,16 @@ reverse_patch_series() {
     git -C "${source_dir}" apply --reverse "${reverse_patches[@]}"
 }
 
-if [[ -z "${requested_version}" ]]; then
-    gitlink_record=$(git -C "${repo_root}" ls-files --stage -- third_party/mooncake)
-    read -r _ requested_revision _ <<<"${gitlink_record}"
-    if [[ -z "${requested_revision:-}" ]]; then
-        printf '%s\n' 'third_party/mooncake has no recorded gitlink revision.' >&2
-        exit 1
-    fi
-    target_record=$(release_for "${requested_revision}") || {
-        printf 'Default Mooncake gitlink %s is not supported by this source preparer.\n' \
-            "${requested_revision}" >&2
-        exit 1
-    }
-else
-    target_record=$(release_for "${requested_version}") || {
-        printf 'Unsupported MOONCAKE_VERSION=%s; expected 0.3.12, 0.3.12.post1, 0.3.13, or 0.3.13.post1.\n' \
-            "${requested_version}" >&2
-        exit 1
-    }
-fi
-IFS='|' read -r target_version target_revision _ <<<"${target_record}"
+nested_submodules_are_clean() {
+    git -C "${source_dir}" submodule foreach --quiet --recursive '
+        index=$(mktemp)
+        trap '\''rm -f "$index"'\'' EXIT
+        rm -f "$index"
+        GIT_INDEX_FILE="$index" git read-tree HEAD &&
+        GIT_INDEX_FILE="$index" git -c core.filemode=true diff --quiet --ignore-submodules=none &&
+        git diff --cached --quiet HEAD -- &&
+        test -z "$(git ls-files --others --exclude-standard)"
+    '
+}
 
-# Source selection and reuse checks share the preparation recipe without fetching.
-if [[ "${operation}" == --describe ]]; then
-    load_patch_series "${target_revision}" current
-    printf '%s\n' "${target_revision}"
-    for patch in "${patches[@]}"; do
-        printf '%s\n' "${patch#"${repo_root}/"}"
-    done
-    exit 0
-fi
-
-source_top=$(git -C "${source_dir}" rev-parse --show-toplevel 2>/dev/null || true)
-if [[ "${operation}" == --check ]]; then
-    [[ "${source_top}" == "${source_dir}" ]] || exit 1
-    [[ "$(git -C "${source_dir}" rev-parse HEAD)" == "${target_revision}" ]] || exit 1
-    tree_matches_patch_series "${target_revision}" current
-    exit $?
-fi
-if [[ "${source_top}" != "${source_dir}" ]]; then
-    if [[ -d "${source_dir}" ]] &&
-        [[ -n "$(find "${source_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-        printf '%s\n' 'third_party/mooncake exists but is not an initialized Git submodule.' >&2
-        exit 1
-    fi
-    git_cmd -C "${repo_root}" submodule update --init third_party/mooncake
-fi
-
-current_revision=$(git -C "${source_dir}" rev-parse HEAD)
-source_state=unknown
-if source_matches_head; then
-    source_state=clean
-elif tree_matches_patch_series "${current_revision}" current; then
-    source_state=current
-elif tree_matches_patch_series "${current_revision}" legacy; then
-    source_state=legacy
-else
-    fail_dirty_source
-fi
-
-if [[ "${current_revision}" == "${target_revision}" && "${source_state}" == current ]]; then
-    git_cmd -C "${source_dir}" submodule update --init --recursive
-    printf 'Prepared Mooncake %s at %s.\n' \
-        "${target_version}" "${target_revision}"
-    exit 0
-fi
-
-if [[ "${source_state}" == current || "${source_state}" == legacy ]]; then
-    reverse_patch_series "${current_revision}" "${source_state}"
-fi
-if ! source_matches_head; then
-    fail_dirty_source
-fi
-
-if [[ "${current_revision}" != "${target_revision}" ]]; then
-    if ! git -C "${source_dir}" cat-file -e "${target_revision}^{commit}" 2>/dev/null; then
-        git_cmd -C "${source_dir}" fetch --depth=1 origin "${target_revision}"
-    fi
-    git -C "${source_dir}" submodule deinit --force --all >/dev/null 2>&1
-    git -C "${source_dir}" checkout --detach "${target_revision}"
-fi
-git_cmd -C "${source_dir}" submodule update --init --recursive
-
-load_patch_series "${target_revision}" current
-for patch in "${patches[@]}"; do
-    git -C "${source_dir}" apply --check "${patch}"
-    git -C "${source_dir}" apply "${patch}"
-done
-
-printf 'Prepared Mooncake %s at %s.\n' \
-    "${target_version}" "${target_revision}"
+main "$@"

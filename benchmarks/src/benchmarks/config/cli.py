@@ -29,6 +29,28 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
     parse_duration_seconds,
 )
+from benchmarks.config.video import VideoEndpointConfig
+
+
+def parse_benchmark_arguments(
+    argv: Sequence[str] | None = None,
+) -> BenchmarkConfig:
+    """Parse performance arguments after top-level ``foretoken perf``."""
+    parser = argparse.ArgumentParser(
+        prog="foretoken perf",
+        description=(
+            "Measure HTTP latency and throughput for Foretoken and "
+            "OpenAI-compatible inference services"
+        ),
+        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    _add_benchmark_arguments(parser)
+
+    parsed_args = parser.parse_args(argv)
+    validate_profile_arguments(parser, parsed_args)
+    config = _benchmark_config(parsed_args)
+    return config
 
 
 def _default(cls: type, name: str) -> Any:
@@ -189,7 +211,7 @@ def _add_benchmark_arguments(
     )
     if video:
         parser.set_defaults(
-            timeout=3600.0,
+            timeout=_default(VideoEndpointConfig, "timeout_s"),
             num_prompts=0,
             output=("local",),
             output_dir="results/video",
@@ -202,6 +224,11 @@ def _add_benchmark_arguments(
         nargs="*",
         metavar="PATH",
         help="Kustomize directories to deploy or reuse sequentially with the same workload",
+    )
+    parser.add_argument(
+        "--name", dest="instance_name",
+        default=_default(ModelServiceSource, "instance_name"),
+        help="Deployment instance name for a single Kustomize PATH; not a model alias",
     )
     parser.add_argument(
         "--model", nargs="+", default=[],
@@ -478,11 +505,14 @@ def _add_benchmark_arguments(
 
 
 def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
+    """Map the explicit CLI surface to typed service, workload, and result choices for execution."""
     paths = tuple(namespace.kustomize_paths or ())
     urls = tuple(namespace.url or ())
     models = tuple(namespace.model or ())
     if paths and urls:
         raise ValueError("provide Kustomize paths or --url values, not both")
+    if namespace.instance_name and len(paths) != 1:
+        raise ValueError("--name requires exactly one Kustomize PATH")
     sources = paths or urls
     if models and len(models) not in (1, len(sources)):
         raise ValueError("--model accepts one shared value or one value per service")
@@ -513,6 +543,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             timeout_seconds=namespace.timeout,
             max_retries=namespace.max_retries,
             wait_timeout=namespace.wait_timeout,
+            instance_name=namespace.instance_name,
         ),
         load=HttpLoadSchedule(
             max_concurrency=namespace.max_concurrency,
@@ -592,24 +623,3 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         service_choices=service_choices,
     )
-
-
-def parse_benchmark_arguments(
-    argv: Sequence[str] | None = None,
-) -> BenchmarkConfig:
-    """Parse performance arguments after top-level ``foretoken perf``."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken perf",
-        description=(
-            "Measure HTTP latency and throughput for Foretoken and "
-            "OpenAI-compatible inference services"
-        ),
-        epilog="For video generation, use --video; run foretoken perf --video --help for its options.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    _add_benchmark_arguments(parser)
-
-    parsed_args = parser.parse_args(argv)
-    validate_profile_arguments(parser, parsed_args)
-    config = _benchmark_config(parsed_args)
-    return config

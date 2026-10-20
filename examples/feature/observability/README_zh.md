@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-为快速开始的模型和前端启用服务告警。示例沿用[快速开始](../../quickstart/qwen3-0.6b/README_zh.md)的资源、命名空间和数据目录。
+为快速开始的模型和前端启用服务告警。示例更新当前命名空间中的[快速开始](../../quickstart/qwen3-0.6b/README_zh.md)实例，并沿用同一数据目录。
 
 ## 选择并部署告警
 
@@ -29,7 +29,7 @@ spec:
 foretoken deploy examples/feature/observability --timeout 20m
 ```
 
-按[快速开始的请求示例](../../quickstart/qwen3-0.6b/README_zh.md)发送请求。在 [Grafana](../../../observability/README_zh.md#查看指标) 打开 Foretoken 系统概览并选择 `foretoken-demo`，再到 Prometheus Alerts 页面确认所选规则。配置[通知接收器](../../../observability/README_zh.md#告警)后，可接收触发和解除消息。
+按[快速开始的请求示例](../../quickstart/qwen3-0.6b/README_zh.md)发送请求。在 [Grafana](../../../observability/README_zh.md#查看指标) 打开 Foretoken 系统概览并选择当前命名空间，再到 Prometheus Alerts 页面确认所选规则。配置[通知接收器](../../../observability/README_zh.md#告警)后，可接收触发和解除消息。
 
 ## 关闭告警或删除服务
 

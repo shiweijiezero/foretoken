@@ -70,56 +70,6 @@ type Reconciler struct {
 	Alerts         *observability.ServiceAlerts
 }
 
-// SetupWithManager watches each resource whose state contributes to frontend readiness.
-func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
-	builder := ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.FrontendService{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Owns(&corev1.ServiceAccount{}).
-		Owns(&rbacv1.Role{}).
-		Owns(&rbacv1.RoleBinding{})
-	builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForClaim))
-	if reconciler.RuntimeProfile.Gateway != nil {
-		builder = builder.Owns(&gatewayv1.HTTPRoute{})
-	}
-	if reconciler.Alerts != nil && reconciler.Alerts.WatchRules {
-		builder = builder.Owns(&monitoringv1.PrometheusRule{})
-	}
-	workloadPod := func(object client.Object) bool {
-		return object.GetLabels()[workload.FrontendServiceLabel] != "" || object.GetLabels()[workload.ModelGroupLabel] != ""
-	}
-	return builder.
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForPod), ctrlbuilder.WithPredicates(predicate.Funcs{
-			CreateFunc: func(event event.CreateEvent) bool { return workloadPod(event.Object) },
-			UpdateFunc: func(event event.UpdateEvent) bool {
-				before, after := event.ObjectOld.(*corev1.Pod), event.ObjectNew.(*corev1.Pod)
-				return workloadPod(before) || workloadPod(after) || before.Status.Phase != after.Status.Phase && (after.Status.Phase == corev1.PodSucceeded || after.Status.Phase == corev1.PodFailed)
-			},
-			DeleteFunc:  func(event.DeleteEvent) bool { return true },
-			GenericFunc: func(event event.GenericEvent) bool { return workloadPod(event.Object) },
-		})).
-		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
-		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
-		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
-		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
-		Complete(reconciler)
-}
-
-// frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
-func (reconciler *Reconciler) frontendsInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
-	var frontends inferencev1alpha1.FrontendServiceList
-	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
-		return nil
-	}
-	requests := make([]reconcile.Request, 0, len(frontends.Items))
-	for index := range frontends.Items {
-		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&frontends.Items[index])})
-	}
-	return requests
-}
-
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
 func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	frontend := new(inferencev1alpha1.FrontendService)
@@ -442,4 +392,54 @@ func (reconciler *Reconciler) reconcileAlerts(ctx context.Context, frontend *inf
 	}
 	err := reconciler.Alerts.Reconcile(ctx, frontend, selected, observability.Scope{Namespace: frontend.Namespace, Frontend: frontend.Name}, nil, admission)
 	return errors.Join(err, observability.UpdateServiceCondition(ctx, reconciler.Client, frontend, len(selected) != 0, err))
+}
+
+// SetupWithManager watches each resource whose state contributes to frontend readiness.
+func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
+	builder := ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.FrontendService{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{})
+	builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForClaim))
+	if reconciler.RuntimeProfile.Gateway != nil {
+		builder = builder.Owns(&gatewayv1.HTTPRoute{})
+	}
+	if reconciler.Alerts != nil && reconciler.Alerts.WatchRules {
+		builder = builder.Owns(&monitoringv1.PrometheusRule{})
+	}
+	workloadPod := func(object client.Object) bool {
+		return object.GetLabels()[workload.FrontendServiceLabel] != "" || object.GetLabels()[workload.ModelGroupLabel] != ""
+	}
+	return builder.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsForPod), ctrlbuilder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(event event.CreateEvent) bool { return workloadPod(event.Object) },
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				before, after := event.ObjectOld.(*corev1.Pod), event.ObjectNew.(*corev1.Pod)
+				return workloadPod(before) || workloadPod(after) || before.Status.Phase != after.Status.Phase && (after.Status.Phase == corev1.PodSucceeded || after.Status.Phase == corev1.PodFailed)
+			},
+			DeleteFunc:  func(event.DeleteEvent) bool { return true },
+			GenericFunc: func(event event.GenericEvent) bool { return workloadPod(event.Object) },
+		})).
+		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Complete(reconciler)
+}
+
+// frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
+func (reconciler *Reconciler) frontendsInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
+	var frontends inferencev1alpha1.FrontendServiceList
+	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(frontends.Items))
+	for index := range frontends.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&frontends.Items[index])})
+	}
+	return requests
 }

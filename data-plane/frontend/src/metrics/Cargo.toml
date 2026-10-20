@@ -11,8 +11,8 @@ license.workspace = true
 foretoken-admission = { path = "../admission" }
 axum.workspace = true
 foretoken-router = { path = "../router" }
-serde.workspace = true
 prometheus-client.workspace = true
+serde.workspace = true
 tracing.workspace = true
 foretoken-model-protocol = { path = "../../../model-protocol" }
 vllm-metrics.workspace = true

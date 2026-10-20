@@ -37,57 +37,10 @@ type schedulerEngineLoad struct {
 	KVCapacityTokens        uint64  `json:"kv_capacity_tokens"`
 }
 
-// getSchedulerLoad reads every rank in one Group only when its policy needs token demand.
-// The collector pins attribution to the selected Group and rejects incomplete observations.
-func (provider *HTTPScalingMetricsProvider) getSchedulerLoad(ctx context.Context, endpoint string, timeout time.Duration, group *inferencev1alpha1.ModelGroup) (modelDemandObservation, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/internal/scheduler-load", nil)
-	if err != nil {
-		return modelDemandObservation{}, err
-	}
-	response, err := provider.httpClient.Do(request)
-	if err != nil {
-		return modelDemandObservation{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return modelDemandObservation{}, fmt.Errorf("HTTP %d", response.StatusCode)
-	}
-	var payload struct {
-		Version           uint8                 `json:"version"`
-		CollectedAtUnixMS uint64                `json:"collected_at_unix_ms"`
-		Engines           []schedulerEngineLoad `json:"engines"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return modelDemandObservation{}, fmt.Errorf("decode scheduler load: %w", err)
-	}
-	if payload.Version != 1 || payload.CollectedAtUnixMS == 0 || payload.CollectedAtUnixMS > math.MaxInt64 || len(payload.Engines) != int(group.Spec.Parallelism.DP) {
-		return modelDemandObservation{}, fmt.Errorf("scheduler load has invalid version, timestamp, or rank coverage")
-	}
-	observation := modelDemandObservation{observedAt: time.UnixMilli(int64(payload.CollectedAtUnixMS))}
-	seen := make(map[uint32]bool, len(payload.Engines))
-	for _, engine := range payload.Engines {
-		if engine.DataParallelRank == nil || engine.QueuedPrefillTokens == nil || engine.ScheduledDecodeKVTokens == nil || engine.QueuedDecodeKVTokens == nil || engine.ContextLength == 0 || engine.KVCapacityTokens == 0 {
-			return modelDemandObservation{}, fmt.Errorf("scheduler load is missing required token counts or capacities")
-		}
-		rank := *engine.DataParallelRank
-		if rank >= uint32(group.Spec.Parallelism.DP) || seen[rank] {
-			return modelDemandObservation{}, fmt.Errorf("scheduler load has duplicate or unexpected DP rank %d", rank)
-		}
-		seen[rank] = true
-		observation.engineLoads = append(observation.engineLoads, core.EngineLoad{
-			GroupUID: string(group.UID), DataParallelRank: rank,
-			QueuedPrefillTokens:     *engine.QueuedPrefillTokens,
-			ScheduledDecodeKVTokens: *engine.ScheduledDecodeKVTokens,
-			QueuedDecodeKVTokens:    *engine.QueuedDecodeKVTokens,
-			ContextLength:           engine.ContextLength, KVCapacityTokens: engine.KVCapacityTokens,
-		})
-	}
-	return observation, nil
-}
-
-const frontendAutoscalingTelemetryVersion = 2
+const (
+	frontendAutoscalingTelemetryVersion = 2
+	modelGroupPoolUIDIndex              = ".spec.modelPoolRef.uid"
+)
 
 type frontendAutoscalingTarget struct {
 	ServiceUID             string `json:"service_uid"`
@@ -121,6 +74,14 @@ type HTTPScalingMetricsProvider struct {
 	configurationError string
 }
 
+// modelDemandObservation retains one complete serving cohort for snapshot composition.
+type modelDemandObservation struct {
+	waitingRequests, runningRequests, activeRequests uint64
+	engineLoads                                      []core.EngineLoad
+	samples                                          int64
+	observedAt                                       time.Time
+}
+
 // NewHTTPScalingMetricsProvider loads the platform file before starting the autoscaling collector.
 func NewHTTPScalingMetricsProvider(kubeClient client.Client, configurationPath string) (*HTTPScalingMetricsProvider, error) {
 	options, err := readAutoscalingTelemetryOptions(configurationPath)
@@ -133,48 +94,6 @@ func NewHTTPScalingMetricsProvider(kubeClient client.Client, configurationPath s
 		configurationPath: configurationPath,
 		options:           options,
 	}, nil
-}
-
-// readAutoscalingTelemetryOptions decodes the complete platform file for startup and later observations.
-func readAutoscalingTelemetryOptions(path string) (AutoscalingTelemetryOptions, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return AutoscalingTelemetryOptions{}, fmt.Errorf("read autoscaling telemetry configuration %q: %w", path, err)
-	}
-	var options AutoscalingTelemetryOptions
-	if err := json.Unmarshal(data, &options); err != nil {
-		return AutoscalingTelemetryOptions{}, fmt.Errorf("decode autoscaling telemetry configuration %q: %w", path, err)
-	}
-	if options.CollectionTimeout.Duration <= 0 {
-		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry collectionTimeout must be positive")
-	}
-	if options.RequestTimeout.Duration <= 0 {
-		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry requestTimeout must be positive")
-	}
-	if options.Concurrency < 1 {
-		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry concurrency must be positive")
-	}
-	return options, nil
-}
-
-// copyOptions observes projected file updates without changing settings of in-flight collections.
-func (provider *HTTPScalingMetricsProvider) copyOptions(ctx context.Context) AutoscalingTelemetryOptions {
-	provider.optionsMu.Lock()
-	defer provider.optionsMu.Unlock()
-	options, err := readAutoscalingTelemetryOptions(provider.configurationPath)
-	if err != nil {
-		if provider.configurationError != err.Error() {
-			ctrl.LoggerFrom(ctx).Error(err, "retaining the last valid autoscaling telemetry configuration")
-			provider.configurationError = err.Error()
-		}
-		return provider.options
-	}
-	if options != provider.options || provider.configurationError != "" {
-		ctrl.LoggerFrom(ctx).Info("loaded autoscaling telemetry configuration", "collectionTimeout", options.CollectionTimeout.Duration.String(), "requestTimeout", options.RequestTimeout.Duration.String(), "concurrency", options.Concurrency)
-	}
-	provider.options = options
-	provider.configurationError = ""
-	return options
 }
 
 // Snapshot collects one complete backend-neutral metrics snapshot for a scaling target.
@@ -234,10 +153,102 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	}, nil
 }
 
+// getSchedulerLoad reads every rank in one Group only when its policy needs token demand.
+// The collector pins attribution to the selected Group and rejects incomplete observations.
+func (provider *HTTPScalingMetricsProvider) getSchedulerLoad(ctx context.Context, endpoint string, timeout time.Duration, group *inferencev1alpha1.ModelGroup) (modelDemandObservation, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/internal/scheduler-load", nil)
+	if err != nil {
+		return modelDemandObservation{}, err
+	}
+	response, err := provider.httpClient.Do(request)
+	if err != nil {
+		return modelDemandObservation{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return modelDemandObservation{}, fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		Version           uint8                 `json:"version"`
+		CollectedAtUnixMS uint64                `json:"collected_at_unix_ms"`
+		Engines           []schedulerEngineLoad `json:"engines"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return modelDemandObservation{}, fmt.Errorf("decode scheduler load: %w", err)
+	}
+	if payload.Version != 1 || payload.CollectedAtUnixMS == 0 || payload.CollectedAtUnixMS > math.MaxInt64 || len(payload.Engines) != int(group.Spec.Parallelism.DP) {
+		return modelDemandObservation{}, fmt.Errorf("scheduler load has invalid version, timestamp, or rank coverage")
+	}
+	observation := modelDemandObservation{observedAt: time.UnixMilli(int64(payload.CollectedAtUnixMS))}
+	seen := make(map[uint32]bool, len(payload.Engines))
+	for _, engine := range payload.Engines {
+		if engine.DataParallelRank == nil || engine.QueuedPrefillTokens == nil || engine.ScheduledDecodeKVTokens == nil || engine.QueuedDecodeKVTokens == nil || engine.ContextLength == 0 || engine.KVCapacityTokens == 0 {
+			return modelDemandObservation{}, fmt.Errorf("scheduler load is missing required token counts or capacities")
+		}
+		rank := *engine.DataParallelRank
+		if rank >= uint32(group.Spec.Parallelism.DP) || seen[rank] {
+			return modelDemandObservation{}, fmt.Errorf("scheduler load has duplicate or unexpected DP rank %d", rank)
+		}
+		seen[rank] = true
+		observation.engineLoads = append(observation.engineLoads, core.EngineLoad{
+			GroupUID: string(group.UID), DataParallelRank: rank,
+			QueuedPrefillTokens:     *engine.QueuedPrefillTokens,
+			ScheduledDecodeKVTokens: *engine.ScheduledDecodeKVTokens,
+			QueuedDecodeKVTokens:    *engine.QueuedDecodeKVTokens,
+			ContextLength:           engine.ContextLength, KVCapacityTokens: engine.KVCapacityTokens,
+		})
+	}
+	return observation, nil
+}
+
+// readAutoscalingTelemetryOptions decodes the complete platform file for startup and later observations.
+func readAutoscalingTelemetryOptions(path string) (AutoscalingTelemetryOptions, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("read autoscaling telemetry configuration %q: %w", path, err)
+	}
+	var options AutoscalingTelemetryOptions
+	if err := json.Unmarshal(data, &options); err != nil {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("decode autoscaling telemetry configuration %q: %w", path, err)
+	}
+	if options.CollectionTimeout.Duration <= 0 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry collectionTimeout must be positive")
+	}
+	if options.RequestTimeout.Duration <= 0 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry requestTimeout must be positive")
+	}
+	if options.Concurrency < 1 {
+		return AutoscalingTelemetryOptions{}, fmt.Errorf("autoscaling telemetry concurrency must be positive")
+	}
+	return options, nil
+}
+
+// copyOptions observes projected file updates without changing settings of in-flight collections.
+func (provider *HTTPScalingMetricsProvider) copyOptions(ctx context.Context) AutoscalingTelemetryOptions {
+	provider.optionsMu.Lock()
+	defer provider.optionsMu.Unlock()
+	options, err := readAutoscalingTelemetryOptions(provider.configurationPath)
+	if err != nil {
+		if provider.configurationError != err.Error() {
+			ctrl.LoggerFrom(ctx).Error(err, "retaining the last valid autoscaling telemetry configuration")
+			provider.configurationError = err.Error()
+		}
+		return provider.options
+	}
+	if options != provider.options || provider.configurationError != "" {
+		ctrl.LoggerFrom(ctx).Info("loaded autoscaling telemetry configuration", "collectionTimeout", options.CollectionTimeout.Duration.String(), "requestTimeout", options.RequestTimeout.Duration.String(), "concurrency", options.Concurrency)
+	}
+	provider.options = options
+	provider.configurationError = ""
+	return options
+}
+
 // frontendQueue sums target-attributed queue samples from ready frontend Pods.
 func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions) (uint64, uint64, int64, time.Time, error) {
 	var pods corev1.PodList
-	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
+	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace), client.HasLabels{workload.FrontendServiceLabel}); err != nil {
 		return 0, 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
 	}
 	type queueSample struct {
@@ -293,14 +304,6 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 	return runtimeQueuedRequests, dispatchQueuedRequests, samples, oldest, nil
 }
 
-// modelDemandObservation retains one complete serving cohort for snapshot composition.
-type modelDemandObservation struct {
-	waitingRequests, runningRequests, activeRequests uint64
-	engineLoads                                      []core.EngineLoad
-	samples                                          int64
-	observedAt                                       time.Time
-}
-
 // modelDemand sums scheduler backlog and admitted requests from routable model servers for one target.
 func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions, needsEngineLoad bool) (modelDemandObservation, error) {
 	service := new(inferencev1alpha1.ModelService)
@@ -316,23 +319,20 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return modelDemandObservation{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
-	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
+	var selectedPool *inferencev1alpha1.ModelPool
 	for index := range pools.Items {
 		pool := &pools.Items[index]
-		if !pool.DeletionTimestamp.IsZero() || pool.Spec.ModelServiceRef.UID != target.ServiceUID {
-			continue
+		if pool.DeletionTimestamp.IsZero() && pool.Spec.ModelServiceRef.UID == target.ServiceUID && string(pool.UID) == target.UID {
+			selectedPool = pool
+			break
 		}
-		if string(pool.UID) != target.UID {
-			continue
-		}
-		selectedPools[string(pool.UID)] = pool
 	}
-	if len(selectedPools) == 0 {
-		return modelDemandObservation{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
+	if selectedPool == nil {
+		return modelDemandObservation{}, fmt.Errorf("no ModelPool found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
-	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
+	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace), client.MatchingFields{modelGroupPoolUIDIndex: target.UID}); err != nil {
 		return modelDemandObservation{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
 	type modelDemandSample struct {
@@ -347,8 +347,7 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 	requestGroup.SetLimit(options.Concurrency)
 	for index := range groups.Items {
 		modelGroup := &groups.Items[index]
-		pool := selectedPools[modelGroup.Spec.ModelPoolRef.UID]
-		if pool == nil || !modelGroup.DeletionTimestamp.IsZero() || !servingconfig.ModelGroupOwnedBy(modelGroup, pool) || modelGroup.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(modelGroup) {
+		if !modelGroup.DeletionTimestamp.IsZero() || !servingconfig.ModelGroupOwnedBy(modelGroup, selectedPool) || modelGroup.Spec.Revision != servingconfig.ServingRevision(service, selectedPool) || !servingconfig.RoutingGroupReady(modelGroup) {
 			continue
 		}
 		name := modelGroup.Name

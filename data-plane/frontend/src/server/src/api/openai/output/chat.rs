@@ -6,6 +6,12 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
+use async_openai::types::chat::{
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCallChunk as ToolCallDelta,
+    ChatCompletionMessageToolCalls as ToolCall, ChatCompletionTokenLogprob as ChatLogprobContent,
+    FunctionCall, FunctionCallStream as FunctionCallDelta, FunctionType,
+    TopLogprobs as ChatLogprob,
+};
 use axum::Json;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -31,21 +37,6 @@ struct ChatLogprobs {
     content: Vec<ChatLogprobContent>,
 }
 
-#[derive(Clone, Serialize)]
-struct ChatLogprobContent {
-    token: String,
-    logprob: f32,
-    bytes: Option<Vec<u8>>,
-    top_logprobs: Vec<ChatLogprob>,
-}
-
-#[derive(Clone, Serialize)]
-struct ChatLogprob {
-    token: String,
-    logprob: f32,
-    bytes: Option<Vec<u8>>,
-}
-
 #[derive(Default, Serialize)]
 struct ChatDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,25 +47,6 @@ struct ChatDelta {
     reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ToolCallDelta>>,
-}
-
-#[derive(Serialize)]
-struct ToolCallDelta {
-    index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    kind: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    function: Option<FunctionCallDelta>,
-}
-
-#[derive(Serialize)]
-struct FunctionCallDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    arguments: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -97,20 +69,6 @@ struct ChatStreamResponse {
     choices: Vec<ChatStreamChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<Usage>,
-}
-
-#[derive(Serialize)]
-struct ToolCall {
-    id: String,
-    #[serde(rename = "type")]
-    kind: &'static str,
-    function: FunctionCall,
-}
-
-#[derive(Serialize)]
-struct FunctionCall {
-    name: String,
-    arguments: String,
 }
 
 #[derive(Serialize)]
@@ -142,102 +100,6 @@ struct ChatResponse {
     usage: Usage,
     #[serde(rename = "metadata")]
     custom_metadata: Value,
-}
-
-fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option<ChatLogprobs> {
-    let logprobs = logprobs?;
-    let content = token_ids
-        .iter()
-        .copied()
-        .zip(logprobs.positions)
-        .map(|(token_id, position)| {
-            let selected = selected_logprob(&position, token_id)
-                .map(|entry| (entry.token.clone(), entry.logprob.max(-9999.0)));
-            let token = selected.as_ref().map_or_else(
-                || format!("token_id:{token_id}"),
-                |(token, _)| token.clone(),
-            );
-            let top_logprobs = position
-                .entries
-                .into_iter()
-                .map(|entry| ChatLogprob {
-                    bytes: Some(entry.token.as_bytes().to_vec()),
-                    token: entry.token,
-                    logprob: entry.logprob.max(-9999.0),
-                })
-                .collect();
-            ChatLogprobContent {
-                bytes: Some(token.as_bytes().to_vec()),
-                token,
-                logprob: selected.map_or(-9999.0, |(_, logprob)| logprob),
-                top_logprobs,
-            }
-        })
-        .collect();
-    Some(ChatLogprobs { content })
-}
-
-fn chat_finish_reason(
-    finish_reason: &FinishReason,
-    has_tool_calls: bool,
-) -> Result<&'static str, ()> {
-    match finish_reason {
-        FinishReason::Stop(_) if has_tool_calls => Ok("tool_calls"),
-        FinishReason::Stop(_) => Ok("stop"),
-        FinishReason::Length => Ok("length"),
-        FinishReason::Abort => Ok("abort"),
-        FinishReason::Repetition(_) => Ok("repetition"),
-        FinishReason::Error => Err(()),
-    }
-}
-
-/// Assembles the canonical public completion from parser-owned final output for both response modes.
-fn build_chat_response(
-    metadata: ResponseMetadata,
-    message: &AssistantMessage,
-    usage: vllm_llm::TokenUsage,
-    finish_reason: &FinishReason,
-    include_reasoning: bool,
-    logprobs: Option<ChatLogprobs>,
-    custom_metadata: Value,
-) -> Result<ChatResponse, GenerationError> {
-    let tool_calls = message
-        .tool_calls()
-        .map(|call| ToolCall {
-            id: call.id.clone(),
-            kind: "function",
-            function: FunctionCall {
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            },
-        })
-        .collect::<Vec<_>>();
-    let finish = chat_finish_reason(finish_reason, !tool_calls.is_empty())
-        .map_err(|_| GenerationError::RequestFailed)?;
-    let content = message.text();
-    Ok(ChatResponse {
-        metadata,
-        object: "chat.completion",
-        choices: vec![ChatChoice {
-            index: 0,
-            message: ChatMessage {
-                role: "assistant",
-                // OpenAI represents a tool-only assistant turn with content: null.
-                content: (!content.is_empty()).then_some(content),
-                reasoning: include_reasoning.then(|| message.reasoning()).flatten(),
-                tool_calls,
-            },
-            logprobs,
-            finish_reason: finish,
-            stop_reason: openai_stop_reason(finish_reason),
-        }],
-        usage: Usage::from_counts(
-            usage.prompt_token_count,
-            usage.output_token_count,
-            usage.cached_token_count,
-        ),
-        custom_metadata,
-    })
 }
 
 /// Streams parser events directly to OpenAI SSE, committing requested archives before terminal output.
@@ -306,9 +168,9 @@ pub(crate) fn chat_stream_with_options(
                         index: 0,
                         delta: ChatDelta {
                             tool_calls: Some(vec![ToolCallDelta {
-                                index,
+                                index: index as u32,
                                 id: Some(id),
-                                kind: Some("function"),
+                                r#type: Some(FunctionType::Function),
                                 function: Some(FunctionCallDelta { name: Some(name), arguments: None }),
                             }]),
                             ..Default::default()
@@ -326,9 +188,9 @@ pub(crate) fn chat_stream_with_options(
                         index: 0,
                         delta: ChatDelta {
                             tool_calls: Some(vec![ToolCallDelta {
-                                index,
+                                index: index as u32,
                                 id: None,
-                                kind: None,
+                                r#type: None,
                                 function: Some(FunctionCallDelta { name: None, arguments: Some(delta) }),
                             }]),
                             ..Default::default()
@@ -489,4 +351,103 @@ pub(crate) async fn chat_collected(
         }
     }
     openai_error(GenerationError::RequestFailed)
+}
+
+/// Assembles the canonical public completion from parser-owned final output for both response modes.
+fn build_chat_response(
+    metadata: ResponseMetadata,
+    message: &AssistantMessage,
+    usage: vllm_llm::TokenUsage,
+    finish_reason: &FinishReason,
+    include_reasoning: bool,
+    logprobs: Option<ChatLogprobs>,
+    custom_metadata: Value,
+) -> Result<ChatResponse, GenerationError> {
+    let tool_calls = message
+        .tool_calls()
+        .map(|call| {
+            ToolCall::Function(ChatCompletionMessageToolCall {
+                id: call.id.clone(),
+                function: FunctionCall {
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    let finish = chat_finish_reason(finish_reason, !tool_calls.is_empty())
+        .map_err(|_| GenerationError::RequestFailed)?;
+    let content = message.text();
+    Ok(ChatResponse {
+        metadata,
+        object: "chat.completion",
+        choices: vec![ChatChoice {
+            index: 0,
+            message: ChatMessage {
+                role: "assistant",
+                // OpenAI represents a tool-only assistant turn with content: null.
+                content: (!content.is_empty()).then_some(content),
+                reasoning: include_reasoning.then(|| message.reasoning()).flatten(),
+                tool_calls,
+            },
+            logprobs,
+            finish_reason: finish,
+            stop_reason: openai_stop_reason(finish_reason),
+        }],
+        usage: Usage::from_counts(
+            usage.prompt_token_count,
+            usage.output_token_count,
+            usage.cached_token_count,
+        ),
+        custom_metadata,
+    })
+}
+
+/// Separates the sampled-token score from the engine's ordered top-k candidates.
+fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option<ChatLogprobs> {
+    let logprobs = logprobs?;
+    let content = token_ids
+        .iter()
+        .copied()
+        .zip(logprobs.positions)
+        .map(|(token_id, position)| {
+            let selected = selected_logprob(&position, token_id)
+                .map(|entry| (entry.token.clone(), entry.logprob.max(-9999.0)));
+            let token = selected.as_ref().map_or_else(
+                || format!("token_id:{token_id}"),
+                |(token, _)| token.clone(),
+            );
+            let top_logprobs = position
+                .entries
+                .into_iter()
+                .skip(1)
+                .map(|entry| ChatLogprob {
+                    bytes: Some(entry.token.as_bytes().to_vec()),
+                    token: entry.token,
+                    logprob: entry.logprob.max(-9999.0),
+                })
+                .collect();
+            ChatLogprobContent {
+                bytes: Some(token.as_bytes().to_vec()),
+                token,
+                logprob: selected.map_or(-9999.0, |(_, logprob)| logprob),
+                top_logprobs,
+            }
+        })
+        .collect();
+    Some(ChatLogprobs { content })
+}
+
+fn chat_finish_reason(
+    finish_reason: &FinishReason,
+    has_tool_calls: bool,
+) -> Result<&'static str, ()> {
+    match finish_reason {
+        FinishReason::Stop(_) if has_tool_calls => Ok("tool_calls"),
+        FinishReason::Stop(_) => Ok("stop"),
+        FinishReason::Length => Ok("length"),
+        FinishReason::Abort => Ok("abort"),
+        FinishReason::Repetition(_) => Ok("repetition"),
+        FinishReason::Error => Err(()),
+    }
 }

@@ -10,11 +10,33 @@ import time
 from datetime import UTC, datetime
 from typing import Self
 
+from foretoken.arguments import ProfileCommand
 from foretoken.errors import DeploymentError
 from foretoken.profiling import ProfileRun
 
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.model_service import ModelService
 from benchmarks.profiling import CaptureCleanupError
-from benchmarks.results.output import write_json
+from benchmarks.results.recording.files import write_json
+
+
+def create_benchmark_profile(
+    benchmark: BenchmarkConfig, service: ModelService, directory: str,
+) -> BenchmarkProfile | None:
+    """Construct the optional capture context; the HTTP runner owns its measured request window."""
+    options = benchmark.profile
+    if options is None:
+        return None
+    command = ProfileCommand(
+        kustomize_path=benchmark.service.kustomize_path,
+        model=service.model,
+        profile_engine=options.engine,
+        profile_duration=options.duration,
+        timeout=benchmark.service.wait_timeout,
+    )
+    return BenchmarkProfile(
+        ProfileRun(command, deployment=service.deployment, kubectl=service.kubectl), directory,
+    )
 
 
 class BenchmarkProfile:
@@ -39,31 +61,6 @@ class BenchmarkProfile:
     def __enter__(self) -> Self:
         """Keep dataset preparation outside the capture window; start at first dispatch."""
         return self
-
-    async def _start(self) -> None:
-        """Wait for all selected runtimes to record before releasing prepared HTTP requests."""
-        startup = asyncio.create_task(asyncio.to_thread(self.run.start))
-        try:
-            await asyncio.shield(startup)
-        except asyncio.CancelledError:
-            # Kubernetes creation continues in its worker thread. Resolve its
-            # final identity before the context cancels and releases resources.
-            await startup
-            raise
-        deadline = time.monotonic() + self.run.wait_seconds
-        while time.monotonic() < deadline:
-            status = await asyncio.to_thread(self.run.observe)
-            if status.get("phase") == "Capturing":
-                self.capturing_observed_at = datetime.now(UTC).isoformat()
-                self._started = True
-                return
-            if self.run.terminal or status.get("phase") == "Stopping":
-                raise DeploymentError(
-                    "capture ended before benchmark requests could start: "
-                    f"{status.get('phase')}: {status.get('message', '')}"
-                )
-            await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
-        raise DeploymentError("timed out waiting for the profile to start recording")
 
     async def start(self) -> None:
         """Prepare capture at the first scheduled dispatch, outside the measurement clock."""
@@ -116,6 +113,31 @@ class BenchmarkProfile:
                     "successful_requests": self.successful_requests,
                     "failed_requests": self.failed_requests,
                 })
+
+    async def _start(self) -> None:
+        """Wait for all selected runtimes to record before releasing prepared HTTP requests."""
+        startup = asyncio.create_task(asyncio.to_thread(self.run.start))
+        try:
+            await asyncio.shield(startup)
+        except asyncio.CancelledError:
+            # Kubernetes creation continues in its worker thread. Resolve its
+            # final identity before the context cancels and releases resources.
+            await startup
+            raise
+        deadline = time.monotonic() + self.run.wait_seconds
+        while time.monotonic() < deadline:
+            status = await asyncio.to_thread(self.run.observe)
+            if status.get("phase") == "Capturing":
+                self.capturing_observed_at = datetime.now(UTC).isoformat()
+                self._started = True
+                return
+            if self.run.terminal or status.get("phase") == "Stopping":
+                raise DeploymentError(
+                    "capture ended before benchmark requests could start: "
+                    f"{status.get('phase')}: {status.get('message', '')}"
+                )
+            await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+        raise DeploymentError("timed out waiting for the profile to start recording")
 
     def _cancel_and_wait(self) -> None:
         """Keep serving resources until cancellation and artifact publication are observed."""

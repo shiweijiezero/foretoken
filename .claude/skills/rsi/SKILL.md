@@ -16,7 +16,7 @@ Read `${CLAUDE_SKILL_DIR}/../../../.agents/skills/rsi/SKILL.md` and follow the s
 
 Use an interactive Agent Team. Confirm Teams are enabled before creating members; otherwise follow the [session setup](../../../rsi-playbooks/README.md#claude-code). Named subagents in SDK or non-interactive sessions are not teammates.
 
-The user sets one `/goal` in the lead session for the task outcome, team progress and delivery. Members do not need separate goals. Use shared Task tools for owners and dependencies when available, and exchange results through messages.
+The user sets one `/goal` in the lead session for the task outcome, team progress and delivery. Members do not need separate goals. Use shared Task tools for owners and dependencies when available.
 
 Give parallel writers task branches and independent checkouts with absolute paths. Prepare checkouts separately from team creation: passing `isolation` to the Agent tool creates an ordinary subagent rather than a teammate.
 

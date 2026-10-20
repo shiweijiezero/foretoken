@@ -24,6 +24,10 @@ use uuid::Uuid;
 
 use crate::backend::VllmBackend;
 
+const PROFILE_ROOT_ENV: &str = "FORETOKEN_PROFILE_ROOT";
+const START_TIMEOUT: Duration = Duration::from_secs(30);
+const STOP_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Profiler instrumentation selected before the engine process starts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -41,81 +45,18 @@ pub struct Preparation {
     pub engine: Engine,
 }
 
-const PROFILE_DIRECTORY: &str = "profiles";
-const START_TIMEOUT: Duration = Duration::from_secs(30);
-const STOP_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Diagnostic identity and storage derived from the mounted persistent RuntimeCache.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     runtime_cache_claim: String,
     data_root: PathBuf,
+    profile_directory: PathBuf,
     pod_uid: String,
     group_uid: String,
     pub(crate) runtime_id: String,
     workers: usize,
     pub(crate) engine: Engine,
     python: String,
-}
-
-impl Config {
-    /// Builds profiling identity and paths from the already validated RuntimeCache mount.
-    pub fn from_runtime_cache(
-        cache: &crate::runtime_cache::Config,
-        group_uid: String,
-        workers: usize,
-        engine: Engine,
-        python: String,
-    ) -> Self {
-        Self {
-            runtime_cache_claim: cache.claim_name.clone(),
-            data_root: cache.mount_path.clone(),
-            pod_uid: cache.pod_uid.clone(),
-            group_uid,
-            runtime_id: Uuid::new_v4().to_string(),
-            workers,
-            engine,
-            python,
-        }
-    }
-
-    fn profile_root(&self) -> PathBuf {
-        self.data_root.join(PROFILE_DIRECTORY)
-    }
-
-    fn staging(&self) -> PathBuf {
-        // The control runtime owns its output scope, including files written by remote RPC workers.
-        self.profile_root().join(".staging").join(&self.runtime_id)
-    }
-
-    /// Prepares capture storage before the instrumented engine starts.
-    pub fn prepare(&self) -> io::Result<()> {
-        // The persistent mount must already exist; never substitute Pod-local storage.
-        fs::metadata(&self.data_root)?;
-        let profile_root = self.profile_root();
-        fs::create_dir_all(profile_root.join("runs"))?;
-        fs::create_dir_all(profile_root.join(".staging"))?;
-        File::open(profile_root)?.sync_all()
-    }
-
-    /// Renders native configuration without enabling recording at process startup.
-    pub fn engine_argument(&self) -> String {
-        if self.engine != Engine::Pytorch {
-            // Native collectors own recording; do not install a competing PyTorch profiler.
-            return "--profiler-config={}".into();
-        }
-        format!(
-            "--profiler-config={}",
-            serde_json::json!({
-                "profiler": "torch",
-                "torch_profiler_dir": self.profile_root().join(".staging"),
-                "torch_profiler_use_gzip": false,
-                "torch_profiler_dump_cuda_time_total": false,
-                "torch_profiler_with_stack": false,
-                "ignore_frontend": true,
-            })
-        )
-    }
 }
 
 /// Actions accepted from the ProfileRun reconciler for one fixed runtime identity.
@@ -157,12 +98,6 @@ pub struct Record {
     pub message: String,
 }
 
-impl Record {
-    fn terminal(&self) -> bool {
-        matches!(self.phase.as_str(), "Succeeded" | "Failed" | "Cancelled")
-    }
-}
-
 /// Runtime identity and the requested run's state; absence means that run has not started here.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,6 +128,170 @@ pub struct Handle {
     config: Config,
     state: Arc<Mutex<State>>,
     sender: mpsc::UnboundedSender<(String, watch::Receiver<Action>)>,
+}
+
+/// Selects the native control adapter while Supervisor retains capture and publication ownership.
+#[derive(Clone)]
+pub enum CaptureBackend {
+    Native(Arc<VllmBackend>),
+    DraftTarget {
+        endpoint: String,
+        client: reqwest::Client,
+    },
+}
+
+impl CaptureBackend {
+    /// Runs one native utility; Supervisor retains uncertain operations until engine exit.
+    async fn control(
+        &self,
+        start: bool,
+        directory: Option<&Path>,
+        prefix: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Native(backend) => match directory {
+                Some(directory) => backend.set_mctracer(start, directory).await,
+                None => backend.set_profiling(start, prefix).await,
+            },
+            Self::DraftTarget { endpoint, client } => {
+                client.post(format!("{endpoint}/profiling"))
+                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy()), "profile_prefix": prefix}))
+                    .send().await.map_err(|error| error.to_string())?
+                    .error_for_status().map_err(|error| error.to_string())?;
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Owns native operations through stop/flush; an uncertain operation requires engine termination.
+pub struct Supervisor {
+    handle: Handle,
+    receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
+    backend: Option<CaptureBackend>,
+    native: Option<JoinHandle<Result<(), String>>>,
+    publication: Option<JoinHandle<io::Result<Record>>>,
+}
+
+struct KernelEvents(bool);
+
+#[derive(Deserialize)]
+struct NativeTrace {
+    #[serde(rename = "traceEvents")]
+    events: KernelEvents,
+}
+
+#[derive(Deserialize)]
+struct ProfileQuery {
+    run_uid: Option<String>,
+}
+
+/// Builds capture control for the existing internal listener on leaders and Nsight workers.
+/// The router borrows a handle; native operations remain owned by the runtime supervisor.
+pub fn router(handle: Option<Handle>) -> Router {
+    Router::new()
+        .route("/v1/internal/profiling", get(observation).post(control))
+        .with_state(handle)
+}
+
+// Return runtime identity before capture so the controller can persist its execution plan.
+async fn observation(
+    HttpState(handle): HttpState<Option<Handle>>,
+    Query(query): Query<ProfileQuery>,
+) -> Response {
+    match handle {
+        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
+        None => StatusCode::NOT_IMPLEMENTED.into_response(),
+    }
+}
+
+// Acceptance is distinct from the native result observed through subsequent polling.
+async fn control(
+    HttpState(handle): HttpState<Option<Handle>>,
+    Json(request): Json<Request>,
+) -> Response {
+    let Some(handle) = handle else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    let uid = request.run_uid.clone();
+    match handle.control(request) {
+        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+impl Config {
+    /// Builds capture identity from the controller-projected root within the persistent cache.
+    pub fn from_runtime_cache(
+        cache: &crate::runtime_cache::Config,
+        group_uid: String,
+        workers: usize,
+        engine: Engine,
+        python: String,
+    ) -> Result<Self, String> {
+        let profile_root = std::env::var(PROFILE_ROOT_ENV)
+            .map(PathBuf::from)
+            .map_err(|_| "FORETOKEN_PROFILE_ROOT must be set when a RuntimeCache is mounted")?;
+        let profile_directory = profile_root
+            .strip_prefix(&cache.mount_path)
+            .map_err(|_| "profile storage must remain within FORETOKEN_CACHE_MOUNT_PATH")?
+            .to_path_buf();
+        Ok(Self {
+            runtime_cache_claim: cache.claim_name.clone(),
+            data_root: cache.mount_path.clone(),
+            profile_directory,
+            pod_uid: cache.pod_uid.clone(),
+            group_uid,
+            runtime_id: Uuid::new_v4().to_string(),
+            workers,
+            engine,
+            python,
+        })
+    }
+
+    /// Prepares capture storage before the instrumented engine starts.
+    pub fn prepare(&self) -> io::Result<()> {
+        // The persistent mount must already exist; never substitute Pod-local storage.
+        fs::metadata(&self.data_root)?;
+        let profile_root = self.profile_root();
+        fs::create_dir_all(profile_root.join("runs"))?;
+        fs::create_dir_all(profile_root.join(".staging"))?;
+        File::open(profile_root)?.sync_all()
+    }
+
+    /// Renders native configuration without enabling recording at process startup.
+    pub fn engine_argument(&self) -> String {
+        if self.engine != Engine::Pytorch {
+            // Native collectors own recording; do not install a competing PyTorch profiler.
+            return "--profiler-config={}".into();
+        }
+        format!(
+            "--profiler-config={}",
+            serde_json::json!({
+                "profiler": "torch",
+                "torch_profiler_dir": self.profile_root().join(".staging"),
+                "torch_profiler_use_gzip": false,
+                "torch_profiler_dump_cuda_time_total": false,
+                "torch_profiler_with_stack": false,
+                "ignore_frontend": true,
+            })
+        )
+    }
+
+    fn profile_root(&self) -> PathBuf {
+        self.data_root.join(&self.profile_directory)
+    }
+
+    fn staging(&self) -> PathBuf {
+        // The control runtime owns its output scope, including files written by remote RPC workers.
+        self.profile_root().join(".staging").join(&self.runtime_id)
+    }
+}
+
+impl Record {
+    fn terminal(&self) -> bool {
+        matches!(self.phase.as_str(), "Succeeded" | "Failed" | "Cancelled")
+    }
 }
 
 impl Handle {
@@ -278,88 +377,6 @@ impl Handle {
         }
         Ok(())
     }
-}
-
-#[derive(Deserialize)]
-struct ProfileQuery {
-    run_uid: Option<String>,
-}
-
-/// Builds capture control for the existing internal listener on leaders and Nsight workers.
-/// The router borrows a handle; native operations remain owned by the runtime supervisor.
-pub fn router(handle: Option<Handle>) -> Router {
-    Router::new()
-        .route("/v1/internal/profiling", get(observation).post(control))
-        .with_state(handle)
-}
-
-// Return runtime identity before capture so the controller can persist its execution plan.
-async fn observation(
-    HttpState(handle): HttpState<Option<Handle>>,
-    Query(query): Query<ProfileQuery>,
-) -> Response {
-    match handle {
-        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
-        None => StatusCode::NOT_IMPLEMENTED.into_response(),
-    }
-}
-
-// Acceptance is distinct from the native result observed through subsequent polling.
-async fn control(
-    HttpState(handle): HttpState<Option<Handle>>,
-    Json(request): Json<Request>,
-) -> Response {
-    let Some(handle) = handle else {
-        return StatusCode::NOT_IMPLEMENTED.into_response();
-    };
-    let uid = request.run_uid.clone();
-    match handle.control(request) {
-        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
-        Err(error) => (StatusCode::CONFLICT, error).into_response(),
-    }
-}
-
-/// Selects the native control adapter while Supervisor retains capture and publication ownership.
-#[derive(Clone)]
-pub enum CaptureBackend {
-    Native(Arc<VllmBackend>),
-    DraftTarget {
-        endpoint: String,
-        client: reqwest::Client,
-    },
-}
-
-impl CaptureBackend {
-    /// Runs one native utility; Supervisor retains uncertain operations until engine exit.
-    async fn control(
-        &self,
-        start: bool,
-        directory: Option<&Path>,
-        prefix: &str,
-    ) -> Result<(), String> {
-        match self {
-            Self::Native(backend) => match directory {
-                Some(directory) => backend.set_mctracer(start, directory).await,
-                None => backend.set_profiling(start, prefix).await,
-            },
-            Self::DraftTarget { endpoint, client } => {
-                client.post(format!("{endpoint}/profiling"))
-                    .json(&serde_json::json!({"start": start, "directory": directory.map(|path| path.to_string_lossy()), "profile_prefix": prefix}))
-                    .send().await.map_err(|error| error.to_string())?
-                    .error_for_status().map_err(|error| error.to_string())?;
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Owns native operations through stop/flush; an uncertain operation requires engine termination.
-pub struct Supervisor {
-    handle: Handle,
-    receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
-    backend: Option<CaptureBackend>,
-    native: Option<JoinHandle<Result<(), String>>>,
-    publication: Option<JoinHandle<io::Result<Record>>>,
 }
 
 impl Supervisor {
@@ -638,11 +655,12 @@ fn seal(config: &Config, mut record: Record) -> io::Result<Record> {
     if record.gpu_activity == Some(false) {
         record.message = "No GPU kernel activity was recorded in this window".into();
     }
-    let relative = format!(
-        "{PROFILE_DIRECTORY}/runs/{}/{}",
-        record.run_uid, config.runtime_id
-    );
-    record.artifact_dir = Some(relative.clone());
+    let relative = config
+        .profile_directory
+        .join("runs")
+        .join(&record.run_uid)
+        .join(&config.runtime_id);
+    record.artifact_dir = Some(relative.display().to_string());
     let mut manifest = File::create(staging.join("manifest.json"))?;
     serde_json::to_writer(&mut manifest, &record)?;
     manifest.write_all(b"\n")?;
@@ -701,14 +719,6 @@ fn validate_trace(config: &Config) -> io::Result<bool> {
     }
     Ok(gpu_activity)
 }
-
-#[derive(Deserialize)]
-struct NativeTrace {
-    #[serde(rename = "traceEvents")]
-    events: KernelEvents,
-}
-
-struct KernelEvents(bool);
 
 // Consume large traces one event at a time; loading an entire trace would compete with inference memory.
 impl<'de> Deserialize<'de> for KernelEvents {

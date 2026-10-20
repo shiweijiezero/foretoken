@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from foretoken.command_execution import CommandExecution, cleanup_commands, run_command
 from foretoken.deployment.endpoint import resolve_frontend_endpoint
+from foretoken.deployment.instances import DeploymentInstance, storage_only_instance
 from foretoken.deployment.lifecycle import DeploymentLifecycle
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.deployment.status import wait_for_resources
@@ -32,35 +33,6 @@ from benchmarks.profiling import CaptureCleanupError
 logger = logging.getLogger(__name__)
 
 
-async def require_health_endpoint(url: str) -> None:
-    """Check one public health URL without forwarding service credentials or routing headers."""
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("health URL must be an absolute HTTP or HTTPS URL")
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("health URL contains an invalid port") from exc
-    hostname = parsed.hostname
-    if ":" in hostname:
-        hostname = f"[{hostname}]"
-    if port is not None:
-        hostname = f"{hostname}:{port}"
-    display_url = urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
-    try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise ValueError(
-            f"Health check failed for {display_url}: HTTP {exc.response.status_code}"
-        ) from exc
-    except httpx.RequestError as exc:
-        raise ValueError(
-            f"Health check failed for {display_url}: {type(exc).__name__}"
-        ) from exc
-
-
 @dataclass(frozen=True)
 class ModelService:
     """Describe one OpenAI-compatible model service that is ready for benchmark requests.
@@ -70,7 +42,8 @@ class ModelService:
     needs to route by hostname; it is empty for LoadBalancer, HTTPS, and user-supplied
     URLs. ``model_service_refs`` contains the Kubernetes status sources that serve
     the selected model and is empty for a user-supplied URL. Every client derives
-    its ``Authorization`` header from ``api_key``.
+    its ``Authorization`` header from ``api_key``. ``kubectl`` is the command's
+    selected client, borrowed by profiling and observation stages.
     """
 
     chat_completions_url: str
@@ -83,6 +56,7 @@ class ModelService:
     model_service_refs: tuple[ResourceRef, ...]
     # Capture must use the same rendered target that supplied the HTTP endpoint.
     deployment: ForetokenDeployment | None = None
+    kubectl: Kubectl | None = None
 
     @property
     def api_root(self) -> str:
@@ -113,7 +87,11 @@ class ModelService:
             for cache in self.deployment.runtime_caches:
                 if not cache.directory:
                     continue
-                data_root = self.deployment.path / Path(cache.directory).expanduser()
+                data_root = Path(cache.directory).expanduser()
+                if not data_root.is_absolute():
+                    if self.deployment.path is None:
+                        continue
+                    data_root = self.deployment.path / data_root
                 local = find_local_tokenizer_path(tokenizer, data_root=data_root)
                 if local is not None:
                     return source, local
@@ -134,7 +112,7 @@ class ModelService:
             if value in selected
         )
         gpu_count = self.gpu_count if model == self.model else (
-            _model_gpu_count(self.deployment, model, Kubectl()) if model else None
+            _model_gpu_count(self.deployment, model, self.kubectl) if model else None
         )
         return replace(self, model=model, models=selected, model_service_refs=refs, gpu_count=gpu_count)
 
@@ -142,6 +120,139 @@ class ModelService:
     def request_headers(self) -> dict[str, str]:
         """Return the routing headers every request must carry, without credentials."""
         return {"Host": self.routing_host} if self.routing_host else {}
+
+
+class ModelServiceResolver:
+    """Resolve one command's services with one lazily selected Kubernetes client."""
+
+    def __init__(self) -> None:
+        """Defer cluster selection until a new Kustomize measurement needs it."""
+        self._kubectl: Kubectl | None = None
+
+    @contextmanager
+    def benchmark(self, benchmark: BenchmarkConfig) -> Iterator[ModelService]:
+        """Prepare one performance service while retaining this command's cluster selection."""
+        workload = benchmark.resolved_workload
+        with self.resolve(
+            benchmark.service,
+            retain_runtime_cache=benchmark.profile is not None,
+            allow_multiple_models=bool(
+                benchmark.trace.trace_selector
+                or (workload.dataset_selectors and workload.dataset_selectors != ["random"])
+            ),
+        ) as service:
+            if benchmark.profile is not None and not service.model:
+                raise ValueError("--profile requires --model for a multi-model deployment")
+            if benchmark.service.health_url:
+                asyncio.run(require_health_endpoint(benchmark.service.health_url))
+                logger.info("Model service health check passed")
+            yield service
+
+    @contextmanager
+    def resolve(
+        self, source: ModelServiceSource, *, retain_runtime_cache: bool = False,
+        allow_multiple_models: bool = False,
+    ) -> Iterator[ModelService]:
+        """Yield a URL service or own a temporary Kustomize deployment through cleanup.
+
+        Existing instances are reused unchanged. Every Kustomize source in a
+        comparison uses the first Kustomize source's cluster, including observation,
+        profiling, and temporary-resource cleanup. URL sources do not access Kubernetes.
+        """
+        if source.url:
+            yield ModelService(
+                chat_completions_url=source.url,
+                model=source.model,
+                api_key=source.api_key,
+                models=(source.model,),
+                hostname="",
+                gpu_count=None,
+                routing_host="",
+                model_service_refs=(),
+            )
+            return
+
+        execution = CommandExecution.current() or CommandExecution(timeout_seconds(source.wait_timeout))
+        with execution:
+            if self._kubectl is None:
+                self._kubectl = Kubectl()
+            kubectl = self._kubectl
+            deployment = load_deployment(
+                source.kustomize_path, kubectl, name=source.instance_name or None,
+            )
+            instance = DeploymentInstance(kubectl, deployment.namespace, deployment.name)
+            current = instance.read(required=False)
+            temporary = current is None or storage_only_instance(current)
+            if current is not None:
+                if current["metadata"].get("deletionTimestamp"):
+                    raise DeploymentError(f"deployment instance {deployment.name!r} is being deleted")
+                deployment = instance.bind(deployment) if temporary else instance.deployment()
+            elif any(
+                kubectl.exists(resource.kind, resource.name, resource.namespace)
+                for resource in deployment.service_refs()
+            ):
+                raise DeploymentError(
+                    "The Foretoken deployment is only partially present: services exist without their instance. "
+                    "Apply or delete it, then rerun the benchmark"
+                )
+
+        lifecycle = DeploymentLifecycle(kubectl, temporary=True)
+        serving = False
+        try:
+            with execution:
+                if temporary:
+                    logger.info("Deploying Foretoken instance %s from %s", deployment.name, source.kustomize_path)
+                    deployment = lifecycle.apply(deployment, source.wait_timeout)
+                service = _discover_model_service(
+                    deployment, kubectl, source, allow_multiple_models=allow_multiple_models
+                )
+            serving = True
+            yield service
+        except CaptureCleanupError:
+            # Keep participants alive until the controller confirms stop and export.
+            logger.error(
+                "Capture cleanup is unconfirmed; retaining deployment instance %s for inspection",
+                deployment.name,
+            )
+            temporary = False
+            raise
+        finally:
+            if temporary:
+                logger.info("Cleaning up Foretoken deployment instance %s", deployment.name)
+                with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
+                    lifecycle.cleanup_temporary(
+                        deployment, source.wait_timeout,
+                        retain_storage=retain_runtime_cache and serving,
+                    )
+
+
+async def require_health_endpoint(url: str) -> None:
+    """Check one public health URL without forwarding service credentials or routing headers."""
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("health URL must be an absolute HTTP or HTTPS URL")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("health URL contains an invalid port") from exc
+    hostname = parsed.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    if port is not None:
+        hostname = f"{hostname}:{port}"
+    display_url = urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ValueError(
+            f"Health check failed for {display_url}: HTTP {exc.response.status_code}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise ValueError(
+            f"Health check failed for {display_url}: {type(exc).__name__}"
+        ) from exc
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -266,7 +377,7 @@ def _discover_model_service(
     *,
     allow_multiple_models: bool = False,
 ) -> ModelService:
-    """Wait for the rendered service to become ready and return its public model service."""
+    """Wait for the selected instance's services and return their public model endpoint."""
     model = (
         "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
         else _select_model(deployment.models.values(), source.model)
@@ -277,9 +388,12 @@ def _discover_model_service(
         progress = wait_for_resources(resources, kubectl, source.wait_timeout)
         for service in progress:
             if service.state == "Stopped":
+                command = f"foretoken deploy {shlex.quote(source.kustomize_path)}"
+                if source.instance_name:
+                    command += f" --name {shlex.quote(source.instance_name)}"
                 raise DeploymentError(
                     f"{service.resource.display_name} is stopped; resume it before benchmarking with:\n"
-                    f"foretoken deploy {shlex.quote(str(deployment.path))}"
+                    f"{command}"
                 )
         gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
         endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
@@ -303,102 +417,5 @@ def _discover_model_service(
         routing_host=endpoint.routing_host,
         model_service_refs=model_refs,
         deployment=deployment,
+        kubectl=kubectl,
     )
-
-
-def _service_presence(
-    deployment: ForetokenDeployment,
-    kubectl: Kubectl,
-) -> list[bool]:
-    return [
-        kubectl.exists(resource.kind, resource.name, resource.namespace)
-        for resource in deployment.service_refs()
-    ]
-
-
-@contextmanager
-def resolve_benchmark_service(benchmark: BenchmarkConfig) -> Iterator[ModelService]:
-    """Prepare a performance service for a point or a contiguous group of sweep points."""
-    workload = benchmark.resolved_workload
-    with resolve_model_service(
-        benchmark.service,
-        retain_runtime_cache=benchmark.profile is not None,
-        allow_multiple_models=bool(
-            benchmark.trace.trace_selector
-            or (workload.dataset_selectors and workload.dataset_selectors != ["random"])
-        ),
-    ) as service:
-        if benchmark.profile is not None and not service.model:
-            raise ValueError("--profile requires --model for a multi-model deployment")
-        if benchmark.service.health_url:
-            asyncio.run(require_health_endpoint(benchmark.service.health_url))
-            logger.info("Model service health check passed")
-        yield service
-
-
-@contextmanager
-def resolve_model_service(
-    source: ModelServiceSource, *, retain_runtime_cache: bool = False,
-    allow_multiple_models: bool = False,
-) -> Iterator[ModelService]:
-    """Yield the model service selected by the benchmark user.
-
-    A URL source is used as given without touching Kubernetes. A Kustomize source
-    reuses a complete deployment unchanged, or creates a temporary deployment
-    and retires only its own creations afterward; a partially present deployment
-    is rejected. Profiling retains RuntimeCache resources and their namespace after
-    serving begins, so temporary workload cleanup cannot delete capture output.
-    """
-    if source.url:
-        yield ModelService(
-            chat_completions_url=source.url,
-            model=source.model,
-            api_key=source.api_key,
-            models=(source.model,),
-            hostname="",
-            gpu_count=None,
-            routing_host="",
-            model_service_refs=(),
-        )
-        return
-
-    execution = CommandExecution.current() or CommandExecution(timeout_seconds(source.wait_timeout))
-    kubectl = Kubectl()
-    with execution:
-        deployment = load_deployment(source.kustomize_path, kubectl)
-        presence = _service_presence(deployment, kubectl)
-    if any(presence) and not all(presence):
-        raise DeploymentError(
-            "The Foretoken deployment is only partially present. "
-            "Apply or delete it, then rerun the benchmark"
-        )
-
-    lifecycle = DeploymentLifecycle(kubectl, temporary=True)
-    temporary = not any(presence)
-    serving = False
-    try:
-        with execution:
-            if temporary:
-                logger.info("Deploying Foretoken service from %s", deployment.path)
-                lifecycle.apply(deployment, source.wait_timeout)
-            service = _discover_model_service(
-                deployment, kubectl, source, allow_multiple_models=allow_multiple_models
-            )
-        serving = True
-        yield service
-    except CaptureCleanupError:
-        # Keep participants alive until the controller confirms stop and export.
-        logger.error(
-            "Capture cleanup is unconfirmed; retaining deployment %s for inspection",
-            deployment.path,
-        )
-        temporary = False
-        raise
-    finally:
-        if temporary:
-            logger.info("Cleaning up Foretoken service from %s", deployment.path)
-            with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
-                lifecycle.cleanup_temporary(
-                    deployment, source.wait_timeout,
-                    retain_storage=retain_runtime_cache and serving,
-                )

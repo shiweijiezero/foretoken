@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Deploy the Quick Start model and frontend with service alerts. The example uses the same resources, namespace, and data directory as the [Quick Start](../../quickstart/qwen3-0.6b/README.md).
+Deploy the Quick Start model and frontend with service alerts. The example updates the [Quick Start](../../quickstart/qwen3-0.6b/README.md) instance in the current namespace and uses the same data directory.
 
 ## Select and deploy alerts
 
@@ -29,7 +29,7 @@ From the repository root:
 foretoken deploy examples/feature/observability --timeout 20m
 ```
 
-Send a request using the [Quick Start request example](../../quickstart/qwen3-0.6b/README.md). Open Foretoken System Overview in [Grafana](../../../observability/README.md#view-dashboards), select `foretoken-demo`, and check the selected rules in Prometheus Alerts. Configure a [notification receiver](../../../observability/README.md#alerts) to receive firing and resolved messages.
+Send a request using the [Quick Start request example](../../quickstart/qwen3-0.6b/README.md). Open Foretoken System Overview in [Grafana](../../../observability/README.md#view-dashboards), select the current namespace, and check the selected rules in Prometheus Alerts. Configure a [notification receiver](../../../observability/README.md#alerts) to receive firing and resolved messages.
 
 ## Disable alerts or remove the service
 

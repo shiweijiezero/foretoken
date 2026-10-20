@@ -21,13 +21,22 @@ import (
 
 var ErrUnprovenBackendOwner = errors.New("backend Pod ownership is not proven")
 
-// ModelGroupForPod proves a new Pod through the Deployment or LWS controller chain.
-func ModelGroupForPod(ctx context.Context, reader client.Reader, pod *corev1.Pod) (*inferencev1alpha1.ModelGroup, error) {
+// ModelGroupPodOwner contains the Group and execution workload proven for one Pod.
+// Leader is populated for LWS members so callers can inspect the same topology observation.
+type ModelGroupPodOwner struct {
+	Group    *inferencev1alpha1.ModelGroup
+	Workload client.Object
+	Leader   *corev1.Pod
+}
+
+// ModelGroupForPod proves a Pod through its Deployment or LWS controller chain.
+// Membership and profiling consumers share the observed Group, workload, and LWS leader identities.
+func ModelGroupForPod(ctx context.Context, reader client.Reader, pod *corev1.Pod) (*ModelGroupPodOwner, error) {
 	owner := metav1.GetControllerOf(pod)
 	if owner == nil {
 		return nil, ErrUnprovenBackendOwner
 	}
-	var executionWorkload client.Object
+	ownership := &ModelGroupPodOwner{}
 	switch {
 	case owner.APIVersion == appsv1.SchemeGroupVersion.String() && owner.Kind == "ReplicaSet":
 		replicaSet := new(appsv1.ReplicaSet)
@@ -38,18 +47,20 @@ func ModelGroupForPod(ctx context.Context, reader client.Reader, pod *corev1.Pod
 		if err := readBackendOwner(ctx, reader, replicaSet, deployment, appsv1.SchemeGroupVersion.String(), "Deployment"); err != nil {
 			return nil, err
 		}
-		executionWorkload = deployment
+		ownership.Workload = deployment
 	case owner.APIVersion == appsv1.SchemeGroupVersion.String() && owner.Kind == "StatefulSet":
 		statefulSet := new(appsv1.StatefulSet)
 		if err := readBackendOwner(ctx, reader, pod, statefulSet, appsv1.SchemeGroupVersion.String(), "StatefulSet"); err != nil {
 			return nil, err
 		}
+		ownership.Leader = pod
 		// LWS worker StatefulSets belong to their leader Pod, not directly to LWS.
 		if parent := metav1.GetControllerOf(statefulSet); parent != nil && parent.APIVersion == corev1.SchemeGroupVersion.String() && parent.Kind == "Pod" {
 			leader := new(corev1.Pod)
 			if err := readBackendOwner(ctx, reader, statefulSet, leader, corev1.SchemeGroupVersion.String(), "Pod"); err != nil {
 				return nil, err
 			}
+			ownership.Leader = leader
 			statefulSet = new(appsv1.StatefulSet)
 			if err := readBackendOwner(ctx, reader, leader, statefulSet, appsv1.SchemeGroupVersion.String(), "StatefulSet"); err != nil {
 				return nil, err
@@ -59,18 +70,19 @@ func ModelGroupForPod(ctx context.Context, reader client.Reader, pod *corev1.Pod
 		if err := readBackendOwner(ctx, reader, statefulSet, leaderWorkerSet, lwsv1.GroupVersion.String(), "LeaderWorkerSet"); err != nil {
 			return nil, err
 		}
-		executionWorkload = leaderWorkerSet
+		ownership.Workload = leaderWorkerSet
 	default:
 		return nil, ErrUnprovenBackendOwner
 	}
 	group := new(inferencev1alpha1.ModelGroup)
-	if err := readBackendOwner(ctx, reader, executionWorkload, group, inferencev1alpha1.GroupVersion.String(), "ModelGroup"); err != nil {
+	if err := readBackendOwner(ctx, reader, ownership.Workload, group, inferencev1alpha1.GroupVersion.String(), "ModelGroup"); err != nil {
 		return nil, err
 	}
 	if pod.Labels[ModelGroupLabel] != group.Name {
 		return nil, ErrUnprovenBackendOwner
 	}
-	return group, nil
+	ownership.Group = group
+	return ownership, nil
 }
 
 // readBackendOwner verifies one controller link for a previously unpublished Pod.

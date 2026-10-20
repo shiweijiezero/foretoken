@@ -34,6 +34,23 @@ pub struct ExecutionReservation {
     reference: ReservationRef,
 }
 
+pub(crate) struct BatchReservation {
+    model: Arc<Admission>,
+    shared: Option<ExecutionReservation>,
+    expires: Instant,
+    deadline: Instant,
+    dispatch: tokio::sync::Mutex<DispatchState>,
+    observation: Mutex<Option<AdmissionAttempt>>,
+}
+
+/// Transferable ownership of candidate slots. Accepted slots remain charged after consumer drop;
+/// only the model-server's engine-completion path can release their execution capacity.
+#[derive(Default)]
+pub struct AdmissionPermit {
+    batch: Option<Arc<BatchReservation>>,
+    slots: Range<u32>,
+}
+
 impl ExecutionReservation {
     /// Reconstructs execution observation from a stored reference without taking over inference.
     pub fn new(ledger: Arc<RequestLedger>, reference: ReservationRef) -> Self {
@@ -66,15 +83,6 @@ impl ExecutionReservation {
     pub async fn acknowledge(&self) -> Result<(), LedgerError> {
         self.ledger.acknowledge(&self.reference).await
     }
-}
-
-pub(crate) struct BatchReservation {
-    model: Arc<Admission>,
-    shared: Option<ExecutionReservation>,
-    expires: Instant,
-    deadline: Instant,
-    dispatch: tokio::sync::Mutex<DispatchState>,
-    observation: Mutex<Option<AdmissionAttempt>>,
 }
 
 impl BatchReservation {
@@ -153,14 +161,6 @@ impl Drop for BatchReservation {
             self.model.remove(&shared.reference.request);
         }
     }
-}
-
-/// Transferable ownership of candidate slots. Accepted slots remain charged after consumer drop;
-/// only the model-server's engine-completion path can release their execution capacity.
-#[derive(Default)]
-pub struct AdmissionPermit {
-    batch: Option<Arc<BatchReservation>>,
-    slots: Range<u32>,
 }
 
 impl AdmissionPermit {

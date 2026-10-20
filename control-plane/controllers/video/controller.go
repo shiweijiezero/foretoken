@@ -47,15 +47,6 @@ type Reconciler struct {
 	ImagePullSecrets     []corev1.LocalObjectReference
 }
 
-// SetupWithManager registers task and owned-Job watches for lifecycle reconciliation.
-func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
-	r.APIReader = manager.GetAPIReader()
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.VideoTask{}).
-		Owns(&batchv1.Job{}).
-		Complete(r)
-}
-
 // Reconcile persists execution identity before creating a Job and retains terminal state until expiration.
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	task := new(inferencev1alpha1.VideoTask)
@@ -454,3 +445,12 @@ func videoTaskTerminal(phase string) bool {
 }
 
 func ptrInt32(value int32) *int32 { return &value }
+
+// SetupWithManager registers task and owned-Job watches for lifecycle reconciliation.
+func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
+	r.APIReader = manager.GetAPIReader()
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.VideoTask{}).
+		Owns(&batchv1.Job{}).
+		Complete(r)
+}

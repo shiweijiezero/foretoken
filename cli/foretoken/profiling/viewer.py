@@ -15,14 +15,42 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from foretoken.arguments import ProfileViewCommand
+from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.profiling.reader import CAPTURE_DIRECTORY
+from foretoken.profiling.nsight import NsightViewerSessions
+from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
 
 
+def view(command: ProfileViewCommand) -> None:
+    """Print a loopback capture viewer URL and retain native sessions and readers until handlers finish."""
+    if timeout_seconds(command.timeout) <= 0:
+        raise DeploymentError("--timeout must be positive")
+    kubectl = Kubectl()
+    history = CaptureDirectories(kubectl, command.namespace)
+    history.refresh()
+    # Drain request handlers, then close native sessions before releasing their borrowed readers.
+    with (
+        ProfileStorage(kubectl, timeout=command.timeout) as storage,
+        NsightViewerSessions(storage) as nsight,
+        ProfileViewer(history, storage, nsight) as server,
+    ):
+        print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
+        print("Press Ctrl+C to stop.", flush=True)
+        server.serve_forever()
+
+
+def _capture_artifact(status: dict[str, Any]) -> dict[str, str] | None:
+    """Resolve a run's actual output scope, preferring its persisted execution plan."""
+    plan = status.get("plan") or {}
+    if plan.get("artifactDirectory"):
+        return {"claimName": plan["runtimeCacheClaim"], "path": plan["artifactDirectory"]}
+    return status.get("artifact")
+
+
 class CaptureDirectories:
-    """Discover capture storage; retained run records enrich files but do not gate access."""
+    """Discover deployment capture roots and explicitly published historical run paths."""
 
     def __init__(self, kubectl: Kubectl, namespace: str | None) -> None:
         self.kubectl = kubectl
@@ -48,16 +76,18 @@ class CaptureDirectories:
             namespace = metadata["namespace"]
             if item["kind"] == "RuntimeCache":
                 claim = status.get("claimName")
-                if claim:
-                    key = f"{namespace}/{claim}"
+                deployment_uid = metadata.get("labels", {}).get(DEPLOYMENT_UID_LABEL, "")
+                if claim and deployment_uid:
+                    key = f"{namespace}/{claim}/{deployment_uid}"
                     stores[key] = {
                         "id": key,
                         "namespace": namespace,
                         "claim": claim,
                         "name": metadata["name"],
+                        "deployment_uid": deployment_uid,
                     }
-            elif status.get("artifact"):
-                runs.append(item)
+            elif (artifact := _capture_artifact(status)) is not None:
+                runs.append({**item, "status": {**status, "artifact": artifact}})
         runs.sort(
             key=lambda run: (
                 run.get("status", {}).get("startedAt")
@@ -69,9 +99,19 @@ class CaptureDirectories:
         for run in runs:
             namespace = run["metadata"]["namespace"]
             claim = run["status"]["artifact"]["claimName"]
-            key = f"{namespace}/{claim}"
+            deployment_uid = run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL, "")
+            key = (
+                f"{namespace}/{claim}/{deployment_uid}"
+                if deployment_uid else f"{namespace}/{claim}"
+            )
             stores.setdefault(
-                key, {"id": key, "namespace": namespace, "claim": claim, "name": claim}
+                key, {
+                    "id": key,
+                    "namespace": namespace,
+                    "claim": claim,
+                    "name": f"{claim} / {deployment_uid}" if deployment_uid else claim,
+                    "deployment_uid": deployment_uid,
+                }
             )
             if latest is None and run["status"].get("phase") == "Succeeded":
                 latest = key
@@ -81,27 +121,42 @@ class CaptureDirectories:
             "latest": latest,
         }
 
-    def directory(self, store_id: str) -> tuple[str, str, str]:
+    def directory(self, store_id: str) -> tuple[str, str, str | None, str]:
         """Resolve only discovered storage, never a browser-supplied PVC identity."""
         store = self.stores.get(store_id)
         if store is None:
             raise FileNotFoundError(
                 "Capture storage is no longer listed; refresh the page."
             )
-        return store["namespace"], store["claim"], CAPTURE_DIRECTORY
+        namespace, deployment_uid = store["namespace"], store["deployment_uid"]
+        root = capture_directory(deployment_uid) if deployment_uid else None
+        return namespace, store["claim"], root, deployment_uid
 
     def files(self, store_id: str, storage: ProfileStorage) -> list[dict[str, Any]]:
         """Recursively list saved traces, attaching historical metadata where available."""
-        namespace, claim, root = self.directory(store_id)
+        namespace, claim, root, deployment_uid = self.directory(store_id)
         runs = [
             run
             for run in self.runs
             if run["metadata"]["namespace"] == namespace
             and run["status"]["artifact"]["claimName"] == claim
+            and run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL, "") == deployment_uid
         ]
-        entries = storage.list_files(namespace, claim, root)
+        # Historical runs retain their published scopes; do not scan another deployment's root.
+        roots = {root} if root is not None else set()
+        for run in runs:
+            historical = run["status"]["artifact"]["path"]
+            if root is None or historical != root and not historical.startswith(root + "/"):
+                roots.add(historical)
+        entries = []
+        for directory in sorted(roots):
+            for entry in storage.list_files(
+                namespace, claim, directory, deployment_uid=deployment_uid
+            ):
+                entry["name"] = f"{directory}/{entry['name']}"
+                entries.append(entry)
         for entry in entries:
-            path = f"{root}/{entry['name']}"
+            path = entry["name"]
             run = next(
                 (
                     run
@@ -131,13 +186,17 @@ class ProfileViewer(ThreadingHTTPServer):
 
     daemon_threads = False
 
-    def __init__(self, history: CaptureDirectories, storage: ProfileStorage) -> None:
+    def __init__(
+        self, history: CaptureDirectories, storage: ProfileStorage, nsight: NsightViewerSessions
+    ) -> None:
+        """Bind loopback HTTP; view retains the borrowed storage and native sessions until handlers finish."""
         self.cluster_lock = threading.Lock()
         self.connection_lock = threading.Lock()
         self.connections: set[socket.socket] = set()
         self.closing = threading.Event()
         self.history = history
         self.storage = storage
+        self.nsight = nsight
         self.session_path = "/" + secrets.token_urlsafe(24) + "/"
         self.page = (
             resources.files("foretoken.profiling").joinpath("viewer.html").read_bytes()
@@ -159,7 +218,7 @@ class ProfileViewer(ThreadingHTTPServer):
         super().shutdown_request(request)
 
     def server_close(self) -> None:
-        """Close browser connections and join request handlers before reader cleanup."""
+        """Close browser connections and join handlers before native sessions and capture readers close."""
         self.closing.set()
         with self.connection_lock:
             for connection in self.connections:
@@ -182,6 +241,7 @@ class ProfileHandler(BaseHTTPRequestHandler):
     def _headers(
         self, status: int, content_type: str, length: int | None = None
     ) -> None:
+        """Keep local responses non-cacheable and restrict embedded frames to the expected Perfetto origin."""
         self.send_response(status)
         if length is not None:
             self.send_header("Content-Length", str(length))
@@ -251,7 +311,6 @@ class ProfileHandler(BaseHTTPRequestHandler):
             elif route in {"api/files", "api/trace", "api/nsight"}:
                 query = parse_qs(query_string)
                 store_id = query.get("store", [""])[0]
-                artifact = self.server.history.directory(store_id)
                 files = self.server.history.files(store_id, self.server.storage)
                 if route == "api/files":
                     self._json(200, files)
@@ -260,16 +319,23 @@ class ProfileHandler(BaseHTTPRequestHandler):
                 selected = next((item for item in files if item["name"] == name), None)
                 if selected is None:
                     raise FileNotFoundError("Trace file is no longer available.")
+                namespace, claim, _, deployment_uid = self.server.history.directory(store_id)
+                directory, filename = selected["name"].rsplit("/", 1)
+                artifact = namespace, claim, directory
                 if route == "api/nsight":
                     if selected["format"] != "nsight":
                         self._json(400, {"error": "Select an Nsight Systems report."})
                         return
-                    url = self.server.storage.open_nsight(*artifact, name)
+                    url = self.server.nsight.open(
+                        *artifact, filename, deployment_uid=deployment_uid
+                    )
                     self._json(200, {"url": url})
                     return
                 self._headers(200, "application/octet-stream", selected["size"])
                 streaming = True
-                self.server.storage.stream_file(*artifact, name, self.wfile)
+                self.server.storage.stream_file(
+                    *artifact, filename, self.wfile, deployment_uid=deployment_uid
+                )
             else:
                 self.send_error(404)
         except (FileNotFoundError, DeploymentError) as error:
@@ -281,22 +347,3 @@ class ProfileHandler(BaseHTTPRequestHandler):
                     404 if isinstance(error, FileNotFoundError) else 503,
                     {"error": str(error)},
                 )
-
-
-def view(command: ProfileViewCommand) -> None:
-    """Print a loopback viewer URL and retain readers until the user exits."""
-    if timeout_seconds(command.timeout) <= 0:
-        raise DeploymentError("--timeout must be positive")
-    kubectl = Kubectl()
-    # A long-lived viewer must not switch clusters when another terminal changes context.
-    context = kubectl.run(["config", "current-context"]).stdout.strip()
-    kubectl = Kubectl(context=context)
-    history = CaptureDirectories(kubectl, command.namespace)
-    history.refresh()
-    with (
-        ProfileStorage(kubectl, timeout=command.timeout) as storage,
-        ProfileViewer(history, storage) as server,
-    ):
-        print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
-        print("Press Ctrl+C to stop.", flush=True)
-        server.serve_forever()

@@ -21,14 +21,14 @@
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 ```
 
-该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
+不传 `--name` 时，实例名采用 [`frontend.yaml`](frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。命令在当前 kubeconfig 的命名空间中创建该实例，并等待服务就绪。添加 `--name candidate-a` 则部署名为 `candidate-a` 的独立实例，后续命令也使用这个名字。
 
 ## 发送请求
 
 解析前端服务 URL：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
 ```
 
 发送 OpenAI API 兼容格式的请求：
@@ -48,5 +48,5 @@ printf '\n'
 ## 清理
 
 ```bash
-foretoken delete examples/quickstart/qwen3-0.6b
+foretoken delete qwen3-0-6b
 ```

@@ -18,7 +18,7 @@ from typing import Any, BinaryIO
 
 from foretoken.command_execution import command_deadline, run_command
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.namespace import mutation_lock_fds
+from foretoken.kubernetes.mutation import mutation_lock_fds
 from foretoken.tools import resolve_tool
 
 
@@ -40,6 +40,10 @@ class KubernetesServiceUnavailableError(DeploymentError):
     """Identify API-server unavailability for callers that own a readiness deadline."""
 
 
+class KubernetesPermissionError(DeploymentError):
+    """Identify an API authorization denial for owners that can defer privileged cleanup."""
+
+
 class KubernetesVersionConflictError(DeploymentError):
     """Identify failed API version preconditions without reclassifying field ownership errors."""
 
@@ -48,9 +52,14 @@ class Kubectl:
     """Run kubectl in the selected context, optionally sharing one monotonic operation deadline."""
 
     def __init__(self, context: str | None = None, *, deadline: float | None = None) -> None:
-        self.context = context
+        """Capture one kubeconfig selection for the caller's complete operation."""
+        self.context = context or ""
         self.deadline = deadline
         self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
+        configuration = _decode_object(self.run(["config", "view", "--minify", "-o", "json"]).stdout)
+        self.context = context or configuration["current-context"]
+        self.namespace = configuration["contexts"][0]["context"].get("namespace") or "default"
+        self.server = configuration["clusters"][0]["cluster"]["server"]
 
     @contextmanager
     def until(self, deadline: float) -> Iterator[float]:
@@ -70,7 +79,7 @@ class Kubectl:
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
-        context = ["--context", self.context] if self.context is not None else []
+        context = ["--context", self.context] if self.context else []
         return [self.executable, *context, *args]
 
     def run(
@@ -102,9 +111,12 @@ class Kubectl:
             message = f"{' '.join(command)} failed: {detail}"
             if detail.startswith("Error from server (ServiceUnavailable):"):
                 raise KubernetesServiceUnavailableError(message)
+            if detail.startswith("Error from server (Forbidden):"):
+                raise KubernetesPermissionError(message)
             if (
                 "the object has been modified; please apply your changes to the latest version" in detail
                 or "metadata.resourceVersion: Invalid value: 0: must be specified for an update" in detail
+                or "Precondition failed: ResourceVersion in precondition:" in detail
             ):
                 raise KubernetesVersionConflictError(message)
             raise DeploymentError(message)
@@ -151,10 +163,8 @@ class Kubectl:
         raise DeploymentError(f"{' '.join(command)} failed: {detail}")
 
     def current_namespace(self) -> str:
-        """Resolve the selected context's namespace for namespace-local deployment ownership."""
-        return self.run([
-            "config", "view", "--minify", "-o", "jsonpath={.contexts[0].context.namespace}",
-        ]).stdout.strip() or "default"
+        """Return the namespace selected when this operation's client was created."""
+        return self.namespace
 
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
@@ -180,8 +190,8 @@ class Kubectl:
             input_text=rendered,
         )
 
-    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True) -> None:
-        """Conditionally delete one observed UID/version; callers may wait outside a mutation lock."""
+    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True, propagation: str = "Foreground") -> None:
+        """Delete an observed UID/version, letting lifecycle finalizers order children with Background propagation."""
         metadata = value["metadata"]
         version = value["apiVersion"]
         base = f"/api/{version}" if "/" not in version else f"/apis/{version}"
@@ -196,7 +206,7 @@ class Kubectl:
             input_text=json.dumps({
                 "apiVersion": "v1", "kind": "DeleteOptions",
                 "preconditions": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
-                "propagationPolicy": "Foreground",
+                "propagationPolicy": propagation,
             }),
             timeout=timeout_seconds(timeout),
         )
@@ -409,8 +419,8 @@ class Kubectl:
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
     def current_context(self) -> str:
-        """Return the active kubeconfig context used by deployment operations."""
-        return self.run(["config", "current-context"]).stdout.strip()
+        """Return this operation's fixed kubeconfig context."""
+        return self.context
 
 
 def _decode_object(output: str) -> dict[str, Any]:

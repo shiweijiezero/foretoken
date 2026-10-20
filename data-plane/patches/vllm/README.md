@@ -44,3 +44,9 @@ Patches for another library belong in a separate directory alongside `vllm/`.
 `common/engine-abort-completion.patch` makes Python EngineCore publish scheduler-confirmed aborted request IDs on every transport, including eager aborts. Keep both patches aligned when upstream request registration, scheduler termination, or output delivery changes.
 Completion marks the end of request scheduling, not GPU synchronization or connector KV release.
 When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.
+
+## Chat token metadata
+
+`rust/chat-token-metadata.patch` builds on upstream [decoder attribution](https://github.com/vllm-project/vllm/commit/b911fe85c42ae984f27d183a0b1de309adab9bf2) and [reasoning attribution](https://github.com/vllm-project/vllm/commit/21a22110404d98dcab5f51cd90e9acb0acc15e47). It carries sampled positions and complete decoded spans through parser buffering, including tokens that jointly produce one UTF-8 fragment.
+
+`ChatTokenMetadataMode::Sampled` preserves raw metadata and its update cadence. `VisibleContent` releases metadata only after the complete token span is classified as parser-visible content; a token crossing hidden content or excluded stop text is omitted as a whole. Keep usage independent of this filtering. When updating the patch, exercise stop buffering, truncation, and parser recovery in both modes, using the real tokenizer and output processors.

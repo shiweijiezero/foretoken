@@ -20,15 +20,87 @@ import (
 const (
 	CacheVolumeName = "runtime-cache"
 	CacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	// RuntimeCacheDirectoryAnnotation records the filesystem selected by a prepared claim.
+	RuntimeCacheDirectoryAnnotation = "inference.foretoken.io/runtime-cache-directory"
 )
 
-// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
-func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
-		{Name: CacheClaimEnv, Value: cache.ClaimName},
-		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
+// RuntimeCacheDirectoryBindings authorizes exact directories without granting PV access.
+// Directories absent from the map are not authorized.
+type RuntimeCacheDirectoryBindings map[string]string
+
+// RuntimeCacheProfile selects persistent storage from administrator-prepared directory bindings or defaults.
+type RuntimeCacheProfile struct {
+	ClaimName         string
+	MountPath         string
+	DirectoryBindings RuntimeCacheDirectoryBindings
+}
+
+// Resolve selects an explicit directory, an existing-claim default, or a managed cache.
+func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
+	var caches inferencev1alpha1.RuntimeCacheList
+	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
+		return nil, false, fmt.Errorf("list RuntimeCaches: %w", err)
 	}
+	directoryRequested := false
+	for _, cache := range caches.Items {
+		if cache.Spec.Directory != "" {
+			directoryRequested = true
+			break
+		}
+	}
+	claimName := profile.ClaimName
+	var cache *inferencev1alpha1.RuntimeCache
+	// An explicit directory selects storage; an existing-claim default must not
+	// silently replace it with a different filesystem.
+	if claimName == "" || directoryRequested {
+		if len(caches.Items) == 0 {
+			return nil, true, nil
+		}
+		if len(caches.Items) > 1 {
+			return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
+		}
+		cache = &caches.Items[0]
+		if !cache.DeletionTimestamp.IsZero() {
+			return nil, true, nil
+		}
+		if cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded {
+			return nil, false, nil
+		}
+		if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
+			return nil, false, nil
+		}
+		claimName = cache.Status.ClaimName
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, claim); err != nil {
+		return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
+	}
+	directory := ""
+	if cache != nil && cache.Spec.Directory != "" {
+		if profile.DirectoryBindings[cache.Spec.Directory] != claim.Name {
+			return nil, false, fmt.Errorf("directory %q has no matching administrator-prepared claim", cache.Spec.Directory)
+		}
+		directory = cache.Spec.Directory
+	} else if cache == nil {
+		for authorized, name := range profile.DirectoryBindings {
+			if name == claim.Name {
+				directory = authorized
+				break
+			}
+		}
+		if directory == "" {
+			directory = claim.Annotations[RuntimeCacheDirectoryAnnotation]
+		}
+	}
+	return profile.binding(claim.Name, directory, claim.Annotations[DirectoryOwnerAnnotation])
+}
+
+// Validate rejects an invalid runtime cache mount path.
+func (profile RuntimeCacheProfile) Validate() error {
+	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
+		return fmt.Errorf("cache mount path must be an absolute non-root path")
+	}
+	return nil
 }
 
 // PlaceRuntimeCache keeps all consumers of a single-node writable claim together.
@@ -64,64 +136,47 @@ func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace stri
 	return nil
 }
 
-// RuntimeCacheProfile configures the cache mount path and an optional existing-claim override.
-type RuntimeCacheProfile struct {
-	ClaimName string
-	MountPath string
+// CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
+func CacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
+		{Name: CacheClaimEnv, Value: cache.ClaimName},
+		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(CacheObservationPort(runtimePort)))},
+	}
 }
 
-// Resolve selects the configured existing claim or the single usable managed cache in a namespace.
-func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
-	if profile.ClaimName != "" {
-		claim := new(corev1.PersistentVolumeClaim)
-		if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: profile.ClaimName}, claim); err != nil {
-			return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
-		}
-		return profile.binding(claim.Name, claim.Annotations[DirectoryOwnerAnnotation])
+// DirectoryPVC selects prepared storage for cache reconciliation without taking ownership.
+func (bindings RuntimeCacheDirectoryBindings) DirectoryPVC(ctx context.Context, reader client.Reader, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, error) {
+	name := bindings[cache.Spec.Directory]
+	if name == "" {
+		return nil, fmt.Errorf("directory %q has no administrator-prepared claim in namespace %q", cache.Spec.Directory, cache.Namespace)
 	}
-	var caches inferencev1alpha1.RuntimeCacheList
-	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
-		return nil, false, fmt.Errorf("list RuntimeCaches: %w", err)
-	}
-	if len(caches.Items) == 0 {
-		return nil, true, nil
-	}
-	if len(caches.Items) > 1 {
-		return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
-	}
-	cache := &caches.Items[0]
-	if !cache.DeletionTimestamp.IsZero() {
-		return nil, true, nil
-	}
-	if cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded {
-		return nil, false, nil
-	}
-	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
-		return nil, false, nil
-	}
-	owner := ""
-	if cache.Spec.Directory != "" {
-		owner = cache.Annotations[DirectoryOwnerAnnotation]
-	}
-	return profile.binding(cache.Status.ClaimName, owner)
+	return ReadPreparedCachePVC(ctx, reader, cache.Namespace, name)
 }
 
-// binding resolves the storage identity shared by preparation, serving and file readers.
-func (profile RuntimeCacheProfile) binding(claimName, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
+// ReadPreparedCachePVC returns a borrowed filesystem claim without changing its lifecycle.
+func ReadPreparedCachePVC(ctx context.Context, reader client.Reader, namespace, name string) (*corev1.PersistentVolumeClaim, error) {
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, claim); err != nil {
+		return nil, fmt.Errorf("read prepared runtime cache claim %q: %w", name, err)
+	}
+	if !claim.DeletionTimestamp.IsZero() {
+		return nil, fmt.Errorf("prepared runtime cache claim %q is deleting", name)
+	}
+	if claim.Spec.VolumeMode != nil && *claim.Spec.VolumeMode != corev1.PersistentVolumeFilesystem {
+		return nil, fmt.Errorf("prepared runtime cache claim %q requires Filesystem volume mode", name)
+	}
+	return claim, nil
+}
+
+// binding pins the confirmed directory and storage identity for execution and lifecycle consumers.
+func (profile RuntimeCacheProfile) binding(claimName, directory, owner string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	identity, err := ParseStorageIdentity(owner)
 	if err != nil {
 		return nil, false, fmt.Errorf("runtime cache claim %q: %w", claimName, err)
 	}
 	return &inferencev1alpha1.RuntimeCacheBinding{
 		ClaimName: claimName, MountPath: profile.MountPath,
-		DirectoryOwner: identity,
+		Directory: directory, DirectoryOwner: identity,
 	}, true, nil
-}
-
-// Validate rejects an invalid runtime cache mount path.
-func (profile RuntimeCacheProfile) Validate() error {
-	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
-		return fmt.Errorf("cache mount path must be an absolute non-root path")
-	}
-	return nil
 }

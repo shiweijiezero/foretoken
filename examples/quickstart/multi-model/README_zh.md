@@ -18,19 +18,19 @@
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint examples/quickstart/multi-model)"
+export FRONTEND_URL="$(foretoken endpoint multi-model)"
 ```
+
+不传 `--name` 时，实例名采用 [`frontend.yaml`](frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `multi-model`。添加 `--name candidate-a` 则部署名为 `candidate-a` 的独立实例，后续命令也使用这个名字。
 
 ## 观察队列自动扩缩容
 
 Qwen 服务每 5 秒评估一次队列负载，从 1 个副本开始，每次评估最多调整 1 个副本，缩容前等待 5 分钟。本示例使用的设置见 [Qwen 模型配置](model-qwen3-0.6b.yaml)。
 
-另开一个终端观察 Qwen 容量资源：
+另开一个终端持续查看该实例的服务状态：
 
 ```bash
-kubectl get modelpool,modelgroup \
-  --namespace foretoken-multi-model-demo \
-  --watch
+foretoken status multi-model --watch
 ```
 
 回到部署时使用的终端，发送 32 个请求，同时最多运行 8 个：
@@ -44,22 +44,7 @@ seq 1 32 | xargs -P8 -I{} sh -c '
 '
 ```
 
-负载运行期间，队列压力可能增加 Qwen 副本。是否扩容取决于可用 GPU 容量和请求持续时间。使用以下命令查看实际应用的容量和决策原因：
-
-```bash
-kubectl get modelservice multi-model-qwen3-0.6b \
-  --namespace foretoken-multi-model-demo \
-  -o json | jq '.status.autoscaling[] | {
-    id,
-    kind,
-    role,
-    observationState,
-    direction,
-    desiredReplicas: .decision.desiredReplicas,
-    adjustedReplicas: .adjustment.adjustedReplicas,
-    appliedReplicas
-  }'
-```
+负载运行期间，队列压力可能增加 Qwen 副本，是否扩容取决于可用 GPU 容量和请求持续时间。状态输出会随容量变化更新副本就绪情况。
 
 ## 发送请求
 
@@ -92,5 +77,5 @@ printf '\n'
 ## 清理
 
 ```bash
-foretoken delete examples/quickstart/multi-model
+foretoken delete multi-model
 ```

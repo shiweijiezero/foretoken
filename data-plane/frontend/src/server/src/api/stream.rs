@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use foretoken_chat::ChatEvent;
+use foretoken_chat::{ChatEvent, ChatTokenMetadataMode};
 use foretoken_text::output::decoded_text_event_stream;
 use futures::{Stream, StreamExt};
 
@@ -92,7 +92,12 @@ pub(crate) fn chat_events(
     } = generated;
     let decoded = idle_timed(decoded(generated), idle)
         .map(|event| event.map_err(foretoken_chat::Error::from));
+    let metadata_mode = if include_reasoning {
+        ChatTokenMetadataMode::Sampled
+    } else {
+        ChatTokenMetadataMode::VisibleContent
+    };
     output_processor
-        .process(Box::pin(decoded))
+        .process_with_metadata(Box::pin(decoded), metadata_mode)
         .map(|stream| (include_reasoning, stream))
 }

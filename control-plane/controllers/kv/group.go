@@ -80,25 +80,10 @@ type managementHTTPError struct {
 	status int
 }
 
-func (err *managementHTTPError) Error() string {
-	return fmt.Sprintf("endpoint returned HTTP %d", err.status)
-}
-
 type GroupReconciler struct {
 	client.Client
 	HTTPClient            *http.Client
 	ControlPlaneNamespace string
-}
-
-// SetupWithManager registers KVGroup reconciliation for its owned client infrastructure.
-func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.KVGroup{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.PersistentVolumeClaim{}).
-		Owns(&networkingv1.NetworkPolicy{}).
-		Complete(reconciler)
 }
 
 // Reconcile materializes one KVGroup client workload and publishes its readiness.
@@ -139,11 +124,7 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
-	current := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), current); err != nil {
-		return ctrl.Result{}, err
-	}
-	podReady := workload.DeploymentAvailable(current)
+	podReady := workload.DeploymentAvailable(deployment)
 	storageEnabled := storageRegistrationEnabled(group)
 	storageReady := true
 	storageCondition := kvGroupCondition{}
@@ -175,8 +156,12 @@ func kvGroupWorkloadName(group *inferencev1alpha1.KVGroup) string {
 }
 
 // One KVGroup materializes a single Mooncake client together with its optional offload disk,
-// management Service, and namespace-scoped network boundary as one owned resource set.
+// management Service, and deployment-scoped network boundary as one owned resource set.
 func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNamespace string) (*appsv1.Deployment, *corev1.Service, *corev1.PersistentVolumeClaim, *networkingv1.NetworkPolicy, error) {
+	deploymentUID := group.Labels[inferencev1alpha1.DeploymentUIDLabel]
+	if deploymentUID == "" {
+		return nil, nil, nil, nil, fmt.Errorf("KVGroup %q has no deployment UID", group.Name)
+	}
 	requests, limits, err := kvResources(group.Spec.Client.Resources)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -272,8 +257,9 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		}},
 	}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labels, Ports: servicePorts}}
-	// Keep namespace ingress open because the provider may use dynamic data paths.
-	ingress := []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}}
+	// The provider uses dynamic data ports within the deployment.
+	deploymentLabels := map[string]string{inferencev1alpha1.DeploymentUIDLabel: deploymentUID}
+	ingress := []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchLabels: deploymentLabels}}}}}
 	if registrationEnabled {
 		if controlPlaneNamespace == "" {
 			return nil, nil, nil, nil, fmt.Errorf("control-plane namespace is required for storage registration")
@@ -283,7 +269,10 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 			From: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": controlPlaneNamespace}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{workload.ControlPlanePodLabel: workload.ControlPlanePodLabelValue}},
+				PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					workload.ControlPlanePodLabel:        workload.ControlPlanePodLabelValue,
+					inferencev1alpha1.DeploymentUIDLabel: deploymentUID,
+				}},
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Port: &managementNetworkPort, Protocol: &protocol}},
 		})
@@ -398,7 +387,7 @@ func storageRegistrationEnabled(group *inferencev1alpha1.KVGroup) bool {
 
 // storageManagementPort resolves the client HTTP port used by registration checks.
 func storageManagementPort(group *inferencev1alpha1.KVGroup) int32 {
-	if registration := group.Spec.Client.StorageRegistration; registration != nil && registration.Port != 0 {
+	if registration := group.Spec.Client.StorageRegistration; registration != nil {
 		return registration.Port
 	}
 	return inferencev1alpha1.DefaultStorageRegistrationPort
@@ -505,6 +494,10 @@ func (reconciler *GroupReconciler) checkStorageRegistration(ctx context.Context,
 	return true, kvGroupCondition{ready: true, reason: "Registered", message: "Mooncake client registration and memory segments match Master"}
 }
 
+func (err *managementHTTPError) Error() string {
+	return fmt.Sprintf("endpoint returned HTTP %d", err.status)
+}
+
 // readProviderJSON reads registration state from a bounded client or Master request.
 func (reconciler *GroupReconciler) readProviderJSON(ctx context.Context, endpoint string, target any) error {
 	if reconciler.HTTPClient == nil {
@@ -572,4 +565,15 @@ func clientPodMessage(ready bool) string {
 		return "Mooncake client Pod is Kubernetes-ready and reachable through its Service"
 	}
 	return "Mooncake client Pod is not Kubernetes-ready"
+}
+
+// SetupWithManager registers KVGroup reconciliation for its owned client infrastructure.
+func (reconciler *GroupReconciler) SetupWithManager(manager ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVGroup{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Complete(reconciler)
 }

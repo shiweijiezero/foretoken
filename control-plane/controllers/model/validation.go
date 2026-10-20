@@ -9,9 +9,9 @@ import (
 	"fmt"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 )
 
 func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {

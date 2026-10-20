@@ -169,6 +169,12 @@ spec:
                         format: int32
                         maximum: 1
                         type: integer
+                      preparationVersion:
+                        description: |-
+                          PreparationVersion pins the selected executable's artifact acquisition and cache contract.
+                          Absence retains the backend's earlier acquisition protocol.
+                        format: int32
+                        type: integer
                       sourceRevision:
                         description: SourceRevision retains the admitted source intent
                           independently of source-mode defaults.
@@ -474,16 +480,14 @@ spec:
                         - message: exactly one Store source is required
                           rule: has(self.profile) != has(self.managedBinding)
                       offload:
-                        description: KVOffload defines local CPU and optionally filesystem-backed
-                          KV offload.
+                        description: NormalizedKVOffload retains parsed capacity while
+                          preserving the Pool's quantity wire format.
                         properties:
                           cpuCacheSize:
-                            allOf:
-                            - minLength: 1
-                            - minLength: 1
                             description: CPUCacheSize is the CPU tier capacity available
-                              to vLLM.
+                              to the inference engine.
                             maxLength: 64
+                            minLength: 1
                             type: string
                             x-kubernetes-validations:
                             - message: must be a valid non-negative Kubernetes resource
@@ -643,6 +647,11 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
+                      directory:
+                        description: |-
+                          Directory identifies the authorized data directory retained by this execution cohort.
+                          Shared-cache lifecycle consumers use it independently of namespace-local claim names.
+                        type: string
                       directoryOwner:
                         description: DirectoryOwner preserves the discovered directory
                           identity across cache consumers.
@@ -746,6 +755,21 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
+              artifactSource:
+                description: |-
+                  ArtifactSource retains the selected source record, including a pending publication, while stopped.
+                  Superseded cohorts retain their own records until their workloads finish draining.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                  uid:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

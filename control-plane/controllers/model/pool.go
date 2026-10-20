@@ -40,52 +40,16 @@ type PoolReconciler struct {
 	RuntimeProfile resolver.RuntimeProfile
 }
 
-// SetupWithManager registers the ModelPool controller and its owned Groups.
-func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
-	reconciler.APIReader = manager.GetAPIReader()
-	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.ModelPool{}).
-		Owns(&inferencev1alpha1.ModelGroup{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForStorageClaim)).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForInstancePod)).
-		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
-		Complete(reconciler)
-}
-
-// poolsForStorageClaim wakes pools whose encoder transfer uses a changed claim.
-func (reconciler *PoolReconciler) poolsForStorageClaim(ctx context.Context, object client.Object) []reconcile.Request {
-	var pools inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "list pools for encoder storage claim")
-		return nil
-	}
-	var requests []reconcile.Request
-	for index := range pools.Items {
-		pool := &pools.Items[index]
-		template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
-		if err == nil && template.ECRuntime != nil && template.ECRuntime.SharedStorageClaim == object.GetName() {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
-		}
-	}
-	return requests
-}
-
-// poolsForService maps a ModelService update to its owned ModelPools.
-func (reconciler *PoolReconciler) poolsForService(ctx context.Context, object client.Object) []reconcile.Request {
-	var pools inferencev1alpha1.ModelPoolList
-	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
-		return nil
-	}
-	requests := make([]reconcile.Request, 0)
-	for index := range pools.Items {
-		pool := &pools.Items[index]
-		if pool.Spec.ModelServiceRef.Name == object.GetName() && pool.Spec.ModelServiceRef.UID == string(object.GetUID()) {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
-		}
-	}
-	return requests
+type groupState struct {
+	Materialized         bool
+	Ready                bool
+	CapacityReady        bool
+	Target               metav1.Condition
+	RolloutPending       bool
+	InsufficientCapacity bool
+	PreparedRevision     string
+	Reason               string
+	Message              string
 }
 
 // Reconcile materializes the desired Group revision and aggregates Group readiness.
@@ -109,6 +73,13 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		if pending {
 			return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
 		}
+		pending, err = reconciler.reconcilePreparationSources(ctx, pool, nil, nil)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if pending {
+			return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
+		}
 		base := pool.DeepCopy()
 		controllerutil.RemoveFinalizer(pool, modelPoolFinalizer)
 		return ctrl.Result{}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
@@ -122,6 +93,10 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		controllerutil.AddFinalizer(pool, modelPoolFinalizer)
 		return ctrl.Result{Requeue: true}, reconciler.Patch(ctx, pool, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	}
+	// Retain the source before draining Groups, even if the next engine configuration is invalid.
+	if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, nil); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Capacity retirement uses the immutable Groups already running. It does not
 	// depend on resolving the next template or applying new admission settings.
 	retiring, err := reconciler.retireExcessGroups(ctx, pool, pool.Spec.DesiredGroups)
@@ -134,9 +109,6 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		if stopped {
 			target = metav1.Condition{Status: metav1.ConditionTrue, Reason: "ScaledToZero", Message: "All ModelGroups have stopped"}
 		}
-		if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
-			return ctrl.Result{}, err
-		}
 		return ctrl.Result{}, reconciler.updateStatus(ctx, pool, metav1.ConditionUnknown, "NotRequired", "Stopping uses the existing Group execution contracts", groupState{
 			Materialized: stopped, RolloutPending: !stopped, Target: target,
 			Reason: target.Reason, Message: target.Message,
@@ -144,6 +116,10 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 	// Preserve the active limit until this Pool reflects the owning service's current intent.
 	if !reflect.DeepEqual(pool.Spec.InstanceAdmission, service.Spec.InstanceAdmission) {
+		return ctrl.Result{}, nil
+	}
+	// The service owner must recover the executable selection before a legacy Pool can create a cohort.
+	if pool.Spec.Template.Application == nil || pool.Spec.Template.Application.PreparationVersion == nil {
 		return ctrl.Result{}, nil
 	}
 	template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
@@ -175,6 +151,11 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if err := reconciler.reconcileWeightSources(ctx, pool, template); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Establish the source reference before execution to cover publications racing with stop.
+	targetSpec := template.Spec(pool, 0)
+	if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, &targetSpec); err != nil {
+		return ctrl.Result{}, err
+	}
 	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision, retiring)
 	if err != nil {
 		active, stateErr := reconciler.currentActiveState(ctx, pool, servingconfig.ServingRevision(service, pool))
@@ -182,8 +163,11 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
 		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
 	}
-	if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
-		return ctrl.Result{}, err
+	// Readiness may follow the first source read; adopt its publication before committing PreparedRevision.
+	if state.PreparedRevision != "" {
+		if _, err := reconciler.reconcilePreparationSources(ctx, pool, service, &targetSpec); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if err := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", state); err != nil {
 		return ctrl.Result{}, err
@@ -295,18 +279,6 @@ func matchingRevision(groups []inferencev1alpha1.ModelGroup, pool *inferencev1al
 func groupMatchesTemplate(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) bool {
 	template.Revision = group.Spec.Revision
 	return reflect.DeepEqual(group.Spec, template.Spec(pool, group.Spec.Ordinal))
-}
-
-type groupState struct {
-	Materialized         bool
-	Ready                bool
-	CapacityReady        bool
-	Target               metav1.Condition
-	RolloutPending       bool
-	InsufficientCapacity bool
-	PreparedRevision     string
-	Reason               string
-	Message              string
 }
 
 // modelPoolStopped confirms the Pool controller has reconciled its current zero-capacity intent.
@@ -580,4 +552,52 @@ func rolloutMessage(state groupState) string {
 		return "Requested Group capacity is converging or superseded Groups are being retired"
 	}
 	return "No previous Group revision is pending rollout"
+}
+
+// SetupWithManager registers the ModelPool controller and its owned Groups.
+func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.ModelPool{}).
+		Owns(&inferencev1alpha1.ModelGroup{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForStorageClaim)).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForInstancePod)).
+		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
+		Complete(reconciler)
+}
+
+// poolsForStorageClaim wakes pools whose encoder transfer uses a changed claim.
+func (reconciler *PoolReconciler) poolsForStorageClaim(ctx context.Context, object client.Object) []reconcile.Request {
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list pools for encoder storage claim")
+		return nil
+	}
+	var requests []reconcile.Request
+	for index := range pools.Items {
+		pool := &pools.Items[index]
+		template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
+		if err == nil && template.ECRuntime != nil && template.ECRuntime.SharedStorageClaim == object.GetName() {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+		}
+	}
+	return requests
+}
+
+// poolsForService maps a ModelService update to its owned ModelPools.
+func (reconciler *PoolReconciler) poolsForService(ctx context.Context, object client.Object) []reconcile.Request {
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0)
+	for index := range pools.Items {
+		pool := &pools.Items[index]
+		if pool.Spec.ModelServiceRef.Name == object.GetName() && pool.Spec.ModelServiceRef.UID == string(object.GetUID()) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+		}
+	}
+	return requests
 }

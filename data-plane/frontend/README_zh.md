@@ -39,7 +39,7 @@ curl --fail-with-body "$FRONTEND_URL/v1/responses" \
 
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具。强制选择工具和严格约束参数需要模型具备[结构化输出能力](#修改服务配置)。
 
-输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。
+输出 token 预算包含思考内容。Chat Completions 支持 `max_completion_tokens` 和 `max_tokens`，同时传入时以前者为准。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。
 
 ### 延续对话
 
@@ -102,34 +102,42 @@ spec:
     retentionSeconds: 86400
 ```
 
-`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，然后应用配置：
+`video-results` 对应同一命名空间内已准备好的专用持久化存储声明（PVC）；跨节点运行时需支持 ReadWriteMany 共享访问。将参考图片放入该卷的 `inputs/reference.png`，再更新配方的默认实例 `h3-api`。如果部署时指定了 `--name`，将 `INSTANCE` 换成原来的实例名：
 
 ```bash
 DEPLOYMENT=examples/recipes/minimax-h3/a100-bf16-tp2
-foretoken deploy "$DEPLOYMENT" --timeout 1h
-FRONTEND_URL="$(foretoken endpoint "$DEPLOYMENT")"
+INSTANCE=h3-api
+foretoken deploy "$DEPLOYMENT" --name "$INSTANCE" --timeout 1h
+FRONTEND_URL="$(foretoken endpoint "$INSTANCE")"
+REQUEST_HOST="$(foretoken endpoint "$INSTANCE" --host)"
 mkdir -p ./data
 ```
 
-以下请求选择名为 `h3` 的模型服务，输入路径相对于视频存储卷根目录：
+`modelServiceRef.name` 需要填写实际部署的 Kubernetes ModelService 名称，不是模型标识。该配方只有一个模型服务，可从实例中读取它的名称后提交请求。输入路径相对于视频存储卷根目录：
 
 ```bash
+MODEL_SERVICE="$(kubectl get inferencedeployment "$INSTANCE" \
+  -o jsonpath='{.spec.resources[?(@.kind=="ModelService")].name}')"
+
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "modelServiceRef": {"name": "h3"},
-    "request": {
-      "task": "fl2va",
-      "prompt": "A sailboat crossing a calm bay at sunrise",
-      "width": 1024, "height": 576,
-      "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
-      "inputFiles": [{
-        "field": "input_reference",
-        "path": "inputs/reference.png",
-        "contentType": "image/png"
-      }]
-    }
-  }'
+  --data-binary @- <<EOF
+{
+  "modelServiceRef": {"name": "$MODEL_SERVICE"},
+  "request": {
+    "task": "fl2va",
+    "prompt": "A sailboat crossing a calm bay at sunrise",
+    "width": 1024, "height": 576,
+    "numFrames": 124, "fps": 24, "numInferenceSteps": 50,
+    "inputFiles": [{
+      "field": "input_reference",
+      "path": "inputs/reference.png",
+      "contentType": "image/png"
+    }]
+  }
+}
+EOF
 ```
 
 响应包含任务 `id`、状态地址 `status_url` 和视频地址 `content_url`。继续使用同一个前端地址，将下表的 `{id}` 替换为返回的任务 ID：
@@ -226,7 +234,7 @@ spec:
 
 ## 运维
 
-使用 `foretoken status` 查看部署状态，使用 `foretoken delete` 删除部署，均传入对应配置目录。指标、日志和告警见[可观测性指南](../../observability/README_zh.md)。
+用 `foretoken status` 查看部署实例，`foretoken delete` 删除实例，参数传入对应实例名。也可以传入配置目录；部署时使用了 `--name` 的，操作时沿用该名称。指标、日志和告警见[可观测性指南](../../observability/README_zh.md)。
 
 | 接口 | 用途 |
 | --- | --- |

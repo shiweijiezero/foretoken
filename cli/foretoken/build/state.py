@@ -26,21 +26,22 @@ from foretoken.applications.files import (
     remove_application_jobs,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import remove_build_pods
+from foretoken.build.cluster.builder import remove_build_pods
 from foretoken.build.inputs import BuildInputs, engine_source_roots
-from foretoken.build.node_images import (
+from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     image_tools_image,
     node_containerd_socket,
 )
-from foretoken.build.storage import SOURCE_BUILD_CACHE_LABEL
+from foretoken.build.cluster.storage import SOURCE_BUILD_CACHE_LABEL
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.manifest import ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 
 SOURCE_INSTALL_ANNOTATION = "foretoken.io/install-source"
+SOURCE_BUILD_KEY = "source-build.json"
 
 
 def _source_home() -> Path:
@@ -53,10 +54,7 @@ def _source_home() -> Path:
 
 def context_identity(kubectl: Kubectl) -> dict[str, str]:
     """Read connection identity locally without adding API permissions to release deploys."""
-    config = json.loads(
-        kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout
-    )
-    return {"server": config["clusters"][0]["cluster"]["server"]}
+    return {"server": kubectl.server}
 
 
 def cluster_state_directory(kubectl: Kubectl) -> Path:
@@ -112,14 +110,14 @@ def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared
 
 @contextmanager
 def source_operation(
-    kubectl: Kubectl, timeout: str, *, installing: bool = False, shared: bool = False
+    kubectl: Kubectl, timeout: str, *, required: bool = False, shared: bool = False
 ) -> Iterator[None]:
     """Exclude platform changes while independent source deployments share the cluster.
 
     Install, delete and uninstall own cleanup under the exclusive lock. Deployments
     additionally lock their checkout state, so unrelated candidates can build together.
     """
-    if not installing and not has_server_binding(kubectl):
+    if not required and not has_server_binding(kubectl):
         yield
         return
     # POSIX locking is needed only for source operations, not other CLI commands.
@@ -186,50 +184,60 @@ def checkout_operation(directory: Path, kubectl: Kubectl, timeout: str) -> Itera
         yield
 
 
-def record_source_deployment(directory: Path, deployment: ForetokenDeployment) -> None:
-    """Associate a checkout with intended services before building, including failed submissions."""
+def record_source_deployment(directory: Path, deployment: ForetokenDeployment, kubectl: Kubectl) -> None:
+    """Associate a live instance UID with its checkout before building or publishing applications."""
     path = directory / "checkout.json"
     identity = json.loads(path.read_text())
-    services = identity.setdefault("services", [])
-    for ref in deployment.service_refs():
-        service = {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
-        if service not in services:
-            services.append(service)
+    services = [service for service in identity.get("services", []) if _source_consumer_exists(kubectl, service)]
+    service = {"kind": "InferenceDeployment", "namespace": deployment.namespace, "name": deployment.name, "uid": deployment.uid}
+    if service not in services:
+        services.append(service)
+    identity["services"] = services
     write_source_state(path, identity)
+
+
+def _source_consumer_exists(kubectl: Kubectl, reference: dict[str, str]) -> bool:
+    """Keep a recorded consumer only while its actual resource incarnation exists."""
+    current = kubectl.get_if_exists(reference["kind"], reference["name"], reference["namespace"])
+    return current is not None and ("uid" not in reference or current["metadata"]["uid"] == reference["uid"])
 
 
 def release_source_deployment(
     kubectl: Kubectl, deployment: ForetokenDeployment, timeout: str,
 ) -> None:
-    """Release a deleted deployment's source associations and clean unused builds under the source lock."""
-    if not has_server_binding(kubectl):
+    """Release this instance's checkout associations without requiring build permissions for ordinary members."""
+    associated = any(
+        reference.get("kind") == "InferenceDeployment"
+        and reference["namespace"] == deployment.namespace and reference["name"] == deployment.name
+        and (not deployment.uid or reference.get("uid") == deployment.uid)
+        for path in _source_home().glob("*/checkouts/*/checkout.json")
+        for reference in json.loads(path.read_text()).get("services", [])
+    )
+    retired = tuple(_source_home().glob("*/retired/*/retired.json"))
+    pending_retirement = False
+    if not associated and retired:
+        context = context_identity(kubectl)
+        pending_retirement = any(json.loads(path.read_text())["context"] == context for path in retired)
+    if not associated and not pending_retirement:
         return
-    cluster = cluster_state_directory(kubectl)
-    services = [
-        {"kind": ref.kind, "namespace": ref.namespace, "name": ref.name}
-        for ref in deployment.service_refs()
-    ]
-    namespaces = {
-        obj["metadata"]["name"] for obj in deployment.objects if obj.get("kind") == "Namespace"
-    }
-    for path in (cluster / "checkouts").glob("*/checkout.json"):
-        identity = json.loads(path.read_text())
-        retained = [
-            service for service in identity.get("services", [])
-            if service not in services and service["namespace"] not in namespaces
-        ]
-        if retained == identity.get("services", []):
-            continue
-        if retained or not identity.get("services_complete", False):
-            identity["services"] = retained
-            write_source_state(path, identity)
-            if not retained:
-                print("Source build resources retained: earlier deployment ownership is unknown", flush=True)
-        else:
-            # Keep the final association until its recovery archive and retirement
-            # record are durable, so repeating delete can finish interrupted cleanup.
-            _retire_source_checkout(kubectl, path.parent)
-    reconcile_source_resources(kubectl, timeout)
+    with source_operation(kubectl, timeout, required=True):
+        cluster = cluster_state_directory(kubectl)
+        for path in (cluster / "checkouts").glob("*/checkout.json"):
+            identity = json.loads(path.read_text())
+            retained = [
+                service for service in identity.get("services", [])
+                if _source_consumer_exists(kubectl, service)
+            ]
+            if retained == identity.get("services", []):
+                continue
+            if retained or not identity.get("services_complete", False):
+                identity["services"] = retained
+                write_source_state(path, identity)
+                if not retained:
+                    print("Source build resources retained: earlier deployment ownership is unknown", flush=True)
+            else:
+                _retire_source_checkout(kubectl, path.parent)
+        reconcile_source_resources(kubectl, timeout)
 
 
 def _retire_source_checkout(kubectl: Kubectl, directory: Path) -> None:
@@ -477,9 +485,28 @@ def record_install(
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
-    platform = Helm(default_platform_config(command.oci_registry)).platform_configuration(kubectl)
+    platform = Helm(default_platform_config(command.oci_registry), kubectl).platform_configuration()
     if platform["metadata"].get("annotations", {}).get(SOURCE_INSTALL_ANNOTATION) != "source":
         raise DeploymentError("expected a source-installed Foretoken platform")
+    if build_state is not None:
+        # Developers on another workstation need build choices, not this machine's
+        # paths, credentials, compiler volumes or captured installation history.
+        recipe = {
+            "registry": build_state["registry"],
+            "ociRegistry": command.oci_registry,
+            "baseImage": base_image,
+            "runtimeBackend": build_state["runtime_backend"],
+            "buildMetaXRuntime": build_state["build_metax_runtime"],
+            "configuration": build_state["configuration"],
+        }
+        metadata = platform["metadata"]
+        kubectl.run([
+            "patch", "configmap", metadata["name"], "--namespace", metadata["namespace"],
+            "--type=merge", "--patch", json.dumps({
+                "metadata": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
+                "data": {SOURCE_BUILD_KEY: json.dumps(recipe)},
+            }),
+        ])
     path = directory / "install.json"
     previous = json.loads(path.read_text()) if path.is_file() else {}
     applications = (build_state or {}).get("applications", {})
@@ -516,6 +543,9 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
     """Read environment images selected by platform defaults, services and workload consumers."""
     images: set[str] = set()
     for document in documents:
+        if document.get("kind") == "ConfigMap" and "controller-selection.json" in document.get("data", {}):
+            selection = json.loads(document["data"]["controller-selection.json"])
+            images.update(application_images([selection["template"]["controller"]]))
         if document.get("metadata", {}).get("labels", {}).get("foretoken.io/platform") == "configuration":
             runtime = runtime_settings(document)
             images.update(filter(None, (
@@ -568,7 +598,7 @@ def reconcile_source_resources(
     retired compiler volumes and runtime files. Uninstall releases all Foretoken pins;
     the platform lifecycle owns its remaining storage and state cleanup.
     """
-    from foretoken.build.node_images import node_image_store
+    from foretoken.build.cluster.images import node_image_store
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
@@ -613,7 +643,7 @@ def reconcile_source_resources(
     if checkout is None and not uninstall and retired:
         try:
             origin = ApplicationFiles(kubectl, config.namespace)
-            references = origin.references(Helm(config).application_history())
+            references = origin.references(Helm(config, kubectl).application_history())
             if references is None:
                 completed_bindings.clear()
             else:
@@ -684,7 +714,7 @@ def reconcile_source_resources(
         return
     nodes = kubectl.list_resources(("nodes",), "")
     if uninstall and not sockets:
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        context = kubectl.current_context()
         for node in nodes:
             socket = node_containerd_socket(context, node)
             if socket:
@@ -694,17 +724,17 @@ def reconcile_source_resources(
             access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
     retained: set[str] = set()
     if not uninstall:
-        history = Helm(config).image_history()
+        history = Helm(config, kubectl).image_history()
         if history is None:
             return
         retained.update(history)
         consumers = application_consumers(kubectl)
         retained.update(application_images(consumers))
-        # A service can select a publication before its controller has written the
-        # image into status. Preserve that manifest's environment across later builds.
+        # Desired source selections protect their environments before a controller
+        # or its serving status has materialized the selected image.
         if any(
-            obj.get("kind") in SERVICE_COMPONENTS
-            and obj["metadata"].get("annotations", {}).get(SOURCE_REVISION)
+            (obj.get("kind") == "InferenceDeployment" and obj.get("spec", {}).get("controllerSourceRevision"))
+            or (obj.get("kind") in SERVICE_COMPONENTS and obj["metadata"].get("annotations", {}).get(SOURCE_REVISION))
             for obj in consumers
         ):
             try:

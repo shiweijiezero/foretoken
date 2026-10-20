@@ -59,7 +59,9 @@ See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace i
 
 The team reads the task, code and previous results, chooses a useful question, and investigates it through implementation and experiments. A question may take several iterations or lead to a finding that an approach is unsuitable. The lead uses the results to continue, change direction or combine approaches, then validates and delivers the outcome when the task ends.
 
-Use [source deployments](../docs/deployment/source.md#run-candidates-in-parallel) to build code changes and run candidates in separate environments. Once workload groups are defined, the team can compare them through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results, and continuing the research.
+Use [source deployments](../docs/deployment/source.md#run-candidates-in-parallel) to build code changes and give each parallel candidate its own instance name. Use the same `--name` with deployment and evaluation commands, and select that instance by name for `status`, `stop`, `delete` and `endpoint`.
+
+Once workload groups are defined, the team can compare them through existing sweeps and assess performance and answer quality against the task's requirements. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments, interpreting results, and continuing the research.
 
 ## Choose evaluations
 

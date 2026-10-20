@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from foretoken import package_version
+from foretoken.errors import DeploymentError
 
 
 @dataclass(frozen=True)
@@ -57,40 +58,44 @@ class DeployCommand:
     profile: ProfileCommand | None = None
     editable: str | None = None
     engine_sources: tuple[str, ...] = ()
+    name: str | None = None
 
 
 @dataclass(frozen=True)
 class DeleteCommand:
-    """Delete the resources rendered by one Kustomize deployment."""
+    """Retire a named deployment instance or the instance selected by a Kustomize root."""
 
-    kustomize_path: str
+    target: str
     timeout: str
+    name: str | None = None
 
 
 @dataclass(frozen=True)
 class StopCommand:
-    """Suspend deployment execution while preserving its configuration and storage."""
+    """Suspend a selected deployment instance while preserving its configuration and storage."""
 
-    kustomize_path: str
+    target: str
     timeout: str
+    name: str | None = None
 
 
 @dataclass(frozen=True)
 class StatusCommand:
-    """Inspect services selected by Kustomize configuration or namespace."""
+    """List deployment instances or inspect one selected instance and its services."""
 
-    kustomize_path: str | None
-    namespace: str | None
+    target: str | None
     watch: bool
+    name: str | None = None
 
 
 @dataclass(frozen=True)
 class EndpointCommand:
-    """Resolve the public frontend endpoint for one Kustomize deployment."""
+    """Resolve the public frontend endpoint for a selected deployment instance."""
 
-    kustomize_path: str
+    target: str
     timeout: str
     host: bool
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +138,112 @@ class ProfileViewCommand:
     timeout: str
 
 
+ParsedCommand = (
+    InstallCommand
+    | UninstallCommand
+    | ClusterCommand
+    | DeployCommand
+    | DeleteCommand
+    | StopCommand
+    | StatusCommand
+    | EndpointCommand
+    | PerformanceCommand
+    | EvaluationCommand
+    | PlotCommand
+    | ProfileViewCommand
+)
+
+
+def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
+    """Parse CLI arguments into the command consumed by the execution layer."""
+    arguments = tuple(argv)
+    if arguments and arguments[0] == "perf":
+        return PerformanceCommand(arguments[1:])
+    if arguments and arguments[0] == "eval":
+        return EvaluationCommand(arguments[1:])
+    if arguments and arguments[0] == "plot":
+        return PlotCommand(arguments[1:])
+
+    parser = _build_parser()
+    parsed_args = parser.parse_args(arguments)
+    if parsed_args.command == "cluster":
+        if parsed_args.cluster_action == "create" and parsed_args.kind == "k3d" and not parsed_args.gpus:
+            parser.error("cluster create k3d requires --gpus INDICES")
+        return ClusterCommand(
+            parsed_args.cluster_action,
+            parsed_args.kind,
+            parsed_args.name,
+            getattr(parsed_args, "gpus", None),
+            getattr(parsed_args, "config", None),
+        )
+    if parsed_args.command == "install":
+        reused_gateway_arguments = any(
+            (
+                parsed_args.gateway_name,
+                parsed_args.gateway_namespace,
+                parsed_args.gateway_section_name,
+            )
+        )
+        if parsed_args.frontend_mode != "gateway" and reused_gateway_arguments:
+            parser.error("Gateway options require --frontend-mode gateway")
+        if (
+            parsed_args.frontend_mode == "gateway"
+            and reused_gateway_arguments
+            and not (parsed_args.gateway_name and parsed_args.gateway_namespace)
+        ):
+            parser.error(
+                "reusing a Gateway requires both --gateway-name and "
+                "--gateway-namespace"
+            )
+        if parsed_args.registry and not parsed_args.editable:
+            parser.error("--registry requires --editable PATH")
+        if parsed_args.engine_source and not parsed_args.editable:
+            parser.error("--engine-source requires --editable PATH")
+        return InstallCommand(
+            tuple(parsed_args.values or ()),
+            parsed_args.editable,
+            parsed_args.registry,
+            parsed_args.oci_registry,
+            parsed_args.prometheus,
+            parsed_args.frontend_mode,
+            parsed_args.gateway_name,
+            parsed_args.gateway_namespace,
+            parsed_args.gateway_section_name,
+            parsed_args.timeout,
+            parsed_args.grafana_auth,
+            tuple(parsed_args.engine_source or ()),
+        )
+    if parsed_args.command == "uninstall":
+        return UninstallCommand(parsed_args.timeout)
+    if parsed_args.command == "deploy":
+        validate_profile_arguments(parser, parsed_args)
+        if parsed_args.model and not parsed_args.profile:
+            parser.error("deploy --model requires --profile")
+        capture = (
+            ProfileCommand(
+                parsed_args.kustomize_path, parsed_args.model,
+                parsed_args.profile_duration, parsed_args.profile_engine,
+                parsed_args.timeout,
+            )
+            if parsed_args.profile else None
+        )
+        return DeployCommand(
+            parsed_args.kustomize_path, parsed_args.timeout, capture,
+            parsed_args.editable, tuple(parsed_args.engine_source or ()), parsed_args.name,
+        )
+    if parsed_args.command == "delete":
+        return DeleteCommand(parsed_args.target, parsed_args.timeout, parsed_args.name)
+    if parsed_args.command == "stop":
+        return StopCommand(parsed_args.target, parsed_args.timeout, parsed_args.name)
+    if parsed_args.command == "profile":
+        return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
+    if parsed_args.command == "status":
+        if parsed_args.name is not None and parsed_args.target is None:
+            parser.error("status --name requires a Kustomize PATH; otherwise pass the instance name directly")
+        return StatusCommand(parsed_args.target, parsed_args.watch, parsed_args.name)
+    return EndpointCommand(parsed_args.target, parsed_args.timeout, parsed_args.host, parsed_args.name)
+
+
 def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the shared optional capture controls to deploy and perf."""
     parser.add_argument(
@@ -159,22 +270,6 @@ def validate_profile_arguments(
         parser.error("--profile-engine and --profile-duration require --profile")
 
 
-ParsedCommand = (
-    InstallCommand
-    | UninstallCommand
-    | ClusterCommand
-    | DeployCommand
-    | DeleteCommand
-    | StopCommand
-    | StatusCommand
-    | EndpointCommand
-    | PerformanceCommand
-    | EvaluationCommand
-    | PlotCommand
-    | ProfileViewCommand
-)
-
-
 def _add_wait_timeout_argument(
     parser: argparse.ArgumentParser, target: str
 ) -> None:
@@ -184,6 +279,23 @@ def _add_wait_timeout_argument(
         default="10m",
         help=f"maximum {target} wait (default: %(default)s)",
     )
+
+
+def _namespace_name(value: str) -> str:
+    """Reject empty selections before Kubernetes tools can substitute the current context's namespace."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("namespace cannot be empty")
+    return value
+
+
+def _instance_name(value: str) -> str:
+    """Apply the frontend Service-name rule to an explicit CLI instance selection."""
+    from foretoken.deployment.manifest import validate_instance_name
+
+    try:
+        return validate_instance_name(value)
+    except DeploymentError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -240,14 +352,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Prepare Foretoken CRDs, discover the cluster LoadBalancer, configure shared "
             "metrics and persistent logs, and create Gateway resources when Gateway mode "
-            "is selected. Deploy namespace controllers and model services with 'foretoken deploy'."
+            "is selected. Deploy independent inference instances with 'foretoken deploy'."
         ),
     )
     install.add_argument(
         "-e",
         "--editable",
         metavar="PATH",
-        help="build the shared Foretoken platform and runtime defaults from this checkout",
+        help="build shared platform and deployment application defaults from this checkout",
     )
     install.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
@@ -329,11 +441,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     deploy.add_argument(
         "-e", "--editable", metavar="PATH",
-        help="build this checkout's controller and serving applications (defaults to the current Foretoken checkout on a source-installed platform)",
+        help=(
+            "build this checkout's controller and serving applications for the selected instance "
+            "(requires a source-installed platform)"
+        ),
     )
     deploy.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
         help="select an engine checkout for this source worktree; repeat for vllm-metax",
+    )
+    deploy.add_argument(
+        "--name", type=_instance_name, metavar="NAME",
+        help="deployment instance name (default: the rendered frontend name)",
     )
     _add_wait_timeout_argument(deploy, "serving readiness or capture completion")
     add_profile_arguments(deploy)
@@ -341,37 +460,31 @@ def _build_parser() -> argparse.ArgumentParser:
 
     delete = subparsers.add_parser(
         "delete",
-        help="Delete the resources rendered by a Kustomize deployment",
+        help="Delete a deployment instance",
     )
     delete.add_argument(
-        "kustomize_path",
-        metavar="PATH",
-        help="Kustomize root whose resources should be deleted",
+        "target", metavar="NAME_OR_PATH",
+        help="deployment instance name or Kustomize root to delete",
     )
+    delete.add_argument("--name", type=_instance_name, metavar="NAME", help="instance selected by PATH")
     _add_wait_timeout_argument(delete, "resource deletion")
 
     stop = subparsers.add_parser(
         "stop", help="Stop a deployment while keeping its configuration and storage",
     )
-    stop.add_argument("kustomize_path", metavar="PATH", help="Kustomize root whose services should stop")
+    stop.add_argument("target", metavar="NAME_OR_PATH", help="deployment instance name or Kustomize root to stop")
+    stop.add_argument("--name", type=_instance_name, metavar="NAME", help="instance selected by PATH")
     _add_wait_timeout_argument(stop, "service shutdown")
 
     status = subparsers.add_parser(
         "status",
-        help="Show Foretoken service readiness",
+        help="List deployment instances or inspect their readiness",
     )
     status.add_argument(
-        "kustomize_path",
-        nargs="?",
-        metavar="PATH",
-        help="Kustomize root whose services should be inspected",
+        "target", nargs="?", metavar="NAME_OR_PATH",
+        help="deployment instance name or Kustomize root (default: list instances)",
     )
-    status.add_argument(
-        "-n",
-        "--namespace",
-        metavar="NAMESPACE",
-        help="inspect all Foretoken services in this namespace",
-    )
+    status.add_argument("--name", type=_instance_name, metavar="NAME", help="instance selected by PATH")
     status.add_argument(
         "--watch",
         action="store_true",
@@ -383,10 +496,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wait for and print a deployment's public frontend endpoint",
     )
     endpoint.add_argument(
-        "kustomize_path",
-        metavar="PATH",
-        help="Kustomize root containing one frontend",
+        "target", metavar="NAME_OR_PATH",
+        help="deployment instance name or Kustomize root containing one frontend",
     )
+    endpoint.add_argument("--name", type=_instance_name, metavar="NAME", help="instance selected by PATH")
     _add_wait_timeout_argument(endpoint, "endpoint")
     endpoint.add_argument(
         "--host",
@@ -406,7 +519,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     view.add_argument(
-        "-n", "--namespace",
+        "-n", "--namespace", type=_namespace_name,
         help="limit capture directories to one namespace (default: all namespaces)",
     )
     _add_wait_timeout_argument(view, "capture storage readiness")
@@ -426,101 +539,3 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Export publication figures and tables from saved benchmark results",
     )
     return parser
-
-
-def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
-    """Parse CLI arguments into the command consumed by the execution layer."""
-    arguments = tuple(argv)
-    if arguments and arguments[0] == "perf":
-        return PerformanceCommand(arguments[1:])
-    if arguments and arguments[0] == "eval":
-        return EvaluationCommand(arguments[1:])
-    if arguments and arguments[0] == "plot":
-        return PlotCommand(arguments[1:])
-
-    parser = _build_parser()
-    parsed_args = parser.parse_args(arguments)
-    if parsed_args.command == "cluster":
-        if parsed_args.cluster_action == "create" and parsed_args.kind == "k3d" and not parsed_args.gpus:
-            parser.error("cluster create k3d requires --gpus INDICES")
-        return ClusterCommand(
-            parsed_args.cluster_action,
-            parsed_args.kind,
-            parsed_args.name,
-            getattr(parsed_args, "gpus", None),
-            getattr(parsed_args, "config", None),
-        )
-    if parsed_args.command == "install":
-        reused_gateway_arguments = any(
-            (
-                parsed_args.gateway_name,
-                parsed_args.gateway_namespace,
-                parsed_args.gateway_section_name,
-            )
-        )
-        if parsed_args.frontend_mode != "gateway" and reused_gateway_arguments:
-            parser.error("Gateway options require --frontend-mode gateway")
-        if (
-            parsed_args.frontend_mode == "gateway"
-            and reused_gateway_arguments
-            and not (parsed_args.gateway_name and parsed_args.gateway_namespace)
-        ):
-            parser.error(
-                "reusing a Gateway requires both --gateway-name and "
-                "--gateway-namespace"
-            )
-        if parsed_args.registry and not parsed_args.editable:
-            parser.error("--registry requires --editable PATH")
-        if parsed_args.engine_source and not parsed_args.editable:
-            parser.error("--engine-source requires --editable PATH")
-        return InstallCommand(
-            tuple(parsed_args.values or ()),
-            parsed_args.editable,
-            parsed_args.registry,
-            parsed_args.oci_registry,
-            parsed_args.prometheus,
-            parsed_args.frontend_mode,
-            parsed_args.gateway_name,
-            parsed_args.gateway_namespace,
-            parsed_args.gateway_section_name,
-            parsed_args.timeout,
-            parsed_args.grafana_auth,
-            tuple(parsed_args.engine_source or ()),
-        )
-    if parsed_args.command == "uninstall":
-        return UninstallCommand(parsed_args.timeout)
-    if parsed_args.command == "deploy":
-        validate_profile_arguments(parser, parsed_args)
-        if parsed_args.model and not parsed_args.profile:
-            parser.error("deploy --model requires --profile")
-        capture = (
-            ProfileCommand(
-                parsed_args.kustomize_path, parsed_args.model,
-                parsed_args.profile_duration, parsed_args.profile_engine,
-                parsed_args.timeout,
-            )
-            if parsed_args.profile else None
-        )
-        return DeployCommand(
-            parsed_args.kustomize_path, parsed_args.timeout, capture,
-            parsed_args.editable, tuple(parsed_args.engine_source or ()),
-        )
-    if parsed_args.command == "delete":
-        return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
-    if parsed_args.command == "stop":
-        return StopCommand(parsed_args.kustomize_path, parsed_args.timeout)
-    if parsed_args.command == "profile":
-        return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
-    if parsed_args.command == "status":
-        if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
-            parser.error("status requires either PATH or --namespace")
-        return StatusCommand(
-            parsed_args.kustomize_path,
-            parsed_args.namespace,
-            parsed_args.watch,
-        )
-    return EndpointCommand(
-        parsed_args.kustomize_path,
-        parsed_args.timeout,
-        parsed_args.host,
-    )

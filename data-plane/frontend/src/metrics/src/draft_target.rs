@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use foretoken_model_protocol::DraftTargetRoundObservation;
 use prometheus_client::{
-    encoding::{EncodeLabelSet, text::encode},
+    encoding::{EncodeLabelSet, text::encode_registry},
     metrics::{
         counter::Counter,
         family::Family,
@@ -309,8 +309,7 @@ pub fn record_draft_target_round(model: &str, observation: &DraftTargetRoundObse
         round = observation.round, observation = ?observation, "DT round");
 }
 
-pub(super) fn render() -> Result<String, std::fmt::Error> {
-    let mut body = String::new();
-    encode(&mut body, &METRICS.registry)?;
-    Ok(body)
+/// Encodes DT families into the scrape owner's OpenMetrics document without a second EOF.
+pub(super) fn encode_metrics(body: &mut String) -> Result<(), std::fmt::Error> {
+    encode_registry(body, &METRICS.registry)
 }
