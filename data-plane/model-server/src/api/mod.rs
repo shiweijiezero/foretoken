@@ -3,9 +3,6 @@
 
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
-mod execution;
-mod health;
-
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,11 +20,12 @@ use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
-use self::execution::{ExecutionStore, start_execution};
-pub use self::health::{AdmissionPermit, AdmissionRejection, RuntimeHealth};
 use crate::backend::vllm::kv_events::{KvDeltaError, KvEventAdapter};
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
-use crate::instance_admission::InstanceAdmissionStatus;
+use crate::execution::{
+    AdmissionRejection, ExecutionError, ExecutionStore, InstanceAdmissionStatus, RuntimeHealth,
+    start_execution,
+};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, SchedulerLoadResponse,
@@ -199,7 +197,12 @@ async fn generate(
         AdmissionRejection::Busy => ApiError::Busy,
     })?;
     let request_id = input.request_id.clone();
-    let stream = start_execution(state, input, permit).await?;
+    let stream = start_execution(state.backend, state.health, state.ledger, input, permit)
+        .await
+        .map_err(|error| match error {
+            ExecutionError::AdmissionUnavailable => ApiError::AdmissionUnavailable,
+            ExecutionError::Backend(error) => ApiError::backend(error),
+        })?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let body_stream = stream.map(move |item| {
         let event = match item {

@@ -12,7 +12,7 @@ import (
 	"fmt"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage/modelcache"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -79,7 +79,7 @@ func maintainModelCache(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	jobLabel, err := labels.NewRequirement(storage.ModelCacheCollectionLabel, selection.Exists, nil)
+	jobLabel, err := labels.NewRequirement(modelcache.CollectionLabel, selection.Exists, nil)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func maintainModelCache(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("create model cache collection manager: %w", err)
 	}
-	if err := (&storage.ModelCacheCollectionReconciler{
+	if err := (&modelcache.Reconciler{
 		Client: manager.GetClient(), Namespace: *namespace, ServiceAccount: *serviceAccount,
 		WorkerImage: *workerImage, WorkerApplicationURL: *workerApplicationURL,
 		DeviceResourceName: *deviceResourceName, ApplicationFiles: files, ImagePullSecrets: imagePullSecrets,

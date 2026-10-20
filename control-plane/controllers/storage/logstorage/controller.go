@@ -3,7 +3,7 @@
 
 // Expands platform log storage using kubelet filesystem observations.
 
-package storage
+package logstorage
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -20,9 +21,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// LogStorageReconciler grows claims mounted by the selected platform Loki StatefulSet.
+// Reconciler grows claims mounted by the selected platform Loki StatefulSet.
 // The maintenance command invokes it once; Helm owns the workload and initial claim template.
-type LogStorageReconciler struct {
+type Reconciler struct {
 	client.Client
 	Kubernetes *kubernetes.Clientset
 	MaxSize    resource.Quantity
@@ -30,7 +31,7 @@ type LogStorageReconciler struct {
 
 // Reconcile reads the mounted log filesystem and requests bounded growth through Kubernetes.
 // Missing measurements and unsupported storage surface as reconciliation errors, not zero usage.
-func (r *LogStorageReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	statefulSet := new(appsv1.StatefulSet)
 	if err := r.Get(ctx, request.NamespacedName, statefulSet); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -68,7 +69,7 @@ func (r *LogStorageReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 
 // expandClaim waits for pending resizes and uses live PVC requests to avoid repeating growth
 // against a pre-expansion kubelet measurement. It never shrinks or replaces retained storage.
-func (r *LogStorageReconciler) expandClaim(ctx context.Context, pod *corev1.Pod, name string) error {
+func (r *Reconciler) expandClaim(ctx context.Context, pod *corev1.Pod, name string) error {
 	pvc := new(corev1.PersistentVolumeClaim)
 	if err := r.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: name}, pvc); err != nil {
 		return err
@@ -76,10 +77,10 @@ func (r *LogStorageReconciler) expandClaim(ctx context.Context, pod *corev1.Pod,
 	if !pvc.DeletionTimestamp.IsZero() || pvc.Status.Phase != corev1.ClaimBound {
 		return nil
 	}
-	if message, failed := pvcResizeFailure(pvc); failed {
+	if message, failed := storage.PVCResizeFailure(pvc); failed {
 		return fmt.Errorf("log claim %s: %s", name, message)
 	}
-	if !pvcCapacityAtLeastRequest(pvc) || pvcResizePending(pvc) {
+	if !storage.PVCCapacityAtLeastRequest(pvc) || storage.PVCResizePending(pvc) {
 		return nil
 	}
 	current := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -92,10 +93,10 @@ func (r *LogStorageReconciler) expandClaim(ctx context.Context, pod *corev1.Pod,
 		return err
 	}
 	requested := current.Value()
-	if used < requested-requested/pvcExpansionFreeSpaceDivisor {
+	if used < requested-requested/storage.PVCExpansionFreeSpaceDivisor {
 		return nil
 	}
-	target := nextPVCSize(requested, r.MaxSize.Value())
+	target := storage.NextPVCSize(requested, r.MaxSize.Value())
 	base := pvc.DeepCopy()
 	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = *resource.NewQuantity(target, resource.BinarySI)
 	if err := r.Patch(ctx, pvc, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -107,7 +108,7 @@ func (r *LogStorageReconciler) expandClaim(ctx context.Context, pod *corev1.Pod,
 
 // filesystem reads kubelet's public summary API through the authenticated Kubernetes API server.
 // Pod UID and PVC identity bind observations to the current mounted log volume.
-func (r *LogStorageReconciler) filesystem(ctx context.Context, pod *corev1.Pod, claim string, allocatedBytes int64) (int64, error) {
+func (r *Reconciler) filesystem(ctx context.Context, pod *corev1.Pod, claim string, allocatedBytes int64) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	data, err := r.Kubernetes.CoreV1().RESTClient().Get().Resource("nodes").Name(pod.Spec.NodeName).

@@ -6,7 +6,7 @@
 pub mod api;
 pub mod backend;
 pub mod engine;
-pub mod instance_admission;
+pub mod execution;
 pub mod model_cache;
 pub mod profiling;
 pub mod runtime_cache;

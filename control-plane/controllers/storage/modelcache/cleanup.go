@@ -3,7 +3,7 @@
 
 // Retires collection Jobs, PVCs, and Retain PVs after their processes exit.
 
-package storage
+package modelcache
 
 import (
 	"context"
@@ -18,32 +18,32 @@ import (
 )
 
 // cleanupCollections resumes cleanup for released or replaced sources, including PV-only leftovers.
-func (reconciler *ModelCacheCollectionReconciler) cleanupCollections(ctx context.Context, key client.ObjectKey, retain types.UID) (ctrl.Result, error) {
+func (reconciler *Reconciler) cleanupCollections(ctx context.Context, key client.ObjectKey, retain types.UID) (ctrl.Result, error) {
 	collections := make(map[types.UID]bool)
 	add := func(object client.Object) {
 		annotations := object.GetAnnotations()
-		uid := types.UID(object.GetLabels()[ModelCacheCollectionLabel])
+		uid := types.UID(object.GetLabels()[CollectionLabel])
 		if uid != "" && uid != retain && annotations[modelCacheCollectionNamespaceAnnotation] == key.Namespace && annotations[modelCacheCollectionNameAnnotation] == key.Name &&
 			annotations[modelCacheCollectionOwnerAnnotation] == reconciler.Namespace+"/"+reconciler.ServiceAccount {
 			collections[uid] = true
 		}
 	}
 	var jobs batchv1.JobList
-	if err := reconciler.APIReader.List(ctx, &jobs, client.InNamespace(reconciler.Namespace), client.HasLabels{ModelCacheCollectionLabel}); err != nil {
+	if err := reconciler.APIReader.List(ctx, &jobs, client.InNamespace(reconciler.Namespace), client.HasLabels{CollectionLabel}); err != nil {
 		return ctrl.Result{}, err
 	}
 	for index := range jobs.Items {
 		add(&jobs.Items[index])
 	}
 	var claims corev1.PersistentVolumeClaimList
-	if err := reconciler.APIReader.List(ctx, &claims, client.InNamespace(reconciler.Namespace), client.HasLabels{ModelCacheCollectionLabel}); err != nil {
+	if err := reconciler.APIReader.List(ctx, &claims, client.InNamespace(reconciler.Namespace), client.HasLabels{CollectionLabel}); err != nil {
 		return ctrl.Result{}, err
 	}
 	for index := range claims.Items {
 		add(&claims.Items[index])
 	}
 	var volumes corev1.PersistentVolumeList
-	if err := reconciler.APIReader.List(ctx, &volumes, client.HasLabels{ModelCacheCollectionLabel}); err != nil {
+	if err := reconciler.APIReader.List(ctx, &volumes, client.HasLabels{CollectionLabel}); err != nil {
 		return ctrl.Result{}, err
 	}
 	for index := range volumes.Items {
@@ -65,7 +65,7 @@ func (reconciler *ModelCacheCollectionReconciler) cleanupCollections(ctx context
 
 // retireCollection retires Jobs, waits for consumers, then removes alias PVCs and PVs.
 // Deletes use observed UIDs and resource versions; PV cleanup also requires the original claim UID.
-func (reconciler *ModelCacheCollectionReconciler) retireCollection(ctx context.Context, record client.ObjectKey, uid types.UID) (bool, error) {
+func (reconciler *Reconciler) retireCollection(ctx context.Context, record client.ObjectKey, uid types.UID) (bool, error) {
 	job := new(batchv1.Job)
 	if err := reconciler.APIReader.Get(ctx, client.ObjectKey{Namespace: reconciler.Namespace, Name: modelCacheCollectionJobPrefix + string(uid)}, job); err == nil {
 		if err := reconciler.validateCollectionResource(job, record, uid); err != nil {

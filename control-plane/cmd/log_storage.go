@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage/logstorage"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -60,7 +60,7 @@ func maintainLogStorage(arguments []string) error {
 		return fmt.Errorf("configure log volume observations: %w", err)
 	}
 	key := client.ObjectKey{Namespace: *namespace, Name: *statefulSet}
-	reconciler := storage.LogStorageReconciler{
+	reconciler := logstorage.Reconciler{
 		Client: reader, Kubernetes: kubeClient, MaxSize: maximum,
 	}
 	ctx, cancel := context.WithTimeout(ctrl.SetupSignalHandler(), *timeout)

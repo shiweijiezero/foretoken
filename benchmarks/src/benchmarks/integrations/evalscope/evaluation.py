@@ -11,54 +11,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from benchmarks.config.evaluation import native_arguments, validate_model_transport
-from benchmarks.integrations.quality import write_progress
-
-
-class EvalScopeProgress:
-    """Read only complete native cache records; prediction and review counts stay separate."""
-
-    def __init__(self) -> None:
-        self.files: dict[Path, tuple[tuple[int, int], int, set[int]]] = {}
-
-    def read(self, directory: Path, model: str, cache_files: list[str]) -> dict[str, int] | None:
-        """Incrementally count unique saved sample IDs, including transactional review reruns."""
-        counts = {}
-        for kind, metric in (
-            ("predictions", "Evaluation/Predictions completed"),
-            ("reviews", "Evaluation/Reviews completed"),
-        ):
-            total = 0
-            cache = directory / kind / model
-            selected = {cache / filename for filename in cache_files}
-            paths = {path for path in selected if path.is_file()}
-            # A review rerun replaces its previous scores only after aggregation succeeds.
-            reruns = {Path(str(path).split(".rerun-", 1)[0]): path
-                      for path in cache.glob("*.jsonl.rerun-*")
-                      if Path(str(path).split(".rerun-", 1)[0]) in selected}
-            for path in sorted(set(paths) | set(reruns)):
-                source = reruns.get(path, path)
-                try:
-                    with source.open("rb") as stream:
-                        stat = os.fstat(stream.fileno())
-                        identity = (stat.st_dev, stat.st_ino)
-                        previous, offset, samples = self.files.get(source, (identity, 0, set()))
-                        # Native review commits atomically replace the file at the same path.
-                        if previous != identity:
-                            offset, samples = 0, set()
-                        stream.seek(offset)
-                        while line := stream.readline():
-                            if not line.endswith(b"\n"):
-                                break
-                            samples.add(json.loads(line)["index"])
-                            offset = stream.tell()
-                except FileNotFoundError:
-                    # Native aggregation can rename a review rerun during this snapshot.
-                    return None
-                self.files[source] = identity, offset, samples
-                total += len(samples)
-            counts[metric] = total
-        return counts
+from benchmarks.integrations.evalscope.cli import parse_arguments
+from benchmarks.integrations.quality import validate_model_transport, write_progress
 
 
 def restore_progress(source: Path, native: Path) -> None:
@@ -79,8 +33,7 @@ def run_evalscope(
     from evalscope.config import parse_task_config
     from evalscope.run import run_task
 
-    args = native_arguments(
-        "evalscope",
+    args = parse_arguments(
         [
             *arguments,
             "--model",

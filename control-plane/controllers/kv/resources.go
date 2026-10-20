@@ -244,6 +244,7 @@ func kvResources(resources inferencev1alpha1.KVResources) (corev1.ResourceList, 
 	return requests, limits, nil
 }
 
+// mooncakeMasterConfig renders native recovery settings: etcd/oplog for HA or local snapshots for a single Master.
 func mooncakeMasterConfig(service *inferencev1alpha1.KVService, connection kvMasterConnection, rpcPort, metadataPort, metricsPort int32, snapshotIntervalSeconds int64, snapshotRetentionCount int32) string {
 	if service.Spec.Master.HighAvailability != nil {
 		return fmt.Sprintf("rpc_port: %d\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: false\ncluster_id: %q\nenable_ha: true\nha_backend_type: \"etcd\"\nha_backend_connstring: %q\netcd_endpoints: %q\nenable_oplog: true\nenable_snapshot: false\nenable_snapshot_restore: false\n", rpcPort, metricsPort, connection.ClusterID, connection.Etcd, connection.Etcd)

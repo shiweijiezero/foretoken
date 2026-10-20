@@ -6,7 +6,6 @@
 package resolver
 
 import (
-	"encoding/json"
 	"fmt"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -14,7 +13,6 @@ import (
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
@@ -126,20 +124,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
-	// DP can reuse world ranks and EPLB changes expert placement after loading;
-	// these cohorts retain native file loading.
-	loader, explicitLoader := effective.EngineArgs["load-format"]
-	var loaderName string
-	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
-	shareableWeights := profile.DeviceResourceName == "nvidia.com/gpu" &&
-		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
-		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
 	rdmaRequired := effective.RequiresRDMA()
 	if rdmaRequired && profile.RDMA == nil {
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || (requestedModelExpress && shareableWeights) {
+	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || effective.RequestsWeightSharing(template, profile.DeviceResourceName) {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -148,15 +138,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
 	}
-	// Automatic weight sharing reuses allocated devices rather than introducing
-	// a hard RDMA scheduling requirement for an otherwise runnable model.
-	if shareableWeights && rdma != nil && (!explicitLoader || requestedModelExpress) &&
-		runtimeconfig.ValidateModelExpressPorts(profile.ModelServerPort, template.Resources.Requests.GPU.Count, pdRuntime) == nil {
-		if effective.EngineArgs == nil {
-			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
-		}
-		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
-	}
+	effective.ConfigureWeightSharing(template, profile.DeviceResourceName, rdma, profile.ModelServerPort, pdRuntime)
 	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
 		if profile.DeviceResourceName != "metax-tech.com/gpu" {
 			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires MetaX GPUs")
@@ -172,11 +154,13 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	resolved := projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
 		Image: image, EngineArgs: effective.EngineArgs, Parallelism: effective.Parallelism,
 	})
+	resolved.Runtime.TritonCacheDirectory = vllmconfig.TritonCacheDirectory(template.RuntimeCache, resolved.Runtime.PreparationVersion)
 	resolved.Runtime.Profiling = template.Profiling.DeepCopy()
 	resolved.PDRuntime, resolved.RDMA, resolved.ECRuntime, resolved.KVRuntime = pdRuntime, rdma, ecRuntime, kvRuntime
 	return resolved, nil
 }
 
+// resolveVLLMOmniPool binds native Omni options and platform resources into an immutable execution contract.
 func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
 	image := profile.OmniImage
 	if template.Application != nil {
@@ -199,9 +183,12 @@ func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, prof
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
-	return projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
+	resolved := projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
 		Image: image, EngineArgs: effective.EngineArgs, Parallelism: effective.Parallelism,
-	}), nil
+	})
+	// Omni uses the same vLLM compiler-cache layout while retaining its own launch contract.
+	resolved.Runtime.TritonCacheDirectory = vllmconfig.TritonCacheDirectory(template.RuntimeCache, resolved.Runtime.PreparationVersion)
+	return resolved, nil
 }
 
 func mergeNodeSelectors(userSelector map[string]string, profile RuntimeProfile) (map[string]string, error) {
@@ -267,7 +254,6 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			PrefixCacheIsolation:                  template.PrefixCacheIsolation,
 			InstanceAdmissionProtocol:             instanceAdmissionProtocol,
 			InstanceAdmission:                     startupAdmission,
-			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache, preparationVersion),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},

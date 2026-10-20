@@ -145,7 +145,9 @@ pub async fn spawn_engine_attempt(
     if mode == runtime_cache::Mode::Persistent
         && let Some(profile) = profiling
     {
-        managed_engine.python_args.push(profile.engine_argument());
+        managed_engine
+            .python_args
+            .push(super::profiling::engine_argument(profile));
         if config.launch.profiling.engine == profiling::Engine::Mctracer {
             managed_engine
                 .python_args
@@ -190,6 +192,9 @@ pub async fn spawn_engine_attempt(
     );
     command.envs(environment);
     let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);
+    if instrumentation.is_some_and(|config| config.engine == profiling::Engine::Nsight) {
+        command.env("VLLM_WORKER_MULTIPROC_METHOD", "spawn");
+    }
     let engine = ManagedEngine::spawn(command, instrumentation)
         .await
         .map_err(|error| {

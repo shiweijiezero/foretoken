@@ -3,7 +3,7 @@
 
 // Coordinates shared model-cache collection after preparation and serving consumers retire.
 
-package storage
+package modelcache
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,8 +29,8 @@ import (
 
 const (
 	modelCacheCollectionPollInterval = time.Second
-	// ModelCacheCollectionLabel associates collection resources with an immutable source-record UID.
-	ModelCacheCollectionLabel                  = "inference.foretoken.io/model-cache-collection"
+	// CollectionLabel associates collection resources with an immutable source-record UID.
+	CollectionLabel                            = "inference.foretoken.io/model-cache-collection"
 	modelCacheCollectionNamespaceAnnotation    = "inference.foretoken.io/model-cache-source-namespace"
 	modelCacheCollectionNameAnnotation         = "inference.foretoken.io/model-cache-source-name"
 	modelCacheCollectionOwnerAnnotation        = "inference.foretoken.io/model-cache-collector"
@@ -69,9 +70,9 @@ type modelCacheCollectionPlan struct {
 	CollectionVolume modelCacheCollectionAlias         `json:"collectionVolume"`
 }
 
-// ModelCacheCollectionReconciler owns platform collection Jobs and volume aliases for deleted sources.
+// Reconciler owns platform collection Jobs and volume aliases for deleted sources.
 // Workers authorize deletion from live API references under the shared filesystem lock.
-type ModelCacheCollectionReconciler struct {
+type Reconciler struct {
 	client.Client
 	APIReader            client.Reader
 	Namespace            string
@@ -84,7 +85,7 @@ type ModelCacheCollectionReconciler struct {
 }
 
 // SetupWithManager registers source and collection-resource watches with the platform manager.
-func (reconciler *ModelCacheCollectionReconciler) SetupWithManager(manager ctrl.Manager) error {
+func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	reconciler.APIReader = manager.GetAPIReader()
 	return ctrl.NewControllerManagedBy(manager).
 		Named("model-cache-collection").
@@ -96,7 +97,7 @@ func (reconciler *ModelCacheCollectionReconciler) SetupWithManager(manager ctrl.
 }
 
 // sourceForCollectionResource requeues sources when collection resources change or are rediscovered.
-func (reconciler *ModelCacheCollectionReconciler) sourceForCollectionResource(_ context.Context, object client.Object) []reconcile.Request {
+func (reconciler *Reconciler) sourceForCollectionResource(_ context.Context, object client.Object) []reconcile.Request {
 	annotations := object.GetAnnotations()
 	namespace, name := annotations[modelCacheCollectionNamespaceAnnotation], annotations[modelCacheCollectionNameAnnotation]
 	if namespace == "" || name == "" {
@@ -106,7 +107,7 @@ func (reconciler *ModelCacheCollectionReconciler) sourceForCollectionResource(_ 
 }
 
 // Reconcile coordinates collection and releases the source record after its dedicated storage is retired.
-func (reconciler *ModelCacheCollectionReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	record := new(corev1.ConfigMap)
 	if err := reconciler.APIReader.Get(ctx, request.NamespacedName, record); apierrors.IsNotFound(err) {
 		return reconciler.cleanupCollections(ctx, request.NamespacedName, "")
@@ -167,15 +168,15 @@ func (reconciler *ModelCacheCollectionReconciler) Reconcile(ctx context.Context,
 	if record.Data[runtimeconfig.PreparationRecordKey] == "" {
 		return ctrl.Result{RequeueAfter: modelCacheCollectionPollInterval}, reconciler.recordCollectionComplete(ctx, record, "unpublished")
 	}
-	storage, err := reconciler.reconcileCollectionStorage(ctx, &plan)
+	storageState, err := reconciler.reconcileCollectionStorage(ctx, &plan)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	switch storage {
+	switch storageState {
 	case collectionStorageManaged:
 		return ctrl.Result{RequeueAfter: modelCacheCollectionPollInterval}, reconciler.recordCollectionComplete(ctx, record, "storage-managed")
 	case collectionStoragePending:
-		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, nil
+		return ctrl.Result{RequeueAfter: storage.PVCPollInterval}, nil
 	}
 	desired, err := reconciler.collectionJob(plan)
 	if err != nil {
@@ -204,7 +205,7 @@ func collectionSourcePlan(record *corev1.ConfigMap) (modelCacheCollectionPlan, e
 }
 
 // collectionConsumersExist checks cohorts, preparation Jobs and Pods before source retirement.
-func (reconciler *ModelCacheCollectionReconciler) collectionConsumersExist(ctx context.Context, record *corev1.ConfigMap, cache runtimeconfig.ModelCacheReference) (bool, error) {
+func (reconciler *Reconciler) collectionConsumersExist(ctx context.Context, record *corev1.ConfigMap, cache runtimeconfig.ModelCacheReference) (bool, error) {
 	namespace := new(corev1.Namespace)
 	err := reconciler.APIReader.Get(ctx, client.ObjectKey{Name: record.Namespace}, namespace)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -282,7 +283,7 @@ func podReferencesPreparationSource(pod *corev1.PodSpec, name string) bool {
 }
 
 // observeCollectionJob validates execution identity and persists success; failed Jobs retain storage for retry.
-func (reconciler *ModelCacheCollectionReconciler) observeCollectionJob(ctx context.Context, record *corev1.ConfigMap, plan modelCacheCollectionPlan, job *batchv1.Job) (ctrl.Result, error) {
+func (reconciler *Reconciler) observeCollectionJob(ctx context.Context, record *corev1.ConfigMap, plan modelCacheCollectionPlan, job *batchv1.Job) (ctrl.Result, error) {
 	if err := reconciler.validateCollectionResource(job, client.ObjectKeyFromObject(record), record.UID); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -333,7 +334,7 @@ func (reconciler *ModelCacheCollectionReconciler) observeCollectionJob(ctx conte
 }
 
 // recordCollectionComplete persists cleanup without discarding concurrent source publication.
-func (reconciler *ModelCacheCollectionReconciler) recordCollectionComplete(ctx context.Context, record *corev1.ConfigMap, completion string) error {
+func (reconciler *Reconciler) recordCollectionComplete(ctx context.Context, record *corev1.ConfigMap, completion string) error {
 	base := record.DeepCopy()
 	if record.Annotations == nil {
 		record.Annotations = make(map[string]string)
@@ -346,6 +347,6 @@ func (reconciler *ModelCacheCollectionReconciler) recordCollectionComplete(ctx c
 }
 
 // retireCollectionJob deletes the observed Job version and lets Kubernetes retire its Pods.
-func (reconciler *ModelCacheCollectionReconciler) retireCollectionJob(ctx context.Context, job *batchv1.Job) error {
+func (reconciler *Reconciler) retireCollectionJob(ctx context.Context, job *batchv1.Job) error {
 	return client.IgnoreNotFound(reconciler.Delete(ctx, job, client.PropagationPolicy("Foreground"), client.Preconditions{UID: &job.UID, ResourceVersion: &job.ResourceVersion}))
 }

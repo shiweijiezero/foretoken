@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Validate prior evaluation identity and dispatch an isolated framework process."""
+"""Dispatch isolated evaluators and share completion snapshots and credential protection."""
 
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 PROGRESS_FILENAME = "evaluation_progress.json"
 
@@ -57,12 +58,35 @@ def main() -> None:
             progress.flush()
 
 
+def read_progress(directory: Path) -> dict[str, int] | None:
+    """Read published completion counters for the parent poller without loading an evaluator."""
+    path = directory / PROGRESS_FILENAME
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def write_progress(directory: Path, snapshot: dict) -> None:
     """Replace the child snapshot atomically so the parent never reads a partial record."""
     path = directory / PROGRESS_FILENAME
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(snapshot), encoding="utf-8")
     temporary.replace(path)
+
+
+def validate_model_transport(arguments: dict[str, Any]) -> None:
+    """Keep service credentials out of native model options before either framework records them."""
+    for field in ("api_key", "auth_token"):
+        if arguments.get(field):
+            raise ValueError(
+                f"Model argument {field} is reserved; supply authentication using `--api-key`"
+            )
+    for field in ("header", "default_headers"):
+        headers = arguments.get(field) or {}
+        if any(name.lower() in ("authorization", "proxy-authorization") for name in headers):
+            raise ValueError(
+                "Authorization headers are reserved; supply authentication using `--api-key`"
+            )
 
 
 def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:

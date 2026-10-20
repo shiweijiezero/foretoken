@@ -260,7 +260,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	files.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), command)
 	mountPreparationSource(group, &deployment.Spec.Template)
-	if err := configureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
+	if err := vllmconfig.ConfigureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
 		return nil, err
 	}
 	container := &deployment.Spec.Template.Spec.Containers[0]
@@ -492,7 +492,7 @@ func (reconciler *GroupReconciler) reconcileNetworkPolicy(ctx context.Context, g
 			})
 		}
 	}
-	ingress = append(ingress, weightSourceIngress(group.Spec)...)
+	ingress = append(ingress, vllmconfig.WeightSourceIngress(group.Spec)...)
 	desired := &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},

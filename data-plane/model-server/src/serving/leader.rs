@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use foretoken_model_protocol::{PreparedTokenizer, RuntimeMetadataResponse, RuntimeModelIdentity};
-use foretoken_model_server::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::api::{AppState, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::backend::vllm::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::backend::vllm::kv_events::KvEventAdapter;
@@ -17,7 +17,7 @@ use foretoken_model_server::backend::vllm::prefix_lookup;
 use foretoken_model_server::backend::vllm::startup::{self, ConnectedEngine};
 use foretoken_model_server::backend::vllm::transport::LOOPBACK_HOST;
 use foretoken_model_server::engine::ManagedEngine;
-use foretoken_model_server::instance_admission::InstanceAdmissionWatcher;
+use foretoken_model_server::execution::{InstanceAdmissionWatcher, RuntimeHealth};
 use foretoken_model_server::{profiling, runtime_cache, shutdown_signal};
 use futures::future::BoxFuture;
 use tokio::net::TcpListener;

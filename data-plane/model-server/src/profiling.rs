@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use axum::extract::{Query, State as HttpState};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -22,11 +23,19 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::backend::VllmBackend;
-
 const PROFILE_ROOT_ENV: &str = "FORETOKEN_PROFILE_ROOT";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Engine-side capture operations borrowed by the supervisor; adapters own their native RPC contract.
+#[async_trait]
+pub trait EngineProfiler: Send + Sync {
+    /// Starts or flushes PyTorch recording on all engine workers using the supervisor's trace prefix.
+    async fn set_pytorch_recording(&self, start: bool, prefix: &str) -> Result<(), String>;
+
+    /// Starts or flushes mcTracer recording into the supervisor's retained staging directory.
+    async fn set_mctracer_recording(&self, start: bool, directory: &Path) -> Result<(), String>;
+}
 
 /// Profiler instrumentation selected before the engine process starts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -134,7 +143,7 @@ pub struct Handle {
 pub struct Supervisor {
     handle: Handle,
     receiver: mpsc::UnboundedReceiver<(String, watch::Receiver<Action>)>,
-    backend: Option<Arc<VllmBackend>>,
+    backend: Option<Arc<dyn EngineProfiler>>,
     native: Option<JoinHandle<Result<(), String>>>,
     publication: Option<JoinHandle<io::Result<Record>>>,
 }
@@ -225,26 +234,7 @@ impl Config {
         File::open(profile_root)?.sync_all()
     }
 
-    /// Renders native configuration without enabling recording at process startup.
-    pub fn engine_argument(&self) -> String {
-        if self.engine != Engine::Pytorch {
-            // Native collectors own recording; do not install a competing PyTorch profiler.
-            return "--profiler-config={}".into();
-        }
-        format!(
-            "--profiler-config={}",
-            serde_json::json!({
-                "profiler": "torch",
-                "torch_profiler_dir": self.profile_root().join(".staging"),
-                "torch_profiler_use_gzip": false,
-                "torch_profiler_dump_cuda_time_total": false,
-                "torch_profiler_with_stack": false,
-                "ignore_frontend": true,
-            })
-        )
-    }
-
-    fn profile_root(&self) -> PathBuf {
+    pub(crate) fn profile_root(&self) -> PathBuf {
         self.data_root.join(&self.profile_directory)
     }
 
@@ -348,7 +338,7 @@ impl Handle {
 impl Supervisor {
     /// Creates a supervisor after engine startup. RPC profilers require an engine client;
     /// Nsight controls the local instrumented process tree without one.
-    pub fn new(config: Config, backend: Option<Arc<VllmBackend>>) -> Self {
+    pub fn new(config: Config, backend: Option<Arc<dyn EngineProfiler>>) -> Self {
         assert!(backend.is_some() || config.engine == Engine::Nsight);
         let (sender, receiver) = mpsc::unbounded_channel();
         Self {
@@ -414,24 +404,25 @@ impl Supervisor {
         }
     }
 
+    /// Retains native recording work until completion or supervisor-confirmed engine termination.
     async fn native_operation(&mut self, start: bool) -> Result<(), String> {
         let backend = self.backend.clone();
         let config = self.handle.config.clone();
         self.native = Some(tokio::spawn(async move {
             match config.engine {
                 Engine::Pytorch => {
-                    // vLLM passes this prefix to Torch's trace handler on every rank.
+                    // Every worker writes under the same supervisor-owned runtime prefix.
                     let prefix = format!("{}/capture", config.runtime_id);
                     backend
                         .expect("RPC profiler has an engine client")
-                        .set_profiling(start, &prefix)
+                        .set_pytorch_recording(start, &prefix)
                         .await
                 }
                 Engine::Nsight => nsight::set_recording(&config, start).await,
                 Engine::Mctracer => {
                     backend
                         .expect("RPC profiler has an engine client")
-                        .set_mctracer(start, &config.staging())
+                        .set_mctracer_recording(start, &config.staging())
                         .await
                 }
             }
