@@ -20,6 +20,7 @@ from pathlib import Path
 
 import torch
 from build import ProjectBuilder
+from engine_sources import generated_engine_file
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -41,17 +42,16 @@ def main() -> None:
     cache = arguments.cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)
     sources = json.loads((arguments.source_root / "manifest.json").read_text())
-    deleted = json.loads((arguments.source_root / "deleted.json").read_text())
     core = cache / "vllm"
     deleted_core = synchronize_source(
-        arguments.source_root / "vllm", core, sources["vllm"]["files"], deleted["vllm"]
+        arguments.source_root / "vllm", core, sources["vllm"]["files"]
     )
     metax = bool(getattr(torch.version, "maca", None))
     plugin_input = arguments.source_root / "vllm-metax"
     plugin = cache / "vllm-metax" if "vllm-metax" in sources else None
     deleted_plugin = (
         synchronize_source(
-            plugin_input, plugin, sources["vllm-metax"]["files"], deleted["vllm-metax"]
+            plugin_input, plugin, sources["vllm-metax"]["files"]
         )
         if plugin is not None
         else set()
@@ -115,18 +115,26 @@ def main() -> None:
 
 
 def synchronize_source(
-    source: Path, workspace: Path, files: list[str], deleted: list[str]
+    source: Path, workspace: Path, files: list[str]
 ) -> set[str]:
-    """Synchronize authoritative inputs without changing the last prepared builder checkout."""
+    """Synchronize the complete source inventory without depending on Git's deletion records."""
     manifest = workspace.parent / f"{workspace.name}-files.json"
     originals = workspace.parent / f"{workspace.name}-inputs"
     previous = set(json.loads(manifest.read_text())) if manifest.exists() else set()
+    previous.update(str(path.relative_to(originals)) for path in originals.rglob("*") if path.is_file())
     current = set(files)
-    previous.update(deleted)
-    for name in previous - current:
+    known = previous | current
+    pending = manifest.with_suffix(".next")
+    pending.write_text(json.dumps(sorted(known)) + "\n")
+    pending.replace(manifest)
+    for name in sorted(previous - current, reverse=True):
         path = originals / name
         if path.is_file() or path.is_symlink():
             path.unlink()
+        parent = path.parent
+        while parent != originals and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
     for name in sorted(current):
         origin, original = source / name, originals / name
         if (
@@ -138,8 +146,6 @@ def synchronize_source(
                 shutil.rmtree(original)
             original.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(origin, original)
-    known = previous | current
-    manifest.write_text(json.dumps(sorted(known)) + "\n")
     return known - current
 
 
@@ -258,8 +264,8 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
         VLLM_USE_PRECOMPILED_RUST="0",
         USE_PRECOMPILED_KERNEL="0",
         FETCHCONTENT_BASE_DIR=str(cache / "dependencies"),
-        CCACHE_DIR=str(cache / "ccache"),
     )
+    environment.setdefault("CCACHE_DIR", str(cache / "ccache"))
     if getattr(torch.version, "maca", None):
         # The SDK CMake wrapper must preserve failures before its cleanup commands.
         environment["BASH_ERREXIT"] = "1"
@@ -331,18 +337,13 @@ def export_overlay(
         ".gitmodules",
         "__pycache__",
     }
-    # Ordinary Python modules come only from source. The image supplies native
-    # libraries and generated/vendor packages.
+    # Source owns Python modules and package resources, including vendored code.
+    # The image supplies native libraries and generated version metadata.
     for path in runtime.rglob("*"):
         relative = path.relative_to(runtime)
         if not path.is_file() or any(part in excluded for part in relative.parts):
             continue
-        if (
-            path.name in {"_version.py", "vllm-rs"}
-            or path.name.endswith(".so")
-            or ".so." in path.name
-            or relative.parts[0] in {"libs", "third_party", "vllm_flash_attn"}
-        ):
+        if generated_engine_file(Path(package) / relative):
             target = destination / package / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)

@@ -5,11 +5,11 @@
 
 [English](source.md) | [中文](source_zh.md)
 
-从本地源码构建 Foretoken，并将源码改动部署到 Kubernetes 集群。
+从本地源码目录构建 Foretoken，并将改动部署到 Kubernetes 集群。普通文件夹、clone 和 worktree 使用相同命令，构建依赖按源码中声明的版本自动准备。
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
+准备 Python 3.11+、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -33,7 +33,9 @@ foretoken install -e .
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes_zh.md#2-从源码安装-foretoken)。
 
-源码构建自动复用节点本地的持久编译缓存。需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
+不同源码目录会复用已有工具链、运行环境、依赖下载和兼容的编译缓存；每个目录保留自己的增量构建状态。
+
+需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
 ## 部署模型服务
 
@@ -88,7 +90,7 @@ foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置，默认 `data/` 会指向主 checkout 的数据目录，复用模型下载，同时为各实例分别保存运行状态。目录需要能被目标节点访问，配置见[共享模型存储](../features/model-storage_zh.md#跨命名空间复用模型文件)；没有共享目录时，可改用[动态存储](../features/model-storage_zh.md#使用动态存储)。
+候选沿用快速开始的单卡配置。上述 worktree 的默认 `data/` 会指向主 checkout 的数据目录，复用模型下载，同时为各实例分别保存运行状态。目录需要能被目标节点访问，配置见[共享模型存储](../features/model-storage_zh.md#跨命名空间复用模型文件)；没有共享目录时，可改用[动态存储](../features/model-storage_zh.md#使用动态存储)。
 
 每个候选分别需要 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 
@@ -101,7 +103,7 @@ foretoken delete candidate-a
 foretoken delete candidate-b
 ```
 
-删除一个候选只移除该实例及其控制器，不影响旁边的候选或 Kubernetes 命名空间。源码目录、实验结果和管理员提供的存储保留；模型缓存与动态卷的清理规则见 [CLI 指南](../../cli/README_zh.md#清理)。
+删除一个候选只移除该实例及其控制器，不影响旁边的候选或 Kubernetes 命名空间。源码目录、增量构建状态、实验结果和管理员提供的存储保留；模型缓存与动态卷的清理规则见 [CLI 指南](../../cli/README_zh.md#清理)。
 
 ## 修改推理引擎
 
@@ -113,7 +115,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
 
-需要限制引擎原生编译并发时，在部署命令前加 `BUILD_JOBS=4`，使用四个编译作业。该选项不设置 Go/Rust 编译并发或内存上限。
+需要限制构建并发时，在源码安装或部署命令前加 `BUILD_JOBS=4`，各 Go、Rust 和引擎原生编译任务分别使用四个编译作业。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 
@@ -149,7 +151,7 @@ runtime:
 
 ### vLLM-Omni 运行时
 
-vLLM-Omni 使用独立的模型服务镜像。在具备 Docker BuildKit、Make 和 rustup 管理的 Rust 工具链的机器上，从仓库根目录构建：
+vLLM-Omni 使用独立的模型服务镜像。在具备 Docker BuildKit 和 Make 的机器上，从仓库根目录构建：
 
 ```bash
 make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest

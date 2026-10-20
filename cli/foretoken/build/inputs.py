@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Select, compare and capture source inputs for installation and deployment."""
+"""Select, compare and capture source directories for installation and deployment."""
 
 from __future__ import annotations
 
@@ -11,24 +11,28 @@ import os
 import shutil
 import stat
 import subprocess
-import tempfile
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from foretoken.build.engine_sources import generated_engine_file
 from foretoken.errors import DeploymentError
+from foretoken.working_directory import find_source_directory
 
 _SOURCE_METADATA = ".foretoken-sources.json"
-SNAPSHOT_METADATA = frozenset({"engine/manifest.json", "engine/deleted.json", _SOURCE_METADATA})
-# Workstation entrypoints and explicitly applied values are not cluster build inputs.
-_NON_BUILD_INPUTS = frozenset({"Makefile", "deploy/dev-build", "deploy/platform-values.yaml"})
+SNAPSHOT_METADATA = frozenset({"engine/manifest.json", _SOURCE_METADATA})
 _RUST_SOURCE = "data-plane/third_party/vllm"
+_GENERATED_DIRECTORIES = frozenset({
+    ".git", ".venv", ".gpu_cache", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".tox", ".nox", ".hypothesis", ".ipynb_checkpoints", "target",
+})
 
 
 @dataclass
 class BuildInputs:
-    """Own selected files and dependency provenance through comparison and capture."""
+    """Own source files and declared dependencies through comparison and capture."""
 
     root: Path
     engines: dict[str, str]
@@ -39,32 +43,38 @@ class BuildInputs:
     @classmethod
     def select(
         cls, root: Path, engines: dict[str, str] | None = None,
-        previous: Path | None = None, *, mooncake_version: str | None = None,
+        *, mooncake_version: str | None = None,
     ) -> BuildInputs:
-        """Select local build inputs, reusing only reproducible fixed dependencies."""
+        """Discover build inputs from directories, independently of their version-control metadata."""
         files = {}
-        for name in _git_names(root):
-            if not name.startswith(("data-plane/", "control-plane/", "deploy/")) and name not in {
-                "Makefile", "LICENSE", ".dockerignore", ".gitmodules",
-            }:
+        for prefix, excluded in (
+            ("data-plane", {"third_party/vllm"}),
+            ("control-plane", {"bin", "cover.out"}),
+            ("deploy/charts/foretoken", set()),
+            ("deploy/inference-engines", set()),
+            ("deploy/mooncake", set()),
+        ):
+            directory = root / prefix
+            if not directory.is_dir():
                 continue
+            for name, path in _directory_files(directory, excluded).items():
+                name = prefix + "/" + name
+                if path.suffix not in {".md", ".png", ".svg"}:
+                    files[name] = path
+        for name in ("LICENSE", ".dockerignore", "deploy/build-source", "cli/foretoken/build/engine_sources.py"):
             path = root / name
-            if name not in _NON_BUILD_INPUTS and path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
+            if path.is_file():
                 files[name] = path
         revision = pinned_rust_revision(root)
-        files.update(_rust_inputs(root, revision))
+        files.update(_rust_inputs(root))
         dependencies = {_RUST_SOURCE: {"revision": revision}}
         if mooncake_version is not None:
-            dependency_files, dependency = mooncake_inputs(root, previous, mooncake_version)
+            dependency_files, dependency = mooncake_inputs(root, mooncake_version)
             files.update(dependency_files)
             dependencies["third_party/mooncake"] = dependency
-        elif (root / "third_party/mooncake/.git").exists():
-            dependency_files, _, _ = _git_dependency_inputs(root, "third_party/mooncake")
-            files.update(dependency_files)
-        for engine, checkout in (engines or {}).items():
-            for name in _git_names(Path(checkout)):
-                path = Path(checkout) / name
-                if path.is_file():
+        for engine, directory in (engines or {}).items():
+            for name, path in _directory_files(Path(directory), {"build", "dist", ".deps"}).items():
+                if not generated_engine_file(Path(name)):
                     files[f"engine/{engine}/{name}"] = path
         return cls(root, engines or {}, files, dependencies, mooncake_version)
 
@@ -74,7 +84,7 @@ class BuildInputs:
             str(path.relative_to(snapshot))
             for path in snapshot.rglob("*")
             if path.is_file()
-            and str(path.relative_to(snapshot)) not in SNAPSHOT_METADATA | _NON_BUILD_INPUTS
+            and str(path.relative_to(snapshot)) not in SNAPSHOT_METADATA
         }
         changed = {
             name for name in previous | self.files.keys()
@@ -83,26 +93,20 @@ class BuildInputs:
         }
         dependencies = _snapshot_dependencies(snapshot)
         for name in dependencies.keys() | self.dependencies.keys():
-            old = {key: value for key, value in dependencies.get(name, {}).items() if key != "prepared"}
-            new = {key: value for key, value in self.dependencies.get(name, {}).items() if key != "prepared"}
-            if old != new:
+            if dependencies.get(name) != self.dependencies.get(name):
                 changed.add(name)
         return changed
 
     def validate(self, snapshot: Path) -> None:
-        """Reject changed bytes or lost fixed-source provenance before publication."""
-        lost_preparation = any(
-            recorded.get("prepared") and not self.dependencies.get(name, {}).get("prepared")
-            for name, recorded in _snapshot_dependencies(snapshot).items()
-        )
-        if self.changed(snapshot) or lost_preparation:
+        """Reject source changes during preparation before publishing captured artifacts."""
+        if self.changed(snapshot):
             raise DeploymentError("source changed while preparing artifacts; rerun the source operation")
 
     def capture(
         self, destination: Path, previous: Path | None = None,
         unchanged: set[str] | None = None,
     ) -> None:
-        """Write a private snapshot for the caller to adopt after successful preparation."""
+        """Capture complete source inventories and optional provenance for a build operation."""
         destination.mkdir(parents=True, mode=0o700)
         for name, source in self.files.items():
             target = destination / name
@@ -120,72 +124,48 @@ class BuildInputs:
         metadata = {
             _SOURCE_METADATA: {
                 "foretoken": _checkout_source(self.root),
-                "engines": {name: _checkout_source(Path(checkout)) for name, checkout in self.engines.items()},
+                "engines": {name: _checkout_source(Path(directory)) for name, directory in self.engines.items()},
                 "dependencies": self.dependencies,
             },
         }
         if self.engines:
-            manifest, deleted = {}, {}
-            for engine, checkout in self.engines.items():
-                prefix = f"engine/{engine}/"
-                manifest[engine] = {"files": sorted(
-                    name.removeprefix(prefix) for name in self.files if name.startswith(prefix)
+            metadata["engine/manifest.json"] = {
+                engine: {"files": sorted(
+                    name.removeprefix(f"engine/{engine}/")
+                    for name in self.files if name.startswith(f"engine/{engine}/")
                 )}
-                result = subprocess.check_output(["git", "-C", checkout, "ls-files", "--deleted", "-z"])
-                deleted[engine] = [os.fsdecode(name) for name in result.split(b"\0") if name]
-            metadata.update({"engine/manifest.json": manifest, "engine/deleted.json": deleted})
+                for engine in self.engines
+            }
         for name, value in metadata.items():
             path = destination / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(value, indent=2) + "\n")
-        # Recheck the original reference; a new snapshot must not certify itself.
         type(self).select(
-            self.root, self.engines, previous, mooncake_version=self.mooncake_version,
+            self.root, self.engines, mooncake_version=self.mooncake_version,
         ).validate(destination)
 
 
-def _git_names(root: Path, *paths: str) -> list[str]:
-    """List tracked and non-ignored files for every source input selector."""
-    result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *paths],
-        capture_output=True, check=False,
-    )
-    if result.returncode:
-        raise DeploymentError(result.stderr.decode().strip())
-    return [os.fsdecode(name) for name in result.stdout.split(b"\0") if name]
-
-
 def source_checkout(explicit: str | None = None) -> Path:
-    """Resolve and validate the Foretoken checkout selected for installation or deployment."""
-    if explicit is not None:
-        root = Path(explicit).expanduser().resolve()
-    else:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
-        )
-        if result.returncode:
-            raise DeploymentError(
-                "source deployment requires a Foretoken checkout; run from that checkout or pass --editable PATH"
-            )
-        root = Path(result.stdout.strip()).resolve()
-    if not (root / "Makefile").is_file() or not (root / "deploy/charts/foretoken/Chart.yaml").is_file():
-        raise DeploymentError(f"not a Foretoken source checkout: {root}")
-    return root
+    """Find the selected Foretoken source root using its build files, not Git metadata."""
+    root = Path(explicit).expanduser().resolve() if explicit is not None else Path.cwd().resolve()
+    directory = find_source_directory(root)
+    if directory is None or explicit is not None and directory != root:
+        raise DeploymentError(f"not a Foretoken source directory: {root}; pass --editable PATH")
+    return directory
 
 
 def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
-    """Resolve explicitly selected runtime checkouts independently of the pinned Rust source."""
+    """Resolve explicitly selected engine directories without requiring version control."""
     roots = {}
     for source in sources:
         name, separator, value = source.partition("=")
         if not separator:
             name, value = "vllm", source
         if name not in {"vllm", "vllm-metax"} or name in roots:
-            raise DeploymentError("--engine-source accepts one vllm checkout and one optional vllm-metax checkout")
+            raise DeploymentError("--engine-source accepts one vllm directory and one optional vllm-metax directory")
         path = Path(value).expanduser().resolve()
         if not (path / name.replace("-", "_")).is_dir() or not (path / "setup.py").is_file():
-            raise DeploymentError(f"engine source is not a {name} checkout: {path}")
+            raise DeploymentError(f"engine source is not a {name} directory: {path}")
         roots[name] = str(path)
     if roots and "vllm" not in roots:
         raise DeploymentError("--engine-source vllm-metax=PATH also requires the corresponding --engine-source vllm=PATH")
@@ -193,237 +173,42 @@ def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
 
 
 def pinned_rust_revision(root: Path) -> str:
-    """Read the recorded Rust dependency revision without downloading its source."""
-    result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--stage", "--", _RUST_SOURCE],
-        capture_output=True, text=True, check=False,
-    )
-    fields = result.stdout.split()
-    if result.returncode or len(fields) != 4 or fields[0] != "160000":
-        raise DeploymentError("source installation requires the recorded vLLM Git submodule")
-    return fields[1]
-
-
-def _rust_inputs(root: Path, revision: str) -> dict[str, Path]:
-    """Capture Rust overrides; builders restore unchanged upstream and managed patches."""
-    checkout = root / _RUST_SOURCE
-    if not (checkout / ".git").exists():
-        if not _unmaterialized_submodule(checkout):
-            raise DeploymentError(f"uninitialized dependency contains local files: {_RUST_SOURCE}")
-        return {}
-    if not (checkout / "rust/Cargo.toml").is_file():
-        raise DeploymentError("initialized vLLM source is missing rust/Cargo.toml; restore it or deinitialize the submodule")
-    files = {
-        name: checkout / name for name in _git_names(checkout, "rust")
-        if (checkout / name).is_file()
-    }
-    state = checkout / ".foretoken-patches.json"
-    if state.is_file():
-        stacks = [json.loads(state.read_text())]
-    else:
-        metadata = tomllib.loads((root / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
-        catalog = root / "data-plane" / metadata["vllm_patch_catalog"]
-        patches = json.loads(catalog.read_text())["patches"]
-        stacks = [[], [
-            {"contents": (catalog.parent / patch["path"]).read_text()}
-            for patch in patches if patch.get("rust", False)
-        ]]
-    # Use the parent's pin, not a possibly modified local commit. Private indexes
-    # inspect actual files even when the working index hides changes.
-    with tempfile.TemporaryDirectory(prefix="foretoken-rust-inputs-") as temporary:
-        environment = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
-        for stack in stacks:
-            loaded = subprocess.run(
-                ["git", "-C", str(checkout), "read-tree", revision], env=environment,
-                capture_output=True, check=False,
-            )
-            if loaded.returncode:
-                break
-            for patch in stack:
-                applied = subprocess.run(
-                    ["git", "-C", str(checkout), "apply", "--cached", "--include=rust/**"],
-                    input=patch["contents"], env=environment,
-                    capture_output=True, text=True, check=False,
-                )
-                if applied.returncode:
-                    break
-            else:
-                if _matches_rust_index(checkout, environment, files):
-                    return {}
-    if state.is_file():
-        files[state.name] = state
-    return {f"{_RUST_SOURCE}/{name}": path for name, path in files.items()}
-
-
-def _matches_rust_index(checkout: Path, environment: dict[str, str], files: dict[str, Path]) -> bool:
-    """Compare actual Rust bytes with a private index, without Git's clean filters."""
-    entries = subprocess.check_output(
-        ["git", "-C", str(checkout), "ls-files", "--stage", "-z", "--", "rust"], env=environment,
-    )
-    expected = {}
-    for entry in entries.split(b"\0"):
-        if entry:
-            metadata, name = entry.split(b"\t", 1)
-            mode, revision, _ = metadata.split()
-            if mode not in {b"100644", b"100755"}:
-                return False
-            expected[os.fsdecode(name)] = (mode, revision)
-    if expected.keys() != files.keys():
-        return False
-    contents = subprocess.check_output(
-        ["git", "-C", str(checkout), "cat-file", "--batch"],
-        input=b"".join(revision + b"\n" for _, revision in expected.values()),
-    )
-    offset = 0
-    for name, (mode, _) in expected.items():
-        header_end = contents.index(b"\n", offset)
-        size = int(contents[offset:header_end].split()[-1])
-        start = header_end + 1
-        if (
-            _source_file_mode(files[name]) != (0o755 if mode == b"100755" else 0o644)
-            or files[name].read_bytes() != contents[start:start + size]
-        ):
-            return False
-        offset = start + size + 1
-    return True
-
-
-def _snapshot_dependencies(snapshot: Path | None) -> dict[str, dict[str, Any]]:
-    """Read fixed-dependency provenance when a captured input set provides it."""
-    metadata = snapshot / _SOURCE_METADATA if snapshot is not None else None
-    if metadata is None or not metadata.is_file():
-        return {}
-    return json.loads(metadata.read_text()).get("dependencies", {})
-
-
-def _unmaterialized_submodule(path: Path) -> bool:
-    """Distinguish an absent checkout from local files that must not be replaced."""
-    return not path.is_symlink() and (not path.exists() or path.is_dir() and not any(path.iterdir()))
-
-
-def _git_dependency_inputs(
-    root: Path, prefix: str, reference: Path | None = None,
-    recorded_revisions: dict[str, str] | None = None,
-) -> tuple[dict[str, Path], dict[str, str], bool]:
-    """Read live dependency files, borrowing only absent submodules at recorded gitlinks."""
-    checkout = root / prefix
-    entries = subprocess.check_output(["git", "-C", str(checkout), "ls-files", "--stage", "-z"])
-    links = {}
-    for entry in entries.split(b"\0"):
-        if entry:
-            metadata, name = entry.split(b"\t", 1)
-            mode, revision, _ = metadata.split()
-            if mode == b"160000":
-                links[os.fsdecode(name)] = revision.decode()
-    files, revisions = {}, {}
-    complete = True
-    for relative in _git_names(checkout):
-        name = prefix + "/" + relative
-        path = root / name
-        if relative not in links:
-            if path.is_file():
-                files[name] = path
-            continue
-        revisions[name] = links[relative]
-        if (path / ".git").exists():
-            nested, nested_revisions, ready = _git_dependency_inputs(root, name, reference, recorded_revisions)
-            files.update(nested)
-            revisions.update(nested_revisions)
-            actual_revision = subprocess.check_output(
-                ["git", "-C", str(path), "rev-parse", "HEAD"], text=True,
-            ).strip()
-            complete = complete and ready and actual_revision == links[relative]
-        elif (
-            reference is not None and _unmaterialized_submodule(path)
-            and (recorded_revisions or {}).get(name) == links[relative]
-        ):
-            files.update({
-                str(item.relative_to(reference)): item
-                for item in (reference / name).rglob("*") if item.is_file()
-            })
-            revisions.update({
-                nested: revision for nested, revision in (recorded_revisions or {}).items()
-                if nested.startswith(name + "/")
-            })
-        else:
-            if not _unmaterialized_submodule(path):
-                raise DeploymentError(f"uninitialized dependency contains local files: {name}")
-            complete = False
-    return files, revisions, complete
+    """Read the declared Rust dependency revision from the source directory's Cargo metadata."""
+    metadata = tomllib.loads((root / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
+    revision = metadata.get("vllm_revision")
+    if not isinstance(revision, str) or not revision:
+        raise DeploymentError("data-plane/Cargo.toml must declare workspace.metadata.foretoken.vllm_revision")
+    return revision
 
 
 def mooncake_inputs(
-    root: Path, previous: Path | None, version: str,
+    root: Path, version: str,
 ) -> tuple[dict[str, Path], dict[str, Any]]:
-    """Resolve fixed Mooncake inputs for capture or the installer's preparation decision."""
+    """Capture supplied Mooncake files and the declared recipe; the build executor prepares dependencies."""
     prefix = "third_party/mooncake"
     preparer = root / "deploy/mooncake/prepare-source"
     environment = {**os.environ, "MOONCAKE_VERSION": version}
     described = subprocess.run(
-        [str(preparer), "--describe"], cwd=root, env=environment,
+        [sys.executable, "-I", str(preparer), "--describe"], cwd=root, env=environment,
         capture_output=True, text=True, check=False,
     )
     if described.returncode:
         raise DeploymentError(described.stderr.strip() or described.stdout.strip())
-    revision, *patches = described.stdout.splitlines()
-    previous_record = _snapshot_dependencies(previous).get(prefix, {})
-    reusable = (
-        previous is not None and previous_record.get("prepared") is True
-        and previous_record.get("revision") == revision
-        and previous_record.get("patches") == patches
-        and all(
-            (previous / name).is_file() and _same_source_file(root / name, previous / name)
-            for name in ["deploy/mooncake/prepare-source", *patches]
-        )
-    )
-    checkout = root / prefix
-    if not (checkout / ".git").exists():
-        if not _unmaterialized_submodule(checkout):
-            raise DeploymentError(f"uninitialized dependency contains local files: {prefix}")
-        if reusable:
-            return {
-                str(path.relative_to(previous)): path
-                for path in (previous / prefix).rglob("*") if path.is_file()
-            }, previous_record
-        return {}, {"revision": revision, "patches": patches, "submodules": {}, "prepared": False}
-    files, submodules, complete = _git_dependency_inputs(
-        root, prefix, previous if reusable else None, previous_record.get("submodules", {}),
-    )
-    checked = subprocess.run(
-        [str(preparer), "--check"], cwd=root, env=environment,
-        capture_output=True, text=True, check=False,
-    )
-    if checked.returncode not in (0, 1):
-        raise DeploymentError(checked.stderr.strip() or checked.stdout.strip())
-    return files, {
-        "revision": revision, "patches": patches, "submodules": submodules,
-        "prepared": complete and checked.returncode == 0,
+    recipe = json.loads(described.stdout)
+    dependency = {
+        "revision": recipe["revision"], "patches": recipe["patches"],
+        "dependencies": {name: value["revision"] for name, value in recipe["dependencies"].items()},
     }
-
-
-def _source_file_mode(path: Path) -> int:
-    """Use Git's executable-file distinction for private build snapshots."""
-    return 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
-
-
-def _same_source_file(left: Path, right: Path) -> bool:
-    """Compare build bytes and executable state independently of workstation metadata."""
-    # filecmp caches deep comparisons by mtime; restored timestamps must not hide edits.
-    filecmp.clear_cache()
-    return _source_file_mode(left) == _source_file_mode(right) and filecmp.cmp(left, right, shallow=False)
-
-
-def _checkout_source(root: Path) -> dict[str, Any] | None:
-    """Record Git provenance without retaining local paths or remote credentials."""
-    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
-    if result.returncode:
-        return None
-    changed = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], text=True)
-    return {"commit": result.stdout.strip(), "dirty": bool(changed)}
+    directory = root / prefix
+    files = {} if _empty_source_directory(directory) else {
+        prefix + "/" + name: path
+        for name, path in _directory_files(directory, {"build", "dist", ".deps"}).items()
+    }
+    return files, dependency
 
 
 def build_sources(snapshot: Path, component: str) -> dict[str, Any] | None:
-    """Read public provenance for a publication, including the model server's bound engines."""
+    """Read publication provenance, preserving source archives for directories without Git."""
     metadata = snapshot / _SOURCE_METADATA
     if not metadata.is_file():
         return None
@@ -453,3 +238,94 @@ def snapshot_versions(
         )
         result[name] = versions[name] if unchanged else revision
     return result
+
+
+def _directory_files(root: Path, excluded: set[str]) -> dict[str, Path]:
+    """Enumerate source files, following directory aliases without accepting recursive links."""
+    files = {}
+
+    def visit(directory: Path, ancestors: frozenset[Path]) -> None:
+        resolved = directory.resolve()
+        if resolved in ancestors:
+            raise DeploymentError(f"recursive directory link in source: {directory}")
+        for path in sorted(directory.iterdir()):
+            name = str(path.relative_to(root))
+            if (
+                name in excluded or path.name in _GENERATED_DIRECTORIES
+                or path.name.endswith((".egg-info", ".dist-info")) or path.name == ".env" or path.name.startswith(".env.")
+            ):
+                continue
+            mode = path.stat().st_mode
+            if stat.S_ISDIR(mode):
+                visit(path, ancestors | {resolved})
+            elif stat.S_ISREG(mode) and path.name != ".DS_Store" and path.suffix not in {".pyc", ".pyo"}:
+                files[name] = path
+
+    visit(root, frozenset())
+    return files
+
+
+def _rust_inputs(root: Path) -> dict[str, Path]:
+    """Capture a supplied Rust tree in full; absent sources use the declared dependency version."""
+    directory = root / _RUST_SOURCE
+    if _empty_source_directory(directory):
+        return {}
+    if not (directory / "rust/Cargo.toml").is_file():
+        raise DeploymentError(f"vLLM source is missing rust/Cargo.toml: {directory}")
+    files = {
+        _RUST_SOURCE + "/rust/" + name: path
+        for name, path in _directory_files(directory / "rust", set()).items()
+    }
+    state = directory / ".foretoken-patches.json"
+    if state.is_file():
+        files[_RUST_SOURCE + "/" + state.name] = state
+    return files
+
+
+def _empty_source_directory(path: Path) -> bool:
+    """Allow automatic dependency preparation only when no source files were supplied."""
+    return (not path.exists() and not path.is_symlink()) or path.is_dir() and not any(
+        entry.name not in {".git", ".DS_Store"} for entry in path.iterdir()
+    )
+
+
+def _snapshot_dependencies(snapshot: Path) -> dict[str, dict[str, Any]]:
+    """Read declared dependencies from a completed input snapshot."""
+    metadata = snapshot / _SOURCE_METADATA
+    if not metadata.is_file():
+        return {}
+    return json.loads(metadata.read_text()).get("dependencies", {})
+
+
+def _source_file_mode(path: Path) -> int:
+    """Preserve executable-file semantics in portable source snapshots."""
+    return 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
+
+
+def _same_source_file(left: Path, right: Path) -> bool:
+    """Compare source bytes and executable state independently of filesystem timestamps."""
+    filecmp.clear_cache()
+    return _source_file_mode(left) == _source_file_mode(right) and filecmp.cmp(left, right, shallow=False)
+
+
+def _checkout_source(root: Path) -> dict[str, Any] | None:
+    """Record optional Git provenance only when this directory is the repository root."""
+    if not (root / ".git").exists():
+        return None
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if top.returncode or Path(top.stdout.strip()).resolve() != root.resolve():
+        return None
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True, text=True, check=False)
+    if result.returncode:
+        return None
+    changed = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True, check=False,
+    )
+    if changed.returncode:
+        return None
+    return {"commit": result.stdout.strip(), "dirty": bool(changed.stdout)}

@@ -1,228 +1,256 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S python3 -I
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Prepares the selected official Mooncake source in the repository submodule.
-set -euo pipefail
+"""Prepare Mooncake source and declared dependencies without requiring a Git checkout."""
 
-main() {
-    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-    repo_root=$(git -C "${script_dir}/../.." rev-parse --show-toplevel)
-    source_dir="${repo_root}/third_party/mooncake"
-    mirror=${FORETOKEN_GITHUB_MIRROR:-}
-    requested_version=${MOONCAKE_VERSION:-}
-    operation=${1:-prepare}
-    if [[ $# -gt 1 ]] || [[ "${operation}" != prepare && "${operation}" != --describe && "${operation}" != --check ]]; then
-        printf 'Usage: %s [--describe|--check]\n' "$0" >&2
-        exit 2
-    fi
+from __future__ import annotations
 
-    if [[ -z "${requested_version}" ]]; then
-        gitlink_record=$(git -C "${repo_root}" ls-files --stage -- third_party/mooncake)
-        read -r _ requested_revision _ <<<"${gitlink_record}"
-        if [[ -z "${requested_revision:-}" ]]; then
-            printf '%s\n' 'third_party/mooncake has no recorded gitlink revision.' >&2
-            exit 1
-        fi
-        target_record=$(release_for "${requested_revision}") || {
-            printf 'Default Mooncake gitlink %s is not supported by this source preparer.\n' \
-                "${requested_revision}" >&2
-            exit 1
+import argparse
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import urllib.request
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+
+class MooncakeSource:
+    """Own source materialization and patch updates, preserving supplied local files."""
+
+    def __init__(self, root: Path, *, destination: Path | None = None, cache: Path | None = None) -> None:
+        self.root = root
+        self.directory = destination if destination is not None else root / "third_party/mooncake"
+        self.archive_cache = cache
+        self.git_executable = shutil.which("git")
+        self.record_path = self.directory / ".foretoken-source.json"
+        self.record = json.loads(self.record_path.read_text()) if self.record_path.is_file() else {}
+        configuration = json.loads((root / "deploy/mooncake/source-environment.json").read_text())
+        requested = os.environ.get("MOONCAKE_VERSION") or configuration["defaultVersion"]
+        releases = configuration["releases"]
+        selected = next((version for version, release in releases.items() if requested in {version, release["revision"]}), None)
+        if selected is None:
+            raise ValueError(f"Unsupported MOONCAKE_VERSION={requested}; expected one of {', '.join(releases)}")
+        self.source = dict(self.record.get("source", {"kind": "local", "revision": None}))
+        self.recipe = releases[selected]
+        self.repository = configuration["repository"]
+        self.patches = [{"path": name, "contents": (root / name).read_text()} for name in self.recipe["patches"]]
+        self.dependencies = {name: dict(dependency) for name, dependency in self.recipe["dependencies"].items()}
+
+    def describe(self) -> dict[str, Any]:
+        """Describe declared build inputs without preparing files or querying version-control metadata."""
+        return {
+            "revision": self.recipe["revision"],
+            "patches": self.recipe["patches"],
+            "dependencies": {"third_party/mooncake/" + name: dependency for name, dependency in self.dependencies.items()},
         }
-    else
-        target_record=$(release_for "${requested_version}") || {
-            printf 'Unsupported MOONCAKE_VERSION=%s; expected 0.3.12, 0.3.12.post1, 0.3.13, or 0.3.13.post1.\n' \
-                "${requested_version}" >&2
-            exit 1
-        }
-    fi
-    IFS='|' read -r target_version target_revision _ <<<"${target_record}"
 
-    # Source selection and reuse checks share the preparation recipe without fetching.
-    if [[ "${operation}" == --describe ]]; then
-        load_patch_series "${target_revision}" current
-        printf '%s\n' "${target_revision}"
-        for patch in "${patches[@]}"; do
-            printf '%s\n' "${patch#"${repo_root}/"}"
-        done
-        exit 0
-    fi
+    def prepared(self) -> bool:
+        """Check actual files, dependency licenses and applied patches rather than Git cleanliness."""
+        if not self._complete_source():
+            return False
+        if self.source["kind"] == "managed" and self.source["revision"] != self.recipe["revision"]:
+            return False
+        if any(not self._complete_dependency(self.directory / name) for name in self.dependencies):
+            return False
+        previous = self.record.get("patches", [])
+        if previous and previous != self.patches:
+            return False
+        if self.git_executable is None:
+            return False
+        return all(self._patch(self.directory, patch["contents"], reverse=True, check=True).returncode == 0 for patch in self.patches)
 
-    source_top=$(git -C "${source_dir}" rev-parse --show-toplevel 2>/dev/null || true)
-    if [[ "${operation}" == --check ]]; then
-        [[ "${source_top}" == "${source_dir}" ]] || exit 1
-        [[ "$(git -C "${source_dir}" rev-parse HEAD)" == "${target_revision}" ]] || exit 1
-        tree_matches_patch_series "${target_revision}" current
-        exit $?
-    fi
-    if [[ "${source_top}" != "${source_dir}" ]]; then
-        if [[ -d "${source_dir}" ]] &&
-            [[ -n "$(find "${source_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-            printf '%s\n' 'third_party/mooncake exists but is not an initialized Git submodule.' >&2
-            exit 1
-        fi
-        git_cmd -C "${repo_root}" submodule update --init third_party/mooncake
-    fi
+    def prepare(self) -> None:
+        """Materialize declared dependencies and apply patches without resetting supplied source files."""
+        if self.source["kind"] == "local" and self.git_executable is not None and (self.directory / ".git").exists():
+            result = subprocess.run(
+                [self.git_executable, "-C", str(self.directory), "rev-parse", "HEAD"], text=True, capture_output=True, check=False,
+                env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_OPTIONAL_LOCKS": "0"},
+            )
+            if result.returncode == 0:
+                self.source["revision"] = result.stdout.strip()
+        if not self.directory.exists() or not any(self.directory.iterdir()):
+            self._download(self.directory, self.repository, self.recipe["revision"])
+            self.source = {"kind": "managed", "repository": self.repository, "revision": self.recipe["revision"]}
+            self._save([])
+        if not self._complete_source():
+            raise ValueError(f"Mooncake source at {self.directory} is incomplete; existing files were preserved")
+        if self.source["kind"] == "managed" and self.source["revision"] != self.recipe["revision"]:
+            raise ValueError(
+                f"Managed Mooncake source is at {self.source['revision']}, not {self.recipe['revision']}; "
+                "preserve that source directory before preparing another version"
+            )
+        for name, dependency in self.dependencies.items():
+            destination = self.directory / name
+            if self._complete_dependency(destination):
+                continue
+            if destination.exists() and any(destination.iterdir()):
+                raise ValueError(f"Mooncake dependency {name} is incomplete; existing local files were preserved")
+            self._download(destination, dependency["repository"], dependency["revision"])
+        self._prepare_patches()
+        self._save(self.patches)
+        print(f"Prepared Mooncake source at {self.directory} ({self.source['kind']}).")
 
-    current_revision=$(git -C "${source_dir}" rev-parse HEAD)
-    source_state=unknown
-    if source_matches_head; then
-        source_state=clean
-    elif tree_matches_patch_series "${current_revision}" current; then
-        source_state=current
-    elif tree_matches_patch_series "${current_revision}" legacy; then
-        source_state=legacy
-    else
-        fail_dirty_source
-    fi
-
-    if [[ "${current_revision}" == "${target_revision}" && "${source_state}" == current ]]; then
-        git_cmd -C "${source_dir}" submodule update --init --recursive
-        printf 'Prepared Mooncake %s at %s.\n' \
-            "${target_version}" "${target_revision}"
-        exit 0
-    fi
-
-    if [[ "${source_state}" == current || "${source_state}" == legacy ]]; then
-        reverse_patch_series "${current_revision}" "${source_state}"
-    fi
-    if ! source_matches_head; then
-        fail_dirty_source
-    fi
-
-    if [[ "${current_revision}" != "${target_revision}" ]]; then
-        if ! git -C "${source_dir}" cat-file -e "${target_revision}^{commit}" 2>/dev/null; then
-            git_cmd -C "${source_dir}" fetch --depth=1 origin "${target_revision}"
-        fi
-        git -C "${source_dir}" submodule deinit --force --all >/dev/null 2>&1
-        git -C "${source_dir}" checkout --detach "${target_revision}"
-    fi
-    git_cmd -C "${source_dir}" submodule update --init --recursive
-
-    load_patch_series "${target_revision}" current
-    for patch in "${patches[@]}"; do
-        git -C "${source_dir}" apply --check "${patch}"
-        git -C "${source_dir}" apply "${patch}"
-    done
-
-    printf 'Prepared Mooncake %s at %s.\n' \
-        "${target_version}" "${target_revision}"
-}
-
-git_cmd() {
-    if [[ -n "${mirror}" ]]; then
-        git -c "url.${mirror%/}/.insteadOf=https://github.com/" "$@"
-    else
-        git "$@"
-    fi
-}
-
-fail_dirty_source() {
-    printf '%s\n' \
-        'third_party/mooncake contains changes other than the Foretoken patch series.' \
-        'Preserve or remove those changes before selecting another Mooncake version.' >&2
-    exit 1
-}
-
-release_for() {
-    case "$1" in
-        0.3.12|c7ae97fd24251ed0aaaa613e8251859f170f1ae7)
-            printf '%s|%s|%s\n' \
-                0.3.12 c7ae97fd24251ed0aaaa613e8251859f170f1ae7 \
-                "${repo_root}/deploy/mooncake/patches/v0.3.12"
-            ;;
-        0.3.12.post1|6041a609a8c3af35e778f70db344f145c2914980)
-            printf '%s|%s|%s\n' \
-                0.3.12.post1 6041a609a8c3af35e778f70db344f145c2914980 \
-                "${repo_root}/deploy/mooncake/patches/v0.3.12.post1"
-            ;;
-        0.3.13|e5598b0992cc258b06d22f24d875480e8931a28e)
-            printf '%s|%s|%s\n' \
-                0.3.13 e5598b0992cc258b06d22f24d875480e8931a28e \
-                "${repo_root}/deploy/mooncake/patches"
-            ;;
-        0.3.13.post1|719735896c86b56fabec6cf3e825fb2ea640597a)
-            printf '%s|%s|%s\n' \
-                0.3.13.post1 719735896c86b56fabec6cf3e825fb2ea640597a \
-                "${repo_root}/deploy/mooncake/patches"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-load_patch_series() {
-    local revision=$1 flavor=${2:-current} record version patch_dir
-    record=$(release_for "${revision}") || return 1
-    IFS='|' read -r version _ patch_dir <<<"${record}"
-    patches=()
-    if [[ "${flavor}" == legacy ]]; then
-        if [[ "${version}" != 0.3.12 ]]; then
-            return 1
-        fi
-        patches=(
-            "${patch_dir}/legacy-provider-registration.patch"
-            "${patch_dir}/legacy-client-lifecycle.patch"
+    def _complete_source(self) -> bool:
+        return (
+            (self.directory / "CMakeLists.txt").is_file()
+            and (self.directory / "LICENSE-APACHE").is_file()
+            and (self.directory / "mooncake-store").is_dir()
+            and (self.directory / "mooncake-transfer-engine").is_dir()
         )
-        return 0
-    fi
-    patches=(
-        "${patch_dir}/provider-registration.patch"
-        "${patch_dir}/client-lifecycle.patch"
-    )
-    if [[ "${version}" == 0.3.13 || "${version}" == 0.3.13.post1 ]]; then
-        patches+=("${patch_dir}/tenant-quota-ha.patch")
-    fi
-}
 
-# Private indexes compare actual files even when the working index hides changes.
-source_matches_head() (
-    local expected_index patch
-    if ! nested_submodules_are_clean; then
-        exit 1
-    fi
-    expected_index=$(mktemp)
-    trap 'rm -f "${expected_index}"' EXIT
-    rm -f "${expected_index}"
-    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" read-tree HEAD || exit
-    for patch in "$@"; do
-        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached --check "${patch}" || exit
-        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached "${patch}" || exit
-    done
-    cmp -s \
-        <(GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" ls-files -z | LC_ALL=C sort -zu) \
-        <(git -C "${source_dir}" ls-files --cached --others --exclude-standard -z | LC_ALL=C sort -zu) || exit 1
-    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" \
-        -c core.filemode=true diff --quiet --ignore-submodules=none
-)
+    @staticmethod
+    def _complete_dependency(directory: Path) -> bool:
+        return (directory / "CMakeLists.txt").is_file() and (directory / "LICENSE").is_file()
 
-tree_matches_patch_series() {
-    load_patch_series "$1" "$2" || return 1
-    source_matches_head "${patches[@]}"
-}
+    def _download(self, destination: Path, repository: str, revision: str) -> None:
+        """Materialize a licensed upstream tree without holding the shared download lock during extraction."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".mooncake-source-", dir=destination.parent) as temporary:
+            staging = Path(temporary)
+            cache = self.archive_cache if self.archive_cache is not None else staging / "archives"
+            archive = self._cached_archive(repository, revision, cache)
+            unpacked = staging / "unpacked"
+            unpacked.mkdir()
+            with tarfile.open(archive, "r:gz") as package:
+                package.extractall(unpacked, filter="data")
+            (source,) = unpacked.iterdir()
+            if destination.exists():
+                destination.rmdir()
+            source.rename(destination)
 
-reverse_patch_series() {
-    local revision=$1 flavor=$2 index
-    load_patch_series "${revision}" "${flavor}"
-    reverse_patches=()
-    for ((index=${#patches[@]} - 1; index >= 0; index--)); do
-        reverse_patches+=("${patches[index]}")
-    done
-    git -C "${source_dir}" apply --reverse --check "${reverse_patches[@]}"
-    git -C "${source_dir}" apply --reverse "${reverse_patches[@]}"
-}
+    def _cached_archive(self, repository: str, revision: str, cache: Path) -> Path:
+        """Publish one complete upstream archive under its repository/revision download lock."""
+        archive = cache / quote(repository.removesuffix(".git"), safe="") / (revision + ".tar.gz")
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        # Workspace extraction and patch preparation happen after this lock is released.
+        with archive.with_name(archive.name + ".lock").open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not archive.is_file():
+                with tempfile.TemporaryDirectory(prefix=".mooncake-download-", dir=archive.parent) as temporary:
+                    received = Path(temporary) / "source.tar.gz"
+                    url = repository.removesuffix(".git") + f"/archive/{revision}.tar.gz"
+                    mirror = os.environ.get("FORETOKEN_GITHUB_MIRROR")
+                    if mirror and url.startswith("https://github.com/"):
+                        url = mirror.rstrip("/") + url.removeprefix("https://github.com")
+                    with urllib.request.urlopen(url) as response, received.open("wb") as output:
+                        shutil.copyfileobj(response, output)
+                    with tarfile.open(received, "r:gz") as package:
+                        members = package.getmembers()
+                    roots = {Path(member.name).parts[0] for member in members if Path(member.name).parts}
+                    if len(roots) != 1:
+                        raise ValueError(f"Source archive from {repository} must contain one project directory")
+                    project = roots.pop()
+                    files = {member.name for member in members if member.isfile()}
+                    if f"{project}/CMakeLists.txt" not in files or not any(f"{project}/{name}" in files for name in ("LICENSE", "LICENSE-APACHE")):
+                        raise ValueError(f"Downloaded source from {repository} is missing CMakeLists.txt or its license")
+                    received.replace(archive)
+        return archive
 
-nested_submodules_are_clean() {
-    git -C "${source_dir}" submodule foreach --quiet --recursive '
-        index=$(mktemp)
-        trap '\''rm -f "$index"'\'' EXIT
-        rm -f "$index"
-        GIT_INDEX_FILE="$index" git read-tree HEAD &&
-        GIT_INDEX_FILE="$index" git -c core.filemode=true diff --quiet --ignore-submodules=none &&
-        git diff --cached --quiet HEAD -- &&
-        test -z "$(git ls-files --others --exclude-standard)"
-    '
-}
+    def _patch(self, source: Path, contents: str, *, reverse: bool = False, check: bool = False) -> subprocess.CompletedProcess[str]:
+        """Use Git's filesystem patch engine without requiring or updating a repository index."""
+        command = ["git", "apply", "--directory=" + source.name]
+        if reverse:
+            command.append("--reverse")
+        if check:
+            command.append("--check")
+        environment = {name: value for name, value in os.environ.items() if name not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}}
+        environment.update(GIT_CEILING_DIRECTORIES=str(source.parent), GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
+        return subprocess.run(command, cwd=source.parent, env=environment, input=contents, text=True, capture_output=True, check=False)
 
-main "$@"
+    def _prepare_patches(self) -> None:
+        """Stage only patch-owned files so a conflicting update cannot alter supplied source."""
+        if self.git_executable is None:
+            raise ValueError("Git is required to check and apply Mooncake patches")
+        if self.prepared():
+            return
+        previous = self.record.get("patches", [])
+        if not previous and self.recipe.get("legacyPatches"):
+            legacy = [{"path": name, "contents": (self.root / name).read_text()} for name in self.recipe["legacyPatches"]]
+            if all(self._patch(self.directory, patch["contents"], reverse=True, check=True).returncode == 0 for patch in legacy):
+                previous = legacy
+        patches = previous + self.patches
+        names = set()
+        for patch in patches:
+            result = subprocess.run(["git", "apply", "--numstat", "-z"], input=patch["contents"], text=True, capture_output=True, check=True)
+            names.update(entry.split("\t", 2)[2] for entry in result.stdout.split("\0") if entry)
+        for name in names:
+            path = Path(name)
+            if not path.parts or path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"Mooncake patch path must stay within its source tree: {name}")
+        with tempfile.TemporaryDirectory(prefix=".mooncake-patches-", dir=self.directory.parent) as temporary:
+            staged = Path(temporary) / "source"
+            staged.mkdir()
+            for name in names:
+                source = self.directory / name
+                if source.is_file():
+                    target = staged / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+            if previous and previous != self.patches:
+                for patch in reversed(previous):
+                    result = self._patch(staged, patch["contents"], reverse=True)
+                    if result.returncode:
+                        raise ValueError(f"Cannot update {patch['path']} with local changes: {result.stderr.strip()}")
+            for patch in self.patches:
+                if self._patch(staged, patch["contents"], reverse=True, check=True).returncode == 0:
+                    continue
+                result = self._patch(staged, patch["contents"])
+                if result.returncode:
+                    raise ValueError(f"Cannot apply {patch['path']} to local Mooncake source: {result.stderr.strip()}")
+            for name in names:
+                source, destination = staged / name, self.directory / name
+                if source.is_file():
+                    if destination.is_file() and source.read_bytes() == destination.read_bytes() and source.stat().st_mode == destination.stat().st_mode:
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    source.replace(destination)
+                else:
+                    destination.unlink(missing_ok=True)
+
+    def _save(self, patches: list[dict[str, str]]) -> None:
+        """Record upstream provenance and actual patch text independently of repository metadata."""
+        value = {"source": self.source, "patches": patches}
+        if self.record_path.is_file() and json.loads(self.record_path.read_text()) == value:
+            return
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.directory, delete=False) as output:
+            temporary = Path(output.name)
+            try:
+                json.dump(value, output, indent=2)
+                output.write("\n")
+                output.close()
+                temporary.replace(self.record_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        self.record = value
+
+
+def main() -> None:
+    """Describe source recipes or prepare their files for repository build callers."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", nargs="?", choices=("prepare",), default="prepare")
+    parser.add_argument("--destination", type=Path, help="Source directory selected by the build executor")
+    parser.add_argument("--cache", type=Path, help="Caller-owned cache directory for upstream source archives")
+    parser.add_argument("--describe", action="store_true")
+    arguments = parser.parse_args()
+    try:
+        source = MooncakeSource(
+            Path(__file__).resolve().parents[2],
+            destination=arguments.destination.expanduser().resolve() if arguments.destination is not None else None,
+            cache=arguments.cache.expanduser().resolve() if arguments.cache is not None else None,
+        )
+        if arguments.describe:
+            print(json.dumps(source.describe()))
+        else:
+            source.prepare()
+    except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"Mooncake source preparation failed: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

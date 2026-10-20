@@ -10,7 +10,10 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
-from foretoken.build.cluster.images import SOURCE_BUILD_BINDING_LABEL, SOURCE_BUILD_POD_LABEL
+from foretoken.build.cluster.images import (
+    SOURCE_BUILD_BINDING_LABEL,
+    SOURCE_BUILD_POD_LABEL,
+)
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 

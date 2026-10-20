@@ -11,7 +11,11 @@ from dataclasses import dataclass
 
 from foretoken.accelerators.config import METAX_GPU_RESOURCES, NVIDIA_GPU_RESOURCE
 from foretoken.accelerators.discovery import ExporterDiscovery
-from foretoken.accelerators.metax import MetaXExporterLifecycle, MetaXMetrics, MetaXMetricsDiscovery
+from foretoken.accelerators.metax import (
+    MetaXExporterLifecycle,
+    MetaXMetrics,
+    MetaXMetricsDiscovery,
+)
 from foretoken.accelerators.nvidia import NvidiaMetrics, NvidiaMetricsDiscovery
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds

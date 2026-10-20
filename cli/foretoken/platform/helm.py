@@ -64,7 +64,7 @@ class Helm(HelmClient):
         """Install resolved platform intent while storage owners retain bootstrap and publication lifetimes."""
         source_mode = source_images is not None
         chart = (
-            str(source_images.source_root / "deploy" / "charts" / "foretoken")
+            str(source_images.inputs / "deploy" / "charts" / "foretoken")
             if source_images is not None else self.config.platform.source
         )
         chart_version = None if source_mode else self.config.platform.version
@@ -161,7 +161,7 @@ class Helm(HelmClient):
         clear_source_build: bool = False,
     ) -> dict[str, Any]:
         """Change instance acceptance with native version preconditions and retire obsolete source recipes."""
-        from foretoken.build.state import SOURCE_BUILD_KEY
+        from foretoken.build.records import SOURCE_BUILD_KEY
 
         metadata = configuration["metadata"]
         annotation = "inference.foretoken.io/retiring"
@@ -186,7 +186,7 @@ class Helm(HelmClient):
         self, root: Path, values: tuple[str, ...], timeout: str,
         *, stored_values: dict[str, Any] | None, download_proxy_url: str,
     ) -> tuple[dict[str, Any], ...]:
-        """Render bootstrap storage intent for the platform's application-file owner."""
+        """Render bootstrap storage, leaving user values interpretation to the selected Helm chart."""
         args = self.upgrade_args(self.platform_release(), str(root / "deploy/charts/foretoken"), timeout)
         merged = stored_values or {}
         for value in load_platform_values(values):

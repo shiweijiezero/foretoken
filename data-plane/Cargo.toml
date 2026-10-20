@@ -29,6 +29,8 @@ members = [
 exclude = ["third_party/vllm"]
 
 [workspace.metadata.foretoken]
+vllm_repository = "vllm-project/vllm"
+vllm_revision = "1be36283678a9a94fc8fdaad6c95c2896d6b4015"
 vllm_source = "third_party/vllm"
 vllm_patch_catalog = "patches/vllm/catalog.json"
 

@@ -109,7 +109,7 @@ kubectl config set-context --current --namespace team-inference
 
 ### uninstall
 
-部署实例全部删除后，由平台管理员卸载共享平台。Kubernetes 集群、Foretoken CRD、已保存的日志和复用的集群组件会保留。
+部署实例全部删除后，由平台管理员卸载共享平台及其托管的开发存储。Kubernetes 集群、Foretoken CRD、已保存的日志和复用的集群组件会保留。
 
 ```bash
 foretoken uninstall
@@ -153,7 +153,7 @@ foretoken stop qwen
 foretoken delete qwen
 ```
 
-托管模型下载在最后一个服务引用释放后回收，`stop` 则保留这些引用。动态卷遵循保留策略和 StorageClass 回收策略，详见[模型存储](../docs/features/model-storage_zh.md#暂停删除与复用)。
+开发环境和增量构建状态会保留，供后续源码部署复用。托管模型下载在最后一个服务引用释放后回收，`stop` 则保留这些引用。动态卷遵循保留策略和 StorageClass 回收策略，详见[模型存储](../docs/features/model-storage_zh.md#暂停删除与复用)。
 
 ### endpoint
 

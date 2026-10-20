@@ -19,6 +19,10 @@ reference/
 # Rust
 target/
 
+# Build dependencies prepared from declared source recipes
+/data-plane/third_party/vllm/
+/third_party/mooncake/
+
 # Experiment records
 results/
 !benchmarks/src/benchmarks/results/

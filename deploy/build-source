@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Compile application files through the same entrypoint in images and development Pods."""
+
+from __future__ import annotations
+
+import argparse
+import filecmp
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+
+def main() -> None:
+    """Build requested application parts into a caller-owned publication directory."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("component", choices=("control-plane", "frontend", "model-server"))
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--parts", nargs="+", choices=("go", "rust", "python"))
+    parser.add_argument("--workspace", type=Path)
+    parser.add_argument("--versions", type=Path)
+    arguments = parser.parse_args()
+    root = Path(__file__).resolve().parent.parent
+    if arguments.workspace is not None:
+        if arguments.versions is None:
+            parser.error("--workspace requires --versions")
+        root = prepare_workspace(root, arguments.workspace.resolve(), arguments.versions, arguments.component)
+    output = arguments.output.resolve()
+    cache = arguments.cache.resolve()
+    parts = set(arguments.parts or ({"go"} if arguments.component == "control-plane" else {"rust", "python"}))
+    output.mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
+    environment = os.environ.copy()
+
+    if "go" in parts:
+        compile_controller(root, output, cache, environment)
+    if "rust" in parts:
+        compile_rust(root, arguments.component, output, cache, environment)
+    if arguments.component == "model-server" and "python" in parts:
+        destination = output / "python"
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(root / "data-plane/model-server/python", destination)
+    if arguments.component in {"control-plane", "model-server"}:
+        shutil.copyfile(root / "LICENSE", output / "LICENSE")
+    (output / "complete.json").write_text(json.dumps({"component": arguments.component}) + "\n")
+
+
+def prepare_workspace(source: Path, workspace: Path, versions: Path, component: str) -> Path:
+    """Update a compiler's mutable source tree while preserving unchanged files and incremental outputs."""
+    prefix = "control-plane/" if component == "control-plane" else "data-plane/"
+    selected = {
+        name: version for name, version in json.loads(versions.read_text()).items()
+        if name.startswith(prefix) or name in {"LICENSE", "deploy/build-source"}
+    }
+    receipt = workspace.with_suffix(".json")
+    previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
+    if previous == selected:
+        return workspace
+    receipt.unlink(missing_ok=True)
+    if not previous:
+        if workspace.exists():
+            shutil.rmtree(workspace)
+    elif component != "control-plane":
+        # Automatically materialized dependencies follow the declaration. Supplied
+        # source files are restored from the captured input, never changed in place.
+        old = tomllib.loads((workspace / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
+        new = tomllib.loads((source / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
+        upstream = "data-plane/" + new["vllm_source"]
+        if (
+            any(old[key] != new[key] for key in ("vllm_source", "vllm_repository", "vllm_revision"))
+            or any(name.startswith(upstream + "/rust/") for name in previous) != any(name.startswith(upstream + "/rust/") for name in selected)
+        ):
+            old_source = workspace / "data-plane" / old["vllm_source"]
+            if old_source.exists():
+                shutil.rmtree(old_source)
+            previous = {name: version for name, version in previous.items() if not name.startswith(upstream + "/")}
+    workspace.mkdir(parents=True, exist_ok=True)
+    for name in sorted(previous.keys() - selected.keys(), reverse=True):
+        target = workspace / name
+        target.unlink(missing_ok=True)
+        parent = target.parent
+        while parent != workspace and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    for name, version in selected.items():
+        if previous.get(name) == version:
+            continue
+        target = workspace / name
+        if target.is_dir():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / name, target)
+        target.touch()
+    pending = receipt.with_suffix(".next")
+    pending.write_text(json.dumps(selected) + "\n")
+    pending.replace(receipt)
+    return workspace
+
+
+def compile_controller(root: Path, output: Path, cache: Path, environment: dict[str, str]) -> None:
+    """Build the controller executables and API definitions with persistent Go caches."""
+    environment.update(CGO_ENABLED="0", GOOS="linux")
+    environment.setdefault("GOFLAGS", "-modcacherw")
+    environment.setdefault("GOMODCACHE", str(cache / "go-modules"))
+    environment.setdefault("GOCACHE", str(cache / "go-build"))
+    jobs = ["-p", environment["BUILD_JOBS"]] if environment.get("BUILD_JOBS") else []
+    binaries = output / "bin"
+    binaries.mkdir(exist_ok=True)
+    for executable, package in (("manager", "./cmd"), ("crd-apply", "./cmd/crd-apply"), ("video-worker", "./cmd/video-worker")):
+        subprocess.run(
+            ["go", "build", *jobs, "-trimpath", "-ldflags=-s -w", "-o", str(binaries / executable), package],
+            cwd=root / "control-plane", env=environment, check=True,
+        )
+    definitions = output / "crds"
+    if definitions.exists():
+        shutil.rmtree(definitions)
+    shutil.copytree(root / "control-plane/config/crd/bases", definitions)
+
+
+def compile_rust(root: Path, component: str, output: Path, cache: Path, environment: dict[str, str]) -> None:
+    """Prepare declared Rust inputs and compile against the workspace's persistent target directory."""
+    environment.setdefault("CARGO_HOME", str(cache / "cargo-home"))
+    environment.setdefault("CARGO_TARGET_DIR", str(root / "data-plane/target"))
+    if environment.get("BUILD_JOBS"):
+        environment["CARGO_BUILD_JOBS"] = environment["BUILD_JOBS"]
+    if mirror := environment.get("FORETOKEN_GITHUB_MIRROR"):
+        index = int(environment.get("GIT_CONFIG_COUNT", "0"))
+        environment[f"GIT_CONFIG_KEY_{index}"] = f"url.{mirror.rstrip('/')}/.insteadOf"
+        environment[f"GIT_CONFIG_VALUE_{index}"] = "https://github.com/"
+        environment["GIT_CONFIG_COUNT"] = str(index + 1)
+    cargo = ["cargo"]
+    if registry := environment.get("FORETOKEN_CARGO_REGISTRY"):
+        cargo += [
+            "--config", 'source.crates-io.replace-with="foretoken-mirror"',
+            "--config", "source.foretoken-mirror.registry=" + json.dumps(registry),
+        ]
+    subprocess.run(
+        [sys.executable, "-I", str(root / "data-plane/prepare-vllm"), "--cache", str(cache / "vllm")],
+        cwd=root, env=environment, check=True,
+    )
+    subprocess.run(
+        [*cargo, "run", "--locked", "--manifest-path", "xtask/Cargo.toml", "--", "prepare-vllm"],
+        cwd=root / "data-plane", env=environment, check=True,
+    )
+
+    # Image layers restore source mtimes on each solve. Keep the prepared tree beside
+    # Cargo's artifacts so unchanged dependencies remain incremental in both callers.
+    target = Path(environment["CARGO_TARGET_DIR"]).resolve()
+    metadata = tomllib.loads((root / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
+    upstream = root / "data-plane" / metadata["vllm_source"] / "rust"
+    prepared = target / "vllm-rust"
+    if not same_tree(prepared, upstream):
+        with tempfile.TemporaryDirectory(prefix=".vllm-rust-", dir=target) as temporary:
+            staged = Path(temporary) / "rust"
+            shutil.copytree(upstream, staged)
+            for source in staged.rglob("*"):
+                if source.is_file():
+                    source.touch()
+            if prepared.exists():
+                shutil.rmtree(prepared)
+            staged.rename(prepared)
+    for source in prepared.rglob("*"):
+        if source.is_file():
+            shutil.copystat(source, upstream / source.relative_to(prepared))
+
+    binary = "foretoken-frontend" if component == "frontend" else environment.get("FORETOKEN_MODEL_SERVER_BINARY", "foretoken-model-server")
+    package = "foretoken-frontend" if component == "frontend" else "foretoken-model-server"
+    subprocess.run(
+        [*cargo, "build", "--locked", "--release", "--manifest-path", "Cargo.toml", "--package", package, "--bin", binary],
+        cwd=root / "data-plane", env=environment, check=True,
+    )
+    binaries = output / "bin"
+    binaries.mkdir(exist_ok=True)
+    destination = binaries / ("foretoken-frontend" if component == "frontend" else "foretoken-model-server")
+    shutil.copyfile(target / "release" / binary, destination)
+    destination.chmod(0o755)
+
+
+def same_tree(left: Path, right: Path) -> bool:
+    """Compare prepared source bytes and file modes without relying on Git or mtimes."""
+    if not left.is_dir():
+        return False
+    before = {path.relative_to(left): path for path in left.rglob("*") if path.is_file()}
+    after = {path.relative_to(right): path for path in right.rglob("*") if path.is_file()}
+    if before.keys() != after.keys():
+        return False
+    filecmp.clear_cache()
+    return all(
+        stat.S_IMODE(path.stat().st_mode) == stat.S_IMODE(after[name].stat().st_mode)
+        and filecmp.cmp(path, after[name], shallow=False)
+        for name, path in before.items()
+    )
+
+
+if __name__ == "__main__":
+    main()

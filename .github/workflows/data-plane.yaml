@@ -13,7 +13,6 @@ on:
     paths:
       - data-plane/**
       - Makefile
-      - .gitmodules
       - rust-toolchain.toml
       - .github/workflows/data-plane.yaml
 
@@ -29,7 +28,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 2
-      # The repository verification target prepares its pinned submodule when needed.
+      # The repository verification target prepares its declared upstream source when needed.
       - name: Select relevant changes
         id: changes
         env:
@@ -37,7 +36,7 @@ jobs:
         run: |
           if [ "$EVENT_NAME" != pull_request ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
-          elif git diff --quiet HEAD^1 HEAD -- data-plane/ Makefile .gitmodules \
+          elif git diff --quiet HEAD^1 HEAD -- data-plane/ Makefile \
             rust-toolchain.toml .github/workflows/data-plane.yaml; then
             echo 'run=false' >> "$GITHUB_OUTPUT"
             echo 'No data-plane changes; verification not needed.'

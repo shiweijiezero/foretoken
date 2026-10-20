@@ -10,24 +10,26 @@ import os
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from foretoken.applications.files import ApplicationFiles, ApplicationPublication
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster.builder import (
-    ClusterBuilder,
-    find_build_cache,
-    registry_credentials,
+from foretoken.build.cluster.builder import ClusterBuilder, registry_credentials
+from foretoken.build.cluster.compiler import CompilerWorkspace
+from foretoken.build.cluster.images import image_tools_image
+from foretoken.build.cluster.storage import (
+    build_configuration,
+    ensure_build_volumes,
+    local_build_nodes,
+    prepare_build_storage,
 )
 from foretoken.build.engine import (
     build_engine_environment,
     build_metax_environment,
     engine_cache_scope,
-    export_engine_source,
-    prepare_mooncake_source,
     resolve_vllm_base_image,
 )
 from foretoken.build.environments import BuildEnvironments
@@ -36,23 +38,18 @@ from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
-    pinned_rust_revision,
     snapshot_versions,
     source_checkout,
 )
-from foretoken.build.cluster.images import image_tools_image
+from foretoken.build.records import completed_build
 from foretoken.build.state import (
     capture_build_inputs,
+    checkout_operation,
+    checkout_state_directory,
     cluster_state_directory,
     context_identity,
     local_candidates,
     write_source_state,
-)
-from foretoken.build.cluster.storage import (
-    build_configuration,
-    ensure_build_volumes,
-    local_build_nodes,
-    prepare_build_storage,
 )
 from foretoken.command_execution import CommandExecution
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -77,11 +74,14 @@ class SourceImages:
 
 @dataclass(frozen=True)
 class _PreparedSourceBuild:
-    """Resolved build history and recorded compiler storage ready for workspace capture."""
+    """Separate completed applications, reusable environments and recoverable inputs before execution."""
 
+    engines: dict[str, str]
     previous_state: dict[str, Any]
     previous_build: dict[str, Any]
+    cached_build: dict[str, Any]
     previous_inputs: Path | None
+    previous_versions: dict[str, str]
     compiler_configuration: dict[str, str]
     pending_path: Path
     pending_state: dict[str, Any]
@@ -94,21 +94,24 @@ class _PreparedSourceBuild:
 
 @dataclass(frozen=True)
 class _SourceWorkspaces:
-    """Captured inputs and live compiler workspaces held by the caller's artifact stack."""
+    """Captured inputs and image builders whose storage also hosts the operation's native compiler."""
 
     snapshot: Path
+    files: dict[str, Path]
     versions: dict[str, str]
     builders: list[ClusterBuilder]
-    publisher: ClusterBuilder
+    origin_builder: ClusterBuilder
     base_image: str | None
+    credentials: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class _BuiltApplications:
-    """Completed component environments and exports awaiting publication and image delivery."""
+class _BuiltEnvironments:
+    """Completed runtime and toolchain images with the application parts selected for native compilation."""
 
     environments: BuildEnvironments
     component_environments: dict[str, dict[str, Any]]
+    compilers: dict[str, str]
     engine_caches: dict[str, str]
     engine_native: bool
     application_parts: dict[str, list[str] | None]
@@ -131,102 +134,81 @@ def prepare_source_images(
     components: tuple[str, ...] = ("control-plane", "frontend", "model-server"),
     cancellation: CommandExecution | None = None,
 ) -> Iterator[SourceImages]:
-    """Prepare installation artifacts, awaiting dependencies before node image delivery.
+    """Prepare a source directory's reusable environments and publish its native applications.
 
-    The platform supplies before_delivery when preparing dependencies concurrently.
-    Captured inputs remain in pending state until the installation or checkout commits them.
+    Installers acquire the workspace lock; deployment callers retain their existing
+    lock. Dependencies finish before image delivery, and compiler processes exit
+    before the caller commits the completed selection.
     """
     cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))
     cancellation.check()
     root = source_checkout(command.editable)
     kubectl = origin.kubectl
-    engines = engine_source_roots(command.engine_sources)
-
-    # Record source and volume ownership before any compiler can start.
-    prepared = _prepare_source_build(
-        root, engines, command, kubectl, namespace, values, origin,
-        inference_engine_image=inference_engine_image,
-        build_metax_runtime=build_metax_runtime,
-        saved_arguments=saved_arguments, checkout=checkout,
-        components=components, cancellation=cancellation,
+    directory = checkout or checkout_state_directory(
+        cluster_state_directory(kubectl), root, command.timeout, context=context_identity(kubectl),
     )
-    with capture_build_inputs(
-        root, engines, prepared.previous_inputs, mooncake_version=prepared.mooncake_version,
-    ) as snapshot, ExitStack() as build_contexts:
-        workspaces = _prepare_workspaces(
-            root, prepared, snapshot, build_contexts, kubectl, namespace, origin,
+    operation = checkout_operation(directory, kubectl, command.timeout) if checkout is None else nullcontext()
+    with operation:
+        prepared = _prepare_source_build(
+            root, command, kubectl, namespace, values, origin,
             inference_engine_image=inference_engine_image,
-            build_metax_runtime=build_metax_runtime,
-            timeout=command.timeout, cancellation=cancellation,
+            build_metax_runtime=build_metax_runtime, runtime_backend=runtime_backend,
+            saved_arguments=saved_arguments, directory=directory, installing=checkout is None,
+            components=components, cancellation=cancellation,
         )
-        built = _build_applications(
-            engines, prepared, workspaces, origin,
-            components=components, runtime_backend=runtime_backend,
-            build_metax_runtime=build_metax_runtime, refresh=checkout is None,
-            cancellation=cancellation,
-        )
-        images = {component: built.component_environments[component]["image"] for component in components}
-        digests: dict[str, dict[str, str]] = {builder.node: {} for builder in workspaces.builders}
-        for component, record in built.component_environments.items():
-            for node, digest in record["digests"].items():
-                digests[node][component] = digest
+        engines = prepared.engines
+        with capture_build_inputs(
+            root, engines, prepared.previous_inputs, mooncake_version=prepared.mooncake_version,
+        ) as snapshot, ExitStack() as build_contexts:
+            workspaces = _prepare_workspaces(
+                prepared, snapshot, build_contexts, kubectl, namespace, origin,
+                inference_engine_image=inference_engine_image,
+                build_metax_runtime=build_metax_runtime,
+                timeout=command.timeout, cancellation=cancellation,
+            )
+            built = _build_environments(
+                engines, prepared, workspaces, origin,
+                components=components, runtime_backend=runtime_backend,
+                build_metax_runtime=build_metax_runtime, refresh=checkout is None,
+                cancellation=cancellation,
+            )
+            images = {component: built.component_environments[component]["image"] for component in components}
+            if before_delivery is not None:
+                before_delivery()
+            _deliver_environments(prepared, workspaces, built, images)
 
-        # Publishers consume completed exports and finish before selection or cleanup.
-        revisions = _publish_applications(
-            prepared, workspaces, built, images, origin,
-            checkout=checkout, oci_registry=command.oci_registry, timeout=command.timeout,
-        )
-        applications = {
-            component: origin.reference(component, revision)
-            for component, revision in revisions.items()
-        }
-        if before_delivery is not None:
-            before_delivery()
-        environment_images = _deliver_environments(workspaces, built, images, digests)
-
-        # Join and close compilers before validating the source and handing artifacts
-        # back to the installation or checkout owner that will commit their selection.
-        build_contexts.close()
-        BuildInputs.select(
-            root, engines, workspaces.snapshot, mooncake_version=prepared.mooncake_version,
-        ).validate(workspaces.snapshot)
-        settings = prepared.pending_state["build"]
-        yield SourceImages(
-            root,
-            "registry" if prepared.registry else "import",
-            images.get("control-plane", ""),
-            images["frontend"],
-            images["model-server"],
-            workspaces.snapshot,
-            {
-                "binding": settings["binding"],
-                "caches": settings["caches"],
-                "configuration": prepared.compiler_configuration,
-                "versions": workspaces.versions,
-                "digests": digests,
-                "images": {**images, **environment_images},
-                "environments": built.environments.records,
-                "arguments": settings["arguments"],
-                "registry_mirrors": settings["registry_mirrors"],
-                "registry": prepared.registry,
-                "containerd_socket": prepared.nodes[0][1],
-                "engine_caches": built.engine_caches,
-                **({"engine_cache_scope": settings["engine_cache_scope"]} if "engine_cache_scope" in settings else {}),
-                "engine_native": built.engine_native,
-                "runtime_backend": runtime_backend,
-                "build_metax_runtime": build_metax_runtime,
-                "applications": {
-                    component: {"revision": revision}
+            # Native containers consume already delivered toolchains. Keep their exports
+            # and exact captured inputs alive through application and build-record publication.
+            with _compile_applications(prepared, workspaces, built, origin, command.timeout) as compiler:
+                BuildInputs.select(root, engines, mooncake_version=prepared.mooncake_version).validate(workspaces.snapshot)
+                revisions = _publish_applications(
+                    prepared, workspaces, built, images, compiler, origin,
+                    checkout=checkout, oci_registry=command.oci_registry, timeout=command.timeout,
+                )
+                applications = {
+                    component: origin.reference(component, revision)
                     for component, revision in revisions.items()
-                },
-            },
-            applications,
-        )
+                }
+                BuildInputs.select(root, engines, mooncake_version=prepared.mooncake_version).validate(workspaces.snapshot)
+                build_state = prepared.pending_state["build"]
+                build_state["applications"] = {
+                    component: {"revision": revision} for component, revision in revisions.items()
+                }
+                if checkout is None:
+                    build_state["completed"] = origin.publish_build(
+                        compiler, workspaces.snapshot.name, completed_build(build_state), timeout=command.timeout,
+                    )
+                write_source_state(prepared.pending_path, prepared.pending_state)
+            build_contexts.close()
+            yield SourceImages(
+                root, "registry" if prepared.registry else "import",
+                images.get("control-plane", ""), images["frontend"], images["model-server"],
+                workspaces.snapshot, build_state, applications,
+            )
 
 
 def _prepare_source_build(
     root: Path,
-    engines: dict[str, str],
     command: InstallCommand,
     kubectl: Kubectl,
     namespace: str,
@@ -235,23 +217,26 @@ def _prepare_source_build(
     *,
     inference_engine_image: str | None,
     build_metax_runtime: bool,
+    runtime_backend: str,
     saved_arguments: dict[str, str] | None,
-    checkout: Path | None,
+    directory: Path,
+    installing: bool,
     components: tuple[str, ...],
     cancellation: CommandExecution,
 ) -> _PreparedSourceBuild:
-    """Resolve build inputs and persist this operation's compiler identities before allocation."""
-    state_directory = checkout if checkout is not None else cluster_state_directory(kubectl)
-    state_path = state_directory / "install.json"
+    """Resolve completed and interrupted build history, then record owned volumes before execution."""
+    state_path = directory / "install.json"
     previous = json.loads(state_path.read_text()) if state_path.is_file() else {}
     build = previous.get("build", {}) if previous.get("root") == str(root) else {}
-    pending_path = state_directory / "build.json"
+    pending_path = directory / "build.json"
     pending = json.loads(pending_path.read_text()) if pending_path.is_file() else {}
     if not build and pending.get("root") == str(root):
         build = pending["build"]
-    binding = (
-        checkout.name if checkout is not None
-        else build.get("binding") or previous.get("build", {}).get("binding") or uuid.uuid4().hex
+    binding = directory.name
+    selection = pending if pending.get("root") == str(root) and "engines" in pending else previous
+    engines = (
+        engine_source_roots(command.engine_sources)
+        if command.engine_sources else selection.get("engines", {})
     )
     cache_scope = None
     if engines:
@@ -262,17 +247,25 @@ def _prepare_source_build(
         )
         saved_scope = pending_build.get("engine_cache_scope") or build.get("engine_cache_scope")
         cache_scope = engine_cache_scope(binding, engines, saved_scope)
-    arguments, registry_mirrors, environment = _select_build_arguments(command, build, saved_arguments)
-    old = state_directory / previous["inputs"] if previous.get("inputs") else None
+    arguments, registry_mirrors = _select_build_arguments(command, build, saved_arguments)
+    saved_inputs = (
+        pending
+        if pending.get("root") == str(root) and pending.get("inputs") and pending.get("build", {}).get("versions")
+        else previous
+    )
+    old = directory / saved_inputs["inputs"] if saved_inputs.get("root") == str(root) and saved_inputs.get("inputs") else None
     mooncake_version = arguments.get("MOONCAKE_VERSION", "") if build_metax_runtime else None
-    if mooncake_version is not None:
-        prepare_mooncake_source(root, old, mooncake_version, environment, cancellation)
-    arguments["VLLM_REVISION"] = pinned_rust_revision(root)
     configuration = build_configuration(
         root, values,
         arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
     )
     registry = (command.registry or "").rstrip("/")
+    cached_build = (
+        pending["build"]
+        if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding
+        and pending["build"].get("registry") == registry and pending["build"].get("environments")
+        else build
+    )
     prefix = registry if registry else _LOCAL_IMAGE_PREFIX
     revision = uuid.uuid4().hex
     references = {
@@ -280,7 +273,10 @@ def _prepare_source_build(
         if registry else f"{prefix}-{component}:{revision}"
         for component in components
     }
-    environment_references = dict(references)
+    environment_references = {
+        **references,
+        **{"compiler-" + component: reference + "-compiler" for component, reference in references.items()},
+    }
     if build_metax_runtime:
         for name in ("metax-sdk", "vllm-metax"):
             environment_references[name] = (
@@ -288,28 +284,29 @@ def _prepare_source_build(
             )
     if engines:
         environment_references["engine-source"] = references["model-server"] + "-engine"
+        environment_references["compiler-engine"] = references["model-server"] + "-engine-compiler"
     secret_names = tuple(secret["name"] for value in values for secret in value.get("imagePullSecrets", []))
     nodes = local_build_nodes(kubectl, command.registry, build.get("containerd_socket", ""))
-    if checkout is not None:
-        nodes = [(node, socket, f"{claim}-{binding[:12]}") for node, socket, claim in nodes]
     if registry:
-        claim = find_build_cache(kubectl, namespace, binding, origin.node, "/var/cache/foretoken")
         node_uid = kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-        default_claim = "foretoken-application-compiler-" + node_uid
-        if checkout is not None:
-            default_claim += "-" + binding[:12]
-        nodes = [(origin.node, "", claim or default_claim)]
+        nodes = [(origin.node, "", "foretoken-application-compiler-" + node_uid)]
+    nodes = [(node, socket, f"{claim}-{binding[:12]}") for node, socket, claim in nodes]
 
-    # Null inputs precede the first sync; absent legacy inputs remain unknown.
-    # An interrupted installation never replaces the last committed source binding.
-    state_directory.mkdir(parents=True, exist_ok=True)
+    # Pending state retains recoverable inputs and storage without replacing the
+    # last completed installation. Null inputs precede the first source capture.
+    directory.mkdir(parents=True, exist_ok=True)
     pending_state = {
         "root": str(root),
+        "engines": engines,
         "context": context_identity(kubectl),
         **({"inputs": pending.get("inputs")} if not pending or "inputs" in pending else {}),
         "base_image": inference_engine_image,
         "build": {
             "binding": binding,
+            "configuration": configuration,
+            "registry": registry,
+            "runtime_backend": runtime_backend,
+            "build_metax_runtime": build_metax_runtime,
             **({"engine_cache_scope": cache_scope} if cache_scope is not None else {}),
             "caches": [
                 *build.get("caches", []),
@@ -324,20 +321,14 @@ def _prepare_source_build(
     }
     pending_state, execution_claims = _prepare_compiler_volumes(
         kubectl, namespace, origin, configuration, nodes, pending_path, pending_state,
-        installing=checkout is None, timeout=command.timeout, cancellation=cancellation,
+        installing=installing, timeout=command.timeout, cancellation=cancellation,
     )
     return _PreparedSourceBuild(
-        previous_state=previous,
-        previous_build=build,
-        previous_inputs=old,
-        compiler_configuration=configuration,
-        pending_path=pending_path,
-        pending_state=pending_state,
-        nodes=nodes,
-        execution_claims=execution_claims,
-        registry=registry,
-        revision=revision,
-        mooncake_version=mooncake_version,
+        engines=engines, previous_state=previous, previous_build=build, cached_build=cached_build,
+        previous_inputs=old, previous_versions=saved_inputs.get("build", {}).get("versions", {}),
+        compiler_configuration=configuration, pending_path=pending_path, pending_state=pending_state,
+        nodes=nodes, execution_claims=execution_claims, registry=registry,
+        revision=revision, mooncake_version=mooncake_version,
     )
 
 
@@ -345,8 +336,8 @@ def _select_build_arguments(
     command: InstallCommand,
     build: dict[str, Any],
     saved_arguments: dict[str, str] | None,
-) -> tuple[dict[str, str], dict[str, list[str]], dict[str, str]]:
-    """Resolve build-source choices once, retaining the caller's explicit saved selections."""
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Resolve download and compilation choices once, retaining explicit saved selections."""
     environment = os.environ.copy()
     if command.oci_registry:
         environment["FORETOKEN_OCI_REGISTRY"] = command.oci_registry
@@ -363,9 +354,8 @@ def _select_build_arguments(
             print(f"Source mirror selected: {selection}", flush=True)
         arguments = build_arguments(environment)
     else:
-        environment.update(saved_arguments)
         arguments = dict(saved_arguments)
-    return arguments, registry_mirrors, environment
+    return arguments, registry_mirrors
 
 
 def _prepare_compiler_volumes(
@@ -417,7 +407,6 @@ def _prepare_compiler_volumes(
 
 
 def _prepare_workspaces(
-    root: Path,
     prepared: _PreparedSourceBuild,
     snapshot: Path,
     contexts: ExitStack,
@@ -430,14 +419,16 @@ def _prepare_workspaces(
     timeout: str,
     cancellation: CommandExecution,
 ) -> _SourceWorkspaces:
-    """Adopt captured inputs into pending state, then start and synchronize owned compiler workspaces."""
+    """Capture input versions before retiring older snapshots, then synchronize isolated image builders."""
     settings = prepared.pending_state["build"]
+    versions = snapshot_versions(snapshot, prepared.previous_inputs, prepared.previous_versions)
     directory = prepared.pending_path.parent
     with local_candidates(directory):
         destination = directory / snapshot.name
         snapshot.rename(destination)
         snapshot = destination
         prepared.pending_state["inputs"] = snapshot.name
+        settings["versions"] = versions
         write_source_state(prepared.pending_path, prepared.pending_state)
     base_image = (
         None if build_metax_runtime
@@ -454,7 +445,6 @@ def _prepare_workspaces(
             *(value for key, value in settings["arguments"].items() if key.endswith("REGISTRY")),
         ],
     )
-    versions = snapshot_versions(snapshot, prepared.previous_inputs, prepared.previous_build.get("versions", {}))
     files = {str(path.relative_to(snapshot)): path for path in snapshot.rglob("*") if path.is_file()}
     builders = []
     for node, socket, claim in prepared.nodes:
@@ -469,14 +459,14 @@ def _prepare_workspaces(
         ))
         builders.append(builder)
         builder.sync(files, versions)
-    publisher = next(builder for builder in builders if builder.node == origin.node)
     return _SourceWorkspaces(
-        snapshot=snapshot, versions=versions, builders=builders,
-        publisher=publisher, base_image=base_image,
+        snapshot=snapshot, files=files, versions=versions, builders=builders,
+        origin_builder=next(builder for builder in builders if builder.node == origin.node),
+        base_image=base_image, credentials=credentials,
     )
 
 
-def _build_applications(
+def _build_environments(
     engines: dict[str, str],
     prepared: _PreparedSourceBuild,
     workspaces: _SourceWorkspaces,
@@ -487,18 +477,17 @@ def _build_applications(
     build_metax_runtime: bool,
     refresh: bool,
     cancellation: CommandExecution,
-) -> _BuiltApplications:
-    """Join component environment builds and file exports before any publisher consumes their cohort."""
+) -> _BuiltEnvironments:
+    """Prepare runtime and compiler images, selecting native work against completed applications only."""
     settings = prepared.pending_state["build"]
     arguments = settings["arguments"]
-    build = prepared.previous_build
+    build, cached = prepared.previous_build, prepared.cached_build
     previous = prepared.previous_state
     environments = BuildEnvironments(
         workspaces.builders, workspaces.versions,
-        build.get("environments", {}) if build.get("registry") == prepared.registry else {},
+        cached.get("environments", {}) if cached.get("registry") == prepared.registry else {},
         settings["images"], push=bool(prepared.registry), refresh=refresh,
     )
-    publisher = workspaces.publisher
     changed = {
         path for path in workspaces.versions.keys() | build.get("versions", {}).keys()
         if path not in SNAPSHOT_METADATA and workspaces.versions.get(path) != build.get("versions", {}).get(path)
@@ -508,17 +497,24 @@ def _build_applications(
         for component in components
     }
     application_parts: dict[str, list[str] | None] = {}
+    compilers: dict[str, str] = {}
     engine_caches: dict[str, str] = {}
     engine_native = bool(engines) and (runtime_backend != "metax" or "vllm-metax" in engines)
 
-    def record_engine_caches(caches: dict[str, str]) -> None:
-        """Retain compiler identities before the engine dependency solve can fail."""
-        engine_caches.update(caches)
-        settings["engine_caches"] = dict(engine_caches)
-        write_source_state(prepared.pending_path, prepared.pending_state)
-
     def build_component(component: str, dockerfile: str) -> dict[str, Any]:
-        """Build a component's environment, then complete its application export at the origin."""
+        """Prepare a component's toolchain and runtime without using mutable compiler workspaces."""
+        compiler_arguments = {key: value for key, value in arguments.items() if key in {
+            "BASE_IMAGE_REGISTRY", "GO_IMAGE_REGISTRY", "UV_IMAGE_REGISTRY", "UV_IMAGE",
+            "GO_BUILDER_IMAGE", "RUST_BUILDER_IMAGE", "BUILDKIT_SYNTAX_IMAGE", "FORETOKEN_GITHUB_MIRROR",
+        }}
+        if component == "model-server":
+            # Dockerfile parsing also resolves FROM arguments in unselected runtime stages.
+            compiler_arguments["INFERENCE_ENGINE_IMAGE"] = "scratch"
+        compiler = environments.build(
+            "compiler-" + component, dockerfile, target="compiler",
+            arguments=compiler_arguments, input_prefixes=(),
+        )
+        compilers[component] = compiler["image"]
         engine_image = workspaces.base_image
         if component == "model-server" and build_metax_runtime:
             engine_image = build_metax_environment(environments, arguments)
@@ -542,8 +538,6 @@ def _build_applications(
         prior = previous_revisions[component]
         manifest = origin.read_manifest(origin.reference(component, prior)) if prior else None
         parts = None
-        # A partial export can reuse only a completed application with the same
-        # dependency base, compiler inputs and selected runtime environment.
         if (
             component != "control-plane" and manifest is not None
             and manifest.get("image") == previous.get("runtime", {}).get("model_image" if component == "model-server" else "image")
@@ -552,7 +546,7 @@ def _build_applications(
         ):
             selected_parts = {"rust"} if component == "frontend" else {"rust", "python", "engine"}
             if not any(
-                path in {".dockerignore", "LICENSE"}
+                path in {".dockerignore", "LICENSE", "deploy/build-source"}
                 or (path.startswith("data-plane/") and not path.startswith("data-plane/model-server/python/"))
                 for path in changed
             ):
@@ -561,27 +555,23 @@ def _build_applications(
                 selected_parts.discard("python")
             parts = sorted(selected_parts)
         application_parts[component] = parts
-        # Keep the export worker inside its owning cancellation/context scope,
-        # including when engine environment preparation fails in parallel.
-        with ThreadPoolExecutor(max_workers=1) as application_build, cancellation:
-            payload = publisher.root + "/applications/" + component
-            application = application_build.submit(
-                cancellation.run_stage, publisher.export_application, component, payload, arguments, parts,
+        if component == "model-server" and engines:
+            selected, compiler_image = build_engine_environment(
+                environments, arguments, runtime_image=selected["image"], base_image=engine_image,
+                cache_prefix=settings["engine_cache_scope"]["prefix"],
             )
-            if component == "model-server" and engines:
-                selected = build_engine_environment(
-                    environments, arguments, runtime_image=selected["image"], base_image=engine_image,
-                    cache_prefix=settings["engine_cache_scope"]["prefix"], record_caches=record_engine_caches,
+            compilers["engine"] = compiler_image
+            for builder in workspaces.builders:
+                key = "" if prepared.registry else builder.node
+                previous_cache = cached.get("engine_caches", {}).get(key)
+                engine_caches[key] = (
+                    previous_cache
+                    if previous_cache and cached.get("compilers", {}).get("engine") == compiler_image
+                    else settings["binding"] + "-" + uuid.uuid4().hex
                 )
-            application.result()
-            if component == "model-server" and engines:
-                export_engine_source(
-                    publisher, payload, arguments,
-                    runtime_image=selected["image"],
-                    cache_id=engine_caches["" if prepared.registry else origin.node],
-                    build_native=engine_native,
-                )
-            return selected
+            settings["engine_caches"] = dict(engine_caches)
+            write_source_state(prepared.pending_path, prepared.pending_state)
+        return selected
 
     with ThreadPoolExecutor(max_workers=len(set(components))) as builds, cancellation:
         pending = {
@@ -593,28 +583,95 @@ def _build_applications(
             ) if component in components
         }
         selected = {component: future.result() for component, future in pending.items()}
-    return _BuiltApplications(
-        environments=environments,
-        component_environments=selected,
-        engine_caches=engine_caches,
-        engine_native=engine_native,
-        application_parts=application_parts,
-        previous_revisions=previous_revisions,
+    return _BuiltEnvironments(
+        environments=environments, component_environments=selected, compilers=compilers,
+        engine_caches=engine_caches, engine_native=engine_native,
+        application_parts=application_parts, previous_revisions=previous_revisions,
     )
+
+
+def _deliver_environments(
+    prepared: _PreparedSourceBuild,
+    workspaces: _SourceWorkspaces,
+    built: _BuiltEnvironments,
+    images: dict[str, str],
+) -> None:
+    """Deliver completed environments and persist their reuse before native compilation can fail."""
+    digests: dict[str, dict[str, str]] = {builder.node: {} for builder in workspaces.builders}
+    for component, record in built.component_environments.items():
+        for node, digest in record["digests"].items():
+            digests[node][component] = digest
+    for name, record in built.environments.records.items():
+        for node, digest in record["digests"].items():
+            digests[node]["environment-" + name] = digest
+    environment_images = {"environment-" + name: record["image"] for name, record in built.environments.records.items()}
+    for builder in workspaces.builders:
+        built.environments.deliver(builder)
+        builder.discard_unselected_images(set(images.values()) | set(environment_images.values()))
+    prepared.pending_state["build"].update(
+        digests=digests, images={**images, **environment_images},
+        environments=built.environments.records, compilers=built.compilers,
+        engine_caches=built.engine_caches, engine_native=built.engine_native,
+    )
+    write_source_state(prepared.pending_path, prepared.pending_state)
+
+
+@contextmanager
+def _compile_applications(
+    prepared: _PreparedSourceBuild,
+    workspaces: _SourceWorkspaces,
+    built: _BuiltEnvironments,
+    origin: ApplicationFiles,
+    timeout: str,
+) -> Iterator[CompilerWorkspace]:
+    """Compile in private persistent workspaces and hold completed exports until publication finishes."""
+    settings = prepared.pending_state["build"]
+    builder = workspaces.origin_builder
+    with CompilerWorkspace(
+        origin.kubectl, origin.namespace, builder.claim, settings["binding"], origin.node,
+        built.compilers, prepared.compiler_configuration, timeout,
+        tools_image=image_tools_image(settings["arguments"], settings["registry_mirrors"]),
+        execution_claim=builder.execution_claim,
+        owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+        pull_secrets=tuple(settings["pull_secrets"]), credentials=workspaces.credentials,
+        cancellation=builder.cancellation,
+    ) as compiler:
+        compiler.sync(workspaces.files, workspaces.versions)
+
+        def compile_application(component: str) -> None:
+            """Assemble a component's native export and optional engine overlay entirely in cluster storage."""
+            payload = compiler.root + "/applications/" + component
+            compiler.export_application(component, payload, settings["arguments"], built.application_parts[component])
+            if component == "model-server" and "engine" in built.compilers:
+                compiler.export_engine(
+                    payload, settings["arguments"],
+                    cache_id=built.engine_caches["" if prepared.registry else origin.node],
+                    build_native=built.engine_native,
+                )
+
+        with ThreadPoolExecutor(max_workers=len(built.component_environments)) as builds, compiler.cancellation:
+            pending = [
+                builds.submit(compiler.cancellation.run_stage, compile_application, component)
+                for component in built.component_environments
+            ]
+            for future in pending:
+                future.result()
+        yield compiler
 
 
 def _publish_applications(
     prepared: _PreparedSourceBuild,
     workspaces: _SourceWorkspaces,
-    built: _BuiltApplications,
+    built: _BuiltEnvironments,
     images: dict[str, str],
+    compiler: CompilerWorkspace,
     origin: ApplicationFiles,
     *,
     checkout: Path | None,
     oci_registry: str | None,
     timeout: str,
 ) -> dict[str, str]:
-    """Publish the completed source cohort while preserving checkout candidates and live consumers."""
+    """Publish completed exports together, retaining live consumers and the checkout's prior selections."""
     retained = None
     if checkout is not None:
         from foretoken.platform.config import default_platform_config
@@ -630,11 +687,10 @@ def _publish_applications(
                     *prepared.previous_build.get("applications", {}).values(),
                 ]
             )
-    publisher = workspaces.publisher
     publications = [
         ApplicationPublication(
             component=component,
-            source=publisher.root + "/applications/" + component,
+            source=compiler.root + "/applications/" + component,
             revision=prepared.revision,
             previous=built.previous_revisions[component],
             sources=build_sources(workspaces.snapshot, component),
@@ -644,26 +700,9 @@ def _publish_applications(
         )
         for component, image in images.items()
     ]
-    revisions = origin.publish_batch(publisher, publications, retained, timeout=timeout)
-    publisher.run(["rm", "-rf", "--", publisher.root + "/applications"], container=publisher.artifact_container)
+    revisions = origin.publish_batch(compiler, publications, retained, timeout=timeout)
+    compiler.run(["rm", "-rf", "--", compiler.root + "/applications"], container=compiler.artifact_container)
     return revisions
-
-
-def _deliver_environments(
-    workspaces: _SourceWorkspaces,
-    built: _BuiltApplications,
-    images: dict[str, str],
-    digests: dict[str, dict[str, str]],
-) -> dict[str, str]:
-    """Deliver selected images after prerequisites, retaining borrowed environments and their OCI records."""
-    for name, record in built.environments.records.items():
-        for node, digest in record["digests"].items():
-            digests[node]["environment-" + name] = digest
-    environment_images = {"environment-" + name: record["image"] for name, record in built.environments.records.items()}
-    for builder in workspaces.builders:
-        built.environments.deliver(builder)
-        builder.discard_unselected_images(set(images.values()) | set(environment_images.values()))
-    return environment_images
 
 
 def build_arguments(environment: dict[str, str]) -> dict[str, str]:
