@@ -63,9 +63,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(action @ ("prepare" | "resolve")) = std::env::args().nth(1).as_deref() {
         let artifacts = ModelArtifacts::from_env()?;
         if action == "prepare" {
-            preparation::prepare_job(&artifacts, &python).await?;
+            preparation::prepare_job(&artifacts, None, &python).await?;
         } else {
-            preparation::resolve(&artifacts, &python).await?;
+            preparation::resolve(&artifacts, None, &python).await?;
         }
         return Ok(());
     }
@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scope = required_env(preparation::PREPARATION_SCOPE_ENV)?;
         tokio::time::timeout_at(
             deadline.into(),
-            preparation::prepare(&plan.artifacts, &python, &storage, &scope, true),
+            preparation::prepare(&plan.artifacts, None, &python, &storage, &scope, true),
         )
         .await
         .map_err(|_| "model preparation exceeded the startup deadline")??
@@ -252,6 +252,7 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 fn telemetry_response(health: &RuntimeHealth) -> TelemetryResponse {
     TelemetryResponse {
         version: 3,
+        draft_target_workload: None,
         request_cost: Default::default(),
         collected_at_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

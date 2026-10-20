@@ -110,6 +110,7 @@ impl RouteTargetStatsHistory {
         let observed_seconds = observed_ms.map(|milliseconds| milliseconds as f64 / 1_000.0);
 
         Some(RouteTargetStats {
+            draft_target_workload: current.draft_target_workload.clone(),
             data_parallel_ranks: current.data_parallel_ranks.clone(),
             prompt_tokens_per_request: self.prompt_lengths.mean,
             generation_tokens_per_request: self.generation_lengths.mean,

@@ -23,7 +23,8 @@ func (snapshot Snapshot) SameConfiguration(other Snapshot) bool {
 		slices.EqualFunc(snapshot.PDComponents, other.PDComponents, equalRoutingPDComponent) &&
 		slices.EqualFunc(snapshot.PDPipelineScopes, other.PDPipelineScopes, equalRoutingPDPipelineScope) &&
 		slices.EqualFunc(snapshot.EPDComponents, other.EPDComponents, equalRoutingEPDComponent) &&
-		slices.EqualFunc(snapshot.EPDPipelineScopes, other.EPDPipelineScopes, equalRoutingEPDPipelineScope)
+		slices.EqualFunc(snapshot.EPDPipelineScopes, other.EPDPipelineScopes, equalRoutingEPDPipelineScope) &&
+		slices.EqualFunc(snapshot.DTComponents, other.DTComponents, equalRoutingDTComponent)
 }
 
 func equalScalingModel(left, right Model) bool {

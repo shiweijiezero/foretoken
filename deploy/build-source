@@ -50,6 +50,7 @@ def main() -> None:
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(root / "data-plane/model-server/python", destination)
+        shutil.copytree(root / "data-plane/dt-plugin/src/foretoken_dt", destination / "foretoken_dt")
     if arguments.component in {"control-plane", "model-server"}:
         shutil.copyfile(root / "LICENSE", output / "LICENSE")
     (output / "complete.json").write_text(json.dumps({"component": arguments.component}) + "\n")

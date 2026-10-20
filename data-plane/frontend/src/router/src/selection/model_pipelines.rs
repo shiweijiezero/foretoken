@@ -73,7 +73,9 @@ impl<T> ModelRoutingStages<T> {
     /// Selects the value owned by one execution role without changing its lifetime.
     fn get(&self, role: ModelServerRole) -> &T {
         match role {
-            ModelServerRole::Aggregate => &self.aggregate,
+            ModelServerRole::Aggregate | ModelServerRole::Draft | ModelServerRole::Target => {
+                &self.aggregate
+            }
             ModelServerRole::Encoder => &self.encoder,
             ModelServerRole::Prefill => &self.prefill,
             ModelServerRole::Decode => &self.decode,
@@ -173,7 +175,9 @@ impl RouterPipelines {
                 .map_err(|source| RouterPipelineConfigError::ModelStage {
                     model: model.clone(),
                     stage: match role {
-                        ModelServerRole::Aggregate => "aggregate",
+                        ModelServerRole::Aggregate
+                        | ModelServerRole::Draft
+                        | ModelServerRole::Target => "aggregate",
                         ModelServerRole::Encoder => "encoder",
                         ModelServerRole::Prefill => "prefill",
                         ModelServerRole::Decode => "decode",

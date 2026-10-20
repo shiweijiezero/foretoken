@@ -35,8 +35,9 @@ struct CancelExecution(Arc<tokio::sync::Notify>);
 
 /// Submission or termination evidence used to settle one stage's ledger reservation.
 #[derive(Clone, Copy)]
-enum ReservationEnd {
+pub(crate) enum ReservationEnd {
     NotSubmitted,
+    AdmissionRefused,
     StageTerminated,
     RequestTerminated,
 }
@@ -214,7 +215,7 @@ async fn stop_uncertain_execution(health: &RuntimeHealth) {
 }
 
 /// Persist the execution task's terminal evidence, retaining reservations across ledger outages.
-async fn finish_shared(
+pub(crate) async fn finish_shared(
     shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
     owner: &str,
     end: ReservationEnd,
@@ -226,6 +227,12 @@ async fn finish_shared(
     reference.final_stage |= matches!(end, ReservationEnd::RequestTerminated);
     loop {
         let result = match end {
+            ReservationEnd::AdmissionRefused => {
+                store
+                    .ledger
+                    .return_before_submission(&reference, owner)
+                    .await
+            }
             ReservationEnd::NotSubmitted => {
                 store
                     .ledger

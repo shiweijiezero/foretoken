@@ -533,7 +533,7 @@ def _build_environments(
             dependency_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
         selected = environments.build(
             component, dockerfile, target="environment", arguments=dependency_arguments,
-            input_prefixes=("data-plane/patches/vllm/",) if component == "model-server" else (),
+            input_prefixes=("data-plane/patches/vllm/", "data-plane/patches/mooncake/", "data-plane/dt-plugin/pyproject.toml") if component == "model-server" else (),
         )
         prior = previous_revisions[component]
         manifest = origin.read_manifest(origin.reference(component, prior)) if prior else None
@@ -547,11 +547,11 @@ def _build_environments(
             selected_parts = {"rust"} if component == "frontend" else {"rust", "python", "engine"}
             if not any(
                 path in {".dockerignore", "LICENSE", "deploy/build-source"}
-                or (path.startswith("data-plane/") and not path.startswith("data-plane/model-server/python/"))
+                or (path.startswith("data-plane/") and not path.startswith(("data-plane/model-server/python/", "data-plane/dt-plugin/src/")))
                 for path in changed
             ):
                 selected_parts.discard("rust")
-            if not any(path.startswith("data-plane/model-server/python/") for path in changed):
+            if not any(path.startswith(("data-plane/model-server/python/", "data-plane/dt-plugin/src/")) for path in changed):
                 selected_parts.discard("python")
             parts = sorted(selected_parts)
         application_parts[component] = parts

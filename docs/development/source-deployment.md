@@ -23,6 +23,8 @@ A frontend-only update keeps unchanged model instances serving. Repeating an unc
 
 Go controller executables, Rust serving executables, Python adapters and inference-engine files have separate build inputs. Rebuild affected outputs, replacing each updated group in full, including deletions. Reuse unchanged files only from a completed application matching the previous inputs and runtime environment. Publish the complete application before updating services; running services must not depend on writable compiler caches.
 
+Rust builders preserve the captured inference-engine Rust sources when completing a partial upstream tree for patch preparation. The pinned checkout supplies only the missing upstream files.
+
 BuildKit prepares reusable environment and compiler images. Independent compiler Pods share node-local dependency downloads, the Go build cache and ccache; each source directory keeps private Rust target and CMake trees. Compiler state survives Pod replacement. Completed artifacts can use a separate StorageClass, and application and model storage retain their own lifecycles.
 
 Independent checkouts can build concurrently. Serialize source updates within one checkout and service mutations for one deployment instance. Source operations sharing a workstation state directory exclude platform changes during builds. The deployment manager rejects new instances while the platform retires. Bound lock acquisition without expiring active holders. Stop and delete supersede older pending submissions; builds and readiness observation do not hold an instance's mutation lock.

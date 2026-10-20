@@ -89,6 +89,9 @@ pub struct Tokenization {
 pub enum GenerationError {
     #[error("request is invalid")]
     InvalidRequest,
+    /// Safe request guidance supplied by the execution adapter for public API callers.
+    #[error("{0}")]
+    UnsupportedRequest(&'static str),
     #[error("model was not found")]
     ModelNotFound,
     #[error("no backend is available")]
@@ -432,6 +435,7 @@ impl From<LlmFacadeError> for GenerationError {
     fn from(error: LlmFacadeError) -> Self {
         match error {
             LlmFacadeError::InvalidRequest => Self::InvalidRequest,
+            LlmFacadeError::UnsupportedRequest(message) => Self::UnsupportedRequest(message),
             LlmFacadeError::Busy => Self::BackendBusy,
             LlmFacadeError::Unavailable => Self::Unavailable,
             LlmFacadeError::Rejected => Self::BackendRejected,

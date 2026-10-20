@@ -99,6 +99,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 	settings, models, admission := configuration.Settings, configuration.Models, configuration.Admission
 	groups, pdComponents, pdPipelineScopes := configuration.Groups, configuration.PDComponents, configuration.PDPipelineScopes
 	epdComponents, epdPipelineScopes := configuration.EPDComponents, configuration.EPDPipelineScopes
+	dtComponents := configuration.DTComponents
 	var projectionErr error
 	if !preserveConfiguration {
 		requestTimeout, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.Request)
@@ -127,7 +128,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		var catalogErr error
 		models, admission, catalogErr = projectConfiguredModels(frontend, services, pools.Items, modelGroups.Items, previous.Models)
 		if catalogErr != nil {
-			var unavailable *modelCatalogProjectionError
+			var unavailable *servingconfig.ModelCatalogProjectionError
 			if !errors.As(catalogErr, &unavailable) {
 				return false, catalogErr
 			}
@@ -139,7 +140,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 				routingServices = append(routingServices, service)
 			}
 		}
-		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr = projectableRouting(routingServices, pools.Items, modelGroups.Items)
+		groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, dtComponents, projectionErr = projectableRouting(routingServices, pools.Items, modelGroups.Items)
 		if projectionErr != nil {
 			var splitProjectionError *servingconfig.SplitRoutingProjectionError
 			if !errors.As(projectionErr, &splitProjectionError) {
@@ -153,7 +154,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		projectionErr = errors.Join(catalogErr, projectionErr)
 	}
 
-	snapshot := servingconfig.Snapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes}
+	snapshot := servingconfig.Snapshot{Settings: settings, FrontendInstances: frontendInstances, BackendInstances: backendInstances, Models: models, Admission: admission, Groups: groups, PDComponents: pdComponents, PDPipelineScopes: pdPipelineScopes, EPDComponents: epdComponents, EPDPipelineScopes: epdPipelineScopes, DTComponents: dtComponents}
 	if frontend.Status.ServingConfigVersion < servingconfig.CacheIsolationProtocol && !preserveConfiguration && slices.ContainsFunc(models, func(model servingconfig.Model) bool { return model.PrefixCacheIsolation != nil }) {
 		projectionErr = errors.Join(projectionErr, errFrontendCacheIsolationUnsupported)
 	}

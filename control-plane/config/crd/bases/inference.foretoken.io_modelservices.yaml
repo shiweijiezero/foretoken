@@ -315,8 +315,9 @@ spec:
                     engineArgs:
                       additionalProperties:
                         x-kubernetes-preserve-unknown-fields: true
-                      description: EngineArgs replaces service-level native options
-                        for this Pool when supplied.
+                      description: |-
+                        EngineArgs replaces service-level native options for this Pool when supplied.
+                        Configure neural speculation on a Draft pool; referencing Targets derive its profile.
                       type: object
                     env:
                       description: Env replaces the service environment when supplied;
@@ -415,6 +416,14 @@ spec:
                       format: int32
                       minimum: 1
                       type: integer
+                    model:
+                      description: |-
+                        Model selects proposal weights for a referenced Draft pool.
+                        With native speculative-config, the service model remains the base model.
+                        The source and tokenizer remain those of the ModelService.
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
                     name:
                       description: Name is the stable identity of this Pool within
                         one ModelService.
@@ -532,14 +541,31 @@ spec:
                           <= 0'
                     role:
                       default: aggregate
-                      description: ModelRole identifies a ModelPool's role in the
-                        serving path.
+                      description: ModelRole identifies the model execution stage
+                        served by a ModelPool.
                       enum:
                       - aggregate
                       - encoder
                       - prefill
                       - decode
                       type: string
+                    speculation:
+                      description: Speculation binds this Target pool to the Draft
+                        pools it may use.
+                      properties:
+                        draftPools:
+                          description: |-
+                            DraftPools names aggregate pools with explicit proposal model weights.
+                            Bounded by the service's modelPools cardinality for Kubernetes CEL evaluation.
+                          items:
+                            type: string
+                          maxItems: 32
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - draftPools
+                      type: object
                   required:
                   - name
                   - resources
@@ -1034,8 +1060,7 @@ spec:
             - message: modelPools name default is reserved for the Quick Start shorthand
               rule: '!has(self.modelPools) || self.modelPools.all(pool, pool.name
                 != ''default'')'
-            - message: modelPools must be aggregate-only, complete P/D, or complete
-                E/P/D without aggregate pools
+            - message: modelPools must be aggregate-only or complete P/D or E/P/D
               rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role)
                 || pool.role == ''aggregate'') || (self.modelPools.exists(pool, has(pool.role)
                 && pool.role == ''prefill'') && self.modelPools.exists(pool, has(pool.role)
@@ -1053,6 +1078,17 @@ spec:
                 has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
                 has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
                 || pool.role == ''decode'')))'
+            - message: Target speculation must reference aggregate Draft pools with
+                model weights
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.speculation)
+                || (!has(pool.model) && (!has(pool.role) || pool.role == ''aggregate'')
+                && pool.speculation.draftPools.all(name, self.modelPools.exists(draft,
+                draft.name == name && has(draft.model) && !has(draft.speculation)
+                && (!has(draft.role) || draft.role == ''aggregate'')))))'
+            - message: model overrides require a referencing Target speculation.draftPools
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.model)
+                || self.modelPools.exists(target, has(target.speculation) && pool.name
+                in target.speculation.draftPools))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.

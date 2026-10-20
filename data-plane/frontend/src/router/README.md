@@ -79,6 +79,17 @@ Set `routerPipeline.picker.algorithm` to control selection:
 | `max` | Select the highest score. |
 | `power_of_two_choices` | Sample two distinct targets and select the higher score; choose randomly on ties. |
 
+## Draft/Target routing
+
+For DT services, Router first selects a Target with healthy compatible Draft pools
+from `speculation.draftPools`, matching candidate format, context and initialized
+tensor paths, then selects a Draft through the same configured
+Filter → Scorer → Picker pipeline. Both routing-load reservations last through
+the request. Native workload snapshots inform existing load scorers; they do not
+reserve token work or dictate physical batching. The binding is fixed for the
+request, and the selected Target advances its rounds. See the
+[DT frontend workflow](../../../dt-plugin/docs/frontend-workflow.md).
+
 ## Override a model or execution stage
 
 Set `spec.routerPipeline` in the model's `ModelService` YAML to override the frontend defaults. For example, use load-based routing for the model and cache-aware routing for its Prefill stage:

@@ -33,6 +33,10 @@ curl --fail-with-body "$FRONTEND_URL/v1/responses" \
 
 `GET /v1/models` 列出已配置的模型；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。支持图片的文本模型接受 base64 编码的图片 `data:` URL。
 
+`/v1/completions` 设置 `return_token_ids: true` 可返回生成的 token IDs。
+流式响应按 choice 的 `index` 分别累积 `token_ids`，也要处理 `text` 为空的 chunk：
+一个 UTF-8 字符可能由多个 token 组成。
+
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具。强制选择工具和严格约束参数需要模型具备[结构化输出能力](#修改服务配置)。
 
 输出 token 预算包含思考内容。Chat Completions 支持 `max_completion_tokens` 和 `max_tokens`，同时传入时以前者为准。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。
@@ -189,7 +193,7 @@ spec:
 
 `ModelService.spec.admission` 和 `ModelService.spec.roleRules` 分别整块替换对应的前端默认配置。要让一个模型在前端不限流，设置 `admission: {}` 和 `roleRules: []`；前端省略这两项时默认不限流。
 
-模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。
+模型角色规则中的 `roleRules[].allowedPools` 通过 `spec.modelPools` 的名称限制可用 Pool。分离式部署必须为每个必需执行阶段保留一个 Pool。Draft/Target 的允许范围必须包含一个 Target，以及该 Target 的 `speculation.draftPools` 引用的至少一个 Draft。
 
 ## 修改服务配置
 

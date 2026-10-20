@@ -33,6 +33,10 @@ The response contains an `id` and generated `output`. Add `"stream": true` and `
 
 `GET /v1/models` lists configured model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs. Image-capable text models accept base64 image `data:` URLs.
 
+For text completions, set `return_token_ids: true` to include generated token IDs.
+In streaming responses, accumulate `token_ids` for each choice's `index`, including
+chunks with empty `text`: a UTF-8 character can span multiple tokens.
+
 Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools. Forced tool choice and strict schemas require the model's [structured-output capability](#update-serving-settings).
 
 Output budgets include reasoning tokens. Chat Completions accepts `max_completion_tokens` or `max_tokens`; when both are set, `max_completion_tokens` takes precedence. Messages uses `max_tokens`, not `thinking.budget_tokens`; thinking controls depend on the model's chat template. Budget exhaustion produces `max_tokens` in Messages or `status: "incomplete"` in Responses. Execute only complete tool calls.
@@ -189,7 +193,7 @@ Role rules require an authentication gateway that overwrites `x-role` and `x-cal
 
 `ModelService.spec.admission` and `ModelService.spec.roleRules` replace the corresponding frontend defaults as whole blocks. Set `admission: {}` and `roleRules: []` to leave one model unrestricted at the frontend; omitting both at the frontend leaves admission unrestricted by default.
 
-A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage.
+A model's `roleRules[].allowedPools` restricts a role to names in `spec.modelPools`. A disaggregated model must retain a Pool for every required execution stage. For Draft/Target, the allowed set must include a Target and at least one Draft referenced by that Target's `speculation.draftPools`.
 
 ## Update serving settings
 

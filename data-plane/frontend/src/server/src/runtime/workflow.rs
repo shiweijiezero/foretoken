@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Executes aggregate, P/D, and E/P/D generation while retaining cross-stage cleanup ownership.
+//! Executes Aggregate, P/D, E/P/D and Target-first DT workflows.
 
 use foretoken_admission::AdmissionPermit;
 use foretoken_llm_facade::{
@@ -61,7 +61,43 @@ pub(crate) async fn execute_workflow(
             .await
             .map_err(after_acceptance)
         }
-        ModelServerRole::Decode => Err(GenerationError::Internal),
+        ModelServerRole::Target => {
+            let target = resolver
+                .resolve_draft_target(&initial)
+                .ok_or(GenerationError::Internal)?;
+            let drafts = session
+                .select_drafts()
+                .map_err(GenerationError::from)?
+                .iter()
+                .map(|draft| {
+                    resolver
+                        .resolve_draft_target(draft)
+                        .ok_or(GenerationError::Internal)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut input = crate::draft_target::normalize(&request)?;
+            input.reservation = admission.reference().map(|mut reference| {
+                reference.final_stage = true;
+                reference
+            });
+            input.priority = role_priority.map_or(input.priority, |priority| !priority);
+            let stream = before_waiting_deadline(admission.waiting_deadline(), async {
+                crate::draft_target::open_target(
+                    drafts,
+                    target,
+                    input,
+                    request,
+                    initial.model.clone(),
+                )
+                .await
+                .map_err(GenerationError::from)
+            })
+            .await?
+            .ok_or(GenerationError::BackendBusy)?;
+            admission.accepted().await;
+            Ok((initial, stream))
+        }
+        ModelServerRole::Decode | ModelServerRole::Draft => Err(GenerationError::Internal),
     }
 }
 

@@ -193,6 +193,25 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         ):
             if speculative.get(key) is not None:
                 message[name] = round(float(speculative[key]) * scale, 4)
+    dt = metrics.get("draft_target")
+    if isinstance(dt, dict):
+        for key, name, scale in (
+            ("acceptance_ratio", "DT/Accepted verified tokens (%)", 100),
+            ("accepted_tokens_per_round", "DT/Accepted tokens per round", 1),
+            ("round_mean_seconds", "DT/Round wall time (ms)", 1000),
+            ("draft_mean_seconds", "DT/Draft wall time (ms)", 1000),
+            ("target_mean_seconds", "DT/Target wall time (ms)", 1000),
+            ("transfer_read_mean_seconds", "DT/Proposal read wall time (ms)", 1000),
+            ("transfer_prepare_mean_seconds", "DT/Proposal prepare wall time (ms)", 1000),
+            ("transfer_bytes_estimate", "DT/Proposal bytes read", 1),
+            ("context_read_mean_seconds", "DT/Feature read wall time (ms)", 1000),
+            ("context_prepare_mean_seconds", "DT/Feature prepare wall time (ms)", 1000),
+            ("context_transfer_bytes_estimate", "DT/Feature bytes read", 1),
+            ("admitted_submissions_estimate", "DT/Admitted submissions", 1),
+            ("rejected_submissions_estimate", "DT/Rejected submissions", 1),
+        ):
+            if dt.get(key) is not None:
+                message[name] = round(float(dt[key]) * scale, 4)
     conversation = metrics.get("conversation")
     if isinstance(conversation, dict):
         message[_CONCURRENT_CONVERSATIONS] = int(metrics["max_concurrency"])

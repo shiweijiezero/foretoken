@@ -49,7 +49,7 @@ pub struct AppState {
 
 /// Fixed, wire-safe errors for the internal API.
 #[derive(Debug, Clone, Copy)]
-enum ApiError {
+pub(crate) enum ApiError {
     InvalidRequest,
     Unavailable,
     Busy,
@@ -365,6 +365,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
         version: 3,
+        draft_target_workload: None,
         request_cost: telemetry.request_cost,
         collected_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -316,6 +316,27 @@ if action == 'accept' then
     request.accepted = true
 elseif action == 'drop' then
     cancel_slot(request, slot)
+elseif action == 'return_before_submission' then
+    if (slot.state == 'accepted' or slot.state == 'cancelling') and slot.owner == input.owner then
+        slot.finished_owners = slot.finished_owners or {}
+        slot.finished_owners[input.owner] = true
+        if request.cancelled or request.retired or slot.state == 'cancelling' then
+            finish_slot(request, slot)
+        else
+            -- The owner proved no engine execution began and joined binding cleanup.
+            -- Restore submission accounting before the frontend can return to waiting.
+            slot.state = 'reserved'
+            slot.owner, slot.backend_pod, slot.backend_epoch = nil, nil, nil
+            adjust('waiting', 1)
+            adjust('w:' .. request.caller, 1)
+            request.accepted = false
+            for _, sibling in ipairs(request.slots) do
+                if sibling.state ~= 'waiting' and sibling.state ~= 'reserved' then
+                    request.accepted = true
+                end
+            end
+        end
+    end
 elseif action == 'reject_before_submission' then
     if not (slot.finished_owners and slot.finished_owners[input.owner]) then
         if slot.state == 'waiting' or slot.state == 'reserved' or slot.state == 'handoff'

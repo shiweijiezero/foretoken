@@ -1,0 +1,24 @@
+--- a/vllm_metax/platform.py
++++ b/vllm_metax/platform.py
+@@ -134,7 +134,7 @@
+     )
+     register_backend(
+         backend=AttentionBackendEnum.TRITON_ATTN,
+-        class_path="vllm_metax.v1.attention.backends.triton_attn.MacaTritonAttentionBackend",
++        class_path="vllm.v1.attention.backends.triton_attn.TritonAttentionBackend",
+     )
+     register_backend(
+         backend=AttentionBackendEnum.FLEX_ATTENTION,
+--- a/vllm_metax/v1/attention/backends/flash_attn.py
++++ b/vllm_metax/v1/attention/backends/flash_attn.py
+@@ -121,7 +121,9 @@
+
+     @classmethod
+     def supports_batch_invariance(cls) -> bool:
+-        return True
++        # Chunked prefill and decode use different reductions. Fixed decode
++        # splits alone do not make cached prefixes invariant to batch shape.
++        return False
+
+     @classmethod
+     def supports_non_causal(cls) -> bool:

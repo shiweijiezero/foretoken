@@ -467,11 +467,12 @@ impl RuntimeGeneration {
             return Err(GenerationError::DeadlineExceeded);
         }
         let generate_request = prepared.generate_request;
+        let admission = Arc::new(admission);
         let mut busy_targets = Vec::new();
         // Preparation holds only waiting capacity. Dispatch grants cover the whole batch;
         // explicit initial nonacceptance returns that grant without resetting queue position.
         // Ambiguous submissions and failures after a stage was accepted never enter this loop.
-        let (decision, backend_stream, mut session) = loop {
+        let (decision, backend_stream, mut session, runtime_slot) = loop {
             // Readiness waiting cannot consume a dispatch reservation. After the caller's
             // turn, reload routing rather than binding prepared input to an earlier snapshot.
             self.generation_slot(&request.model, Some(&admission))
@@ -520,7 +521,7 @@ impl RuntimeGeneration {
                 Err(error) => return Err(error.into()),
             };
             match result {
-                Ok((decision, stream)) => break (decision, stream, session),
+                Ok((decision, stream)) => break (decision, stream, session, active),
                 Err(GenerationError::BackendBusy) => {
                     drop(session);
                     if !admission.retry().await? {
@@ -541,6 +542,7 @@ impl RuntimeGeneration {
         let stream = Box::pin(async_stream::stream! {
             use futures::StreamExt;
             let _admission = admission;
+            let _runtime_slot = runtime_slot;
             let mut backend_stream = backend_stream;
             let mut response_started = false;
             while let Some(output) = backend_stream.next().await {
@@ -637,7 +639,7 @@ impl AdmissionObservation {
         let error = match error {
             GenerationError::QueueTimeout => AdmissionError::QueueTimeout,
             GenerationError::DeadlineExceeded => AdmissionError::DeadlineExceeded,
-            GenerationError::InvalidRequest => {
+            GenerationError::InvalidRequest | GenerationError::UnsupportedRequest(_) => {
                 attempt.invalid_request();
                 return;
             }

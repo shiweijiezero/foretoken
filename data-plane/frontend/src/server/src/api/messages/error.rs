@@ -48,6 +48,7 @@ impl From<GenerationError> for AnthropicApiError {
     fn from(error: GenerationError) -> Self {
         let (status, kind) = match error {
             GenerationError::InvalidRequest
+            | GenerationError::UnsupportedRequest(_)
             | GenerationError::BackendRejected
             | GenerationError::AdmissionCapacityExceeded => {
                 (StatusCode::BAD_REQUEST, "invalid_request_error")

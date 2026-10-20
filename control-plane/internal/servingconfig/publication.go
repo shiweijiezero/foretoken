@@ -70,6 +70,11 @@ func ContainsRouteTarget(snapshot Snapshot, routeTargetID string) bool {
 			return true
 		}
 	}
+	for _, component := range snapshot.DTComponents {
+		if component.RouteTargetID == routeTargetID {
+			return true
+		}
+	}
 	for _, component := range snapshot.EPDComponents {
 		if component.RouteTargetID == routeTargetID {
 			return true

@@ -3,6 +3,7 @@
 
 //! Composes process-local services before handing serving ownership to a leader or worker.
 
+mod draft_target;
 mod leader;
 mod worker;
 
@@ -78,6 +79,18 @@ async fn run_runtime(
     } else {
         None
     };
+
+    if config.launch.dt.is_some() {
+        return draft_target::run(
+            &config,
+            cache_config.as_ref(),
+            profiling_config.as_ref(),
+            &mut cache_server,
+            cache_shutdown,
+            request_ledger,
+        )
+        .await;
+    }
 
     // Workers own local execution only; the leader owns the group handshake and request ingress.
     if config

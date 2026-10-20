@@ -23,6 +23,9 @@ use serde::Serialize;
 
 pub use vllm_metrics::*;
 
+mod draft_target;
+pub use draft_target::record_draft_target_round;
+
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Routes served to the platform rather than to inference clients. They are not counted as
 /// requests and receive no request span, so scrapes and probes do not appear in request logs.
@@ -227,6 +230,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
         encode_registry(&mut body, METRICS.registry())?;
         foretoken_router::encode_metrics(&mut body)?;
         foretoken_admission::encode_metrics(&mut body)?;
+        draft_target::encode_metrics(&mut body)?;
         let mut registry = Registry::default();
         registry.register_collector(Box::new(FrontendCollector {
             kv_index: kv_index.map(|(state, reason, healthy, total)| {

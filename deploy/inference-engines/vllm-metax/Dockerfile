@@ -67,6 +67,8 @@ ENV MACA_PATH=${MACA_PATH} \
 # Mooncake's download mirror is a prefix before the complete GitHub URL.
 ARG FORETOKEN_GITHUB_MIRROR
 # vLLM consumes only the TransferEngine and Store requester Python modules.
+# DT refreshes dynamic peer registrations through Mooncake's public C API.
+# Retain its archive object when linking the Python module.
 RUN mirror="${FORETOKEN_GITHUB_MIRROR%/}"; \
     case "$mirror" in \
       *https://github.com) export ASCEND_GITHUB_MIRROR_URLS="${mirror%https://github.com}" ;; \
@@ -74,6 +76,7 @@ RUN mirror="${FORETOKEN_GITHUB_MIRROR%/}"; \
     uv venv /opt/mooncake-build --python /usr/bin/python3 \
     && cmake -S /src/mooncake -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_MODULE_LINKER_FLAGS=-Wl,--undefined=openSegmentNoCache \
       -DUSE_MACA=ON -DMACA_ROOT="${MACA_PATH}" \
       -DUSE_TCP=ON -DUSE_ETCD=OFF -DUSE_HTTP=ON \
       -DWITH_TE=ON -DWITH_STORE=ON -DWITH_STORE_RUST=OFF -DWITH_EP=OFF \

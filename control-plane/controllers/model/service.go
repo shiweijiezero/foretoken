@@ -488,6 +488,10 @@ func (reconciler *ServiceReconciler) reconcileServingCohort(ctx context.Context,
 	})
 	if len(selected) > 0 {
 		switch {
+		case servingconfig.PoolsHaveDT(servicePools):
+			if _, err := servingconfig.ProjectServiceDTComponents(candidate, servicePools, groups.Items); err != nil {
+				return err
+			}
 		case servingconfig.PoolsHaveEPD(servicePools) || servingconfig.ServiceDeclaresEPD(candidate):
 			if !servingconfig.PoolsContainCompleteEPD(servicePools) {
 				return nil
@@ -599,7 +603,12 @@ func (reconciler *ServiceReconciler) servingCohortReadiness(ctx context.Context,
 	if err := reconciler.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
 		return false, "PoolsNotReady", "ModelGroups are not ready", err
 	}
+	selectedPools = servingconfig.ServingRoutingPools(service, selectedPools, groups.Items)
 	switch {
+	case servingconfig.PoolsHaveDT(selectedPools):
+		if _, err := servingconfig.ProjectServiceDTComponents(service, selectedPools, groups.Items); err != nil {
+			return false, "PoolsNotReady", "The serving D/T generation is incomplete", nil
+		}
 	case servingconfig.PoolsHaveEPD(selectedPools):
 		if _, _, err := servingconfig.ProjectServiceEPDComponents(service, selectedPools, groups.Items); err != nil {
 			return false, "PoolsNotReady", "The serving E/P/D generation is incomplete", nil

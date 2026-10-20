@@ -470,7 +470,7 @@ class EditableDeployment:
                     rebuild = True
                 else:
                     components.setdefault("control-plane", set()).add("go")
-            elif name.startswith("data-plane/model-server/python/"):
+            elif name.startswith(("data-plane/model-server/python/", "data-plane/dt-plugin/src/")):
                 components.setdefault("model-server", set()).add("python")
             elif name.startswith("data-plane/") and (
                 name.endswith((".rs", ".lua")) or Path(name).name in {"Cargo.toml", "Cargo.lock"}
@@ -913,7 +913,12 @@ class EditableDeployment:
         snapshot = json.loads(config_map["data"]["serving.json"])
         published = {
             route["route_target_id"]
-            for section in ("groups", "pd_components", "epd_components")
+            for section in (
+                "groups",
+                "pd_components",
+                "epd_components",
+                "dt_components",
+            )
             for route in (snapshot.get(section) or [])
         }
         if not route_targets <= published:

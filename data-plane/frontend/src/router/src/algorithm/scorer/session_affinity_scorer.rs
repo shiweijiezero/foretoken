@@ -23,7 +23,7 @@ struct Binding {
 }
 
 // A frontend pipeline serves multiple models; each stage keeps model-scoped session bindings.
-type Bindings = [BTreeMap<(String, String), Binding>; 3];
+type Bindings = [BTreeMap<(String, String), Binding>; 4];
 
 #[derive(Clone, Copy)]
 struct EvictionSettings {
@@ -214,6 +214,7 @@ impl RouteScorer for SessionAffinityScorer {
             RoutingStage::Initial => 0,
             RoutingStage::Prefill => 1,
             RoutingStage::Decode => 2,
+            RoutingStage::Draft => 3,
         };
         let session_key = (request.model.clone(), session_id.to_owned());
         let bound = self

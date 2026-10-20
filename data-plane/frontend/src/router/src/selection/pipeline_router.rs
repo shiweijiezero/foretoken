@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
+//! Compatible stage selection for Aggregate/P/D/E/P/D and Target-first DT.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{DraftTargetCandidateFormat, ModelServerRole};
 
 use crate::inventory::supports_request;
 use crate::route_target_stats::NoopRouteTargetStatsReader;
@@ -43,6 +43,7 @@ enum SessionStage {
         pipeline_scope_id: String,
         encoder_completed: bool,
     },
+    Target(Box<RouteCandidate>),
     Complete,
 }
 
@@ -226,6 +227,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             current_stage: RoutingStage::Initial,
             completed_stages: &[],
             pipeline_scope_id: None,
+            selected_target: None,
         };
         let candidate = self.router.select_initial(
             &self.request,
@@ -247,13 +249,41 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                 encoder_completed: false,
             },
             ModelServerRole::Aggregate => SessionStage::Complete,
-            ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
+            ModelServerRole::Target => SessionStage::Target(Box::new(candidate.clone())),
+            ModelServerRole::Decode | ModelServerRole::Draft => {
+                unreachable!("role is not an initial stage")
+            }
         };
         self.selected.push((
             candidate.route_target_id.clone(),
             candidate.data_parallel_rank,
         ));
         Ok(candidate.decision())
+    }
+
+    fn select_drafts(&mut self) -> Result<Vec<crate::RouteDecision>, RouteError> {
+        let SessionStage::Target(target) = &self.stage else {
+            return Err(RouteError::DraftBeforeTarget);
+        };
+        let progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
+            current_stage: RoutingStage::Draft,
+            completed_stages: &[],
+            pipeline_scope_id: target.pipeline_scope_id.as_deref(),
+            selected_target: Some(target),
+        };
+        let draft = self.router.select(
+            &self.request,
+            &progress,
+            &mut self.customized_context,
+            |candidate, _| candidate.is_draft_for(target),
+            RouteError::Busy,
+        )?;
+        self.selected
+            .push((draft.route_target_id.clone(), draft.data_parallel_rank));
+        self.stage = SessionStage::Complete;
+        // The binding is a set; the current execution protocol supports one Draft.
+        Ok(vec![draft.decision()])
     }
 
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError> {
@@ -265,6 +295,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             current_stage: RoutingStage::Prefill,
             completed_stages: &[ModelServerRole::Encoder],
             pipeline_scope_id: Some(pipeline_scope_id),
+            selected_target: None,
         };
         let prefill = self.router.select_prefill_in_pipeline_scope(
             &self.request,
@@ -303,6 +334,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             current_stage: RoutingStage::Decode,
             completed_stages,
             pipeline_scope_id: Some(pipeline_scope_id),
+            selected_target: None,
         };
         let decode = self.router.select_decode_in_pipeline_scope(
             &self.request,
@@ -336,51 +368,100 @@ impl<C: Send + 'static> PipelineRouter<C> {
         request: &RouterRequest,
         reservations: &RoutingReservations,
     ) -> Vec<RouteCandidate> {
-        self.inventory
-            .model_routes()
-            .candidates(request)
-            .into_iter()
-            .filter(|route| {
-                self.inventory
-                    .is_route_target_healthy(&route.route_target_id)
-            })
-            .filter(|route| {
-                supports_request(
-                    &self
-                        .inventory
-                        .effective_capabilities(&route.route_target_id),
-                    request,
-                    // In E/P/D, Encoder owns media encoding; P/D consume its result and KV.
-                    !matches!(
-                        route.role,
-                        ModelServerRole::Prefill | ModelServerRole::Decode
-                    ) || !route
-                        .pipeline_scope_id
-                        .as_deref()
-                        .is_some_and(|scope| self.pipeline_scope_has_encoder(request, scope)),
-                )
-            })
-            .flat_map(|route| {
-                // Read the group's aggregate and rank-local gauges once, then share the immutable
-                // observation across candidates; scorers select the candidate's exact DP rank.
-                let stats = self
-                    .route_target_stats_reader
-                    .stats(&route.route_target_id, ROUTE_TARGET_STATS_WINDOW)
-                    .map(Arc::new);
-                (0..route.data_parallel_size).map(move |data_parallel_rank| RouteCandidate {
-                    route_target_id: route.route_target_id.clone(),
-                    target: route.target.clone(),
-                    admission_targets: route.admission_targets.clone(),
-                    role: route.role,
-                    model: route.model.clone(),
-                    revision: route.revision.clone(),
-                    pipeline_scope_id: route.pipeline_scope_id.clone(),
-                    data_parallel_rank,
-                    route_target_stats: stats.clone(),
-                    local_load: reservations
-                        .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
-                    stage_eligible: false,
+        let candidates: Vec<_> =
+            self.inventory
+                .model_routes()
+                .candidates(request)
+                .into_iter()
+                .filter(|route| {
+                    self.inventory
+                        .is_route_target_healthy(&route.route_target_id)
                 })
+                .filter(|route| {
+                    // DT's execution adapter validates its normalized request surface before remote
+                    // admission, so unsupported options return a request error rather than no route.
+                    if request.generate_request.is_some()
+                        && matches!(route.role, ModelServerRole::Draft | ModelServerRole::Target)
+                    {
+                        return true;
+                    }
+                    supports_request(
+                        &self
+                            .inventory
+                            .effective_capabilities(&route.route_target_id),
+                        request,
+                        // In E/P/D, Encoder owns media encoding; P/D consume its result and KV.
+                        !matches!(
+                            route.role,
+                            ModelServerRole::Prefill | ModelServerRole::Decode
+                        ) || !route
+                            .pipeline_scope_id
+                            .as_deref()
+                            .is_some_and(|scope| self.pipeline_scope_has_encoder(request, scope)),
+                    )
+                })
+                .flat_map(|route| {
+                    let capabilities = self
+                        .inventory
+                        .draft_target_capabilities(&route.route_target_id);
+                    // Read the group's aggregate and rank-local gauges once, then share the immutable
+                    // observation across candidates; scorers select the candidate's exact DP rank.
+                    let stats = self
+                        .route_target_stats_reader
+                        .stats(&route.route_target_id, ROUTE_TARGET_STATS_WINDOW)
+                        .map(Arc::new);
+                    (0..route.data_parallel_size).map(move |data_parallel_rank| RouteCandidate {
+                        route_target_id: route.route_target_id.clone(),
+                        target: route.target.clone(),
+                        admission_targets: route.admission_targets.clone(),
+                        role: route.role,
+                        model: route.model.clone(),
+                        revision: route.revision.clone(),
+                        pipeline_scope_id: route.pipeline_scope_id.clone(),
+                        draft_target_capabilities: capabilities.clone(),
+                        draft_pools: self.inventory.draft_pools(&route.route_target_id).to_vec(),
+                        data_parallel_rank,
+                        route_target_stats: stats.clone(),
+                        local_load: reservations
+                            .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                        stage_eligible: false,
+                    })
+                })
+                .filter(|candidate| {
+                    if !matches!(
+                        candidate.role,
+                        ModelServerRole::Draft | ModelServerRole::Target
+                    ) {
+                        return true;
+                    }
+                    // Token-only peers cannot serve random sampling, even when their scopes match.
+                    candidate
+                        .draft_target_capabilities
+                        .as_ref()
+                        .is_some_and(|capabilities| {
+                            capabilities.candidate_format
+                                == DraftTargetCandidateFormat::TokenIdsLogProbs
+                                || request.generate_request.as_ref().is_some_and(|request| {
+                                    request.sampling_params.temperature == 0.0
+                                })
+                        })
+                })
+                .collect();
+        // Target selection requires an available compatible Draft, but does not bind one.
+        // A second policy round uses the selected Target and fresh load to assign its Drafts.
+        let ready_targets = candidates
+            .iter()
+            .filter(|target| {
+                target.role == ModelServerRole::Target
+                    && candidates.iter().any(|draft| draft.is_draft_for(target))
+            })
+            .map(|target| target.route_target_id.clone())
+            .collect::<BTreeSet<_>>();
+        candidates
+            .into_iter()
+            .filter(|candidate| match candidate.role {
+                ModelServerRole::Target => ready_targets.contains(&candidate.route_target_id),
+                _ => true,
             })
             .collect()
     }
@@ -591,7 +672,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     candidate.pipeline_scope_id.is_some()
                         && Self::future_stages_available(candidate, candidates)
                 }
-                ModelServerRole::Decode => false,
+                ModelServerRole::Target => true,
+                ModelServerRole::Decode | ModelServerRole::Draft => false,
             },
             RouteError::NoCompatibleTarget {
                 model: request.model.clone(),

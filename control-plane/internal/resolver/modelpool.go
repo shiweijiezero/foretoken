@@ -7,6 +7,7 @@ package resolver
 
 import (
 	"fmt"
+	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
@@ -34,22 +35,24 @@ type RuntimeProfile struct {
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
 type ModelGroupTemplate struct {
-	Revision    string
-	Role        inferencev1alpha1.ModelRole
-	Artifacts   inferencev1alpha1.ModelGroupArtifacts
-	Runtime     inferencev1alpha1.ModelGroupRuntime
-	PDRuntime   *inferencev1alpha1.ModelGroupPDRuntimeConfig
-	RDMA        *inferencev1alpha1.RDMAAllocation
-	ECRuntime   *inferencev1alpha1.ModelGroupECRuntimeConfig
-	KVRuntime   *inferencev1alpha1.ModelGroupKVRuntimeConfig
-	Resources   inferencev1alpha1.ModelResources
-	Timeouts    inferencev1alpha1.ModelTimeouts
-	NodeCount   int32
-	MemberCount int32
-	Parallelism inferencev1alpha1.CompiledParallelism
-	Features    inferencev1alpha1.ModelFeatures
-	Accelerator inferencev1alpha1.ModelGroupAccelerator
-	Network     string
+	Revision        string
+	Role            inferencev1alpha1.ModelRole
+	SpeculationRole inferencev1alpha1.SpeculationRole
+	DraftPools      []string
+	Artifacts       inferencev1alpha1.ModelGroupArtifacts
+	Runtime         inferencev1alpha1.ModelGroupRuntime
+	PDRuntime       *inferencev1alpha1.ModelGroupPDRuntimeConfig
+	RDMA            *inferencev1alpha1.RDMAAllocation
+	ECRuntime       *inferencev1alpha1.ModelGroupECRuntimeConfig
+	KVRuntime       *inferencev1alpha1.ModelGroupKVRuntimeConfig
+	Resources       inferencev1alpha1.ModelResources
+	Timeouts        inferencev1alpha1.ModelTimeouts
+	NodeCount       int32
+	MemberCount     int32
+	Parallelism     inferencev1alpha1.CompiledParallelism
+	Features        inferencev1alpha1.ModelFeatures
+	Accelerator     inferencev1alpha1.ModelGroupAccelerator
+	Network         string
 }
 
 type resolvedModelRuntime struct {
@@ -65,6 +68,9 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 	if template.SourceRevision != "" && template.Backend != "vllm" {
 		return ModelGroupTemplate{}, fmt.Errorf("source bundles support the vLLM model-server only")
+	}
+	if template.SpeculationRole != "" && template.Backend != "vllm" {
+		return ModelGroupTemplate{}, fmt.Errorf("speculation requires the vllm backend")
 	}
 	if template.Backend == vllmomniconfig.Backend {
 		return resolveVLLMOmniPool(template, profile)
@@ -129,7 +135,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || effective.RequestsWeightSharing(template, profile.DeviceResourceName) {
+	if template.SpeculationRole != "" || template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || effective.RequestsWeightSharing(template, profile.DeviceResourceName) {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -237,7 +243,9 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 		startupAdmission = template.InstanceAdmission.DeepCopy()
 	}
 	return ModelGroupTemplate{
-		Role: template.Role,
+		Role:            template.Role,
+		SpeculationRole: template.SpeculationRole,
+		DraftPools:      slices.Clone(template.DraftPools),
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model: template.Model, Source: template.Source, ModelRevision: template.ModelRevision,
 			Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
@@ -381,23 +389,25 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		ecRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
 	}
 	return inferencev1alpha1.ModelGroupSpec{
-		ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
-		Revision:     template.Revision,
-		Ordinal:      ordinal,
-		Role:         template.Role,
-		Artifacts:    template.Artifacts,
-		Runtime:      template.Runtime,
-		PDRuntime:    pdRuntime,
-		RDMA:         template.RDMA,
-		ECRuntime:    ecRuntime,
-		KVRuntime:    template.KVRuntime,
-		Resources:    template.Resources,
-		Timeouts:     template.Timeouts,
-		NodeCount:    template.NodeCount,
-		MemberCount:  template.MemberCount,
-		Parallelism:  template.Parallelism,
-		Features:     *template.Features.DeepCopy(),
-		Accelerator:  template.Accelerator,
-		Network:      template.Network,
+		ModelPoolRef:    inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
+		Revision:        template.Revision,
+		Ordinal:         ordinal,
+		Role:            template.Role,
+		SpeculationRole: template.SpeculationRole,
+		DraftPools:      slices.Clone(template.DraftPools),
+		Artifacts:       template.Artifacts,
+		Runtime:         template.Runtime,
+		PDRuntime:       pdRuntime,
+		RDMA:            template.RDMA,
+		ECRuntime:       ecRuntime,
+		KVRuntime:       template.KVRuntime,
+		Resources:       template.Resources,
+		Timeouts:        template.Timeouts,
+		NodeCount:       template.NodeCount,
+		MemberCount:     template.MemberCount,
+		Parallelism:     template.Parallelism,
+		Features:        *template.Features.DeepCopy(),
+		Accelerator:     template.Accelerator,
+		Network:         template.Network,
 	}
 }

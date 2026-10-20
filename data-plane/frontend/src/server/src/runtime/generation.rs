@@ -33,7 +33,7 @@ pub(super) struct ConfigurationStatus {
 #[derive(Clone)]
 pub struct RuntimeGeneration {
     pub(super) slot: Arc<ArcSwapOption<RuntimeSlot>>,
-    pub(super) publication: Arc<Mutex<()>>,
+    pub(super) publication: Arc<Mutex<Vec<std::sync::Weak<RuntimeSlot>>>>,
     pub(super) publication_updates: tokio::sync::watch::Sender<u64>,
     pub(super) accepting: Arc<AtomicBool>,
     pub(super) request_slot: Option<Arc<RuntimeSlot>>,
@@ -50,7 +50,7 @@ impl RuntimeGeneration {
         let (publication_updates, _) = tokio::sync::watch::channel(0);
         Self {
             slot: Arc::new(ArcSwapOption::empty()),
-            publication: Arc::new(Mutex::new(())),
+            publication: Arc::new(Mutex::new(Vec::new())),
             publication_updates,
             accepting: Arc::new(AtomicBool::new(true)),
             request_slot: None,
@@ -67,7 +67,7 @@ impl RuntimeGeneration {
         control: Arc<dyn RuntimeControl>,
         admission: PreparedAdmissions,
     ) -> bool {
-        let _publication = self
+        let mut publication = self
             .publication
             .lock()
             .expect("runtime publication lock poisoned");
@@ -83,12 +83,16 @@ impl RuntimeGeneration {
         }
         control.activate(version);
         self.admission.publish(version, admission);
-        self.slot.store(Some(Arc::new(RuntimeSlot {
+        // Active responses retain their original runtime and request processors.
+        publication.retain(|previous| previous.strong_count() != 0);
+        let slot = Arc::new(RuntimeSlot {
             version,
             models: control.configured_models().into(),
             state,
             control,
-        })));
+        });
+        publication.push(Arc::downgrade(&slot));
+        self.slot.store(Some(slot));
         self.record_configuration(Some(version), None);
         self.publication_updates.send_replace(version);
         true
@@ -132,8 +136,20 @@ impl RuntimeGeneration {
 
     /// Refreshes readiness for the currently loaded runtime slot and wakes queued admission checks.
     pub async fn refresh_backend_readiness(&self) {
+        let slots = self
+            .publication
+            .lock()
+            .expect("runtime publication lock poisoned")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect::<Vec<_>>();
+        futures::future::join_all(
+            slots
+                .iter()
+                .map(|slot| slot.control.refresh_backend_readiness()),
+        )
+        .await;
         if let Some(slot) = self.slot.load_full() {
-            slot.control.refresh_backend_readiness().await;
             self.publication_updates.send_replace(slot.version);
         }
     }

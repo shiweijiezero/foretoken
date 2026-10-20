@@ -22,3 +22,4 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 vllm-llm.workspace = true
+tracing.workspace = true

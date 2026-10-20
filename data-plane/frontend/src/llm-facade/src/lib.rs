@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 //! Backend-neutral generation execution port and vLLM adapter.
+pub mod draft_target;
 mod facade;
 mod http;
 use async_trait::async_trait;
@@ -31,6 +32,9 @@ pub enum RouteStage {
 pub enum LlmFacadeError {
     #[error("request is invalid for the selected backend")]
     InvalidRequest,
+    /// Caller-facing explanation authored by the adapter, never a remote error body.
+    #[error("{0}")]
+    UnsupportedRequest(&'static str),
     #[error("backend explicitly rejected acceptance because it is busy")]
     Busy,
     #[error("backend unavailable")]
@@ -192,4 +196,9 @@ pub trait LlmFacadeResolver: Send + Sync {
     /// The workflow reads it immediately before starting prefill and passes it to the decode
     /// connector; `None` prevents the workflow from admitting that staged request.
     fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
+
+    /// Opens the selected Target or a role diagnostic transport.
+    fn resolve_draft_target(&self, _decision: &RouteDecision) -> Option<draft_target::RoleClient> {
+        None
+    }
 }

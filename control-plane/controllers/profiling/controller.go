@@ -318,6 +318,11 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 	if err := r.APIReader.List(ctx, groups, client.InNamespace(run.Namespace)); err != nil {
 		return plan, err
 	}
+	identity, _, err := servingconfig.SelectedCatalogIdentity(service, pools.Items, groups.Items, nil)
+	if err != nil {
+		return plan, err
+	}
+	plan.Model = identity.Model
 	coveredPools := 0
 	for _, pool := range pools.Items {
 		if !servingconfig.RoutingPoolOwnedBy(&pool, service) || servingconfig.ServingRevision(service, &pool) == "" {
@@ -328,8 +333,6 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 			if !servingconfig.RoutingGroupOwnedBy(&group, &pool) || group.Spec.Revision != servingconfig.ServingRevision(service, &pool) || !servingconfig.RoutingGroupReady(&group) {
 				continue
 			}
-			// Desired service intent may already name the next model during a rollout.
-			plan.Model = group.Spec.Artifacts.Model
 			cache := group.Spec.Artifacts.Cache
 			if cache == nil {
 				return plan, fmt.Errorf("ModelService %s has no persistent RuntimeCache; add one to the deployment and redeploy before profiling", service.Name)

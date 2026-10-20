@@ -18,6 +18,7 @@ type Settings struct {
 }
 
 type Snapshot struct {
+	DTComponents      []DTComponent        `json:"dt_components,omitempty"`
 	Settings          Settings             `json:"settings"`
 	Version           uint64               `json:"version"`
 	FrontendInstances []string             `json:"frontend_instances"`
@@ -152,4 +153,20 @@ type EPDPipelineScope struct {
 	EncoderRouteTargetIDs []string `json:"encoder_route_target_ids"`
 	PrefillRouteTargetIDs []string `json:"prefill_route_target_ids"`
 	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
+}
+
+// DTComponent exposes a role independently of its compatible peers.
+type DTComponent struct {
+	DraftPools      []string                          `json:"draft_pools,omitempty"`
+	ServiceUID      string                            `json:"service_uid"`
+	PoolUID         string                            `json:"pool_uid"`
+	PoolName        string                            `json:"pool_name"`
+	RouteTargetID   string                            `json:"route_target_id"`
+	PipelineScopeID string                            `json:"pipeline_scope_id"`
+	Role            inferencev1alpha1.SpeculationRole `json:"role"`
+	Model           string                            `json:"model"`
+	EngineModel     string                            `json:"engine_model"`
+	EngineRevision  *string                           `json:"engine_revision"`
+	MaxInputTokens  *int32                            `json:"max_input_tokens,omitempty"`
+	Endpoint        string                            `json:"endpoint"`
 }

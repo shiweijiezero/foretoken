@@ -77,39 +77,22 @@ impl HttpFacade {
         .map_err(|_| LlmFacadeError::Unavailable)?
         .map_err(classify_reqwest)?;
         if !response.status().is_success() {
-            let status = response.status();
-            if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
-                let error = response.json::<serde_json::Value>().await;
-                // These rejection codes are emitted before submission; generic 5xx are not replayable.
-                if matches!(
-                    error
-                        .ok()
-                        .as_ref()
-                        .and_then(|body| body.get("error"))
-                        .and_then(|error| error.get("code"))
-                        .and_then(serde_json::Value::as_str),
-                    Some("admission_busy" | "admission_unavailable")
-                ) {
-                    return Err(LlmFacadeError::Busy);
-                }
-            }
-            return Err(classify_status(status));
+            return Err(classify_response_failure(response).await);
         }
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
             return Err(LlmFacadeError::Protocol);
         }
         Ok(Box::pin(async_stream::stream! {
-            let body = response.bytes_stream().map(|chunk| chunk.map_err(io::Error::other));
-            let mut lines = FramedRead::new(StreamReader::new(body), LinesCodec::new());
+            let mut lines = ndjson_lines(response);
             while let Some(line) = lines.next().await {
-                let output = line.map_err(classify_line_error)
-                    .and_then(|line| decode_event(line.as_bytes()));
+                let output = line.and_then(|line| decode_event(&line));
                 let failed = output.is_err();
                 yield output;
                 if failed { return; }
             }
         }))
     }
+
     /// Asks this model server to cancel admitted work after its consumer ends early.
     ///
     /// Stream cleanup guards call this best-effort operation. A successful result ends the HTTP
@@ -174,14 +157,14 @@ fn classify_line_error(error: LinesCodecError) -> LlmFacadeError {
     }
 }
 
-fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
+pub(crate) fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
     if error.is_timeout() || error.is_connect() {
         LlmFacadeError::Unavailable
     } else {
         LlmFacadeError::RequestFailed
     }
 }
-fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
+pub(crate) fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
     if status == reqwest::StatusCode::BAD_REQUEST {
         LlmFacadeError::InvalidRequest
     } else if status == reqwest::StatusCode::SERVICE_UNAVAILABLE || status.is_server_error() {
@@ -192,7 +175,28 @@ fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
         LlmFacadeError::Protocol
     }
 }
-fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
+/// Classifies explicit pre-submission refusal from the shared model-server ingress.
+/// Both native and DT transports use these codes; generic failures remain non-replayable.
+pub(crate) async fn classify_response_failure(response: reqwest::Response) -> LlmFacadeError {
+    let status = response.status();
+    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        let error = response.json::<serde_json::Value>().await;
+        if matches!(
+            error
+                .ok()
+                .as_ref()
+                .and_then(|body| body.get("error"))
+                .and_then(|error| error.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("admission_busy" | "admission_unavailable")
+        ) {
+            return LlmFacadeError::Busy;
+        }
+    }
+    classify_status(status)
+}
+
+pub(crate) fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
     value.and_then(|v| v.to_str().ok()).is_some_and(|v| {
         v.split(';')
             .next()
@@ -230,6 +234,19 @@ pub async fn bootstrap_engine_id(
         .filter(|rank| !rank.engine_id.is_empty())
         .map(|rank| rank.engine_id.clone())
         .ok_or(LlmFacadeError::Protocol)
+}
+
+/// Splits streaming HTTP bodies for both model-server and role adapters without buffering a response.
+pub(crate) fn ndjson_lines(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, LlmFacadeError>> + Send>> {
+    let body = response
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(io::Error::other));
+    Box::pin(
+        FramedRead::new(StreamReader::new(body), LinesCodec::new())
+            .map(|line| line.map(String::into_bytes).map_err(classify_line_error)),
+    )
 }
 
 fn decode_event(line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {

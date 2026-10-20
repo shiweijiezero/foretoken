@@ -20,6 +20,8 @@ pub struct RuntimeConfig {
     pub listen_address: SocketAddr,
     pub ports: RuntimePorts,
     pub member: Option<MemberContext>,
+    /// Pod address advertised by the DT worker for Mooncake control handshakes.
+    pub dt_rdma_address: Option<std::net::IpAddr>,
     pub instance_admission_path: Option<PathBuf>,
     pub startup_admission_limit: Option<u32>,
 }
@@ -75,6 +77,17 @@ impl RuntimeConfig {
         } else {
             None
         };
+        let dt_rdma_address = if launch.dt.as_ref().is_some_and(|dt| dt.rdma) {
+            let address = required_env("FORETOKEN_MEMBER_IP")?
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| "FORETOKEN_MEMBER_IP must be a Pod IP address".to_string())?;
+            if address.is_unspecified() || address.is_loopback() {
+                return Err("DT RDMA requires a routable Pod IP address".into());
+            }
+            Some(address)
+        } else {
+            None
+        };
         let instance_admission_path = match std::env::var("FORETOKEN_INSTANCE_ADMISSION_CONFIG") {
             Ok(value) if !value.is_empty() => Some(PathBuf::from(value)),
             Ok(_) => return Err("FORETOKEN_INSTANCE_ADMISSION_CONFIG must not be empty".into()),
@@ -105,6 +118,7 @@ impl RuntimeConfig {
             listen_address,
             ports,
             member,
+            dt_rdma_address,
             instance_admission_path,
             startup_admission_limit,
         })

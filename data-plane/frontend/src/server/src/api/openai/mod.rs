@@ -448,10 +448,11 @@ pub(super) fn json_error(error: JsonRejection) -> Response {
     response
 }
 
-/// Maps every typed pre-response generation failure to a fixed OpenAI error.
+/// Maps pre-response failures to OpenAI errors, preserving safe request guidance.
 pub(crate) fn openai_error(error: GenerationError) -> Response {
     let (status, message, kind, code) = match error {
         GenerationError::InvalidRequest => return client_error("invalid request"),
+        GenerationError::UnsupportedRequest(message) => return client_error(message),
         GenerationError::ModelNotFound => (
             StatusCode::NOT_FOUND,
             "model not found",

@@ -16,23 +16,33 @@ import (
 
 // projectableRouting publishes service-selected cohorts whose Groups satisfy ownership,
 // readiness, and aggregate or split-topology compatibility.
-func projectableRouting(services []inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, modelGroups []inferencev1alpha1.ModelGroup) ([]servingconfig.Group, []servingconfig.PDComponent, []servingconfig.PDPipelineScope, []servingconfig.EPDComponent, []servingconfig.EPDPipelineScope, error) {
+func projectableRouting(services []inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, modelGroups []inferencev1alpha1.ModelGroup) ([]servingconfig.Group, []servingconfig.PDComponent, []servingconfig.PDPipelineScope, []servingconfig.EPDComponent, []servingconfig.EPDPipelineScope, []servingconfig.DTComponent, error) {
 
 	groups := make([]servingconfig.Group, 0, len(modelGroups))
 	pdComponents := make([]servingconfig.PDComponent, 0)
 	pdPipelineScopes := make([]servingconfig.PDPipelineScope, 0)
 	epdComponents := make([]servingconfig.EPDComponent, 0)
 	epdPipelineScopes := make([]servingconfig.EPDPipelineScope, 0)
+	dtComponents := make([]servingconfig.DTComponent, 0)
 	var projectionErr error
 	for serviceIndex := range services {
 		service := &services[serviceIndex]
 		if (service.Spec.Backend != "vllm" && service.Spec.Backend != "vllm-omni") || !servingconfig.HasServingCohort(service) {
 			continue
 		}
-		servicePools := servingconfig.OwnedRoutingPools(service, pools)
+		servicePools := servingconfig.ServingRoutingPools(service, servingconfig.OwnedRoutingPools(service, pools), modelGroups)
 		servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 			return servingconfig.ServingRevision(service, pool) == ""
 		})
+		if servingconfig.PoolsHaveDT(servicePools) {
+			components, err := servingconfig.ProjectServiceDTComponents(service, servicePools, modelGroups)
+			if err != nil {
+				projectionErr = errors.Join(projectionErr, err)
+				continue
+			}
+			dtComponents = append(dtComponents, components...)
+			continue
+		}
 		if servingconfig.PoolsHaveEPD(servicePools) {
 			components, pipelineScopes, err := servingconfig.ProjectServiceEPDComponents(service, servicePools, modelGroups)
 			if err != nil {
@@ -62,13 +72,16 @@ func projectableRouting(services []inferencev1alpha1.ModelService, pools []infer
 			}
 			for groupIndex := range modelGroups {
 				group := &modelGroups[groupIndex]
-				if !servingconfig.RoutingGroupOwnedBy(group, pool) || group.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+				if !servingconfig.RoutingGroupOwnedBy(group, pool) || group.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || group.Spec.SpeculationRole != "" {
 					continue
 				}
 				groups = append(groups, servingconfig.RoutingGroupForService(service, pool, group))
 			}
 		}
 	}
+	slices.SortFunc(dtComponents, func(left, right servingconfig.DTComponent) int {
+		return cmp.Compare(left.RouteTargetID, right.RouteTargetID)
+	})
 	slices.SortFunc(groups, func(left, right servingconfig.Group) int {
 		return cmp.Compare(left.RouteTargetID, right.RouteTargetID)
 	})
@@ -85,7 +98,10 @@ func projectableRouting(services []inferencev1alpha1.ModelService, pools []infer
 		return cmp.Compare(left.PipelineScopeID, right.PipelineScopeID)
 	})
 	if err := servingconfig.ValidateRoutingIdentities(nil, groups, pdComponents, epdComponents); err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	return groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, projectionErr
+	if err := servingconfig.ValidateDTModelTopology(groups, pdComponents, epdComponents, dtComponents); err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	return groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, dtComponents, projectionErr
 }

@@ -79,6 +79,15 @@ spec:
 | `max` | 选择最高分目标。 |
 | `power_of_two_choices` | 随机抽取两个不同目标，选择分数较高者，同分时随机选择。 |
 
+## Draft/Target 路由
+
+DT 服务先从 `speculation.draftPools` 中具有健康兼容 Draft 的 Target 里选取 Target；
+兼容性包括候选格式、context profile 和已初始化的 tensor 传输路径。
+再通过相同配置的 Filter → Scorer → Picker 选择 Draft。两者的路由负载 reservation
+持续到请求结束。现有负载 scorer 使用原生 workload 快照；它不预留 token 工作，
+也不决定物理 batch。绑定在请求期间固定，由选中的 Target 推进轮次。详见
+[DT Frontend 流程](../../../dt-plugin/docs/frontend-workflow_zh.md)。
+
 ## 按模型和执行阶段选择算法
 
 在模型的 `ModelService` YAML 中设置 `spec.routerPipeline`，即可覆盖前端默认策略。例如，模型默认按负载选路，预填充阶段单独使用缓存感知策略：

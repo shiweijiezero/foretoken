@@ -389,6 +389,26 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             value = speculative.get(key)
             measured = value * scale if value is not None else None
             lines.append(f"    {label}: {_format_metric(measured, 2)}{unit}")
+    dt = metrics.get("draft_target")
+    if isinstance(dt, dict):
+        lines.append("  Draft/Target completed speculation rounds (Prometheus window estimate):")
+        for key, label, scale, unit in (
+            ("acceptance_ratio", "Accepted / verified tokens", 100, "%"),
+            ("accepted_tokens_per_round", "Accepted tokens per round", 1, ""),
+            ("round_mean_seconds", "Round wall time", 1000, "ms"),
+            ("draft_mean_seconds", "Draft wall time", 1000, "ms"),
+            ("target_mean_seconds", "Target wall time", 1000, "ms"),
+            ("transfer_read_mean_seconds", "Proposal read wall time", 1000, "ms"),
+            ("transfer_prepare_mean_seconds", "Proposal prepare wall time", 1000, "ms"),
+            ("transfer_bytes_estimate", "Proposal bytes read", 1, " bytes"),
+            ("context_read_mean_seconds", "Feature read wall time", 1000, "ms"),
+            ("context_prepare_mean_seconds", "Feature prepare wall time", 1000, "ms"),
+            ("context_transfer_bytes_estimate", "Feature bytes read", 1, " bytes"),
+            ("admitted_submissions_estimate", "Admitted submissions", 1, ""),
+            ("rejected_submissions_estimate", "Rejected submissions", 1, ""),
+        ):
+            value = dt.get(key)
+            lines.append(f"    {label}: {_format_metric(value * scale if value is not None else None, 2)}{unit}")
     allocation = metrics.get("gpu_allocation")
     if isinstance(allocation, dict):
         coverage = allocation["coverage"]

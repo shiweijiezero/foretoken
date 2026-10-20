@@ -172,9 +172,20 @@ fn scheduler_requests(candidate: &RouteCandidate) -> Option<u64> {
 }
 
 /// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.
+/// DT folds in this frontend's bound requests by maximum, without double counting native work.
 /// Group-level admission counts cannot be assigned to an individual rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
     scheduler_requests(candidate)
+        .map(|requests| {
+            if matches!(
+                candidate.role,
+                ModelServerRole::Draft | ModelServerRole::Target
+            ) {
+                requests.max(candidate.local_load.requests as u64)
+            } else {
+                requests
+            }
+        })
         .and_then(|requests| i64::try_from(requests).ok())
         .unwrap_or(i64::MAX)
 }

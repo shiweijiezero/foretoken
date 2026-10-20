@@ -93,14 +93,14 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(fmt.Errorf("multi-node Groups require LeaderWorkerSet; run foretoken install to prepare the controller")))
 	}
 	// Report configuration errors before allocating preparation or serving resources.
-	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
+	deployment, err := desiredDeployment(group, pool, reconciler.ImagePullSecrets, reconciler.ApplicationFiles)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
 	if err := servingconfig.EnsureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
+	if err := reconciler.reconcileNetworkPolicy(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
 	// Hold the Group until preparation and serving workloads have both retired.

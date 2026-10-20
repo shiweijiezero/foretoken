@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
@@ -22,6 +22,8 @@ use crate::engine::{Lifecycle, append_engine_arg, python_executable};
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
+    #[serde(default)]
+    pub dt: Option<DraftTargetPlan>,
     pub version: u8,
     /// Kubernetes nodes participating in this complete execution group.
     #[serde(rename = "nodeCount")]
@@ -38,6 +40,34 @@ pub struct LaunchPlanV1 {
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
     pub engine_args: BTreeMap<String, serde_json::Value>,
+}
+
+/// Selects the independent role application while retaining the shared engine argument renderer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftTargetPlan {
+    pub role: DraftTargetRole,
+    #[serde(default)]
+    pub rdma: bool,
+    #[serde(default, rename = "draftArtifacts")]
+    pub draft_artifacts: Option<ModelArtifacts>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DraftTargetRole {
+    Draft,
+    Target,
+}
+
+impl DraftTargetRole {
+    /// Returns the role application's CLI value for the process launcher.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Target => "target",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -164,6 +194,9 @@ impl LaunchPlanV1 {
             return Err("launch plan requires a positive node count".into());
         }
         self.artifacts.validate()?;
+        if let Some(draft) = self.dt.as_ref().and_then(|dt| dt.draft_artifacts.as_ref()) {
+            draft.validate()?;
+        }
         let p = &self.parallelism;
         if p.tp == 0 || p.pp == 0 || p.dp == 0 || p.pcp == 0 || p.dcp == 0 {
             return Err("launch plan topology values must be positive".into());

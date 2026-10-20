@@ -48,6 +48,12 @@ pub(crate) fn project_registry(
     }
     let mut routes = Vec::new();
     let mut components = BTreeMap::new();
+    crate::draft_target::project(
+        &snapshot,
+        &admission_by_target,
+        &mut routes,
+        &mut components,
+    )?;
     let aggregate_models = project_aggregate(
         snapshot.groups,
         &admission_by_target,
@@ -335,7 +341,10 @@ fn project_pd(
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
             },
-            ModelServerRole::Aggregate | ModelServerRole::Encoder => {
+            ModelServerRole::Aggregate
+            | ModelServerRole::Encoder
+            | ModelServerRole::Draft
+            | ModelServerRole::Target => {
                 return Err(SnapshotError::InvalidPdPipelineScope(
                     route.pipeline_scope_id.clone().unwrap_or_default(),
                 ));
@@ -485,7 +494,7 @@ fn project_epd(
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
             },
-            ModelServerRole::Aggregate => unreachable!("aggregate E/P/D component was rejected"),
+            _ => unreachable!("non E/P/D component was rejected"),
         };
         if components
             .insert(route.route_target_id.clone(), component)
@@ -498,7 +507,11 @@ fn project_epd(
     Ok(())
 }
 
-fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> ScalingTarget {
+pub(crate) fn pool_target(
+    service_uid: String,
+    pool_uid: String,
+    pool_name: String,
+) -> ScalingTarget {
     ScalingTarget {
         service_uid,
         name: pool_name,
