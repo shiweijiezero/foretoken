@@ -70,8 +70,32 @@ it does not close the shared client or another request's connection.
 confirmed progress. It does not construct URLs or manage HTTP resources.
 `RoleService` validates model context, tensor layout and engine tickets before
 staging or admission. Communication retains started read/ACK operations independently
-of their waiters; the caller owns destination staging after successful completion.
+of their waiters. Read readiness hands local consumption to the caller; ACK and
+source reclamation continue under the same transfer owner. The request resumes
+after feature append or ticket admission; its session retains the operation until
+ACK and destination reclamation complete. Completed cleanup failures are checked
+before further rounds and joined at close. A neural Draft runs while its feature
+transfer buffer is reclaimed; Target output also need not wait for its previous
+proposal buffer's reclamation. Destination storage remains owned until local use
+is fenced even if a later ACK fails.
 Worker transports continue to own all physical buffers and completion fences.
+
+For routed neural requests, Target starts feature preparation on confirmed output.
+Its existing snapshot/publication operation reserves the single reader. The next
+proposal carries interval metadata and an artifact handle; the physical descriptor
+stays in the source session inventory until Draft claims it. The claim endpoint
+hands off that prepared result without another Worker/Core call. A diagnostic
+`/context` export still hands the descriptor directly to its caller.
+
+Source close joins preparation. It can release an unclaimed prepared result using
+the exact publication ID, since no remote reader received its descriptor. Claim
+reserves remote ownership before yielding; after that, close waits for the ordinary
+reader ACK. Lost claim/export responses retain uncertain ownership. After the first
+Draft turn, read readiness also queues feature append at the Core input boundary.
+Core processes native aborts and validates the retained turn before append; I/O
+threads only notify. Completed reads keep their ACK proof even when append is
+rejected or fails. Uncertain utility results or failed appends retain destination
+ownership until abort/fencing or process exit.
 
 At role shutdown, request sessions and shared communication operations are joined
 while the HTTP pool remains open for close messages and ACKs. Existing Worker
@@ -81,9 +105,12 @@ The pool adds no request capacity limit: existing admission remains the owner,
 and active session streams cannot exhaust a separate connection quota.
 
 Preparation telemetry reuses these same operations. Source claim/ACK replies
-carry local Worker RPC phase totals; the receiver combines them with receive/poll,
+carry measured Worker RPC phase totals; cached feature claims have no Worker RPC.
+The receiver combines those observations with completion wait,
 allocation, prior-use fencing and backend-read wall times. Feature export, append
-and receiver release remain distinct. These nested durations are retained in the
+and receiver release remain distinct. Coordinated export measures source-side
+preparation; manual export measures the HTTP round trip. Feature totals sum source
+and receiver intervals, excluding the intervening control handoff. These nested durations are retained in the
 round's transfer breakdown and do not change ownership or add RPCs/fences. See
 [observation boundaries](role-protocol.md#observations).
 
@@ -92,23 +119,33 @@ round's transfer breakdown and do not change ownership or add RPCs/fences. See
 1. Draft's MRV2 sampler exposes processed logits. The worker extension captures
    full `log(q)` rows on GPU and publishes them after the producer CUDA event.
 2. Target claims the artifact directly from Draft to obtain its descriptor,
-   then starts and polls the selected transport through worker RPCs. Transfer work
+   then awaits a native utility Future for the selected transport. Completion
+   notification does not occupy the model execution loop or require repeated Worker RPCs. Transfer work
    runs outside model execution; the affected request waits without scheduling
    verification before its data is ready.
-3. After read completion, Target ACKs the source publication and binds the
-   destination artifact to the engine request ID and generation. Only then does
-   the role call `submit_external_draft_batch`.
+3. Tensor verification starts one native read/admission utility. Read completion
+   queues metadata and wakes EngineCore, which drains native input and aborts,
+   checks each ticket and binds its destination before admission. Slow reads do
+   not hold ready members behind a barrier. After the utility reply the role
+   starts source ACK independently of model execution. Token-only submissions
+   retain client event-loop coalescing. Neither path adds a batching timer;
+   native scheduling determines which requests execute together.
 4. Scheduler forms local batches. Runner resolves current request slots and
    candidate positions, so transfer arrival order cannot define batch row order.
 5. The adapter supplies `log(q) * target_temperature` to the native rejection
    sampler, which applies its own temperature division. Greedy rows use a unit
    scale. This preserves the meaning of the already normalized proposal data.
 6. Target retains the artifact through the next committed output or request
-   abort. Releasing the source after DMA is independent of releasing the
-   destination after model consumption.
+   abort, then hands it to session-owned reclamation without delaying the next
+   round. Releasing the source after DMA is independent of releasing the
+   destination after model consumption. Pending ACK/release timings are null in
+   an observation emitted before that operation completes.
 
 The Target still owns verification, sampling and stopping. A successful
 submission means admission to verification; only Target output commits tokens.
+The next proposal carries the exact confirmed delta, applied atomically by Draft
+before it prepares that proposal. A terminal output closes the existing pair
+without another prefix synchronization. Manual commit remains available.
 Draft randomness is independent of Target's RNG. The user seed controls Target
 sampling and does not promise output equality across proposal schedules.
 

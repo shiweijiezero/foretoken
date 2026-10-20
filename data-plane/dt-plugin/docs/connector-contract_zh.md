@@ -60,8 +60,21 @@ feature export、tensor claim/read/ACK 和 RDMA 验证复用。每个请求的
 `TargetCoordinator` 决定何时 propose、commit、revoke 和 verify，并管理确认进度，
 不再构造 URL 或管理 HTTP 资源。`RoleService` 继续负责模型上下文、tensor 布局和
 engine ticket 校验，之后才 staging 或 admission。通信 owner 独立持有已启动的
-read/ACK 操作；成功完成后，调用方接管目标数据的 staging 生命周期。物理 buffer
+read/ACK 操作；读取就绪后，调用方接管目标数据的消费生命周期。物理 buffer
 和完成 fence 仍由 Worker transport 持有。
+
+绑定的神经 Draft 请求由 Target 在确认输出后立即启动特征准备。既有 snapshot／
+publication 操作预留单读者；下一轮 propose 携带区间元数据和 artifact handle，物理
+描述符保留在源会话中。Draft 调用既有 claim 接口时，Target 直接交付准备结果，
+不再进入 Worker／Core。诊断 `/context` 接口仍直接向调用者交付已领取的描述符。
+
+源 session 关闭时等待准备完成；尚未被远端 claim 的结果可凭精确 publication ID
+回收，因为描述符从未离开本进程。claim 在任何 await 前转交远端归属；此后关闭必须
+等待原有 reader ACK。claim／export 回复丢失继续保留不确定归属。首轮 Draft 仍在
+原生准入前追加特征；后续轮次的 read 就绪事件在 Core 输入边界触发追加。Core 先
+处理原生 abort、校验保留的轮次，I/O 线程只通知。追加被拒绝或失败时仍返回已读
+完成证明，以便 ACK；utility 结果不确定或追加失败时，目标 buffer 保留到
+abort/fencing 或进程退出。
 
 关闭 session 会等待原生输入预处理和提交完成，再 abort 并等待 GPU 工作结束；
 checkpoint 接收 buffer 也保留到这一边界。输入拒绝只作为请求错误返回，关闭仍执行
@@ -69,26 +82,41 @@ abort 和 GPU fencing；真实的清理失败继续向上传递。神经 Draft �
 checkpoint revision，服务发现仍使用请求的模型身份；独立启动时使用原生配置解析的
 commit，本地路径必须对应同一份不可变权重。
 
+读取就绪后，本地消费交给请求 owner；ACK 和源端回收仍由同一个传输操作负责。
+请求在特征追加或 ticket admission 完成后继续推进，session 仍持有传输操作，直到
+ACK 和目标 buffer 回收完成。已完成的清理错误会在后续轮次开始前暴露，关闭时统一
+等待并传播。神经 Draft 可在特征传输 buffer 回收期间执行；Target 交付确认结果和
+推进下一轮也不等待上一轮提议 buffer 的回收。即使 ACK 随后失败，目标 buffer
+也保留到本地消费完成或 abort fencing 后，不会提前复用。观测发出时尚未完成的
+ACK、release 耗时为 null，不记为零耗时。
+
 role 退出时，先保持 HTTP 连接池可用，等待请求关闭和共享通信操作完成，以便
 发送关闭消息及 ACK；随后执行既有 Worker drain。role lifespan 最后关闭连接池，
 再停止 engine。失败或完成不确定的传输继续沿用隔离与进程退出边界。连接池不另设
 请求容量限制，长生命周期 session stream 不会耗尽一套额外的连接额度；现有
 admission 继续负责请求容量。
 
-准备耗时复用上述操作采集：源端 claim/ACK 回复携带本地 Worker RPC 分段，
-接收端补上接收与轮询、分配、旧使用同步和后端读取的墙钟时间。特征导出、追加与
-接收 buffer 回收单独计时。轮次的 transfer breakdown 保留这些相互包含的区间，
+准备耗时复用上述操作采集：源端 claim/ACK 回复携带实际 Worker RPC 分段，
+缓存的特征 claim 无 Worker RPC。
+接收端补上完成等待、分配、旧使用同步和后端读取的墙钟时间。特征导出、追加与
+接收 buffer 回收单独计时。协调路径的 export 为源端准备耗时，手动导出则包含 HTTP
+往返；特征 total 为源端与接收端区间之和，不包含中间控制交接的间隔。轮次的
+transfer breakdown 保留这些相互包含的区间，
 不改变资源归属，也不新增 RPC 或同步。详见[观测边界](role-protocol.md#observations)。
 
 ## Worker 与引擎如何衔接
 
 1. Draft 的 MRV2 采样器提供处理后的 logits；Worker 扩展在 GPU 上保存完整 `log(q)`，
    等待生产者 CUDA event 后发布描述符。
-2. Target 先向 Draft claim artifact，取得描述符，再通过 Worker RPC 发起并轮询所选传输方式的读取。
+2. Target 先向 Draft claim artifact，取得描述符，再等待原生 utility Future 通知读取完成。
+   完成通知不阻塞模型执行循环，也不需要反复发送 Worker 查询。
    传输工作在模型执行之外进行；
    数据尚未就绪时，对应请求不会进入验证调度。
-3. 读取完成后，Target 确认源 publication，并把目标 artifact 绑定到引擎请求 ID 和
-   generation；随后才调用 `submit_external_draft_batch`。
+3. Tensor 验证通过一次原生 utility 启动读取和 admission。读取完成后仅将就绪 metadata
+   入队并唤醒 EngineCore；Core 先处理原生输入及取消，再逐 ticket 校验、绑定目标 buffer
+   并接纳。慢成员不阻塞已就绪成员。role 收到结果后独立完成源端 ACK，不阻塞模型执行。
+   token-only 提交保留客户端事件循环内的合并；两条路径都不增加组批等待计时器，
+   实际 GPU batch 由原生 Scheduler 决定。
 4. Scheduler 组织本地 batch；Runner 按当前请求槽位和候选位置映射分布，不能按传输
    到达顺序推断 batch 行号。
 5. 适配器把 `log(q) * Target 温度` 交给原生拒绝采样器，抵消其内部的温度除法。
@@ -97,7 +125,9 @@ admission 继续负责请求容量。
    模型消费后目标端可释放，是两个不同的时点。
 
 验证、采样、停止由 Target 负责。候选提交成功只表示进入验证，最终 token 必须来自
-Target 输出。Draft 随机数与 Target 独立；用户 seed 控制 Target，不保证不同候选轮次
+Target 输出。下一轮 propose 同时携带精确的确认 delta，Draft 在同一操作中原子校验、
+应用并取得 proposal 归属；终止输出直接关闭现有实例对，不再同步无后续用途的前缀。
+独立的手动 commit 入口仍可用。Draft 随机数与 Target 独立；用户 seed 控制 Target，不保证不同候选轮次
 安排会产生相同输出。
 
 ## 内存、取消与排空

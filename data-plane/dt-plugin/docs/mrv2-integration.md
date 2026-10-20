@@ -47,10 +47,18 @@ DT does not maintain an additional engine image or ready-metadata patch.
 
 ## Engine boundary
 
-The plugin configures `method="external"` and exposes
-`ExternalAsyncLLM.submit_external_draft_batch([(ticket, token_ids, work_identity), ...])`.
-All entries reach the scheduler in one utility call, returning one admission result
-per entry; native scheduling still chooses physical GPU batches. A nonterminal
+The plugin configures `method="external"`. Tensor verification uses
+`ExternalAsyncLLM.receive_external_draft(submission, payload, read_rpc)`:
+one utility starts the Worker read, whose completion queues only metadata and
+wakes EngineCore through its native input queue. After native input processing,
+including queued aborts, EngineCore checks each ticket, stages its buffer and
+admits it before the next scheduling step. No return to the role or second utility
+submission is needed between read completion and admission. Each member proceeds
+independently; native scheduling still chooses physical GPU batches.
+Token-only submissions use
+`ExternalAsyncLLM.submit_external_draft_batch([ExternalDraftSubmission(...), ...])`,
+coalescing work ready in the same client event-loop turn without a batching timer.
+A nonterminal
 `RequestOutput.external_draft_request` carries an immutable request/generation
 ticket after normal output stop handling. Each result reports whether its ticket
 was admitted, not whether verification accepted the candidates. Stale or consumed
@@ -97,7 +105,7 @@ no artificial static K limit. Neural Drafts compute their native block; the
 adapter truncates returned tokens and exported q rows to the requested prefix.
 Their native block length is the advertised method limit. Request-level routing
 checks execution compatibility; each round caps the configured K by the selected
-method and Target capacities. These fields are carried by role protocol v10 and
+method and Target capacities. These fields are carried by role protocol v14 and
 `DraftTargetCapabilities`; `requested_tokens` records the selected round count
 alongside proposal, verification and acceptance counts.
 
@@ -128,6 +136,21 @@ other requests can still execute. Distributed model execution,
 multimodal input and EC transfer are not enabled by this adapter. The optional
 NVIDIA Target migration connector supports one full-attention KV group; other KV
 connectors remain unsupported.
+
+### Confirmed-output feature preparation
+
+For a coordinated neural request, `TargetCoordinator.confirmed` starts the next
+feature interval through `DraftPeerSession.prepare_context` before yielding output.
+`RoleService` retains the existing native export task in its session export inventory.
+`DraftPeerSession.propose` joins preparation and sends only the interval reference.
+Draft claims its descriptor through `RoleService.claim_artifact`, which hands off the
+cached result without a Worker RPC, then reuses ordinary read/append/ACK.
+
+The original native export still validates the paused ticket at a Core boundary.
+No publication callback runs on an I/O thread or changes the Scheduler's ownership.
+Before remote claim, session close joins preparation and reclaims its exact reserved
+publication. Claim transfers ownership before awaiting; exposed/uncertain results
+still require the reader ACK. Manual `/context` remains available for diagnostics.
 
 ### Native graph execution
 
@@ -237,8 +260,13 @@ before admission. GPU-consumption fences still govern destination buffer reuse.
 
 With a neural Draft profile, Target retains a position-indexed history of final and
 auxiliary hidden states through a non-model speculator. Export runs on the
-EngineCore scheduler thread and selects only the confirmed computed prefix,
-excluding the last correction/bonus token. Rejected suffixes are discarded;
+EngineCore scheduler thread and selects only the confirmed computed prefix.
+The same utility initiates Worker snapshot/publication and returns through its
+completion Future. The same Worker operation fixes the snapshot's single reader
+and returns its claimed descriptor; no separate publication or claim dispatch is
+needed. Source storage still waits for the reader's exact ACK, even when source
+session close races the response; a lost response cannot prove safe reuse.
+The interval excludes the last correction/bonus token. Rejected suffixes are discarded;
 request completion and abort release the retained history. Native slot removal
 for preemption retains that history and the Target's staged proposal binding.
 Replay does not overwrite the logical features. An export made before or during
@@ -255,6 +283,13 @@ session's confirmed feature prefix, excluding the final anchor. Profile, full
 confirmed tokens, interval and tensor layout are checked before consumption.
 The first interval starts at zero. Draft advances its retained-prefix cursor only
 after a completed read is appended to its Worker-owned `DraftContext`.
+The first turn appends before native admission. Subsequent turns use a single
+read/append utility: I/O completion only queues readiness and wakes Core. Core
+handles native aborts first, validates the retained Draft request, session,
+version and continuous interval, then appends on the native execution thread.
+An explicit rejection still returns completed-read proof for ACK. An uncertain
+utility or append failure retains the destination until abort/fencing or process
+exit; no I/O callback mutates Draft state.
 Claim/read/ACK and the transfer buffer's last-use fence remain with the existing
 artifact owner. Session features survive individual transfers and KV eviction;
 closing the session joins native abort and outstanding operations before dropping them.
@@ -323,6 +358,12 @@ instead follows ordinary waiting admission and native slot reconstruction.
 The refresh marker survives a token-budget deferral or preemption until the turn
 is actually scheduled; it neither owns KV nor changes the confirmed frontier.
 
+An ordinary autoregressive Draft can find its entire new confirmed input in
+computed proposal KV. Reconciliation retains at most input length minus one
+computed tokens, so the next native step recomputes the last input and produces
+proposal logits instead of leaving a ready turn with no native work. Neural
+Drafts retain their feature/anchor bound.
+
 Native FCFS/priority scheduling still owns admission and victim selection;
 preserving candidates does not itself provide a starvation guarantee
 under an unbounded workload or a KV configuration unable to run one request.
@@ -336,8 +377,11 @@ artifacts; it does not duplicate the platform admission store or limit watcher.
 
 The selected Target owns peer HTTP and transfer operations through `RoleCommunication`;
 `DraftPeerSession` retains each control stream while `TargetCoordinator` decides request rounds.
-Native prefill emits the first confirmed output and ticket. The coordinator commits
-exact deltas, obtains one chain and calls local verification. Each request prepares
+Native prefill emits the first confirmed output and ticket. The coordinator sends
+the exact confirmed delta with the next proposal command, obtains one chain and
+calls local verification. The Draft validates and applies that delta before
+starting proposal preparation in the same session operation. Terminal output
+closes the pair without synchronizing an unused Draft prefix. Each request prepares
 and admits independently; native scheduling combines compatible ready requests.
 The Target default candidate count is 3, capped by remaining output; its engine
 capacity can be configured independently. There is
@@ -385,8 +429,11 @@ owners finish using them. Device buffers remain reusable until role shutdown;
 RDMA registrations stay with those buffers. ZMQ host snapshots are released on ACK
 or unclaimed revoke. Idle device buffers are excluded from retained-artifact counts.
 
-Target's role waits for read readiness, ACKs the source, stages the tensor and
-submits candidates through the existing EngineCore utility queue. MRV2 maps the
+Target's role receives read readiness and native admission from one utility,
+then joins source ACK independently of model execution. Worker publication,
+read and reclamation return process-local Futures; EngineCore uses its native
+asynchronous utility completion mechanism while continuing to execute other requests.
+The supported single-process executor keeps these Futures local to EngineCore. MRV2 maps the
 staged distribution to current GPU request slots before native rejection sampling.
 Submission success is not consumption completion: the role retains Target storage
 until subsequent engine output or abort. See the
@@ -409,9 +456,12 @@ load/KV authority. Schedule/output hooks attach stable physical batch and work i
 acceptance without copying the scheduling algorithm. The one-worker synchronous
 execution constraint makes each scheduled step's completion unambiguous.
 
-`ExternalAsyncLLM` consumes cumulative output observations through EngineCore's
-utility queue, derives interval deltas, and deletes remaining records when its
-generator closes. Native abort notifications have no model step to measure.
+`ExternalAsyncLLM` retains one batched observation reader per engine through a
+native utility Future. Scheduler output completion publishes request/frontier-keyed
+snapshots to that reader before normal outputs are queued; no per-request query
+is issued after receiving model output. The client derives interval deltas and
+forgets local queues when their request closes. Native abort notifications have
+no model step to measure. The reader is cancelled with native engine shutdown.
 The role adds Worker-measured transfer timing; TargetCoordinator owns round identity and remote-stage wall durations; Frontend records
 received observations in tracing and aggregate metrics. See the
 [measurement contract](role-protocol.md#observations) for boundaries and KV limits.

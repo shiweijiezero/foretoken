@@ -62,11 +62,11 @@ curl http://127.0.0.1:19100/status
 
 `/status` should report the expected model and role, `accepting: true`, and
 `candidate_format: "token_ids_log_probs"`, `tensor_transports: ["zmq"]` and
-`protocol_version: 10` when no RDMA or GPU peer path is available. Both selected roles must advertise the
+`protocol_version: 14` when no RDMA or GPU peer path is available. Both selected roles must advertise the
 same format. Start the frontend using their HTTP endpoints; the role services
 are internal APIs and do not expose public OpenAI endpoints or authentication.
 
-Each role uses one GPU worker, the native `uni` executor and synchronous local
+Each role uses one GPU worker with the native `uni` executor and synchronous local
 scheduling. Eager execution remains the default. Add the native `--no-enforce-eager`
 option to enable vLLM's configured compilation and CUDA Graph paths; managed
 deployments use `engineArgs.enforce-eager: false`. Native attention/backend support
@@ -90,7 +90,7 @@ to the remaining output length.
 Ordinary autoregressive Drafts have no configured candidate-count limit: they
 execute the count requested by Target, subject to native context and resource
 limits. Both options are Target-only. Update frontend and both roles together;
-protocol v10 advertises initialized tensor paths for binding-time selection, alongside
+protocol v14 advertises initialized tensor paths for binding-time selection, alongside
 separate round policy/capacity.
 `--port` changes the HTTP port (default 19100). Select different GPUs and ports
 when roles share a host. Their HTTP endpoints must be reachable from the frontend
@@ -254,14 +254,15 @@ Neural drafting supports greedy and random sampling and chunked prefill. Draft
 sessions retain private native KV across rounds; rejection discards the invalid
 tail before the next turn. Neural Target APC is disabled to retain complete features. The first feature
 transfer contains the necessary prefix; subsequent transfers contain only newly
-confirmed rows. Retained features also serve native Draft KV recomputation after
+confirmed rows. Target prepares each interval on confirmed output and sends its
+handle with the next proposal; Draft claims and reads that prepared result.
+Retained features also serve native Draft KV recomputation after
 preemption and are released with the session. Supported model variants and restrictions are listed in the
 [integration contract](docs/mrv2-integration.md#neural-draft-context).
 
 The existing Frontend `/metrics` and `foretoken::dt` round traces expose tensor
-preparation phases: claim, receive/poll, allocation, destination fencing, backend
-read, ACK and staging. Feature totals also include export and receiver-buffer
-release. Local Worker RPCs separate dispatch/queue, method and return wall time;
+preparation phases: claim, completion wait, allocation, destination fencing, backend
+read, ACK and staging. Feature export and receiver-buffer release are measured separately. Local Worker RPCs separate dispatch/queue, method and return wall time;
 these are not GPU timings. See [observation boundaries](docs/role-protocol.md#observations)
 when diagnosing preparation that takes longer than the data read.
 

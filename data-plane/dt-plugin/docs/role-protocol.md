@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Draft/Target role protocol
 
-Protocol version 9 connects request-level Foretoken routing and independent
+Protocol version 14 connects request-level Foretoken routing and independent
 Draft/Target roles. Router selects a fixed Draft set and Target. The Target owns
 round progression; native schedulers own token budgets, physical batches and KV.
 Update frontend and both roles together. No shared stage scheduler or `/work/*`
@@ -33,8 +33,14 @@ The managed deployment supplies Pod IP and existing platform RDMA allocations.
 `RoleCommunication` owns the shared HTTP pool and peer protocol; each
 `DraftPeerSession` retains its request's control stream. `TargetCoordinator` uses
 that session handle and advances the exact confirmed prefix. Native Target prefill supplies the first token and next ticket.
-Each subsequent round commits confirmed deltas, selects one chain length from its configured default and remaining output,
-prepares its data and submits the current ticket once.
+Each subsequent round sends the exact confirmed delta with the next proposal,
+selects one chain length from its configured default and remaining output,
+prepares its data and submits the current ticket once. `Propose.confirmed_delta`
+contains the existing `base_version`, `version` and `token_ids` commit fields.
+Draft validates and applies it atomically before setting proposal ownership,
+without a separate commit round trip. The response version acknowledges the
+confirmed prefix; an uncertain response fails the binding and is not replayed.
+Terminal output closes the pair without sending another Draft commit.
 `TargetCoordinator.select_candidate_count()` selects K without owning execution;
 its default also respects the bound method limit and Target capacity. The role consumes ticket
 ownership before the native utility call; uncertain admission is never retried.
@@ -52,7 +58,7 @@ preparation. Requests borrow the connection-owned proof; cancellation closes the
 without cancelling shared probes. Prefill
 still waits for successful preparation. `committed` contains
 confirmed token/text deltas, nullable next version, native observations, transfer
-measurements and the Target-owned round record. Protocol v10 identifies the actual
+measurements and the Target-owned round record. Protocol v14 identifies the actual
 RDMA transport incarnation and uses connection-owned proof endpoints. It retains nullable
 `round.admitted` for ticket admission and `round.context_transfer` for the
 Target-to-Draft feature read; `round.transfer` retains proposal-read measurements. Keep the stream open for session
@@ -73,7 +79,7 @@ token acceptance. Native workload snapshots are observations, not adapter credit
 
 ## Candidate policy and capacity
 
-Protocol v10 advertises two distinct nullable length fields, separately from tensor transport:
+Protocol v14 advertises two distinct nullable length fields, separately from tensor transport:
 
 | Role | `default_draft_tokens` | `max_candidate_tokens` |
 | --- | --- | --- |
@@ -131,14 +137,19 @@ after explicit refusal proves nonacceptance. Other HTTP or transport errors are 
    `PayloadRef` defined in the [Connector contract](connector-contract.md).
    A revoked or already claimed artifact returns HTTP 409; Target propagates
    that failure without starting a read or consuming its ticket. Otherwise, Target
-   completes the transfer into GPU storage and sends `POST /artifacts/{artifact_id}/release` to
-   Draft with the exact `publication_id`, then stages data and submits candidates.
+   starts one native read/admission utility. Read completion wakes EngineCore;
+   after processing queued input and aborts, it validates the ticket and stages
+   the buffer before admission. The role then sends
+   `POST /artifacts/{artifact_id}/release` to Draft with the exact `publication_id`.
+   Model execution need not wait for that ACK; the transfer operation still joins it.
    `accepted` means the engine admitted this candidate submission, not that its
    tokens were accepted by verification. An empty token list requests one ordinary
    Target step. Duplicate, stale and already-consumed tickets return false.
-5. Read the next Target commit. If nonterminal, call Draft
-   `POST /sessions/{id}/commit` with `base_version`, the new `version`, and the
-   exact confirmed `token_ids` delta, then repeat from step 3. Each version permits
+5. Read the next Target commit. If nonterminal, repeat step 3 with
+   `confirmed_delta` containing `base_version`, the new `version`, and the exact
+   confirmed `token_ids` delta. Manual callers may instead apply that delta with
+   `POST /sessions/{id}/commit` and then propose without `confirmed_delta`.
+   Each version permits
    one proposal; repeats return HTTP 409. Draft retains one native request and
    reconciles its KV with that confirmed prefix before the next input turn.
 6. On termination or failure, close both response streams. Explicit
@@ -159,24 +170,47 @@ the method and Target/Draft model pair. Managed roles use preparation's frozen
 checkpoint revisions in this profile, while discovery retains the requested model
 identity. Standalone roles use the loaded native config's commit identity; local
 checkpoint paths must identify the same immutable weights. Selected roles must agree on this profile.
-`propose` additionally carries `context_source: {endpoint, session_id}` for the
-current Target. Independent token-only Draft models ignore this field.
+`propose` additionally carries `context_source: {endpoint, session_id, context}` for
+the current Target. Independent token-only Draft models ignore this field.
 
-Draft calls Target `POST /sessions/{id}/context` with the same `version` and
-selected `tensor_transport`, plus `start_token` identifying the end of the
-Draft's retained continuous feature prefix. Target checks that path against its capabilities and
-any coordinated binding. Target
-validates the paused engine ticket and returns `artifact_id`, the complete confirmed
-`token_ids`, `profile`, `start_token` and `end_token`. The artifact contains a dense
+For routed neural requests, Target starts preparation immediately after a confirmed
+output. The existing native utility checks the paused ticket and snapshots/publishes
+only `[start_token, end_token)`, starting at the end of Draft's retained feature prefix.
+The next proposal carries `context` metadata: `artifact_id`, the complete confirmed
+`token_ids`, `profile`, `start_token`, `end_token` and source `export_seconds`.
+It contains no physical descriptor. Draft claims the artifact through the existing
+`POST /artifacts/{id}/claim`; Target hands off the prepared descriptor without a
+second Worker/Core call. Draft then uses the ordinary read/ACK lifecycle. Target's
+initial snapshot still needs a native safe boundary; this does not enable async
+scheduling or bypass native execution ownership.
+
+An unbound diagnostic caller can omit `context` and use Target
+`POST /sessions/{id}/context` with `version`, selected `tensor_transport` and
+`start_token`. That endpoint returns the same metadata with an already-claimed
+`payload`, and the caller reads/ACKs without another claim. Target validates the
+selected transport against its capabilities and any coordinated binding.
+
+The artifact contains a dense
 `[end_token - start_token, feature_layers, hidden_size]` tensor in the Target model dtype;
 the first layer is the final hidden state and subsequent layers are native auxiliary
 outputs. The computed prefix excludes the final anchor token. Draft checks the
-profile, prefix and dimensions, then uses the existing claim/read/ACK endpoints.
+profile, prefix and dimensions, then uses the existing read/ACK lifecycle.
 The Draft Worker appends the completed delta to session-owned features before
 releasing the transfer buffer. Its cursor advances only after that append; duplicate
 or noncontiguous intervals are rejected. Features survive KV eviction and are
-released after session abort and started operations have joined. Protocol v10
-requires both roles and the frontend to be upgraded together.
+released after session abort and started operations have joined. The first turn
+appends through the Worker before native Draft admission. Later turns read and
+append in one utility: I/O completion wakes Core, which processes queued aborts
+before checking the retained request, session, version and contiguous interval.
+Append stays on the native execution thread and preserves the consumer fence.
+The source session owns preparation and its reserved publication. Before a remote
+claim, close joins preparation and can reclaim the exact publication because no
+physical descriptor left the process. Claim atomically transfers that obligation to
+the reader before awaiting preparation; duplicate claims are rejected. Afterwards,
+close retains the source through its reader's ACK. A lost claim or manual export
+response is not proof of an unused publication: uncertain ownership retains the
+existing process-exit boundary.
+Protocol v14 requires both roles and the frontend to be upgraded together.
 Context transfer completes outside the Target compute loop, allowing other requests
 to execute while this request waits for Draft.
 If the context is closed or consumed before Draft admission, Draft returns HTTP 409
@@ -339,54 +373,70 @@ cancelled requests can end without a final round record.
 
 | Measurement | Boundary and meaning |
 | --- | --- |
-| `draft_seconds` | Proposal request through receipt, including HTTP and native queueing. |
-| `target_seconds` | Initial prefill or verification preparation through confirmed output and Draft prefix synchronization; includes native queueing. |
+| `draft_seconds` | Proposal request through receipt, including the confirmed delta, HTTP and native queueing. |
+| `target_seconds` | Initial prefill or verification preparation through confirmed output; includes native queueing. Prefix synchronization belongs to the next proposal interval. |
 | Engine `queue_seconds` | Ready engine work waiting to be scheduled, summed across steps. Excludes remote-candidate waits. |
 | Engine `scheduled_seconds` | Sum of native schedule-to-result wall time. Each member observes its shared batch duration; this is not CUDA-event GPU time. |
 | Engine `remote_wait_seconds` | Previous Target output to admission of the next candidates, including across KV preemption. Includes caller waiting, drafting and transfer; may overlap recovery. |
 | Engine `steps`, `scheduled_tokens`, `preemptions` | Actual native work in this output interval. `batch_requests` and `batch_tokens` describe its final native step, not the caller's batch. |
 | `requested_tokens` | Target-selected K before Draft execution; null for prefill. |
 | `proposed_tokens` / engine `verified_tokens` / engine `accepted_tokens` / `committed_tokens` | Draft output, candidates actually checked, sampler acceptance before stop truncation, and final Target output respectively. Acceptance excludes correction/bonus tokens. |
-| Transfer `transport`, `bytes`, `read_seconds`, `prepare_seconds` | Concrete completed-read backend and actual proposal bytes; Worker read including readiness fencing/polling; role claim through read, ACK and staging. Null when no tensor transfer is needed. |
+| Transfer `transport`, `bytes`, `read_seconds`, `prepare_seconds` | Concrete completed-read backend and actual proposal bytes; Worker read including readiness fencing/polling; role claim through data readiness and local staging/admission, with source ACK overlapped. Null when no tensor transfer is needed. |
 
 These intervals overlap and must not be added. In particular, remote wait starts
 in the preceding output interval. Unavailable measurements are null. Engine measurements are retained only until the owning generator consumes
 the output or closes; they are not an engine-side history store.
 
 Transfer observations additionally carry optional `breakdown`. Existing
-`read_seconds` and `prepare_seconds` retain their boundaries: feature prepare
-starts after the export reply and ends before receiver-buffer release. Use
-`breakdown.total_seconds` for the receiving preparation path including those
-feature-only phases. Proposal production/publication and later native ticket
-admission are outside this interval.
+`read_seconds` measures the Worker read. Feature `prepare_seconds` starts when
+the interval reference is available at Draft and ends after feature append; it
+excludes the subsequent native Draft turn and receiver release. Proposal prepare
+ends after the native read/admission reply. Source ACK runs concurrently with
+model execution and is joined by the session-owned operation independently of
+the readiness reply.
+Pending ACK and receiver-release durations are null in that reply; cleanup failures
+remain owned and are surfaced at subsequent round boundaries or session close.
+Feature `breakdown.total_seconds` sums source export and receiver preparation.
+It excludes control handoff gaps between those measurements, subsequent computation
+and later receiver release; it is not end-to-end round latency. Source preparation
+can overlap other requests. Checkpoint/probe preparation still joins ACK before returning.
 
 | Breakdown | Boundary |
 | --- | --- |
-| `export_seconds` | Feature export HTTP request through response; null for proposals/checkpoints. |
-| `claim_seconds`, `validation_seconds` | Claim HTTP request and descriptor decoding; then local layout/prefix validation. |
-| `receive_seconds` | First receive RPC through observing ready, including start/poll RPCs and role polling waits. |
-| `receive_poll_seconds` | Actual elapsed time in role polling sleeps, including event-loop scheduling delay. |
+| `export_seconds` | Coordinated feature preparation on Target: native utility submission through snapshot/publication reply. Manual `/context` diagnostics measure their export HTTP round trip. Null for proposals/checkpoints. |
+| `claim_seconds`, `validation_seconds` | Claim HTTP request and descriptor decoding, then local layout/prefix validation. Cached feature claims have null `claim_rpc`; only manual export descriptors skip claim HTTP and report zero claim time. |
+| `receive_seconds` | Receive RPC through native completion notification, including local dispatch and IO wait; proposal reception includes native admission, and retained Draft feature reception includes append. |
+| `receive_poll_seconds` | Zero for native completion notification; backend polling remains inside `transport_read_seconds`. |
 | `io_queue_seconds` | Worker submits the background receive through I/O coroutine entry. |
 | `buffer_seconds`, `buffer_reused` | Pool lookup and any tensor allocation/registration; reuse means a registered transport-pool hit. |
 | `read_fence_seconds` | Destination prior-use fence, including host thread scheduling. |
 | `transport_read_seconds` | Backend read, including its connection setup, polling and host staging where applicable. |
-| `ack_seconds` | Release/ACK HTTP round trip, including source cleanup. |
-| `stage_rpc` | Target proposal binding or Draft feature-prefix append. |
-| `release_seconds` | Draft receiver-buffer release after feature append; null on other paths. |
+| `ack_seconds` | Release/ACK HTTP round trip, including source cleanup; null while pending. |
+| `stage_rpc` | Target read-ready through native binding and the utility reply, or Draft feature-prefix append. Target binding is nested within the receive/admission utility. |
+| `release_seconds` | Draft receiver-buffer release after feature append and source ACK; it may overlap the native turn and is null on other paths. |
 
 `claim_rpc`, `receive_rpc`, `ack_rpc` and `stage_rpc` contain `calls` plus
 `dispatch_seconds`, `worker_seconds`, and `return_seconds`. These partition the
 local role-to-Worker round trips: send through Worker entry (EngineCore/IPC queue
-and dispatch), synchronous method execution, then response through caller
-resumption. The sum covers all calls in that phase, not an average. Claim and ACK
+and dispatch), method wall time including asynchronous IO completion, then response
+through caller resumption. The sum covers all calls in that phase, not an average. Claim and ACK
 RPCs are measured on the source role; receive and staging on the destination.
 Only clocks on the same host are subtracted; cross-host clock synchronization is
 not required. These measurements target the supported local single-Worker role.
 Missing source RPC observations remain null.
 
+Proposal receive/admission and retained Draft feature receive/append each use one
+utility. Their `receive_rpc.return_seconds` includes embedded native consumption
+and reply after Worker read completion.
+The nested `stage_rpc` starts at read readiness and measures EngineCore waiting,
+Worker binding or append and reply. These intervals overlap and must not be added.
+An uncertain fused utility reply keeps destination storage through native abort
+and execution fencing, and keeps the claimed source immutable without an ACK.
+Completion proof or owner process exit remains the safe release boundary.
+
 No extra RPC round trip, GPU synchronization, transfer probe or retry is introduced for these
 measurements. Worker method wall time is not GPU execution time. A background
-read overlaps its receive/poll RPCs; parent and child durations must not be added.
+read overlaps native model work; parent and child durations must not be added.
 Failures can lack a completed round record and retain the existing cleanup owner.
 Role logs associate completed preparation with artifact, session/frontier/work;
 round records retain request, round and native physical-batch association.

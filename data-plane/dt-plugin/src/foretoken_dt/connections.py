@@ -119,10 +119,7 @@ class RdmaConnection:
         service = self.owner.service
         try:
             await service.worker("dt_create_transport_probe", artifact_id)
-            while not (await service.worker("dt_publish", artifact_id, "rdma"))[
-                "ready"
-            ]:
-                await asyncio.sleep(0.001)
+            await service.worker("dt_publish", artifact_id, "rdma")
         except BaseException:
             await self.revoke(artifact_id)
             raise
@@ -301,7 +298,7 @@ class RoleCommunication:
         transport: str,
         start_token: int,
     ) -> dict | None:
-        """Obtain a confirmed feature handle; the calling engine stage validates its model context."""
+        """Obtain a claimed feature descriptor; the retained receiver must validate and read/ACK it."""
         response = await self.client.post(
             f"{endpoint.rstrip('/')}/sessions/{session_id}/context",
             json={
@@ -317,15 +314,27 @@ class RoleCommunication:
         return response.json()
 
     async def read_artifact(
-        self, artifact_id: str, source_endpoint: str, validate
+        self,
+        artifact_id: str,
+        source_endpoint: str,
+        validate,
+        on_ready=None,
+        receive=None,
+        payload=None,
     ) -> dict | None:
-        """Join claim/read/ACK; the caller owns destination staging after successful completion."""
+        """Join read/ACK using an exported claim or acquire one; uncertain consumption retains storage."""
         return await asyncio.shield(
-            self.start(self._read_artifact(artifact_id, source_endpoint, validate))
+            self.start(
+                self._read_artifact(
+                    artifact_id, source_endpoint, validate, on_ready, receive, payload
+                )
+            )
         )
 
-    async def _read_artifact(self, artifact_id, source_endpoint, validate):
-        """Own one claim/read/ACK; failed reads retain storage until DMA is known complete."""
+    async def _read_artifact(
+        self, artifact_id, source_endpoint, validate, on_ready, receive, payload
+    ):
+        """Own transfer and ACK through cancellation; readiness hands local consumption to the caller."""
         from .service import TensorPayload
 
         service = self.service
@@ -336,15 +345,23 @@ class RoleCommunication:
             "export_seconds": None,
             "stage_rpc": None,
             "release_seconds": None,
+            "ack_seconds": None,
+            "ack_rpc": None,
         }
         try:
             source = f"{source_endpoint.rstrip('/')}/artifacts/{artifact_id}"
-            response = await self.client.post(f"{source}/claim")
-            if response.status_code == 409:
-                return None
-            response.raise_for_status()
-            payload = TensorPayload.model_validate(response.json())
-            breakdown["claim_seconds"] = time.monotonic() - started
+            if payload is None:
+                response = await self.client.post(f"{source}/claim")
+                if response.status_code == 409:
+                    return None
+                response.raise_for_status()
+                payload = TensorPayload.model_validate(response.json())
+                breakdown["claim_seconds"] = time.monotonic() - started
+            else:
+                # Feature export already assigned this publication to its sole
+                # reader. Validation failures still owe the ordinary source ACK.
+                payload = TensorPayload.model_validate(payload)
+                breakdown["claim_seconds"] = 0.0
             breakdown["claim_rpc"] = (
                 payload.claim_rpc.model_dump() if payload.claim_rpc else None
             )
@@ -359,42 +376,36 @@ class RoleCommunication:
                 breakdown["validation_seconds"] = time.monotonic() - validating
                 receiving = time.monotonic()
                 rpc = RpcTiming()
-                poll_seconds = 0.0
-                while True:
-                    read_started = True
+                read_started = True
+                if receive is None:
                     result = await service.worker(
                         "dt_receive", artifact_id, payload.descriptor(), timing=rpc
                     )
-                    if result["ready"]:
-                        read_finished = True
-                        break
-                    polling = time.monotonic()
-                    await asyncio.sleep(0.001)
-                    poll_seconds += time.monotonic() - polling
+                else:
+                    result = await receive(payload, rpc)
+                read_finished = True
                 breakdown.update(
                     receive_seconds=time.monotonic() - receiving,
                     receive_rpc=rpc.to_wire(),
-                    receive_poll_seconds=poll_seconds,
+                    receive_poll_seconds=0.0,
                     **result["worker_read"],
                 )
+                breakdown["total_seconds"] = time.monotonic() - started
+                result["breakdown"] = breakdown
             finally:
                 if not read_started or read_finished:
-                    acknowledging = time.monotonic()
-                    response = await self.client.post(
-                        f"{source}/release",
-                        json={"publication_id": payload.publication_id},
+                    # The same retained operation owns both branches. Consumer
+                    # failure or cancellation must still join the exact source ACK.
+                    acknowledgement = asyncio.create_task(
+                        self._acknowledge(source, payload.publication_id, breakdown)
                     )
-                    response.raise_for_status()
-                    breakdown["ack_seconds"] = time.monotonic() - acknowledging
-                    breakdown["ack_rpc"] = response.json().get("rpc")
-                    logger.info(
-                        "DT transfer ACK artifact=%s source=%s publication=%s",
-                        artifact_id,
-                        source_endpoint,
-                        payload.publication_id,
-                    )
-            breakdown["total_seconds"] = time.monotonic() - started
-            result["breakdown"] = breakdown
+                    try:
+                        if read_finished and on_ready is not None:
+                            await on_ready(result)
+                    finally:
+                        await asyncio.shield(acknowledgement)
+            if on_ready is None:
+                breakdown["total_seconds"] = time.monotonic() - started
             logger.info(
                 "DT transfer completed artifact=%s source=%s observation=%s",
                 artifact_id,
@@ -404,11 +415,26 @@ class RoleCommunication:
             return result
         except BaseException:
             # An uncertain read stays registered: dt_release awaits its operation.
-            if read_started:
+            if read_started and not read_finished:
                 if payload.transport == "rdma":
                     self.failed(payload.segment)
-                await service.release_artifact(artifact_id)
+                if receive is None:
+                    await service.release_artifact(artifact_id)
+                # A fused receiver may already have admitted GPU consumption.
+                # Its session must abort/fence before releasing this destination.
             raise
+
+    async def _acknowledge(
+        self, source: str, publication_id: str, breakdown: dict
+    ) -> None:
+        """Return source ownership after a known-complete read; the parent joins reclamation errors."""
+        started = time.monotonic()
+        response = await self.client.post(
+            f"{source}/release", json={"publication_id": publication_id}
+        )
+        response.raise_for_status()
+        breakdown["ack_seconds"] = time.monotonic() - started
+        breakdown["ack_rpc"] = response.json().get("rpc")
 
     async def drain(self) -> None:
         """Join session closes and shared communication owners while their HTTP pool remains open."""
@@ -443,6 +469,8 @@ class DraftPeerSession:
         self.tensor_transport: str | None = None
         self.max_candidate_tokens: int | None = None
         self.rdma_connection: RdmaConnection | None = None
+        self.context_preparation: asyncio.Task | None = None
+        self.context_tokens = 0
         owner.sessions.add(self)
 
     async def open(self, request, version: int) -> bool:
@@ -523,25 +551,38 @@ class DraftPeerSession:
         if self.rdma_connection is not None:
             await self.rdma_connection.prepare(local_endpoint)
 
-    async def commit(self, base_version: int, version: int, tokens: list[int]) -> None:
-        """Send the coordinator's confirmed delta and require its exact frontier acknowledgement."""
-        response = await self.owner.client.post(
-            f"{self.endpoint}/sessions/{self.session_id}/commit",
-            json={
-                "base_version": base_version,
-                "version": version,
-                "token_ids": tokens,
-            },
-            timeout=None,
-        )
-        response.raise_for_status()
-        if response.json()["version"] != version:
-            raise ValueError("Draft did not acknowledge the confirmed frontier")
+    def prepare_context(self, session_id: str, ticket) -> None:
+        """Start the bound Target's next interval as soon as its frontier is confirmed."""
+        service = self.owner.service
+        if service.context_profile is not None:
+            self.context_preparation = service.prepare_context(
+                session_id, ticket, self.tensor_transport, self.context_tokens
+            )
 
     async def propose(
-        self, version: int, budget: int, source: dict, work: dict
+        self,
+        version: int,
+        budget: int,
+        source: dict,
+        work: dict,
+        confirmed_delta: dict | None = None,
     ) -> dict:
-        """Request one chain from the confirmed prefix; closed/revoked contexts fail the call."""
+        """Send one confirmed delta and proposal command; uncertain replies are never replayed."""
+        context = None
+        if self.context_preparation is not None:
+            prepared = await asyncio.shield(self.context_preparation)
+            context = {
+                key: prepared[key]
+                for key in (
+                    "artifact_id",
+                    "token_ids",
+                    "start_token",
+                    "end_token",
+                    "profile",
+                    "export_seconds",
+                )
+            }
+            source = {**source, "context": context}
         response = await self.owner.client.post(
             f"{self.endpoint}/sessions/{self.session_id}/propose",
             json={
@@ -549,11 +590,16 @@ class DraftPeerSession:
                 "max_tokens": budget,
                 "context_source": source,
                 "work": work,
+                "confirmed_delta": confirmed_delta,
             },
             timeout=None,
         )
         response.raise_for_status()
-        return response.json()
+        proposal = response.json()
+        if context is not None:
+            self.context_tokens = context["end_token"]
+        self.context_preparation = None
+        return proposal
 
     async def revoke(self, artifact_id: str) -> None:
         """Revoke an unused peer proposal; its Worker retains any claimed publication until ACK."""

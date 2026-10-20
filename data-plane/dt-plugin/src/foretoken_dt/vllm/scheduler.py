@@ -4,6 +4,7 @@
 """External candidate admission layered on vLLM's scheduling and KV lifecycle."""
 
 import time
+from concurrent.futures import Future
 from importlib.metadata import version
 from uuid import uuid4
 
@@ -25,6 +26,8 @@ class ObservedScheduler(Scheduler):
         self.dt_observations = {}
         self.dt_instance = uuid4().hex
         self.dt_batch_sequence = 0
+        self.dt_ready_observations = []
+        self.dt_observation_waiter = None
         # MetaX retains the 0.30 core; 0.31 splits blocked requests from KV holders.
         self.dt_waiting_queues = (
             self.waiting,
@@ -49,7 +52,6 @@ class ObservedScheduler(Scheduler):
                 "steps": 0,
                 "preemptions": 0,
             },
-            "outputs": {},
             "physical_batches": [],
             "work": identity,
             "client_request_id": identity["request_id"] if identity else None,
@@ -134,18 +136,28 @@ class ObservedScheduler(Scheduler):
             for output in client_output.outputs:
                 if not output.new_token_ids:
                     continue
+                if (
+                    not isinstance(self, ExternalScheduler)
+                    and output.finish_reason is None
+                ):
+                    continue
                 req_id = output.request_id
                 record = self.dt_observations[req_id]
-                if not isinstance(self, ExternalScheduler):
-                    # Draft consumes one cumulative observation per completed turn.
-                    record["outputs"].clear()
-                record["outputs"][requests[req_id].num_output_tokens] = {
+                observation = {
                     **record["totals"],
                     "batch_requests": len(scheduler_output.num_scheduled_tokens),
                     "batch_tokens": scheduler_output.total_num_scheduled_tokens,
                     "kv": self.dt_request_kv(req_id),
                     "physical_batches": list(record["physical_batches"]),
                 }
+                record["physical_batches"].clear()
+                self.dt_ready_observations.append(
+                    (req_id, requests[req_id].num_output_tokens, observation)
+                )
+        if self.dt_ready_observations and self.dt_observation_waiter is not None:
+            waiter, self.dt_observation_waiter = self.dt_observation_waiter, None
+            ready, self.dt_ready_observations = self.dt_ready_observations, []
+            waiter.set_result(ready)
         return outputs
 
     def _preempt_request(self, request, timestamp, drop_stale_output=False):
@@ -225,27 +237,15 @@ class ObservedScheduler(Scheduler):
             "kv_used_blocks": capacity - pool.get_num_free_blocks(),
         }
 
-    def dt_take_observation(self, request_id, generation, finished):
-        """Consume one output's cumulative measurements, retaining no completed history."""
-        outputs = self.dt_observations[request_id]["outputs"]
-        key = max(outputs) if finished else generation
-        result = dict(outputs[key])
-        consumed_batches = {batch["batch_id"] for batch in result["physical_batches"]}
-        record = self.dt_observations[request_id]
-        record["physical_batches"] = [
-            batch
-            for batch in record["physical_batches"]
-            if batch["batch_id"] not in consumed_batches
-        ]
-        for pending in outputs.values():
-            pending["physical_batches"] = [
-                batch
-                for batch in pending["physical_batches"]
-                if batch["batch_id"] not in consumed_batches
-            ]
-        for consumed in [value for value in outputs if value <= key]:
-            del outputs[consumed]
-        return result
+    def dt_next_observations(self):
+        """Notify the role's single retained reader at output completion, without polling."""
+        if self.dt_ready_observations:
+            ready, self.dt_ready_observations = self.dt_ready_observations, []
+            return ready
+        if self.dt_observation_waiter is not None:
+            raise RuntimeError("DT observations already have a reader")
+        self.dt_observation_waiter = Future()
+        return self.dt_observation_waiter
 
 
 class DraftScheduler(ObservedScheduler):
@@ -347,6 +347,10 @@ class DraftScheduler(ObservedScheduler):
             if new_confirmed[: len(old_confirmed)] != old_confirmed:
                 raise ValueError("Draft anchor changed a confirmed input")
             reused = min(reused, len(old_prompt))
+        else:
+            # Even a fully computed confirmed prefix needs its last input token
+            # replayed to produce the next proposal's logits.
+            reused = min(reused, len(prompt) - 1)
         session.num_computed_tokens = reused
         del session._all_token_ids[reused:]
         session._output_token_ids.clear()
@@ -505,6 +509,16 @@ class ExternalScheduler(ObservedScheduler):
         request.next_decode_eligible_step = 0
         super()._preempt_request(request, timestamp, drop_stale_output)
 
+    def can_admit_external_draft(self, request_id: str, generation: int) -> bool:
+        """Check ticket identity before EngineCore stages data in the same serialized utility turn."""
+        request = self.requests.get(request_id)
+        return bool(
+            request is not None
+            and not request.is_finished()
+            and request.waiting_for_external_draft
+            and request.num_output_tokens == generation
+        )
+
     def submit_external_draft_tokens(
         self,
         request_id: str,
@@ -513,14 +527,9 @@ class ExternalScheduler(ObservedScheduler):
         work: dict | None = None,
     ) -> bool:
         """Admit one ready round on EngineCore's loop; reject stale or closed tickets."""
-        request = self.requests.get(request_id)
-        if (
-            request is None
-            or request.is_finished()
-            or not request.waiting_for_external_draft
-            or request.num_output_tokens != generation
-        ):
+        if not self.can_admit_external_draft(request_id, generation):
             return False
+        request = self.requests[request_id]
         if len(token_ids) > self.num_spec_tokens:
             raise ValueError("candidate length exceeds num_speculative_tokens")
         vocab_size = self.vllm_config.model_config.get_vocab_size()

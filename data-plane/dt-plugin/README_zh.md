@@ -57,13 +57,14 @@ curl http://127.0.0.1:19100/status
 ```
 
 `/status` 应返回正确的模型和角色、`accepting: true`，以及
-`candidate_format: "token_ids_log_probs"`、`tensor_transports: ["zmq"]`、`protocol_version: 10`（没有可用的 RDMA 或 GPU peer 路径时）。前端选中的两个角色必须使用相同格式。
+`candidate_format: "token_ids_log_probs"`、`tensor_transports: ["zmq"]`、`protocol_version: 14`（没有可用的 RDMA 或 GPU peer 路径时）。前端选中的两个角色必须使用相同格式。
 使用两端 HTTP 地址启动前端；角色服务仅提供内部 API，没有公共 OpenAI 接口或鉴权。
 
 每个角色使用一个 GPU Worker、原生 `uni` executor 和本地同步调度，默认 eager 执行。
 添加原生 `--no-enforce-eager` 参数可启用 vLLM 配置的编译与 CUDA Graph 路径；
 托管部署设置 `engineArgs.enforce-eager: false`。哪些 batch 可 replay Graph 由原生
-attention/backend 能力决定。等待远端候选只暂停对应请求，其他请求仍可执行。Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
+attention 后端和配置决定。等待远端候选只暂停对应请求，其他请求仍可执行。
+Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
 恢复 KV 后继续验证原候选，不会额外确认一个 token。
 Draft 会话跨轮保留原生私有 KV，按 Target 确认结果更新尾部。驻留续轮继续参与原生 KV
 抢占；已被抢占的轮次使用确认输入和保留的特征重建 KV。Draft 当前要求
@@ -75,7 +76,7 @@ Target 的 `--draft-tokens` 设置每轮默认候选数，默认 3；
 8 个候选准备容量，当前每轮请求 3 个。默认值必须落在容量内；最后一轮按剩余输出长度截短。
 
 普通自回归 Draft 不配置固定候选上限，按 Target 请求的数量执行，仍受原生上下文长度和
-资源约束。这两个选项仅用于 Target。升级时同时更新 Frontend 和两端角色；协议 v10
+资源约束。这两个选项仅用于 Target。升级时同时更新 Frontend 和两端角色；协议 v14
 公布已初始化的 tensor 传输能力供绑定时选择，并分别表达轮次候选策略和引擎容量。
 `--port` 设置 HTTP 端口，默认 19100；
 同机角色应选择不同 GPU 和端口。Frontend 与选中的 Target 必须能访问角色 HTTP 地址。
@@ -214,13 +215,13 @@ SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":3}'
 
 神经 Draft 支持 greedy/random sampling 和 chunked prefill。Draft 会话跨轮保留原生私有 KV，
 下一轮开始前丢弃被拒绝的尾部状态。神经 Target 为保留完整特征而禁用 APC。
-首次传输必要的特征前缀，后续只传新增确认行。接收端保留的特征也供 Draft 抢占后
+首次传输必要的特征前缀，后续只传新增确认行。Target 在确认输出后准备区间，
+下一轮 propose 携带 handle；Draft 领取后直接读取准备结果。接收端保留的特征也供 Draft 抢占后
 重建 KV 使用，随会话关闭释放。
 支持的模型变体与限制见[集成说明](docs/mrv2-integration.md#neural-draft-context)。
 
 现有 Frontend `/metrics` 和 `foretoken::dt` 轮次记录可查看张量准备的 claim、
-接收与轮询、分配、目标 buffer 同步、后端读取、ACK 和 staging；特征总时间还包含导出
-与接收 buffer 回收。Worker RPC 分别记录派发与排队、方法执行和返回的墙钟时间，
+完成等待、分配、目标 buffer 同步、后端读取、ACK 和 staging；特征导出与接收 buffer 回收单独计时。Worker RPC 分别记录派发与排队、方法执行和返回的墙钟时间，
 这些不是 GPU 时间。定位“准备远慢于读取”时，请按[观测边界](docs/role-protocol.md#observations)
 读取数据，避免叠加相互包含的阶段。
 

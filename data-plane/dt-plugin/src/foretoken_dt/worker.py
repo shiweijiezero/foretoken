@@ -26,6 +26,20 @@ from foretoken_dt.transport import (
 logger = logging.getLogger(__name__)
 
 
+def _completed(operation: Future, result) -> Future:
+    """Forward IO completion to a native utility Future without blocking model execution."""
+    completed = Future()
+
+    def finish(operation):
+        try:
+            completed.set_result(result(operation.result()))
+        except Exception as error:  # noqa: BLE001 - forward failures to the waiting utility call.
+            completed.set_exception(error)
+
+    operation.add_done_callback(finish)
+    return completed
+
+
 @dataclass
 class _Artifact:
     """Keep device storage alive through computation, transfer and acknowledgement."""
@@ -107,10 +121,15 @@ class _WorkerIO:
         self.loop = asyncio.new_event_loop()
         self.thread = Thread(target=self.loop.run_forever, daemon=True)
         self.thread.start()
-        if zmq_endpoint is not None:
-            asyncio.run_coroutine_threadsafe(
-                self.transports["zmq"].start(), self.loop
-            ).result()
+        asyncio.run_coroutine_threadsafe(self._initialize_io(), self.loop).result()
+
+    async def _initialize_io(self) -> None:
+        """Bind the transport thread to its Worker's GPU before accepting IO operations."""
+        # Device guards can retain an empty context on a new CUDA thread. Bind
+        # explicitly before Driver API allocation queries and Mooncake registration.
+        torch.cuda.set_device(self.device)
+        if "zmq" in self.transports:
+            await self.transports["zmq"].start()
 
     def add_request(self, req_id: str, sampling_params: Any) -> None:
         """Bind a Draft engine request to its role-owned round artifact."""
@@ -347,10 +366,19 @@ class _WorkerIO:
 class DraftTargetWorkerExtension:
     """vLLM worker extension used by the internal role service's collective RPC."""
 
-    def dt_timed_rpc(self, method: str, args: tuple) -> dict:
-        """Measure Worker execution separately from the role's local RPC queue/IPC wait."""
+    def dt_timed_rpc(self, method: str, args: tuple) -> dict | Future:
+        """Measure Worker wall time, including asynchronous IO, without blocking its compute loop."""
         started = time.monotonic()
         value = getattr(self, method)(*args)
+        if isinstance(value, Future):
+            return _completed(
+                value,
+                lambda value: {
+                    "value": value,
+                    "started": started,
+                    "finished": time.monotonic(),
+                },
+            )
         return {"value": value, "started": started, "finished": time.monotonic()}
 
     def dt_initialize(
@@ -395,13 +423,28 @@ class DraftTargetWorkerExtension:
         return get_kv_transfer_group().snapshot(artifact_id, block_ids)
 
     def dt_snapshot_context(
-        self, artifact_id: str, request_id: str, start_token: int, computed_tokens: int
-    ) -> None:
-        """Snapshot a confirmed interval selected by the paused Target's scheduler frontier."""
+        self,
+        artifact_id: str,
+        request_id: str,
+        start_token: int,
+        computed_tokens: int,
+        transport: str,
+        metadata: dict,
+    ) -> Future:
+        """Snapshot and claim one interval, returning its descriptor to the retained reader."""
         tensor = self.model_runner.speculator.snapshot(
             request_id, start_token, computed_tokens
         )
         self.dt_io.publish_tensor(artifact_id, tensor)
+        publication = self.dt_publish(artifact_id, transport)
+        artifact = self.dt_io.artifacts[artifact_id]
+        # Reserve the single reader on the execution thread before exposing its
+        # descriptor. Close must retain this source until ACK or process exit.
+        artifact.claimed = True
+        return _completed(
+            publication,
+            lambda _: {**metadata, "payload": artifact.operation.result()},
+        )
 
     def dt_append_draft_context(self, session_id, artifact_id, start_token, end_token):
         """Retain a completed delta independently of its transfer and proposal lifetimes."""
@@ -463,8 +506,8 @@ class DraftTargetWorkerExtension:
         if layout != connector.layout() or nbytes != expected:
             raise ValueError("KV checkpoint layout differs from destination")
 
-    def dt_publish(self, artifact_id: str, transport: str) -> dict[str, Any]:
-        """Prepare a publication; only dt_claim may expose its descriptor."""
+    def dt_publish(self, artifact_id: str, transport: str) -> Future:
+        """Notify native utility completion when a publication is ready; only claim exposes it."""
         io = self.dt_io
         artifact = io.artifacts[artifact_id]
         if transport not in io.transports:
@@ -478,10 +521,7 @@ class DraftTargetWorkerExtension:
             artifact.operation = asyncio.run_coroutine_threadsafe(
                 io._publish(artifact), io.loop
             )
-        if not artifact.operation.done():
-            return {"ready": False}
-        artifact.operation.result()
-        return {"ready": True}
+        return _completed(artifact.operation, lambda _: None)
 
     def dt_claim(self, artifact_id: str) -> dict[str, Any] | None:
         """Give one Target read ownership, serialized with cancellation RPCs."""
@@ -494,8 +534,8 @@ class DraftTargetWorkerExtension:
         artifact.claimed = True
         return payload
 
-    def dt_receive(self, artifact_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Start or poll one immutable publication's transfer on this Worker."""
+    def dt_receive(self, artifact_id: str, payload: dict[str, Any]) -> Future:
+        """Start one immutable read and notify readiness without repeated Worker RPCs."""
         io = self.dt_io
         source = PayloadRef.from_wire(payload)
         if source.dtype == "uint8" and len(source.shape) == 1:
@@ -548,16 +588,15 @@ class DraftTargetWorkerExtension:
             )
         elif artifact.source != source:
             raise ValueError("artifact identity was reused for a different publication")
-        if not artifact.operation.done():
-            return {"ready": False}
-        artifact.operation.result()
-        return {
-            "ready": True,
-            "read_seconds": artifact.read_seconds,
-            "bytes": source.nbytes,
-            "transport": source.transport,
-            "worker_read": artifact.read_timing,
-        }
+        return _completed(
+            artifact.operation,
+            lambda _: {
+                "read_seconds": artifact.read_seconds,
+                "bytes": source.nbytes,
+                "transport": source.transport,
+                "worker_read": artifact.read_timing,
+            },
+        )
 
     def dt_stage(self, artifact_id: str, request_id: str, generation: int) -> None:
         """Bind a completed read to the exact request before Scheduler admission."""
@@ -570,8 +609,8 @@ class DraftTargetWorkerExtension:
 
     def dt_release(
         self, artifact_id: str, publication_id: str | None = None
-    ) -> bool | None:
-        """Revoke storage: True is released, False is fencing, None requires the reader ACK."""
+    ) -> bool | Future | None:
+        """Notify completed reclamation; an unacknowledged claim remains reader-owned."""
         io = self.dt_io
         artifact = io.artifacts.get(artifact_id)
         if artifact is None:
@@ -586,17 +625,14 @@ class DraftTargetWorkerExtension:
             return None
         if publication_id is not None:
             artifact.acknowledgement = publication_id
-        if artifact.release is not None:
-            if not artifact.release.done():
-                return False
-            artifact.release.result()
-        for req_id, (staged_id, _) in tuple(io.staged.items()):
-            if staged_id == artifact_id:
-                io.staged.pop(req_id)
-        artifact.release = asyncio.run_coroutine_threadsafe(
-            io._release(artifact_id, artifact), io.loop
-        )
-        return False
+        if artifact.release is None:
+            for req_id, (staged_id, _) in tuple(io.staged.items()):
+                if staged_id == artifact_id:
+                    io.staged.pop(req_id)
+            artifact.release = asyncio.run_coroutine_threadsafe(
+                io._release(artifact_id, artifact), io.loop
+            )
+        return _completed(artifact.release, lambda _: True)
 
     def dt_close(self) -> dict[str, Any]:
         """Poll role teardown; unacknowledged publications remain process-owned."""

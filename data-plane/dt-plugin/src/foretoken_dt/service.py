@@ -26,7 +26,7 @@ from .observations import RpcTiming
 
 logger = logging.getLogger(__name__)
 
-ROLE_PROTOCOL_VERSION = 10
+ROLE_PROTOCOL_VERSION = 14
 CONTEXT_REVOKED = "Target context was revoked"
 
 if TYPE_CHECKING:
@@ -71,20 +71,23 @@ class OpenDraft(Message):
     tensor_transport: Literal["gpu_ipc", "rdma", "zmq"] | None = None
 
 
+class ContextReference(Message):
+    """Prepared feature interval; claim grants its sole reader the physical descriptor."""
+
+    artifact_id: str
+    token_ids: list[StrictInt]
+    start_token: StrictInt = Field(ge=0)
+    end_token: StrictInt = Field(gt=0)
+    profile: dict
+    export_seconds: float = Field(ge=0)
+
+
 class ContextSource(Message):
-    """Location of the Target session holding a confirmed prefix's features."""
+    """Bound Target session and optional proactively prepared feature interval."""
 
     endpoint: str
     session_id: str
-
-
-class Propose(Message):
-    """One candidate chain from an already confirmed Draft context."""
-
-    version: StrictInt = Field(ge=0)
-    max_tokens: StrictInt = Field(gt=0)
-    context_source: ContextSource | None = None
-    work: dict | None = None
+    context: ContextReference | None = None
 
 
 class Commit(Message):
@@ -93,6 +96,16 @@ class Commit(Message):
     base_version: StrictInt = Field(ge=0)
     version: StrictInt = Field(ge=0)
     token_ids: list[StrictInt] = Field(min_length=1)
+
+
+class Propose(Message):
+    """One candidate chain, optionally applying the exact confirmed delta in the same operation."""
+
+    version: StrictInt = Field(ge=0)
+    max_tokens: StrictInt = Field(gt=0)
+    context_source: ContextSource | None = None
+    work: dict | None = None
+    confirmed_delta: Commit | None = None
 
 
 class Generate(Message):
@@ -267,6 +280,9 @@ class RoleService:
         self.model_metadata = model_metadata or {}
         self.coordinators: dict[str, TargetCoordinator] = {}
         self.session_tasks: dict[str, set[asyncio.Task]] = {}
+        # Completed failures stay owned until the next round or close observes
+        # them; successful independent reclamation leaves no request history.
+        self.reclamations: dict[str, set[asyncio.Task]] = {}
         self.verifying: set[str] = set()
         self.role = role
         self.default_draft_tokens = default_draft_tokens
@@ -277,7 +293,7 @@ class RoleService:
         self.operations: set[asyncio.Task] = set()
         self.target_artifacts: dict[str, str] = {}
         self.transfer_observations: dict[str, dict] = {}
-        self.target_exports: dict[str, set[str]] = {}
+        self.target_exports: dict[str, dict[str, asyncio.Task | None]] = {}
         self.migration_enabled = engine.vllm_config.kv_transfer_config is not None
         self.accepting = True
         self.drafts: dict[str, DraftSession] = {}
@@ -302,11 +318,10 @@ class RoleService:
     async def worker(self, method: str, *args, timing: RpcTiming | None = None):
         """Call the local Worker, optionally splitting its existing RPC's queue and execution."""
         sent = time.monotonic()
-        results = await self.engine.collective_rpc(
+        result = await self.engine.worker_rpc(
             method if timing is None else "dt_timed_rpc",
-            args=args if timing is None else (method, args),
+            args if timing is None else (method, args),
         )
-        (result,) = results
         if timing is not None:
             timing.record(sent, time.monotonic(), result["started"], result["finished"])
             return result["value"]
@@ -350,6 +365,7 @@ class RoleService:
         session = self.drafts.get(session_id)
         if session is None:
             raise HTTPException(404, "draft session is closed or unknown")
+        self.check_reclamations(session_id)
         return session
 
     def validate_tokens(self, tokens: list[int]) -> None:
@@ -405,10 +421,21 @@ class RoleService:
                 if peer_close is not None:
                     operations += (peer_close,)
                 await asyncio.gather(*operations, return_exceptions=True)
-            exports = self.target_exports.get(session_id, set())
-            for artifact_id in tuple(exports):
-                await self.release_artifact(artifact_id)
-                exports.discard(artifact_id)
+            exports = self.target_exports.get(session_id, {})
+            for artifact_id, preparation in tuple(exports.items()):
+                publication_id = None
+                if preparation is not None:
+                    # No claim exposed this reserved descriptor to a remote reader.
+                    # Join preparation before using that proof to reclaim its buffer.
+                    try:
+                        context = await asyncio.shield(preparation)
+                    except HTTPException as error:
+                        if error.status_code != 409:
+                            raise
+                    else:
+                        publication_id = context["payload"]["publication_id"]
+                await self.release_artifact(artifact_id, publication_id)
+                exports.pop(artifact_id, None)
             self.target_exports.pop(session_id, None)
             self.transfer_observations.pop(session_id, None)
             artifact_id = self.target_artifacts.get(session_id)
@@ -417,6 +444,47 @@ class RoleService:
                 self.target_artifacts.pop(session_id, None)
             if peer_close is not None:
                 peer_close.result()
+        reclamations = self.reclamations.pop(session_id, set())
+        if reclamations:
+            results = await asyncio.gather(*reclamations, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+    def defer_reclamation(self, session_id: str, operation) -> asyncio.Task:
+        """Retain independent cleanup under the existing session operation owner."""
+        task = self.start_operation(session_id, operation)
+        owned = self.reclamations.setdefault(session_id, set())
+        owned.add(task)
+
+        def completed(task):
+            if not task.cancelled() and task.exception() is None:
+                owned.discard(task)
+                if not owned and self.reclamations.get(session_id) is owned:
+                    self.reclamations.pop(session_id, None)
+
+        task.add_done_callback(completed)
+        return task
+
+    def check_reclamations(self, session_id: str) -> None:
+        """Surface completed cleanup failures before another round can advance."""
+        for task in self.reclamations.get(session_id, ()):
+            if task.done():
+                task.result()
+
+    async def wait_ready(self, session_id: str, task, ready):
+        """Return member readiness while its retained operation joins ACK and cleanup."""
+        done, _ = await asyncio.wait((task, ready), return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            # An error before readiness is still this caller's request error,
+            # rather than a detached cleanup failure during a later close.
+            owned = self.reclamations.get(session_id)
+            if owned is not None:
+                owned.discard(task)
+                if not owned:
+                    self.reclamations.pop(session_id, None)
+            return task.result()
+        return ready.result()
 
     def start_operation(self, session_id: str, operation) -> asyncio.Task:
         """Retain one session's asynchronous operation until completion and safe cleanup."""
@@ -474,6 +542,19 @@ class RoleService:
         )
         return await asyncio.shield(task)
 
+    def apply_commit(self, session_id: str, request: Commit) -> None:
+        """Apply one Target-confirmed delta atomically for manual commit or the next proposal."""
+        session = self.draft_session(session_id)
+        self.validate_tokens(request.token_ids)
+        if (
+            session.proposing
+            or request.base_version != session.version
+            or request.version != session.version + len(request.token_ids)
+        ):
+            raise HTTPException(409, "context changed or proposal is in flight")
+        session.token_ids.extend(request.token_ids)
+        session.version = request.version
+
     async def _propose(
         self, session_id: str, request: Propose, work: dict | None
     ) -> dict:
@@ -484,18 +565,24 @@ class RoleService:
 
         session = self.draft_session(session_id)
         if (
-            request.version != session.version
-            or request.version == session.proposed_version
-            or session.proposing
-        ):
-            raise HTTPException(409, "context version changed or proposal is in flight")
-        if (
             self.max_candidate_tokens is not None
             and request.max_tokens > self.max_candidate_tokens
         ):
             raise HTTPException(
                 422, "proposal exceeds the Draft method's candidate capacity"
             )
+        if request.confirmed_delta is not None:
+            if request.confirmed_delta.version != request.version:
+                raise HTTPException(
+                    409, "confirmed delta differs from proposal version"
+                )
+            self.apply_commit(session_id, request.confirmed_delta)
+        if (
+            request.version != session.version
+            or request.version == session.proposed_version
+            or session.proposing
+        ):
+            raise HTTPException(409, "context version changed or proposal is in flight")
         request_id = session_id
         artifact_id = uuid4().hex
         session.proposing = True
@@ -520,14 +607,6 @@ class RoleService:
             if self.context_profile is not None:
                 if request.context_source is None:
                     raise HTTPException(422, "neural Draft requires Target context")
-                context_task = self.start_operation(
-                    session_id, self.receive_context(session_id, session, request)
-                )
-                await asyncio.shield(context_task)
-                if session.closed.is_set():
-                    raise HTTPException(
-                        409, "Draft session closed during context transfer"
-                    )
                 extra.update(
                     dt_context_session=session_id, dt_anchor_token=prompt.pop()
                 )
@@ -542,23 +621,32 @@ class RoleService:
                 ignore_eos=True,
                 output_kind=RequestOutputKind.DELTA,
             )
-            output = await self.engine.propose(
-                request_id,
-                TokensPrompt(prompt_token_ids=prompt),
-                params,
-                session.priority,
-            )
+
+            async def generate():
+                """Admit only a live session after its required features have been appended."""
+                if session.closed.is_set():
+                    raise HTTPException(409, "Draft session closed during preparation")
+                return await self.engine.propose(
+                    request_id,
+                    TokensPrompt(prompt_token_ids=prompt),
+                    params,
+                    session.priority,
+                )
+
+            if self.context_profile is not None:
+                ready = asyncio.get_running_loop().create_future()
+                context_task = self.defer_reclamation(
+                    session_id,
+                    self.receive_context(session_id, session, request, ready),
+                )
+                await self.wait_ready(session_id, context_task, ready)
+            output = await generate()
+            self.check_reclamations(session_id)
             tokens = list(output.outputs[0].token_ids)
             if session.closed.is_set():
                 raise HTTPException(409, "session closed during proposal")
             if self.tensor_transports:
-                while True:
-                    publication = await self.worker(
-                        "dt_publish", artifact_id, session.tensor_transport
-                    )
-                    if publication["ready"]:
-                        break
-                    await asyncio.sleep(0.001)
+                await self.worker("dt_publish", artifact_id, session.tensor_transport)
                 artifact = {"artifact_id": artifact_id}
             completed = True
             session.proposed_version = request.version
@@ -573,7 +661,9 @@ class RoleService:
             with CancelScope(shield=True):
                 if not completed or session.closed.is_set():
                     await self.engine.abort(request_id)
-                if context_task is not None:
+                if context_task is not None and (
+                    not completed or session.closed.is_set()
+                ):
                     await asyncio.gather(context_task, return_exceptions=True)
                 session.proposing = False
                 if self.tensor_transports and (
@@ -583,23 +673,29 @@ class RoleService:
                     session.artifacts.discard(artifact_id)
 
     async def receive_context(
-        self, session_id: str, session: DraftSession, request: Propose
-    ) -> None:
-        """Append only missing confirmed features; retain transfer cleanup through cancellation."""
+        self, session_id: str, session: DraftSession, request: Propose, ready
+    ):
+        """Publish appended feature readiness; retain source ACK and destination reclamation."""
         source = request.context_source
-        if session.context_source is not None and source != session.context_source:
+        binding = ContextSource(endpoint=source.endpoint, session_id=source.session_id)
+        if session.context_source is not None and binding != session.context_source:
             raise HTTPException(409, "Draft context source changed within its session")
-        session.context_source = source
+        session.context_source = binding
         start_token = session.context_tokens
-        exporting = time.monotonic()
-        context = await self.communication.export_context(
-            source.endpoint,
-            source.session_id,
-            request.version,
-            session.tensor_transport,
-            start_token,
-        )
-        export_seconds = time.monotonic() - exporting
+        if source.context is not None:
+            context = source.context.model_dump()
+            export_seconds = source.context.export_seconds
+        else:
+            # Manual diagnostics may still request an interval from an unbound Target.
+            exporting = time.monotonic()
+            context = await self.communication.export_context(
+                source.endpoint,
+                source.session_id,
+                request.version,
+                session.tensor_transport,
+                start_token,
+            )
+            export_seconds = time.monotonic() - exporting
         if context is None:
             raise HTTPException(409, CONTEXT_REVOKED)
         artifact_id = context["artifact_id"]
@@ -613,6 +709,8 @@ class RoleService:
         session.artifacts.add(artifact_id)
 
         async def validate(payload):
+            if session.closed.is_set():
+                raise HTTPException(409, "Draft session closed during preparation")
             if payload.transport != session.tensor_transport:
                 raise HTTPException(
                     422, "context transport differs from session binding"
@@ -635,25 +733,50 @@ class RoleService:
                 )
 
         started = time.monotonic()
-        try:
-            result = await self.communication.read_artifact(
-                artifact_id, source.endpoint, validate
-            )
-            if result is None:
-                raise HTTPException(409, CONTEXT_REVOKED)
-            stage_rpc = RpcTiming()
-            await self.worker(
-                "dt_append_draft_context",
+        fused = session.proposed_version is not None
+        retained = False
+        stage_rpc = RpcTiming()
+
+        async def receive(payload, rpc):
+            """Retain uncertain native consumption until session abort and cleanup fence it."""
+            nonlocal retained
+            retained = True
+            result = await self.engine.receive_draft_context(
                 session_id,
-                artifact_id,
+                request.version,
                 start_token,
                 context["end_token"],
-                timing=stage_rpc,
+                artifact_id,
+                payload.descriptor(),
+                rpc,
+                stage_rpc,
             )
+            retained = result["append_error"] is not None
+            return result
+
+        async def append(result):
+            """Make features compute-ready before waiting for independent source reclamation."""
+            if fused and result["append_error"] is not None:
+                raise RuntimeError(result["append_error"])
+            if session.closed.is_set():
+                raise HTTPException(409, "Draft session closed during preparation")
+            if fused:
+                if not result["appended"]:
+                    raise HTTPException(409, "Draft context changed during preparation")
+            else:
+                await self.worker(
+                    "dt_append_draft_context",
+                    session_id,
+                    artifact_id,
+                    start_token,
+                    context["end_token"],
+                    timing=stage_rpc,
+                )
             session.context_tokens = context["end_token"]
             result["breakdown"].update(
                 export_seconds=export_seconds,
                 stage_rpc=stage_rpc.to_wire(),
+                total_seconds=export_seconds + time.monotonic() - started,
             )
             self.transfer_observations[session_id] = {
                 "bytes": result["bytes"],
@@ -662,13 +785,26 @@ class RoleService:
                 "prepare_seconds": time.monotonic() - started,
                 "breakdown": result["breakdown"],
             }
+            ready.set_result(None)
+
+        try:
+            result = await self.communication.read_artifact(
+                artifact_id,
+                source.endpoint,
+                validate,
+                on_ready=append,
+                receive=receive if fused else None,
+                payload=context.get("payload"),
+            )
+            if result is None:
+                raise HTTPException(409, CONTEXT_REVOKED)
         finally:
             releasing = time.monotonic()
-            await self.release_artifact(artifact_id)
-            session.artifacts.discard(artifact_id)
+            if not retained:
+                await self.release_artifact(artifact_id)
+                session.artifacts.discard(artifact_id)
         result["breakdown"].update(
             release_seconds=time.monotonic() - releasing,
-            total_seconds=time.monotonic() - exporting,
         )
         logger.info(
             "DT feature prepared session=%s version=%s artifact=%s",
@@ -677,22 +813,59 @@ class RoleService:
             artifact_id,
         )
 
-    async def export_context(
-        self, session_id, ticket, artifact_id, transport, start_token
+    def prepare_context(
+        self, session_id: str, ticket, transport: str, start_token: int
     ):
+        """Start publication on confirmation; session close retains the task and unclaimed source."""
+        artifact_id = uuid4().hex
+        task = self.start_operation(
+            session_id, self.export_context(ticket, artifact_id, transport, start_token)
+        )
+        self.target_exports.setdefault(session_id, {})[artifact_id] = task
+        return task
+
+    async def claim_artifact(self, artifact_id: str) -> dict:
+        """Hand off a prepared context once, or delegate an ordinary claim to its Worker."""
+        for session_id, exports in self.target_exports.items():
+            preparation = exports.get(artifact_id)
+            if preparation is not None:
+                if session_id not in self.targets:
+                    raise HTTPException(
+                        409, "Target generation closed before context claim"
+                    )
+                # Reserve before yielding so close and duplicate claims cannot revoke or reuse it.
+                exports[artifact_id] = None
+                context = await asyncio.shield(preparation)
+                return context["payload"]
+        timing = RpcTiming()
+        payload = await self.worker("dt_claim", artifact_id, timing=timing)
+        if payload is None:
+            raise HTTPException(409, "artifact is unavailable or already claimed")
+        return {**payload, "claim_rpc": timing.to_wire()}
+
+    async def export_context(self, ticket, artifact_id, transport, start_token):
         """Publish a scheduler-selected snapshot while retaining session cancellation ownership."""
-        try:
-            context = await self.engine.export_context(ticket, artifact_id, start_token)
-            if context is None:
-                raise HTTPException(409, "Target generation changed")
-            while not (await self.worker("dt_publish", artifact_id, transport))[
-                "ready"
-            ]:
-                await asyncio.sleep(0.001)
-            return {**context, "profile": self.context_profile}
-        finally:
-            if session_id not in self.targets:
-                await self.release_artifact(artifact_id)
+        started = time.monotonic()
+        context = await self.engine.export_context(
+            ticket, artifact_id, start_token, transport
+        )
+        if context is None:
+            raise HTTPException(409, "Target generation changed")
+        # The session inventory retains this reserved claim until remote handoff
+        # or close proves that the descriptor never left this process.
+        logger.info(
+            "DT context publication artifact=%s engine_request=%s frontier=%d interval=[%d,%d)",
+            artifact_id,
+            ticket.request_id,
+            ticket.generation,
+            start_token,
+            context["end_token"],
+        )
+        return {
+            **context,
+            "profile": self.context_profile,
+            "export_seconds": time.monotonic() - started,
+        }
 
     async def generate(self, request: Generate, resume: ResumeTarget | None = None):
         """Stream Target-confirmed deltas; disconnect aborts the original request."""
@@ -772,10 +945,12 @@ class RoleService:
                 async for output in outputs:
                     if session_id not in self.targets:
                         return
-                    artifact_id = self.target_artifacts.get(session_id)
+                    self.check_reclamations(session_id)
+                    artifact_id = self.target_artifacts.pop(session_id, None)
                     if artifact_id is not None:
-                        await self.release_artifact(artifact_id)
-                        self.target_artifacts.pop(session_id, None)
+                        self.defer_reclamation(
+                            session_id, self.release_artifact(artifact_id)
+                        )
                     ticket = output.external_draft_request
                     self.targets[session_id] = ticket
                     completion = output.outputs[0]
@@ -794,7 +969,7 @@ class RoleService:
                         "round": None,
                     }
                     if coordinator is not None:
-                        await coordinator.confirmed(event)
+                        coordinator.confirmed(event)
                     if session_id not in self.targets:
                         return
                     yield _event(event)
@@ -811,8 +986,7 @@ class RoleService:
                 raise HTTPException(
                     409, "Target generation no longer has exportable KV"
                 )
-            while not (await self.worker("dt_publish", artifact_id, "rdma"))["ready"]:
-                await asyncio.sleep(0.001)
+            await self.worker("dt_publish", artifact_id, "rdma")
             return checkpoint
         finally:
             if session_id not in self.targets:
@@ -864,6 +1038,7 @@ class RoleService:
     ) -> bool:
         """Prepare one member independently, then let native ticket admission decide readiness."""
         self.require_role("target")
+        self.check_reclamations(session_id)
         self.validate_tokens(request.token_ids)
         if len(request.token_ids) > self.max_candidate_tokens:
             raise HTTPException(
@@ -893,18 +1068,20 @@ class RoleService:
         )
 
         async def prepare_and_admit():
+            from .vllm.engine import ExternalDraftSubmission
+
             try:
-                if needs_tensor and not await self.receive_and_stage(
-                    session_id, ticket, request
-                ):
-                    return False
+                if needs_tensor:
+                    return await self.receive_and_admit(
+                        session_id, ticket, request, work, ready
+                    )
                 if self.targets.get(session_id) != ticket:
                     return False
                 # Consume role-side ownership before the utility call. A lost
                 # admission response cannot make the same ticket submit again.
                 self.targets[session_id] = None
                 (accepted,) = await self.engine.submit_external_draft_batch(
-                    [(ticket, request.token_ids, work)]
+                    [ExternalDraftSubmission(ticket, request.token_ids, work)]
                 )
                 if not accepted:
                     artifact = self.target_artifacts.get(session_id)
@@ -913,8 +1090,15 @@ class RoleService:
                         self.target_artifacts.pop(session_id, None)
                 return accepted
             finally:
-                self.verifying.discard(session_id)
+                # A successful ready notification releases this round's guard.
+                # Its later ACK must not clear a newer round's preparation.
+                if not needs_tensor or not ready.done():
+                    self.verifying.discard(session_id)
 
+        if needs_tensor:
+            ready = asyncio.get_running_loop().create_future()
+            task = self.defer_reclamation(session_id, prepare_and_admit())
+            return await self.wait_ready(session_id, task, ready)
         task = self.start_operation(session_id, prepare_and_admit())
         return await asyncio.shield(task)
 
@@ -959,14 +1143,22 @@ class RoleService:
             if isinstance(result, BaseException):
                 raise result
 
-    async def receive_and_stage(self, session_id, ticket, request: Verify) -> bool:
-        """Receive one proposal, then stage it only for the still-live Target ticket."""
+    async def receive_and_admit(
+        self, session_id, ticket, request: Verify, work, ready
+    ) -> bool:
+        """Submit a completed read immediately, overlapping verification with the retained ACK."""
+        from .vllm.engine import ExternalDraftSubmission
+
         started = time.monotonic()
         artifact_id = request.artifact.artifact_id
         self.target_artifacts[session_id] = artifact_id
-        staged = False
+        retained = False
+        accepted = False
+        stage_rpc = RpcTiming()
 
         async def validate(payload):
+            if self.targets.get(session_id) != ticket:
+                raise HTTPException(409, "Target generation changed")
             coordinator = self.coordinators.get(session_id)
             if (
                 coordinator is not None
@@ -984,49 +1176,55 @@ class RoleService:
                     422, "Draft distribution does not match candidates and vocabulary"
                 )
 
-        try:
-            result = await self.communication.read_artifact(
-                artifact_id, request.source_endpoint, validate
+        async def receive(payload, rpc):
+            """Keep the destination through the native read/admission call, even if its reply is lost."""
+            nonlocal retained
+            self.targets[session_id] = None
+            retained = True
+            return await self.engine.receive_external_draft(
+                ExternalDraftSubmission(
+                    ticket, request.token_ids, work, artifact_id, stage_rpc
+                ),
+                payload.descriptor(),
+                rpc,
             )
-            if result is None:
-                raise HTTPException(
-                    409, "proposal artifact was revoked or already claimed"
-                )
-            if self.targets.get(session_id) != ticket:
-                return False
-            stage_rpc = RpcTiming()
-            await self.worker(
-                "dt_stage",
-                artifact_id,
-                ticket.request_id,
-                ticket.generation,
-                timing=stage_rpc,
-            )
-            if self.targets.get(session_id) != ticket:
-                return False
-            self.target_artifacts[session_id] = artifact_id
+
+        async def admit(result):
+            """Publish a completed native admission while the same operation joins source ACK."""
+            nonlocal retained, accepted
+            accepted = result["accepted"]
+            retained = accepted
             prepared = time.monotonic() - started
             result["breakdown"].update(
                 stage_rpc=stage_rpc.to_wire(),
                 total_seconds=prepared,
             )
-            self.transfer_observations[session_id] = {
-                "bytes": result["bytes"],
-                "transport": result["transport"],
-                "read_seconds": result["read_seconds"],
-                "prepare_seconds": prepared,
-                "breakdown": result["breakdown"],
-            }
-            logger.info(
-                "DT proposal prepared session=%s version=%s artifact=%s",
-                session_id,
-                ticket.generation,
+            if session_id in self.targets:
+                self.transfer_observations[session_id] = {
+                    "bytes": result["bytes"],
+                    "transport": result["transport"],
+                    "read_seconds": result["read_seconds"],
+                    "prepare_seconds": prepared,
+                    "breakdown": result["breakdown"],
+                }
+            self.verifying.discard(session_id)
+            ready.set_result(accepted)
+
+        try:
+            result = await self.communication.read_artifact(
                 artifact_id,
+                request.source_endpoint,
+                validate,
+                on_ready=admit,
+                receive=receive,
             )
-            staged = True
-            return True
+            if result is None:
+                raise HTTPException(
+                    409, "proposal artifact was revoked or already claimed"
+                )
+            return accepted
         finally:
-            if not staged:
+            if not retained:
                 await self.release_artifact(artifact_id)
                 self.target_artifacts.pop(session_id, None)
 
@@ -1344,17 +1542,8 @@ def create_app(
     @app.post("/sessions/{session_id}/commit")
     async def commit(session_id: str, request: Commit):
         """Apply the exact Target delta before accepting the next Draft round."""
-        session = app.state.service.draft_session(session_id)
-        app.state.service.validate_tokens(request.token_ids)
-        if (
-            session.proposing
-            or request.base_version != session.version
-            or request.version != session.version + len(request.token_ids)
-        ):
-            raise HTTPException(409, "context changed or proposal is in flight")
-        session.token_ids.extend(request.token_ids)
-        session.version = request.version
-        return {"version": session.version}
+        app.state.service.apply_commit(session_id, request)
+        return {"version": request.version}
 
     def validate_generation(request: Generate):
         """Validate both fresh and migrated Target admission at their shared boundary."""
@@ -1397,7 +1586,7 @@ def create_app(
         if ticket is None or ticket.generation != request.version:
             raise HTTPException(409, "Target generation changed")
         artifact_id = uuid4().hex
-        service.target_exports.setdefault(session_id, set()).add(artifact_id)
+        service.target_exports.setdefault(session_id, {})[artifact_id] = None
         task = service.start_operation(
             session_id, service.export_checkpoint(session_id, ticket, artifact_id)
         )
@@ -1422,11 +1611,10 @@ def create_app(
         if ticket is None or ticket.generation != request.version:
             raise HTTPException(409, "Target generation changed")
         artifact_id = uuid4().hex
-        service.target_exports.setdefault(session_id, set()).add(artifact_id)
+        service.target_exports.setdefault(session_id, {})[artifact_id] = None
         task = service.start_operation(
             session_id,
             service.export_context(
-                session_id,
                 ticket,
                 artifact_id,
                 request.tensor_transport,
@@ -1470,17 +1658,12 @@ def create_app(
 
     @app.post("/artifacts/{artifact_id}/claim")
     async def claim_artifact(artifact_id: str):
-        """Grant one Target a descriptor unless cancellation already revoked it."""
-        service = app.state.service
-        timing = RpcTiming()
-        payload = await service.worker("dt_claim", artifact_id, timing=timing)
-        if payload is None:
-            raise HTTPException(409, "artifact is unavailable or already claimed")
-        return {**payload, "claim_rpc": timing.to_wire()}
+        """Grant a peer one descriptor unless cancellation already revoked it."""
+        return await app.state.service.claim_artifact(artifact_id)
 
     @app.post("/artifacts/{artifact_id}/release")
     async def release_artifact(artifact_id: str, request: ReleaseArtifact):
-        """Release a claimed publication after Target guarantees no further read."""
+        """Release a claimed publication after its reader guarantees no further read."""
         service = app.state.service
         timing = RpcTiming()
         await service.release_artifact(
@@ -1490,7 +1673,7 @@ def create_app(
         for session in service.drafts.values():
             session.artifacts.discard(artifact_id)
         for exports in service.target_exports.values():
-            exports.discard(artifact_id)
+            exports.pop(artifact_id, None)
         return {"released": True, "rpc": timing.to_wire()}
 
     @app.delete("/sessions/{session_id}")

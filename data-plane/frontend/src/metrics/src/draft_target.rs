@@ -219,7 +219,7 @@ pub fn record_draft_target_round(model: &str, observation: &DraftTargetRoundObse
                 "context_backend_read",
                 Some(detail.transport_read_seconds),
             ),
-            ("transfer_ack", "context_ack", Some(detail.ack_seconds)),
+            ("transfer_ack", "context_ack", detail.ack_seconds),
             (
                 "transfer_release",
                 "context_release",

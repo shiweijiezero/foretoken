@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
 /// Version of the internal role protocol; frontend and both roles upgrade together.
-pub const DRAFT_TARGET_PROTOCOL_VERSION: u32 = 10;
+pub const DRAFT_TARGET_PROTOCOL_VERSION: u32 = 14;
 
 /// Concrete tensor path advertised by DT workers for compatible peer selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,14 +197,14 @@ pub struct DraftTargetRpcObservation {
 /// Preparation phases measured by their owners; nested intervals overlap.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DraftTargetTransferBreakdown {
-    /// Includes feature export and receiver-buffer release when present.
+    /// Measured preparation including feature export; excludes later receiver-buffer release.
     pub total_seconds: f64,
     pub export_seconds: Option<f64>,
     pub claim_seconds: f64,
     pub claim_rpc: Option<DraftTargetRpcObservation>,
     pub validation_seconds: f64,
     pub receive_seconds: f64,
-    /// Sum of start/poll RPCs; the asynchronous read can overlap these calls.
+    /// Receive utility round trip, including asynchronous completion and any fused staging.
     pub receive_rpc: DraftTargetRpcObservation,
     pub receive_poll_seconds: f64,
     /// Worker I/O-loop enqueue through coroutine entry.
@@ -215,7 +215,8 @@ pub struct DraftTargetTransferBreakdown {
     pub read_fence_seconds: f64,
     /// Backend read wall time, including its own connection setup and polling.
     pub transport_read_seconds: f64,
-    pub ack_seconds: f64,
+    /// Absent while the transfer owner is still awaiting source acknowledgement.
+    pub ack_seconds: Option<f64>,
     pub ack_rpc: Option<DraftTargetRpcObservation>,
     /// Proposal binding or feature-prefix append, depending on the direction.
     pub stage_rpc: Option<DraftTargetRpcObservation>,
@@ -229,7 +230,7 @@ pub struct DraftTargetTransferObservation {
     pub bytes: u64,
     /// Includes readiness fencing and transport polling; not wire-only latency.
     pub read_seconds: f64,
-    /// Claim through read, ACK and staging, including control/Worker RPC overhead.
+    /// Claim/reference through preparation; candidate/feature readiness can precede source ACK.
     pub prepare_seconds: f64,
     /// Absent in older observations; unavailable remote RPC phases remain null.
     #[serde(default)]
@@ -251,9 +252,9 @@ pub struct DraftTargetRoundObservation {
     pub context_tokens: usize,
     pub batch_requests: usize,
     pub elapsed_seconds: f64,
-    /// Target-side wall time including Draft proposal HTTP overhead.
+    /// Target-side wall time including confirmed-prefix delivery and Draft proposal HTTP overhead.
     pub draft_seconds: Option<f64>,
-    /// Target preparation/admission through confirmed output and Draft synchronization.
+    /// Target preparation/admission through confirmed output; prefix delivery belongs to the next proposal.
     pub target_seconds: Option<f64>,
     pub proposed_tokens: Option<usize>,
     /// Target-selected candidate count, before Draft execution or native verification.

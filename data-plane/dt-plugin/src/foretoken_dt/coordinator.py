@@ -36,6 +36,7 @@ class TargetCoordinator:
         self.proposal: dict | None = None
         self.admitted: bool | None = None
         self.requested_tokens: int | None = None
+        self.pending_delta: dict | None = None
 
     def identity(self, phase: str) -> dict:
         """Bind native work to the client request, round and confirmed output frontier."""
@@ -56,21 +57,28 @@ class TargetCoordinator:
         await self.peer.prepare(self.request.target_endpoint)
         self.target_started = time.monotonic()
 
-    async def confirmed(self, event: dict) -> None:
-        """Advance only from native confirmed output and synchronize the bound Draft prefix."""
+    def confirmed(self, event: dict) -> None:
+        """Advance native-confirmed progress and retain its delta for the next proposal call."""
         tokens = event["token_ids"]
         frontier = self.frontier + len(tokens)
         if event["version"] is not None and event["version"] != frontier:
             raise ValueError(
                 "Target ticket does not match the confirmed output frontier"
             )
-        if tokens:
-            await self.peer.commit(self.frontier, frontier, tokens)
-        # A commit ACK may arrive after DELETE joined native and peer cleanup.
-        # Closed ownership cannot publish or advance another confirmed round.
-        if self.session_id not in self.service.targets:
-            return
+        self.pending_delta = (
+            {
+                "base_version": self.frontier,
+                "version": frontier,
+                "token_ids": tokens,
+            }
+            if tokens and not event["finished"]
+            else None
+        )
         self.frontier = frontier
+        if event["version"] is not None:
+            self.peer.prepare_context(
+                self.session_id, self.service.targets[self.session_id]
+            )
         now = time.monotonic()
         event["round"] = {
             "request_id": self.request.request_id,
@@ -127,17 +135,23 @@ class TargetCoordinator:
         """Request one chain and submit it when ready; native scheduling chooses its forward."""
         from .service import Verify
 
+        if self.session_id not in self.service.targets:
+            return
         self.round += 1
         self.started = time.monotonic()
         self.proposal = None
         self.admitted = None
         budget = self.select_candidate_count()
         self.requested_tokens = budget
+        # Prefix synchronization and the next proposal share one request. An
+        # ambiguous response fails the binding; the delta is never replayed.
+        confirmed_delta, self.pending_delta = self.pending_delta, None
         self.proposal = await self.peer.propose(
             self.frontier,
             budget,
             {"endpoint": self.request.target_endpoint, "session_id": self.session_id},
             self.identity("draft"),
+            confirmed_delta,
         )
         self.draft_seconds = time.monotonic() - self.started
         if self.proposal["version"] != ticket.generation:
