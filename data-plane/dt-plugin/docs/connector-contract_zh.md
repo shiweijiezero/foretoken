@@ -137,7 +137,8 @@ request、两端地址及所选路径。TCP 描述符包含 Worker 实际绑定�
 温度 0。Router 根据 Target 引用的 Draft pools、format、传输方式和 context profile 检查兼容性，
 Draft 和 Target 均须属于调用者允许的 Pool 范围；
 随机采样还会排除仅传 token 的角色。调度策略为选定的 Target 分配 Draft，Target 在执行前检查已分配 Draft 的实时能力，不会把需要概率张量的请求自动降级成仅传 token。
-当前每个角色使用单 GPU Worker、eager 执行、本地同步调度。
+当前每个角色使用单 GPU Worker、原生 `uni` executor 和本地同步调度；
+eager 为默认，可选原生 CUDA Graph。
 
 显式 Target migration 使用 uint8 KV checkpoint，复用 artifact 的 claim/read/ACK
 生命周期。两个 Target 都需启用 migration，并使用兼容的模型和 layer layout。

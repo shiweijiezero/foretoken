@@ -165,8 +165,8 @@ class ExternalEngineArgs(AsyncEngineArgs):
         if (
             result.parallel_config.world_size != 1
             or result.parallel_config.data_parallel_size != 1
+            or result.parallel_config.distributed_executor_backend != "uni"
             or result.scheduler_config.async_scheduling
-            or not result.model_config.enforce_eager
             or result.scheduler_config.stream_interval != 1
             or (
                 result.kv_transfer_config is not None
@@ -181,7 +181,7 @@ class ExternalEngineArgs(AsyncEngineArgs):
             or result.ec_transfer_config is not None
         ):
             raise ValueError(
-                "DT requires one eager worker, synchronous local scheduling, "
+                "DT requires one worker with the native uni executor, synchronous local scheduling, "
                 "stream_interval=1, no EC transfer and only the DT migration KV connector"
             )
         return result

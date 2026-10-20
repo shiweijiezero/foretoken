@@ -162,8 +162,8 @@ format, a common transport and context profiles; both members must also be in th
 excluding token-only roles for random sampling. Target
 checks the routing-assigned Draft's live capabilities before execution. A selected pair must agree;
 there is no automatic reduction of a probability-bearing request to token-only
-execution. Each role currently uses one GPU worker, eager execution and local
-synchronous scheduling.
+execution. Each role currently uses one GPU worker, the native `uni` executor and local
+synchronous scheduling. Eager is the default; native CUDA Graphs are optional.
 
 Explicit Target migration reuses the artifact claim/read/ACK lifecycle for a uint8
 KV checkpoint. Both Targets must enable migration and use compatible model and

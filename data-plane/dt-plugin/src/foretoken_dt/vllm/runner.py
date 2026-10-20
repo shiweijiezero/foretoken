@@ -69,7 +69,7 @@ class GPUModelRunner(model_runner.GPUModelRunner):
         self.context_role = vllm_config.additional_config.get(
             "foretoken_dt_context_role"
         )
-        self.context_batch = None
+        self.context_features = None
         self.context_requests = {}
         self.context_prefixes = {}
         self.external_speculation = speculative is not None and (
@@ -164,17 +164,21 @@ class GPUModelRunner(model_runner.GPUModelRunner):
             batch.external_draft_recovery = (
                 {} if self.warming_up else scheduler_output.external_draft_recovery
             )
-        if self.context_role == "draft":
-            self.context_batch = batch
+        if self.context_role == "draft" and not self.warming_up:
+            # Populate stable graph inputs outside capture/replay. Request IDs,
+            # retained histories and their growing allocations stay on this side
+            # of the native graph boundary; only the fixed staging buffer is read.
+            offset = 0
+            for index, req_id in enumerate(batch.req_ids):
+                context_id = self.context_requests[req_id][0]
+                start = int(batch.num_computed_tokens_np[index])
+                count = int(batch.num_scheduled_tokens[index])
+                self.context_features[offset : offset + count].copy_(
+                    self.context_prefixes[context_id].read(start, count)
+                )
+                offset += count
+            self.context_features[offset : batch.num_tokens_after_padding].zero_()
         return batch
-
-    def execute_model(self, *args, **kwargs):
-        """Limit staged feature input ownership to one native execution call."""
-        self.context_batch = None
-        try:
-            return super().execute_model(*args, **kwargs)
-        finally:
-            self.context_batch = None
 
     def sample_tokens(self, grammar_output):
         """Return a native neural proposal as the terminal output of a Draft request."""

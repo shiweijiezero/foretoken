@@ -63,7 +63,7 @@ class TargetContext(BaseSpeculator):
         self.requests: dict[str, list[tuple[int, torch.Tensor]]] = {}
 
     def init_cudagraph_manager(self, mode):
-        """The external role executes eagerly and owns no draft CUDA graphs."""
+        """Target model graphs remain native; this collector owns no local Draft graph."""
 
     def capture(self):
         """External proposal execution has no local graph to capture."""
@@ -213,6 +213,24 @@ class SharedTargetLoader:
             model.load_weights(self.loader.get_all_weights(model_config, model))
 
         runner = self.runner
+        aux_layers = (
+            (
+                get_eagle3_aux_layers_from_config(vllm_config.speculative_config)
+                or model.get_eagle3_default_aux_hidden_state_layers()
+            )
+            if runner.use_aux_hidden_state_outputs
+            else []
+        )
+        # The native graph manager captures views of this fixed allocation.
+        # Per-request histories may grow or disappear without invalidating graphs;
+        # prepare_inputs copies the current batch before replay on the same stream.
+        runner.context_features = torch.zeros(
+            runner.max_num_tokens,
+            1 + len(aux_layers),
+            model_config.get_hidden_size(),
+            dtype=model_config.dtype,
+            device=runner.device,
+        )
 
         def forward(
             model,
@@ -222,31 +240,8 @@ class SharedTargetLoader:
             inputs_embeds=None,
             **kwargs,
         ):
-            """Consume staged features, or synthetic inputs during profiling and warmup."""
-            if runner.context_batch is None or runner.warming_up:
-                hidden = torch.zeros(
-                    len(positions),
-                    model_config.get_hidden_size(),
-                    dtype=model_config.dtype,
-                    device=positions.device,
-                )
-                if runner.use_aux_hidden_state_outputs:
-                    layers = (
-                        get_eagle3_aux_layers_from_config(
-                            vllm_config.speculative_config
-                        )
-                        or model.get_eagle3_default_aux_hidden_state_layers()
-                    )
-                    return hidden, [hidden] * len(layers)
-                return hidden
-            batch = runner.context_batch
-            rows = []
-            for index, req_id in enumerate(batch.req_ids):
-                context_id = runner.context_requests[req_id][0]
-                start = int(batch.num_computed_tokens_np[index])
-                count = int(batch.num_scheduled_tokens[index])
-                rows.append(runner.context_prefixes[context_id].read(start, count))
-            features = torch.cat(rows, dim=0)
+            """Expose fixed feature inputs to native eager, compiled and graph execution."""
+            features = runner.context_features[: len(positions)]
             hidden = features[:, 0]
             if runner.use_aux_hidden_state_outputs:
                 return hidden, list(features[:, 1:].unbind(dim=1))

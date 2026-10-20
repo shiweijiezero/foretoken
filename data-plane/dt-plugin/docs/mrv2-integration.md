@@ -120,14 +120,41 @@ again only for verification. A new confirmed output consumes the round and issue
 the next frontier; abort/completion removes the request, and a recreated session
 has a new native request identity. Late or duplicate submissions cannot reuse it.
 
-This mode supports text, one worker, eager execution, synchronous local scheduling
+This mode supports text, one worker with the native `uni` executor, synchronous local scheduling
 and output interval one. `draft_sample_method="probabilistic"` consumes external
 proposal distributions; the token-only mode requires greedy sampling. RDMA Draft
 also uses the plugin sampler's processed-logit export. Remote waits are per request;
-other requests can still execute. Distributed model execution, CUDA graphs,
+other requests can still execute. Distributed model execution,
 multimodal input and EC transfer are not enabled by this adapter. The optional
 NVIDIA Target migration connector supports one full-attention KV group; other KV
 connectors remain unsupported.
+
+### Native graph execution
+
+Eager remains the launch default; `--no-enforce-eager` preserves native compilation
+and graph configuration. MRV2 owns capture sizes, attention compatibility, graph
+pools, replay and eager execution for unmatched batch shapes. Target's feature
+collector runs after model execution and owns independent feature copies; it is
+not captured as a local Draft model.
+
+Neural Draft feature history remains session-owned and can grow independently of
+graph capture. `SharedTargetLoader` allocates one fixed input tensor in the Runner.
+Before forward, `prepare_inputs` copies the scheduled feature intervals into this
+tensor in native batch order and zeros padded rows. The feature-only forward
+returns views of that fixed storage for both capture and execution. No request
+lookup, history pointer or session lifecycle is captured. The native speculator
+retains its own graph managers, including DSpark's backbone and Markov sampling.
+Input copies, replay, feature/probability export and consumption events retain
+their existing stream order and resource owners.
+
+Async scheduling remains unsupported by the external-candidate adapter. Native
+`AsyncScheduler` schedules output placeholders before results arrive, whereas a
+DT request must stop at each confirmed frontier and wait for its remote proposal.
+Adapting that contract also requires preserving in-flight output ownership through
+preemption, zero-output KV replay and retained Draft turn replacement. Merely
+enabling the flag or replacing the scheduler base would violate those boundaries.
+The synchronous loop still batches independently ready requests; no additional
+global token scheduler or graph implementation is introduced.
 
 The role CLI preserves the native `VLLM_BATCH_INVARIANT` default and any explicit
 environment setting. Comparison runs that enable it must use the same setting

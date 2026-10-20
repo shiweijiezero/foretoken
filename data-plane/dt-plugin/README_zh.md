@@ -60,8 +60,10 @@ curl http://127.0.0.1:19100/status
 `candidate_format: "token_ids_log_probs"`、`tensor_transports: ["zmq"]`、`protocol_version: 10`（没有可用的 RDMA 或 GPU peer 路径时）。前端选中的两个角色必须使用相同格式。
 使用两端 HTTP 地址启动前端；角色服务仅提供内部 API，没有公共 OpenAI 接口或鉴权。
 
-每个角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
-对应请求，其他请求仍可执行。Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
+每个角色使用一个 GPU Worker、原生 `uni` executor 和本地同步调度，默认 eager 执行。
+添加原生 `--no-enforce-eager` 参数可启用 vLLM 配置的编译与 CUDA Graph 路径；
+托管部署设置 `engineArgs.enforce-eager: false`。哪些 batch 可 replay Graph 由原生
+attention/backend 能力决定。等待远端候选只暂停对应请求，其他请求仍可执行。Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
 恢复 KV 后继续验证原候选，不会额外确认一个 token。
 Draft 会话跨轮保留原生私有 KV，按 Target 确认结果更新尾部。驻留续轮继续参与原生 KV
 抢占；已被抢占的轮次使用确认输入和保留的特征重建 KV。Draft 当前要求

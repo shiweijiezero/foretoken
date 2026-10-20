@@ -66,8 +66,12 @@ curl http://127.0.0.1:19100/status
 same format. Start the frontend using their HTTP endpoints; the role services
 are internal APIs and do not expose public OpenAI endpoints or authentication.
 
-Each role uses one GPU worker, eager execution and synchronous local
-scheduling. Requests waiting for remote proposals do not block other requests.
+Each role uses one GPU worker, the native `uni` executor and synchronous local
+scheduling. Eager execution remains the default. Add the native `--no-enforce-eager`
+option to enable vLLM's configured compilation and CUDA Graph paths; managed
+deployments use `engineArgs.enforce-eager: false`. Native attention/backend support
+determines which batches can replay a graph. Requests waiting for remote proposals
+do not block other requests.
 Target KV preemption preserves the confirmed prefix and in-flight Draft round;
 recovery rebuilds KV before verifying those candidates without confirming an extra token.
 Draft sessions retain private native KV between rounds and reconcile the tail

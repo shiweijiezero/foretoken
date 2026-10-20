@@ -162,8 +162,8 @@ def main() -> None:
             kv_role="kv_both",
             kv_connector_module_path="foretoken_dt.vllm.migration",
         )
-    if not engine_args.enforce_eager or engine_args.async_scheduling:
-        parser.error("DT requires --enforce-eager and --no-async-scheduling")
+    if engine_args.async_scheduling:
+        parser.error("DT requires --no-async-scheduling")
     register()
     if tensor_enabled:
         if engine_args.worker_extension_cls:
