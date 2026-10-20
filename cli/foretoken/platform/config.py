@@ -190,14 +190,15 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     for path_value in paths:
         path = Path(path_value)
         try:
-            values = yaml.safe_load(path.read_text()) or {}
+            values = yaml.safe_load(path.read_text())
         except (OSError, yaml.YAMLError) as exc:
             raise DeploymentError(
                 f"cannot read Helm values file {path}: {exc}"
             ) from exc
+        if values is None:
+            values = {}
         if not isinstance(values, dict):
-            loaded.append({})
-            continue
+            raise DeploymentError(f"Helm values file {path} must contain a mapping")
         global_values = values.get("global")
         if isinstance(global_values, dict) and "imageRegistry" in global_values:
             raise DeploymentError(

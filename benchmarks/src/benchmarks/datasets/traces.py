@@ -14,10 +14,10 @@ from typing import Any
 
 from benchmarks.datasets.conversations import (
     Task,
-    iter_dataset_rows,
     parse_message_turns,
     request_row_metadata,
 )
+from benchmarks.datasets.rows import iter_dataset_rows
 
 # Each Mooncake hash ID identifies one fixed-size input-token block.
 MOONCAKE_BLOCK_TOKENS = 512

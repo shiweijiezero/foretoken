@@ -5,19 +5,11 @@
 
 pub mod api;
 pub mod backend;
-pub mod cache_gc;
-pub mod config;
+pub mod engine;
 pub mod instance_admission;
-mod kubernetes;
-pub mod kv_event_adapter;
-pub mod launch;
-pub mod managed_engine;
-pub mod preparation;
+pub mod model_cache;
 pub mod profiling;
 pub mod runtime_cache;
-#[doc(hidden)]
-pub mod runtime_transport;
-pub mod shared_kv;
 
 /// Waits for process termination requested by the serving or preparation supervisor.
 /// Callers retain responsibility for draining their tasks and child processes.

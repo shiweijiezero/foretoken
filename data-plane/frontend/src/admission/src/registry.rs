@@ -349,6 +349,7 @@ impl Admission {
         }
     }
 
+    /// Applies a publication to this stable queue and persists its settings without blocking activation.
     fn replace(
         self: &Arc<Self>,
         version: u64,
@@ -429,6 +430,7 @@ impl Admission {
         ))
     }
 
+    /// Registers this model's frontend process epoch once before it publishes waiting requests.
     async fn initialize_owner(&self) -> Result<u64, AdmissionError> {
         let ledger = self
             .ledger
@@ -454,6 +456,7 @@ impl Admission {
         Ok(())
     }
 
+    /// Enters model admission and returns waiting ownership for the complete candidate batch.
     async fn enter_waiting(
         self: &Arc<Self>,
         request: &AdmissionRequest,
@@ -611,8 +614,8 @@ impl Admission {
         Ok(entry.reserved)
     }
 
-    // Only caller heads are considered. Preparing or deferred heads preserve that caller's FIFO
-    // without blocking other callers; priority bands are visited from highest to lowest.
+    /// Reserves one eligible caller head using priority bands and caller rotation.
+    /// Preparing or deferred heads preserve that caller's FIFO without blocking other callers.
     pub(crate) async fn grant_ready(&self) -> Result<(), AdmissionError> {
         let _dispatch = self.dispatch.lock().await;
         let (version, config, members) = self.configuration()?;

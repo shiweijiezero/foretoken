@@ -82,7 +82,11 @@ When a component owns the same resources, clients, configuration, or invariants 
 
 A module centered on a state-owning class should contain that lifecycle and its closely related types. Put behavior shared by current implementations on their base class, and keep adapter-specific recognition, capacity, and policy as methods on the specialized class so the adapter remains readable in one place. Move only reusable stateless parsing, matching, and formatting to clearly named helper modules. Do not enforce one class per file mechanically; keep multiple classes together when they participate in the same lifecycle and share one responsibility.
 
-File length alone is not a refactoring rule. Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries; when an entry point starts making domain policy decisions; or when one state is threaded through many unrelated helpers. Create a domain package or directory when multiple current modules share one stable responsibility, and keep the entry point focused on composition and dispatch. Group engine, hardware, and provider implementations under the domain they implement rather than making each one a peer of unrelated core subsystems. Do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical future implementations. A long file with one cohesive responsibility may remain intact.
+Keep directory hierarchies understandable without opening every file. When a directory accumulates files for several responsibilities, group them by their existing domains or lifecycles so readers can find the entry point and related implementation together. Group engine, hardware, and provider implementations under the domain they implement rather than making each one a peer of unrelated core subsystems. Each level must explain a responsibility; do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical implementations.
+
+Review every first-party source file exceeding 300 effective code lines and every function exceeding 150. Count lines containing code, excluding blank lines, comment-only lines, and documentation strings; a line containing both code and a comment counts. Examine responsibility boundaries, abstraction levels, state ownership, and readability, and decide whether to retain, reorganize, or refactor each definition. These are review thresholds, not mandatory splitting limits: cohesive declarations, mappings, and algorithms may remain together.
+
+Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries. Keep primary functions focused on meaningful stages of the complete operation; move domain policy, protocol handling, and resource construction into the stages that own them. Preserve a readable execution order and shared cleanup rather than shortening the entry point through chains of forwarding helpers.
 
 After substantial feature growth, review the final responsibility map rather than accepting code growth as inevitable. Remove replaced paths, duplicate state, repeated stages, and forwarding layers with no independent ownership; move domain policy out of entry points; and verify that a split reduces the total concepts and implementation that maintainers must understand.
 
@@ -93,7 +97,7 @@ Comments explain information the code cannot express clearly:
 - which external contract constrains the implementation;
 - what remains true after failure or cleanup.
 
-Every first-party public production function must have a concise doc comment stating what it does, who calls or consumes it, what it returns or publishes, and any ownership or lifecycle responsibility that matters. Private functions that own a complete stage or are not self-explanatory need the same context. Generated code and third-party sources follow their owning project.
+Every first-party public production function must have a concise doc comment stating what it does, who calls or consumes it, what it returns or publishes, and any ownership or lifecycle responsibility that matters. Private functions that own a complete stage or are not self-explanatory need the same context. This includes program entry points and functions owning startup, request execution, reconciliation, publication, or shutdown. Generated code and third-party sources follow their owning project.
 
 Large code blocks, multi-stage flows, non-obvious algorithms, and critical boundaries must have a small number of structural comments that let maintainers understand the execution before reading details.
 
@@ -103,7 +107,7 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
-- Rust data plane: run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
+- Rust data plane: run `make verify-data-plane`. It checks formatting and compiles all workspace targets with Clippy.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
 - Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
 - Python benchmarks: follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.

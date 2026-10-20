@@ -15,6 +15,7 @@ use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{RuntimeGeneration, router};
 use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
+/// Publishes controller snapshots to the HTTP frontend and owns admission-close and shutdown drain.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     foretoken_artifacts::source::activate("foretoken-frontend")?;
@@ -102,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Waits for process termination before main closes admission and drains accepted work.
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()

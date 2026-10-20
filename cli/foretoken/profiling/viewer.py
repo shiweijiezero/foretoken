@@ -18,20 +18,23 @@ from foretoken.arguments import ProfileViewCommand
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.profiling.nsight import NsightViewerSessions
 from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
 
 
 def view(command: ProfileViewCommand) -> None:
-    """Print a loopback viewer URL and retain readers until the user exits."""
+    """Print a loopback capture viewer URL and retain native sessions and readers until handlers finish."""
     if timeout_seconds(command.timeout) <= 0:
         raise DeploymentError("--timeout must be positive")
     kubectl = Kubectl()
     history = CaptureDirectories(kubectl, command.namespace)
     history.refresh()
+    # Drain request handlers, then close native sessions before releasing their borrowed readers.
     with (
         ProfileStorage(kubectl, timeout=command.timeout) as storage,
-        ProfileViewer(history, storage) as server,
+        NsightViewerSessions(storage) as nsight,
+        ProfileViewer(history, storage, nsight) as server,
     ):
         print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
         print("Press Ctrl+C to stop.", flush=True)
@@ -183,13 +186,17 @@ class ProfileViewer(ThreadingHTTPServer):
 
     daemon_threads = False
 
-    def __init__(self, history: CaptureDirectories, storage: ProfileStorage) -> None:
+    def __init__(
+        self, history: CaptureDirectories, storage: ProfileStorage, nsight: NsightViewerSessions
+    ) -> None:
+        """Bind loopback HTTP; view retains the borrowed storage and native sessions until handlers finish."""
         self.cluster_lock = threading.Lock()
         self.connection_lock = threading.Lock()
         self.connections: set[socket.socket] = set()
         self.closing = threading.Event()
         self.history = history
         self.storage = storage
+        self.nsight = nsight
         self.session_path = "/" + secrets.token_urlsafe(24) + "/"
         self.page = (
             resources.files("foretoken.profiling").joinpath("viewer.html").read_bytes()
@@ -211,7 +218,7 @@ class ProfileViewer(ThreadingHTTPServer):
         super().shutdown_request(request)
 
     def server_close(self) -> None:
-        """Close browser connections and join request handlers before reader cleanup."""
+        """Close browser connections and join handlers before native sessions and capture readers close."""
         self.closing.set()
         with self.connection_lock:
             for connection in self.connections:
@@ -234,6 +241,7 @@ class ProfileHandler(BaseHTTPRequestHandler):
     def _headers(
         self, status: int, content_type: str, length: int | None = None
     ) -> None:
+        """Keep local responses non-cacheable and restrict embedded frames to the expected Perfetto origin."""
         self.send_response(status)
         if length is not None:
             self.send_header("Content-Length", str(length))
@@ -318,7 +326,7 @@ class ProfileHandler(BaseHTTPRequestHandler):
                     if selected["format"] != "nsight":
                         self._json(400, {"error": "Select an Nsight Systems report."})
                         return
-                    url = self.server.storage.open_nsight(
+                    url = self.server.nsight.open(
                         *artifact, filename, deployment_uid=deployment_uid
                     )
                     self._json(200, {"url": url})

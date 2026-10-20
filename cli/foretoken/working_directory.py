@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import codecs
 import os
 import subprocess
 from pathlib import Path
@@ -17,23 +18,26 @@ def _checkout_roots(root: Path) -> tuple[Path, Path] | None:
     try:
         current = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
+            capture_output=True, check=False,
         )
         if current.returncode:
             return None
         worktrees = subprocess.run(
-            ["git", "-C", str(root), "worktree", "list", "--porcelain", "-z"],
-            capture_output=True, text=True, check=True,
+            ["git", "-c", "core.quotePath=true", "-C", str(root), "worktree", "list", "--porcelain"],
+            capture_output=True, check=True,
         )
     except FileNotFoundError:
         return None
     except subprocess.CalledProcessError as error:
-        raise DeploymentError(f"cannot read Git worktree paths: {error.stderr.strip()}") from error
-    checkout = Path(current.stdout.strip()).resolve()
-    primary = worktrees.stdout.split("\0\0", 1)[0].split("\0")
-    if "bare" in primary:
+        raise DeploymentError(f"cannot read Git worktree paths: {os.fsdecode(error.stderr).strip()}") from error
+    checkout = Path(os.fsdecode(current.stdout.removesuffix(b"\n"))).resolve()
+    primary = worktrees.stdout.split(b"\n\n", 1)[0].splitlines()
+    if b"bare" in primary:
         return checkout, checkout
-    return checkout, Path(primary[0].removeprefix("worktree ")).resolve()
+    path = primary[0].removeprefix(b"worktree ")
+    if path.startswith(b'"'):
+        path = codecs.escape_decode(path[1:-1])[0]
+    return checkout, Path(os.fsdecode(path)).resolve()
 
 
 def repository_data_directory(root: Path) -> Path:

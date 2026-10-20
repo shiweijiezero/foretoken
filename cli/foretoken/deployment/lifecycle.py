@@ -72,6 +72,7 @@ class DeploymentLifecycle:
         self, deployment: ForetokenDeployment, timeout: str, *,
         editable: str | None, engine_sources: tuple[str, ...],
     ) -> ForetokenDeployment:
+        """Publish instance intent and return the deployment observed after controller and service readiness."""
         started = time.monotonic()
         submission = DeploymentSubmission(self.kubectl, deployment, timeout, create_only=self.temporary)
         self.submission = submission

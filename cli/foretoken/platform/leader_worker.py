@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import yaml
+
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
-from foretoken.platform.helm import Helm
+from foretoken.platform.helm_client import HelmClient
 from foretoken.platform.types import ReleaseRef
 
 _API_GROUP = "leaderworkerset.x-k8s.io"
@@ -29,13 +31,14 @@ class LeaderWorkerPlan:
 class LeaderWorkerLifecycle:
     """Own the managed LWS release while leaving shared controllers and CRDs intact."""
 
-    def __init__(self, helm: Helm, kubectl: Kubectl) -> None:
+    def __init__(self, helm: HelmClient, kubectl: Kubectl) -> None:
         self._helm = helm
         self._kubectl = kubectl
+        self._release = ReleaseRef(helm.config.leader_worker.release_name, helm.config.namespace)
 
     def resolve_install(self) -> LeaderWorkerPlan:
         """Select an existing controller or the CLI-owned release before installation."""
-        release = self._helm.leader_worker_release()
+        release = self._release
         release_exists = self._helm.release_exists(release)
         if release_exists and self._helm.is_cli_managed(release):
             return LeaderWorkerPlan(release, "Upgrade", release.display_name)
@@ -96,17 +99,23 @@ class LeaderWorkerLifecycle:
         if plan.controller is not None:
             self._kubectl.rollout_status(plan.controller, timeout)
             return
-        self._helm.install_leader_worker(
-            plan.release,
-            timeout,
-            apply_crds=self._kubectl.apply if plan.action == "Upgrade" else None,
-        )
+        helm = self._helm
+        chart = helm.config.leader_worker
+        values = helm.stored_chart_values(plan.release)
+        with helm.prepared_chart(chart.source, chart.version) as prepared:
+            if plan.action == "Upgrade":
+                # Helm upgrades leave CRDs unchanged; apply this chart's definitions first.
+                self._kubectl.apply(helm.run(["show", "crds", str(prepared)]).stdout)
+            args = helm.upgrade_args(plan.release, str(prepared), timeout)
+            helm.set_chart_image_sources(prepared, ("image.manager",), release=plan.release, overrides=values)
+            args.extend(["--reset-values", "--values", "-"])
+            helm.run(args, input_text=yaml.safe_dump(values))
         self._kubectl.wait_for_crds((_RESOURCE,), timeout)
         self._require_api()
 
     def finish_uninstall(self, timeout: str) -> tuple[str, str]:
         """Remove our controller only when no LWS-managed custom resources remain."""
-        release = self._helm.leader_worker_release()
+        release = self._release
         if not self._helm.release_exists(release):
             return "Preserve", "no CLI-managed controller release"
         if not self._helm.is_cleanup_managed(release):

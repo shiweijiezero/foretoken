@@ -55,19 +55,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Also synchronize saved results and per-run figures to their original W&B runs; never send model requests",
     )
     options = parser.parse_args(argv)
-    from benchmarks.results.plots.figures import (
-        default_output_directory,
-        render_results,
-    )
+    from benchmarks.results.plots.export import default_output_directory, render_results
 
     output = (options.output_dir or default_output_directory(*options.sources, base=options.base)).resolve()
     sources = []
     errors = []
     owner = None
     if options.sync_wandb:
-        from benchmarks.results.console import configure_logging
-        from benchmarks.results.publication import result_sources, sync_results
-        from benchmarks.results.wandb_sync import publication_lock
+        from benchmarks.results.recording.directories import result_sources
+        from benchmarks.results.recording.locks import publication_lock
+        from benchmarks.results.recording.logs import configure_logging
+        from benchmarks.results.wandb.publication import sync_results
 
         configure_logging(True)
         selected = [*options.sources, *([options.base] if options.base is not None else [])]
