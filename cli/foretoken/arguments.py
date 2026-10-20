@@ -359,11 +359,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-e",
         "--editable",
         metavar="PATH",
-        help="build shared platform and deployment application defaults from this checkout",
+        help="build shared platform and deployment application defaults from this source directory",
     )
     install.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
-        help="bind a vLLM checkout for source updates; repeat with vllm-metax=PATH for its plugin (requires -e)",
+        help="select vLLM source; repeat with vllm-metax=PATH for its plugin (requires -e)",
     )
     install.add_argument(
         "--registry",
@@ -442,13 +442,13 @@ def _build_parser() -> argparse.ArgumentParser:
     deploy.add_argument(
         "-e", "--editable", metavar="PATH",
         help=(
-            "build this checkout's controller and serving applications for the selected instance "
+            "build controller and serving applications from this source directory for the selected instance "
             "(requires a source-installed platform)"
         ),
     )
     deploy.add_argument(
         "--engine-source", action="append", metavar="[ENGINE=]PATH",
-        help="select an engine checkout for this source worktree; repeat for vllm-metax",
+        help="select an engine source directory; repeat for vllm-metax",
     )
     deploy.add_argument(
         "--name", type=_instance_name, metavar="NAME",

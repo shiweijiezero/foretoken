@@ -65,6 +65,7 @@ pub(crate) fn validate_stored_items(items: &[Value]) -> Result<(), String> {
         })
 }
 
+/// Starts one response execution and selects JSON, live SSE, or cached replay delivery.
 async fn create(
     State(api): State<ApiState>,
     Extension(snapshot): Extension<RequestSnapshot>,
@@ -103,6 +104,7 @@ async fn create(
     }
 }
 
+/// Reads a saved response or replays committed events without acquiring inference capacity.
 async fn retrieve(
     State(api): State<ApiState>,
     Path(id): Path<String>,
@@ -157,6 +159,7 @@ async fn retrieve(
     ))
 }
 
+/// Hides a saved response without cancelling execution or deleting other history views.
 async fn delete(State(api): State<ApiState>, Path(id): Path<String>) -> Response {
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
@@ -170,6 +173,7 @@ async fn delete(State(api): State<ApiState>, Path(id): Path<String>) -> Response
     }
 }
 
+/// Commits background cancellation intent before waking an executor in this frontend process.
 async fn cancel(State(api): State<ApiState>, Path(id): Path<String>) -> Response {
     let Some(store) = api.store else {
         return ApiError::from(StoreError::Disabled).into_response();
@@ -184,6 +188,7 @@ async fn cancel(State(api): State<ApiState>, Path(id): Path<String>) -> Response
     }
 }
 
+/// Lists the response's retained expanded input without changing its history membership.
 async fn input_items(
     State(api): State<ApiState>,
     Path(id): Path<String>,

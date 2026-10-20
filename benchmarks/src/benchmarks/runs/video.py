@@ -17,16 +17,18 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.config.video import VideoBenchmarkConfig
-from benchmarks.integrations.video import VideoGenerationClient, VideoSampleResult
+from benchmarks.integrations.video.client import VideoGenerationClient
+from benchmarks.integrations.video.types import VideoSampleResult
 from benchmarks.model_service import require_health_endpoint
-from benchmarks.results.output import BenchmarkRun, ResultOutputs
-from benchmarks.results.video import (
-    aggregate_video_results,
+from benchmarks.results.measurements.video import aggregate_video_results
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.video import (
     create_video_benchmark_run,
     video_result_record,
-    video_result_sinks,
     video_run_record,
 )
+from benchmarks.results.reporting.video import video_result_sinks
+from benchmarks.results.types import BenchmarkRun
 
 logger = logging.getLogger(__name__)
 

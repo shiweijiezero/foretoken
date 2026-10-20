@@ -10,11 +10,31 @@ import time
 from datetime import UTC, datetime
 from typing import Self
 
+from foretoken.arguments import ProfileCommand
 from foretoken.errors import DeploymentError
 from foretoken.profiling import ProfileRun
 
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.model_service import ModelService
 from benchmarks.profiling import CaptureCleanupError
-from benchmarks.results.output import write_json
+from benchmarks.results.recording.files import write_json
+
+
+def create_benchmark_profile(
+    benchmark: BenchmarkConfig, service: ModelService, directory: str,
+) -> BenchmarkProfile | None:
+    """Construct the optional capture context; the HTTP runner owns its measured request window."""
+    options = benchmark.profile
+    if options is None:
+        return None
+    command = ProfileCommand(
+        kustomize_path=benchmark.service.kustomize_path,
+        model=service.model,
+        profile_engine=options.engine,
+        profile_duration=options.duration,
+        timeout=benchmark.service.wait_timeout,
+    )
+    return BenchmarkProfile(ProfileRun(command, deployment=service.deployment), directory)
 
 
 class BenchmarkProfile:

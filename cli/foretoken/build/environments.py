@@ -8,7 +8,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from foretoken.build.cluster import ClusterBuilder, ImageNotFoundError
+from foretoken.build.cluster.builder import ClusterBuilder, ImageNotFoundError
 from foretoken.build.records import BUILD_TRANSPORT_ARGUMENTS
 
 
@@ -74,7 +74,7 @@ class BuildEnvironments:
                     key: value for key, value in overrides.items() if key != "CACHE_ID"
                 },
                 "images": {
-                    key: builder.resolve_image(value)
+                    key: value if value == "scratch" else builder.resolve_image(value)
                     for key, value in arguments.items()
                     if key.endswith("_IMAGE")
                 },

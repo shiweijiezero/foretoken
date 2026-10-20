@@ -14,9 +14,9 @@ from benchmarks.config.evaluation import (
     parse_evaluation_arguments,
 )
 from benchmarks.model_service import resolve_model_service
-from benchmarks.results.console import configure_logging
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.logs import configure_logging
 from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
 
 

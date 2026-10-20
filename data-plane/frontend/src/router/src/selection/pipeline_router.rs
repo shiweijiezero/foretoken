@@ -3,7 +3,6 @@
 
 //! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
-use crate::routing_load::{ReservationKey, RoutingReservations};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -13,6 +12,7 @@ use foretoken_model_protocol::ModelServerRole;
 
 use crate::inventory::supports_request;
 use crate::route_target_stats::NoopRouteTargetStatsReader;
+use crate::routing_load::{ReservationKey, RoutingReservations};
 use crate::{
     RouteCandidate, RouteDecision, RouteError, RouteInventory, RouteSession,
     RouteTargetStatsReader, Router, RouterPipeline, RouterPipelines, RouterRequest,
@@ -32,6 +32,28 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     routing_load: Arc<Mutex<RoutingReservations>>,
     metrics: Arc<crate::metrics::RouterMetricsScope>,
 }
+
+#[derive(Clone)]
+enum SessionStage {
+    Initial,
+    Encoder {
+        pipeline_scope_id: String,
+    },
+    Prefill {
+        pipeline_scope_id: String,
+        encoder_completed: bool,
+    },
+    Complete,
+}
+
+struct Session<C: Send + 'static> {
+    router: PipelineRouter<C>,
+    request: RouterRequest,
+    customized_context: C,
+    stage: SessionStage,
+    selected: Vec<ReservationKey>,
+}
+
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
     pub fn with_pipeline(
@@ -64,12 +86,6 @@ impl<C: Send + 'static> PipelineRouter<C> {
         }
     }
 
-    /// Resolves the current execution role independently of which candidate wins selection.
-    fn pipeline(&self, model: &str, round: RoutingStage) -> &Arc<RouterPipeline<C>> {
-        let role = self.inventory.model_routes().selection_role(model, round);
-        self.pipelines.get(model, role)
-    }
-
     /// Associates this inventory with its serving-snapshot version for shared algorithm state.
     /// RuntimeBuilder supplies the version; sessions retain it with their original inventory.
     pub fn with_snapshot_version(mut self, version: u64) -> Self {
@@ -97,10 +113,224 @@ impl<C: Send + 'static> PipelineRouter<C> {
         self.route_target_stats_reader = route_target_stats_reader;
         self
     }
+}
 
-    // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
-    // health, capabilities, rank-local telemetry, and frontend reservations are captured before
-    // algorithms observe it.
+impl PipelineRouter<()> {
+    /// Creates a Router with the default pipeline and no-op data readers.
+    pub fn new(inventory: Arc<dyn RouteInventory>) -> Self {
+        Self::with_pipeline(
+            inventory,
+            crate::RouterPipelineConfig::default()
+                .build()
+                .expect("built-in Router pipeline configuration must be valid"),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: Send + 'static> Router for PipelineRouter<C> {
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
+        let needs_prefix = self
+            .inventory
+            .model_routes()
+            .routes()
+            .iter()
+            .filter(|route| route.model == request.model)
+            .any(|route| {
+                let pipeline = self.pipelines.get(&request.model, route.role);
+                pipeline.filter.needs_kv_prefix() || pipeline.scorer.needs_kv_prefix()
+            });
+        let kv_prefix_indexer = if needs_prefix {
+            let candidates = {
+                let reservations = self
+                    .routing_load
+                    .lock()
+                    .expect("routing load lock poisoned");
+                self.candidates(&request, &reservations)
+            };
+            let lookups = candidates
+                .iter()
+                .filter(|candidate| {
+                    matches!(
+                        candidate.role,
+                        ModelServerRole::Aggregate
+                            | ModelServerRole::Prefill
+                            | ModelServerRole::Decode
+                    )
+                })
+                .filter_map(|candidate| {
+                    request
+                        .kv_prefix_lookup(
+                            candidate.route_target_id.as_str(),
+                            candidate.data_parallel_rank,
+                        )
+                        .ok()
+                })
+                .collect::<Vec<_>>();
+            self.kv_prefix_indexer
+                .prepare(&lookups)
+                .await
+                .unwrap_or_else(|| self.kv_prefix_indexer.clone())
+        } else {
+            self.kv_prefix_indexer.clone()
+        };
+        Box::new(Session {
+            router: Self {
+                inventory: self.inventory.clone(),
+                snapshot_version: self.snapshot_version,
+                kv_prefix_indexer,
+                route_target_stats_reader: self.route_target_stats_reader.clone(),
+                pipelines: self.pipelines.clone(),
+                routing_load: self.routing_load.clone(),
+                metrics: self.metrics.clone(),
+            },
+            customized_context: (self
+                .pipeline(&request.model, RoutingStage::Initial)
+                .customized_context_factory)(&request),
+            request,
+            stage: SessionStage::Initial,
+            selected: Vec::new(),
+        })
+    }
+}
+
+impl<C: Send + 'static> RouteSession for Session<C> {
+    fn response_started(&mut self) {
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in &self.selected {
+            reservations.release_prompt_load(key, self.request.request_id());
+        }
+    }
+
+    fn stage_complete(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in self.selected.drain(..) {
+            reservations.release(&key, self.request.request_id());
+        }
+    }
+
+    fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
+        let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
+            current_stage: RoutingStage::Initial,
+            completed_stages: &[],
+            pipeline_scope_id: None,
+        };
+        let candidate = self.router.select_initial(
+            &self.request,
+            &routing_progress,
+            &mut self.customized_context,
+        )?;
+        self.stage = match candidate.role {
+            ModelServerRole::Encoder => SessionStage::Encoder {
+                pipeline_scope_id: candidate
+                    .pipeline_scope_id
+                    .clone()
+                    .expect("eligible encoder has a pipeline scope"),
+            },
+            ModelServerRole::Prefill => SessionStage::Prefill {
+                pipeline_scope_id: candidate
+                    .pipeline_scope_id
+                    .clone()
+                    .expect("eligible prefill has a pipeline scope"),
+                encoder_completed: false,
+            },
+            ModelServerRole::Aggregate => SessionStage::Complete,
+            ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
+        };
+        self.selected.push((
+            candidate.route_target_id.clone(),
+            candidate.data_parallel_rank,
+        ));
+        Ok(candidate.decision())
+    }
+
+    fn select_prefill(&mut self) -> Result<RouteDecision, RouteError> {
+        let SessionStage::Encoder { pipeline_scope_id } = &self.stage else {
+            return Err(RouteError::PrefillBeforeEncoder);
+        };
+        let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
+            current_stage: RoutingStage::Prefill,
+            completed_stages: &[ModelServerRole::Encoder],
+            pipeline_scope_id: Some(pipeline_scope_id),
+        };
+        let prefill = self.router.select_prefill_in_pipeline_scope(
+            &self.request,
+            &routing_progress,
+            &mut self.customized_context,
+        )?;
+        self.stage = SessionStage::Prefill {
+            pipeline_scope_id: prefill
+                .pipeline_scope_id
+                .clone()
+                .expect("eligible prefill has a pipeline scope"),
+            encoder_completed: true,
+        };
+        self.selected
+            .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
+        Ok(prefill.decision())
+    }
+
+    fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
+        // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
+        // candidates observed for the earlier Prefill choice.
+        let SessionStage::Prefill {
+            pipeline_scope_id,
+            encoder_completed,
+        } = &self.stage
+        else {
+            return Err(RouteError::DecodeBeforePrefill);
+        };
+        let completed_stages: &[ModelServerRole] = if *encoder_completed {
+            &[ModelServerRole::Encoder, ModelServerRole::Prefill]
+        } else {
+            &[ModelServerRole::Prefill]
+        };
+        let routing_progress = RoutingProgress {
+            snapshot_version: self.router.snapshot_version,
+            current_stage: RoutingStage::Decode,
+            completed_stages,
+            pipeline_scope_id: Some(pipeline_scope_id),
+        };
+        let decode = self.router.select_decode_in_pipeline_scope(
+            &self.request,
+            &routing_progress,
+            &mut self.customized_context,
+        )?;
+        self.stage = SessionStage::Complete;
+        self.selected
+            .push((decode.route_target_id.clone(), decode.data_parallel_rank));
+        Ok(decode.decision())
+    }
+}
+
+impl<C: Send + 'static> Drop for Session<C> {
+    fn drop(&mut self) {
+        self.stage_complete();
+    }
+}
+
+impl<C: Send + 'static> PipelineRouter<C> {
+    /// Resolves the current execution role independently of which candidate wins selection.
+    fn pipeline(&self, model: &str, round: RoutingStage) -> &Arc<RouterPipeline<C>> {
+        let role = self.inventory.model_routes().selection_role(model, round);
+        self.pipelines.get(model, role)
+    }
+
+    /// Builds one rank-expanded observation snapshot before the selection algorithms run.
+    /// Dynamic health, capabilities, telemetry, and frontend reservations are captured together.
     fn candidates(
         &self,
         request: &RouterRequest,
@@ -155,8 +385,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .collect()
     }
 
-    // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
-    // computing stage eligibility before scoring; only eligible candidates reach Picker.
+    /// Runs Filter-Scorer-Picker and reserves the winner under one routing-load lock.
+    /// Extension indexes and stage eligibility are checked before a candidate reaches Picker.
     fn select(
         &self,
         request: &RouterRequest,
@@ -335,6 +565,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             })
     }
 
+    /// Selects Aggregate or the initial stage of a complete split pipeline.
     fn select_initial(
         &self,
         request: &RouterRequest,
@@ -368,6 +599,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         )
     }
 
+    /// Selects Prefill within the Encoder's scope while requiring an eligible Decode stage.
     fn select_prefill_in_pipeline_scope(
         &self,
         request: &RouterRequest,
@@ -392,6 +624,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         )
     }
 
+    /// Selects Decode from a fresh observation snapshot within the completed Prefill's scope.
     fn select_decode_in_pipeline_scope(
         &self,
         request: &RouterRequest,
@@ -413,229 +646,5 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 model: request.model.clone(),
             },
         )
-    }
-}
-impl PipelineRouter<()> {
-    /// Creates a Router with the default pipeline and no-op data readers.
-    pub fn new(inventory: Arc<dyn RouteInventory>) -> Self {
-        Self::with_pipeline(
-            inventory,
-            crate::RouterPipelineConfig::default()
-                .build()
-                .expect("built-in Router pipeline configuration must be valid"),
-        )
-    }
-}
-
-#[derive(Clone)]
-enum SessionStage {
-    Initial,
-    Encoder {
-        pipeline_scope_id: String,
-    },
-    Prefill {
-        pipeline_scope_id: String,
-        encoder_completed: bool,
-    },
-    Complete,
-}
-
-struct Session<C: Send + 'static> {
-    router: PipelineRouter<C>,
-    request: RouterRequest,
-    customized_context: C,
-    stage: SessionStage,
-    selected: Vec<ReservationKey>,
-}
-impl<C: Send + 'static> Drop for Session<C> {
-    fn drop(&mut self) {
-        self.stage_complete();
-    }
-}
-impl<C: Send + 'static> RouteSession for Session<C> {
-    fn response_started(&mut self) {
-        let mut reservations = self
-            .router
-            .routing_load
-            .lock()
-            .expect("routing load lock poisoned");
-        for key in &self.selected {
-            reservations.release_prompt_load(key, self.request.request_id());
-        }
-    }
-
-    fn stage_complete(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        let mut reservations = self
-            .router
-            .routing_load
-            .lock()
-            .expect("routing load lock poisoned");
-        for key in self.selected.drain(..) {
-            reservations.release(&key, self.request.request_id());
-        }
-    }
-
-    fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
-        let routing_progress = RoutingProgress {
-            snapshot_version: self.router.snapshot_version,
-            current_stage: RoutingStage::Initial,
-            completed_stages: &[],
-            pipeline_scope_id: None,
-        };
-        let candidate = self.router.select_initial(
-            &self.request,
-            &routing_progress,
-            &mut self.customized_context,
-        )?;
-        self.stage = match candidate.role {
-            ModelServerRole::Encoder => SessionStage::Encoder {
-                pipeline_scope_id: candidate
-                    .pipeline_scope_id
-                    .clone()
-                    .expect("eligible encoder has a pipeline scope"),
-            },
-            ModelServerRole::Prefill => SessionStage::Prefill {
-                pipeline_scope_id: candidate
-                    .pipeline_scope_id
-                    .clone()
-                    .expect("eligible prefill has a pipeline scope"),
-                encoder_completed: false,
-            },
-            ModelServerRole::Aggregate => SessionStage::Complete,
-            ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
-        };
-        self.selected.push((
-            candidate.route_target_id.clone(),
-            candidate.data_parallel_rank,
-        ));
-        Ok(candidate.decision())
-    }
-
-    fn select_prefill(&mut self) -> Result<RouteDecision, RouteError> {
-        let SessionStage::Encoder { pipeline_scope_id } = &self.stage else {
-            return Err(RouteError::PrefillBeforeEncoder);
-        };
-        let routing_progress = RoutingProgress {
-            snapshot_version: self.router.snapshot_version,
-            current_stage: RoutingStage::Prefill,
-            completed_stages: &[ModelServerRole::Encoder],
-            pipeline_scope_id: Some(pipeline_scope_id),
-        };
-        let prefill = self.router.select_prefill_in_pipeline_scope(
-            &self.request,
-            &routing_progress,
-            &mut self.customized_context,
-        )?;
-        self.stage = SessionStage::Prefill {
-            pipeline_scope_id: prefill
-                .pipeline_scope_id
-                .clone()
-                .expect("eligible prefill has a pipeline scope"),
-            encoder_completed: true,
-        };
-        self.selected
-            .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
-        Ok(prefill.decision())
-    }
-
-    fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
-        // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
-        // candidates observed for the earlier Prefill choice.
-        let SessionStage::Prefill {
-            pipeline_scope_id,
-            encoder_completed,
-        } = &self.stage
-        else {
-            return Err(RouteError::DecodeBeforePrefill);
-        };
-        let completed_stages: &[ModelServerRole] = if *encoder_completed {
-            &[ModelServerRole::Encoder, ModelServerRole::Prefill]
-        } else {
-            &[ModelServerRole::Prefill]
-        };
-        let routing_progress = RoutingProgress {
-            snapshot_version: self.router.snapshot_version,
-            current_stage: RoutingStage::Decode,
-            completed_stages,
-            pipeline_scope_id: Some(pipeline_scope_id),
-        };
-        let decode = self.router.select_decode_in_pipeline_scope(
-            &self.request,
-            &routing_progress,
-            &mut self.customized_context,
-        )?;
-        self.stage = SessionStage::Complete;
-        self.selected
-            .push((decode.route_target_id.clone(), decode.data_parallel_rank));
-        Ok(decode.decision())
-    }
-}
-#[async_trait::async_trait]
-impl<C: Send + 'static> Router for PipelineRouter<C> {
-    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
-        let needs_prefix = self
-            .inventory
-            .model_routes()
-            .routes()
-            .iter()
-            .filter(|route| route.model == request.model)
-            .any(|route| {
-                let pipeline = self.pipelines.get(&request.model, route.role);
-                pipeline.filter.needs_kv_prefix() || pipeline.scorer.needs_kv_prefix()
-            });
-        let kv_prefix_indexer = if needs_prefix {
-            let candidates = {
-                let reservations = self
-                    .routing_load
-                    .lock()
-                    .expect("routing load lock poisoned");
-                self.candidates(&request, &reservations)
-            };
-            let lookups = candidates
-                .iter()
-                .filter(|candidate| {
-                    matches!(
-                        candidate.role,
-                        ModelServerRole::Aggregate
-                            | ModelServerRole::Prefill
-                            | ModelServerRole::Decode
-                    )
-                })
-                .filter_map(|candidate| {
-                    request
-                        .kv_prefix_lookup(
-                            candidate.route_target_id.as_str(),
-                            candidate.data_parallel_rank,
-                        )
-                        .ok()
-                })
-                .collect::<Vec<_>>();
-            self.kv_prefix_indexer
-                .prepare(&lookups)
-                .await
-                .unwrap_or_else(|| self.kv_prefix_indexer.clone())
-        } else {
-            self.kv_prefix_indexer.clone()
-        };
-        Box::new(Session {
-            router: Self {
-                inventory: self.inventory.clone(),
-                snapshot_version: self.snapshot_version,
-                kv_prefix_indexer,
-                route_target_stats_reader: self.route_target_stats_reader.clone(),
-                pipelines: self.pipelines.clone(),
-                routing_load: self.routing_load.clone(),
-                metrics: self.metrics.clone(),
-            },
-            customized_context: (self
-                .pipeline(&request.model, RoutingStage::Initial)
-                .customized_context_factory)(&request),
-            request,
-            stage: SessionStage::Initial,
-            selected: Vec::new(),
-        })
     }
 }

@@ -758,6 +758,17 @@ def admission_panels(board: dashboard.Dashboard) -> None:
 
 def model_serving_panels(board: dashboard.Dashboard) -> None:
     """Add model throughput, latency, cache, device, and routing panels."""
+    _model_overview_panels(board)
+    _generation_latency_panels(board)
+    _request_length_panels(board)
+    _speculative_decoding_panels(board)
+    _cache_panels(board)
+    _resource_panels(board)
+    _routing_panels(board)
+
+
+def _model_overview_panels(board: dashboard.Dashboard) -> None:
+    """Add whole-model throughput, completed requests, and scheduler panels."""
     board.with_row(dashboard.Row("Model Serving"))
     # Whole-model totals ignore drill-down filters; backend curves retain those filters.
     # In a disaggregated pipeline, input belongs to prefill and output to decode.
@@ -813,6 +824,10 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
             span=12,
         )
     )
+
+
+def _generation_latency_panels(board: dashboard.Dashboard) -> None:
+    """Add generation latency, stage latency, and histogram sample panels."""
     board.with_row(dashboard.Row("Generation latency"))
     board.with_panel(
         latency(
@@ -913,6 +928,8 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
             )
         )
 
+def _request_length_panels(board: dashboard.Dashboard) -> None:
+    """Add prompt and output request-length distributions."""
     board.with_row(dashboard.Row("Request lengths"))
     board.with_panel(
         distribution(
@@ -929,6 +946,8 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
         )
     )
 
+def _speculative_decoding_panels(board: dashboard.Dashboard) -> None:
+    """Add speculative decoding token, acceptance, and timing panels."""
     board.with_row(dashboard.Row("Speculative decoding"))
     draft_tokens = model_total("vllm:spec_decode_num_draft_tokens_total", rate=True, roles="aggregate|decode")
     accepted_tokens = model_total("vllm:spec_decode_num_accepted_tokens_total", rate=True, roles="aggregate|decode")
@@ -1028,6 +1047,8 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
         )
     )
 
+def _cache_panels(board: dashboard.Dashboard) -> None:
+    """Add KV and RuntimeCache filesystem panels."""
     board.with_row(dashboard.Row("Cache"))
     board.with_panel(
         series(
@@ -1084,6 +1105,8 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
         )
     )
 
+def _resource_panels(board: dashboard.Dashboard) -> None:
+    """Add accelerator, CPU, and memory resource panels."""
     board.with_row(dashboard.Row("Accelerators and Resources"))
     board.with_panel(
         by_device(
@@ -1170,6 +1193,8 @@ def model_serving_panels(board: dashboard.Dashboard) -> None:
         )
     )
 
+def _routing_panels(board: dashboard.Dashboard) -> None:
+    """Add routing share, outcome, latency, and candidate panels."""
     # Route distribution uses the smallest routable unit; controller internals remain diagnostic.
     board.with_row(dashboard.Row("Routing decisions"))
     selections = routing_target_rates()

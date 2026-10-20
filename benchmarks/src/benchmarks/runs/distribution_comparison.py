@@ -19,22 +19,24 @@ from foretoken.errors import DeploymentError
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig
 from benchmarks.config.evaluation import EvaluationConfig
-from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
+from benchmarks.datasets.rows import iter_jsonl_rows
 from benchmarks.integrations.distributions import (
     CompletionComparisonClient,
     compare_logprobs,
 )
 from benchmarks.model_service import ModelService, resolve_model_service
-from benchmarks.results.distribution_comparison import (
+from benchmarks.results.observations.environment import serving_environment
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.distribution_comparison_checkpoint import (
+    DistributionComparisonCheckpoint,
+)
+from benchmarks.results.recording.files import write_json
+from benchmarks.results.reporting.distribution_comparison import (
     distribution_comparison_sinks,
     greedy_comparison_sinks,
 )
-from benchmarks.results.distribution_comparison_checkpoint import (
-    DistributionComparisonCheckpoint,
-)
-from benchmarks.results.environment import serving_environment
-from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
+from benchmarks.results.types import BenchmarkRun
 
 logger = logging.getLogger(__name__)
 

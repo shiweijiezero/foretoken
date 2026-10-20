@@ -3,7 +3,7 @@
 
 //! Engine-neutral operations, output ownership, and failures consumed by internal HTTP handlers.
 
-mod vllm;
+pub mod vllm;
 
 use std::future::Future;
 use std::pin::Pin;

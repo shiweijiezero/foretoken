@@ -23,7 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.video import VideoBenchmarkConfig
-from benchmarks.results.console import capture_run_logs
+from benchmarks.results.recording.logs import capture_run_logs
 
 logger = logging.getLogger(__name__)
 _Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)

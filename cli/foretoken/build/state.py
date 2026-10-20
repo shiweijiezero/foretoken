@@ -28,21 +28,21 @@ from foretoken.applications.files import (
     remove_application_jobs,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import remove_build_pods
-from foretoken.build.inputs import BuildInputs, engine_source_roots
-from foretoken.build.node_images import (
+from foretoken.build.cluster.builder import remove_build_pods
+from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
     SOURCE_IMAGE_HELPER_LABEL,
     image_tools_image,
     node_containerd_socket,
 )
+from foretoken.build.cluster.storage import SOURCE_BUILD_CACHE_LABEL
+from foretoken.build.inputs import BuildInputs, engine_source_roots
 from foretoken.build.records import (
     SOURCE_BUILD_KEY,
     WORKSPACE_LABEL,
     WORKSPACE_SELECTION_KEY,
 )
-from foretoken.build.storage import SOURCE_BUILD_CACHE_LABEL
 from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -447,7 +447,7 @@ def reconcile_source_resources(
     kubectl: Kubectl, timeout: str, *, checkout: Path | None = None,
 ) -> None:
     """Reconcile a workstation's owned image pins while retaining completed and pending environments."""
-    from foretoken.build.node_images import node_image_store
+    from foretoken.build.cluster.images import node_image_store
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
@@ -554,7 +554,7 @@ def source_uninstall(
     The platform lifecycle removes Helm resources inside this context. All cleanup
     identities and node access come from observed cluster resources, not local state.
     """
-    from foretoken.build.node_images import node_image_store
+    from foretoken.build.cluster.images import node_image_store
 
     origin_owners = {("PersistentVolumeClaim", origin["name"], origin["uid"]) for origin in origins}
     if not origin_owners:

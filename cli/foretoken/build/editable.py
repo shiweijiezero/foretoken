@@ -23,10 +23,13 @@ from foretoken.applications.files import (
     SERVICE_COMPONENTS,
     SOURCE_REVISION,
     ApplicationFiles,
+    ApplicationPublication,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster import registry_credentials
-from foretoken.build.compiler import CompilerWorkspace
+from foretoken.build.cluster.builder import registry_credentials
+from foretoken.build.cluster.compiler import CompilerWorkspace
+from foretoken.build.cluster.images import image_tools_image, node_image_store
+from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
 from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
@@ -34,7 +37,6 @@ from foretoken.build.inputs import (
     snapshot_versions,
     source_checkout,
 )
-from foretoken.build.node_images import image_tools_image, node_image_store
 from foretoken.build.records import (
     BUILD_TRANSPORT_ARGUMENTS,
     SOURCE_BUILD_KEY,
@@ -53,7 +55,6 @@ from foretoken.build.state import (
     runtime_settings,
     write_source_state,
 )
-from foretoken.build.storage import ensure_build_volumes, local_build_nodes
 from foretoken.command_execution import cleanup_commands
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
@@ -84,6 +85,7 @@ class EditableDeployment:
         self, kubectl: Kubectl, cluster: Path, platform: dict[str, Any],
         root: Path, engine_sources: tuple[str, ...], timeout: str,
     ) -> None:
+        """Resolve the platform's build recipe, borrowing only matching local installation history."""
         self.kubectl = kubectl
         self.cluster = cluster
         self.configuration = platform
@@ -98,6 +100,8 @@ class EditableDeployment:
             or self.platform["runtime"] != runtime_settings(platform)
         ):
             self.platform = None
+        # The cluster recipe supports new workstations; legacy local settings
+        # are usable only after their platform identity and runtime matched.
         recipe = platform["data"].get(SOURCE_BUILD_KEY)
         if recipe is not None:
             self.recipe = json.loads(recipe)
@@ -605,68 +609,18 @@ class EditableDeployment:
             ) is None:
                 bundle.pop("parts")
         build = self.state["build"]
-        local_caches = local_build_nodes(
-            self.kubectl, build["registry"], build["containerd_socket"]
-        )
-        node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-        claim = next(
-            (claim for node, _, claim in local_caches if node == origin.node),
-            "foretoken-application-compiler-" + node_uid,
-        ) + "-" + build["binding"][:12]
-
-        def record_cache(identity: dict[str, Any]) -> None:
-            """Keep each volume UID recoverable if paired allocation or publication fails."""
-            if identity not in build.setdefault("caches", []):
-                build["caches"].append(identity)
-                write_source_state(self.directory / "install.json", self.state)
-
-        _, execution = ensure_build_volumes(
-            self.kubectl,
-            namespace,
-            claim,
-            build["configuration"],
-            binding=build["binding"],
-            timeout=timeout,
-            record_identity=record_cache,
-            recorded_caches=build.get("caches", []),
-            owner={
-                "apiVersion": "v1",
-                "kind": "PersistentVolumeClaim",
-                "name": origin.claim,
-                "uid": origin.claim_uid,
-            },
-        )
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
-            and "engine" in self.state["bundles"]["model-server"].get(
-                "parts", _APPLICATION_PARTS["model-server"]
-            )
+            and "engine" in self.state["bundles"]["model-server"].get("parts", _APPLICATION_PARTS["model-server"])
         )
-        if build_engine and not build["registry"] and origin.node not in build["engine_caches"]:
-            # A newly prepared origin node needs a cold cache, not another node's native outputs.
-            build["engine_caches"][origin.node] = (
-                build["binding"] + "-" + uuid.uuid4().hex
-            )
-            write_source_state(self.directory / "install.json", self.state)
-        inputs = {
-            str(path.relative_to(snapshot)): path
-            for path in snapshot.rglob("*")
-            if path.is_file()
-        }
-        references = origin.references(helm.application_history())
-        if references is not None:
-            references.update(
-                bundle["revision"] for bundle in self.state["bundles"].values()
-            )
-        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
         compilers = {component: build["compilers"][component] for component in missing}
         if build_engine:
             compilers["engine"] = build["compilers"]["engine"]
-        tools_image = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
         if not build["registry"]:
             with node_image_store(
-                self.kubectl, namespace, origin.node, build["containerd_socket"], tools_image,
+                self.kubectl, namespace, origin.node, build["containerd_socket"],
+                image_tools_image(build["arguments"], build.get("registry_mirrors", {})),
                 timeout, binding=build["binding"], pull_secrets=origin.pull_secrets,
             ) as store:
                 available = all(
@@ -678,16 +632,10 @@ class EditableDeployment:
                 print("Compiler image is unavailable on this node; restoring the development environment", flush=True)
                 self._rebuild(timeout)
                 return
-        with CompilerWorkspace(
-            self.kubectl, namespace, claim, build["binding"], origin.node,
-            compilers, build["configuration"], timeout,
-            tools_image=tools_image,
-            execution_claim=execution["name"] if execution is not None else "",
-            owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
-            credentials=registry_credentials([tools_image, *compilers.values()]),
-            pull_secrets=origin.pull_secrets,
-        ) as builder:
-            builder.sync(inputs, build["versions"])
+        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
+        with self._application_workspace(
+            origin, snapshot, compilers, helm, timeout,
+        ) as (builder, references):
 
             def build_application(component: str) -> None:
                 """Build a component's files and assemble its engine overlay before publication."""
@@ -722,30 +670,24 @@ class EditableDeployment:
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
             previous_revisions = {}
-            with ThreadPoolExecutor(max_workers=len(missing)) as publications, builder.cancellation:
-                futures = {}
-                for component in sorted(missing):
-                    bundle = self.state["bundles"][component]
-                    revision = bundle["revision"]
-                    previous = bundle.get("previous", "")
-                    previous_revisions[component] = previous
-                    futures[component] = publications.submit(
-                        builder.cancellation.run_stage, origin.publish,
-                        builder,
-                        builder.root + "/output/" + revision + "/payload",
-                        component,
-                        revision,
-                        previous,
-                        references,
-                        timeout=timeout,
-                        reuse_previous=True,
-                        sources=build_sources(snapshot, component),
-                        image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
-                        parts=bundle.get("parts"),
-                    )
-                published = {
-                    component: future.result() for component, future in futures.items()
-                }
+            publications = []
+            for component in sorted(missing):
+                bundle = self.state["bundles"][component]
+                revision = bundle["revision"]
+                previous = bundle.get("previous", "")
+                previous_revisions[component] = previous
+                publications.append(ApplicationPublication(
+                    component=component,
+                    source=builder.root + "/output/" + revision + "/payload",
+                    revision=revision,
+                    previous=previous,
+                    sources=build_sources(snapshot, component),
+                    image=self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]],
+                    parts=bundle.get("parts"),
+                ))
+            published = origin.publish_batch(
+                builder, publications, references, timeout=timeout,
+            )
             for component, published_revision in published.items():
                 default_revision = (
                     build.get("applications", {}).get(component, {}).get("revision")
@@ -768,6 +710,78 @@ class EditableDeployment:
                 flush=True,
             )
             builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
+
+    @contextmanager
+    def _application_workspace(
+        self,
+        origin: ApplicationFiles,
+        snapshot: Path,
+        compilers: dict[str, str],
+        helm: Helm,
+        timeout: str,
+    ) -> Iterator[tuple[CompilerWorkspace, set[str] | None]]:
+        """Hold one origin compiler and its retention snapshot through incremental application publication."""
+        namespace = origin.namespace
+        build = self.state["build"]
+        local_caches = local_build_nodes(
+            self.kubectl, build["registry"], build["containerd_socket"]
+        )
+        node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+        claim = next(
+            (claim for node, _, claim in local_caches if node == origin.node),
+            "foretoken-application-compiler-" + node_uid,
+        ) + "-" + build["binding"][:12]
+
+        def record_cache(identity: dict[str, Any]) -> None:
+            """Keep each volume UID recoverable if paired allocation or publication fails."""
+            if identity not in build.setdefault("caches", []):
+                build["caches"].append(identity)
+                write_source_state(self.directory / "install.json", self.state)
+
+        _, execution = ensure_build_volumes(
+            self.kubectl,
+            namespace,
+            claim,
+            build["configuration"],
+            binding=build["binding"],
+            timeout=timeout,
+            record_identity=record_cache,
+            recorded_caches=build.get("caches", []),
+            owner={
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "name": origin.claim,
+                "uid": origin.claim_uid,
+            },
+        )
+        if "engine" in compilers and not build["registry"] and origin.node not in build["engine_caches"]:
+            # A newly prepared origin node needs a cold cache, not another node's native outputs.
+            build["engine_caches"][origin.node] = (
+                build["binding"] + "-" + uuid.uuid4().hex
+            )
+            write_source_state(self.directory / "install.json", self.state)
+        inputs = {
+            str(path.relative_to(snapshot)): path
+            for path in snapshot.rglob("*")
+            if path.is_file()
+        }
+        references = origin.references(helm.application_history())
+        if references is not None:
+            references.update(
+                bundle["revision"] for bundle in self.state["bundles"].values()
+            )
+        tools_image = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
+        with CompilerWorkspace(
+            self.kubectl, namespace, claim, build["binding"], origin.node,
+            compilers, build["configuration"], timeout,
+            tools_image=tools_image,
+            execution_claim=execution["name"] if execution is not None else "",
+            owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+            credentials=registry_credentials([tools_image, *compilers.values()]),
+            pull_secrets=origin.pull_secrets,
+        ) as builder:
+            builder.sync(inputs, build["versions"])
+            yield builder, references
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str

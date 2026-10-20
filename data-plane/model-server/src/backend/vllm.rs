@@ -3,7 +3,14 @@
 
 //! Adapts vLLM's public Llm facade, completion ownership, and metrics to the model-server backend.
 
+pub mod config;
+pub mod kv_events;
+pub mod launch;
+pub mod prefix_lookup;
+pub mod startup;
 mod telemetry;
+#[doc(hidden)]
+pub mod transport;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

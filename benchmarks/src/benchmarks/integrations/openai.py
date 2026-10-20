@@ -21,8 +21,8 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.conversations import Task
 from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.model_service import ModelService
-from benchmarks.results.metrics import compute_tpot
-from benchmarks.results.responses import ResponseContent, ResponseWriter
+from benchmarks.results.measurements.requests import compute_tpot
+from benchmarks.results.recording.responses import ResponseContent, ResponseWriter
 
 
 @dataclass(frozen=True)
