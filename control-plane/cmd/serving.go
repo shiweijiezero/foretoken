@@ -18,7 +18,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/kv"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/model"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/profiling"
-	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage/runtimecache"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/video"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/deployments"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/observability"
@@ -460,7 +460,7 @@ func registerServingControllers(manager ctrl.Manager, configuration servingConfi
 		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
-	if err := (&storage.RuntimeCacheReconciler{Client: manager.GetClient(), Profile: configuration.cacheProfile}).SetupWithManager(manager); err != nil {
+	if err := (&runtimecache.Reconciler{Client: manager.GetClient(), Profile: configuration.cacheProfile}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
 	}

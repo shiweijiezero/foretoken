@@ -3,7 +3,7 @@
 
 // Manages recoverable collection-volume aliases without changing borrowed storage.
 
-package storage
+package modelcache
 
 import (
 	"context"
@@ -32,10 +32,10 @@ const (
 
 // collectionMetadata identifies collection resources by source UID and platform collector.
 // Cluster-scoped PVs cannot use namespaced owners and are retired explicitly by this controller.
-func (reconciler *ModelCacheCollectionReconciler) collectionMetadata(record modelCacheCollectionRecord, name, namespace string) metav1.ObjectMeta {
+func (reconciler *Reconciler) collectionMetadata(record modelCacheCollectionRecord, name, namespace string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: name, Namespace: namespace,
-		Labels: map[string]string{ModelCacheCollectionLabel: string(record.UID)},
+		Labels: map[string]string{CollectionLabel: string(record.UID)},
 		Annotations: map[string]string{
 			modelCacheCollectionNamespaceAnnotation: record.Namespace,
 			modelCacheCollectionNameAnnotation:      record.Name,
@@ -45,9 +45,9 @@ func (reconciler *ModelCacheCollectionReconciler) collectionMetadata(record mode
 }
 
 // validateCollectionResource restricts adoption and cleanup to this collector's resources for one source.
-func (reconciler *ModelCacheCollectionReconciler) validateCollectionResource(object client.Object, record client.ObjectKey, uid types.UID) error {
+func (reconciler *Reconciler) validateCollectionResource(object client.Object, record client.ObjectKey, uid types.UID) error {
 	annotations := object.GetAnnotations()
-	if object.GetLabels()[ModelCacheCollectionLabel] != string(uid) ||
+	if object.GetLabels()[CollectionLabel] != string(uid) ||
 		annotations[modelCacheCollectionNamespaceAnnotation] != record.Namespace ||
 		annotations[modelCacheCollectionNameAnnotation] != record.Name ||
 		annotations[modelCacheCollectionOwnerAnnotation] != reconciler.Namespace+"/"+reconciler.ServiceAccount {
@@ -58,7 +58,7 @@ func (reconciler *ModelCacheCollectionReconciler) validateCollectionResource(obj
 
 // collectionSourceVolume returns the source's proven PV, or nil when no backing volume remains.
 // PVC UID and claimRef resolve its identity without persisting a derived volume name.
-func (reconciler *ModelCacheCollectionReconciler) collectionSourceVolume(ctx context.Context, record modelCacheCollectionRecord, reference runtimeconfig.ModelCacheReference) (*corev1.PersistentVolume, error) {
+func (reconciler *Reconciler) collectionSourceVolume(ctx context.Context, record modelCacheCollectionRecord, reference runtimeconfig.ModelCacheReference) (*corev1.PersistentVolume, error) {
 	claim := new(corev1.PersistentVolumeClaim)
 	var volume *corev1.PersistentVolume
 	if err := reconciler.APIReader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: reference.ClaimName}, claim); err == nil {
@@ -199,7 +199,7 @@ func collectionAliasSpec(volume *corev1.PersistentVolume) (corev1.PersistentVolu
 
 // reconcileCollectionStorage prepares supported aliases or defers to the cache's storage lifecycle.
 // The platform claim retains the source spec so restarts and source-namespace removal can resume collection.
-func (reconciler *ModelCacheCollectionReconciler) reconcileCollectionStorage(ctx context.Context, plan *modelCacheCollectionPlan) (modelCacheCollectionStorageState, error) {
+func (reconciler *Reconciler) reconcileCollectionStorage(ctx context.Context, plan *modelCacheCollectionPlan) (modelCacheCollectionStorageState, error) {
 	name := modelCacheCollectionStoragePrefix + string(plan.Record.UID)
 	key := client.ObjectKey{Namespace: reconciler.Namespace, Name: name}
 	recordKey := client.ObjectKey{Namespace: plan.Record.Namespace, Name: plan.Record.Name}

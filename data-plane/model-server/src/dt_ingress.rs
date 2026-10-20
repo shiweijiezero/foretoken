@@ -4,9 +4,11 @@
 //! Applies the model-server's admission and execution ownership to Python DT roles.
 
 use std::io;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -17,7 +19,10 @@ use foretoken_request_ledger::{Outcome, RequestLedger, ReservationRef};
 use futures::StreamExt;
 use serde_json::Value;
 
-use crate::api::{AdmissionPermit, ExecutionStore, ReservationEnd, RuntimeHealth, finish_shared};
+use crate::execution::{
+    AdmissionPermit, ExecutionStore, ReservationEnd, RuntimeHealth, finish_shared,
+};
+use crate::profiling::EngineProfiler;
 
 #[derive(Clone)]
 struct Ingress {
@@ -55,6 +60,55 @@ pub fn router(
         .fallback(forward)
         .with_state(state)
         .merge(crate::profiling::router(profiling)))
+}
+
+/// Builds the private role's capture adapter for its process-owned profiling supervisor.
+pub fn create_profiler(endpoint: String) -> io::Result<Arc<dyn EngineProfiler>> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(io::Error::other)?;
+    Ok(Arc::new(RoleProfiler { endpoint, client }))
+}
+
+struct RoleProfiler {
+    endpoint: String,
+    client: reqwest::Client,
+}
+
+impl RoleProfiler {
+    /// Sends one capture command; the supervisor retains uncertain native operations through shutdown.
+    async fn control(
+        &self,
+        start: bool,
+        directory: Option<&Path>,
+        prefix: &str,
+    ) -> Result<(), String> {
+        self.client
+            .post(format!("{}/profiling", self.endpoint))
+            .json(&serde_json::json!({
+                "start": start,
+                "directory": directory.map(|path| path.to_string_lossy()),
+                "profile_prefix": prefix,
+            }))
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl EngineProfiler for RoleProfiler {
+    async fn set_pytorch_recording(&self, start: bool, prefix: &str) -> Result<(), String> {
+        self.control(start, None, prefix).await
+    }
+
+    async fn set_mctracer_recording(&self, start: bool, directory: &Path) -> Result<(), String> {
+        self.control(start, Some(directory), "").await
+    }
 }
 
 // Admission lives at the Rust listener; Python remains the owner of sessions and engine work.
@@ -132,10 +186,10 @@ async fn forward(State(state): State<Ingress>, request: Request) -> Response {
         };
         let permit = match state.health.try_admit() {
             Ok(permit) => permit,
-            Err(crate::api::AdmissionRejection::Busy) => {
+            Err(crate::execution::AdmissionRejection::Busy) => {
                 return crate::api::ApiError::Busy.into_response();
             }
-            Err(crate::api::AdmissionRejection::Closed) => {
+            Err(crate::execution::AdmissionRejection::Closed) => {
                 return (
                     [(header::CONTENT_TYPE, "application/x-ndjson")],
                     Body::from("{\"event\":\"admission_closed\"}\n"),

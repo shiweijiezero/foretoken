@@ -3,7 +3,7 @@
 
 // Selects prepared cache claims and manages RuntimeCache-owned dynamic PVCs.
 
-package storage
+package runtimecache
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
@@ -32,8 +33,8 @@ const (
 	runtimeCacheRetentionAnnotation = "inference.foretoken.io/runtime-cache-retention"
 )
 
-// RuntimeCacheReconciler owns dynamic PVCs and observes administrator-selected storage.
-type RuntimeCacheReconciler struct {
+// Reconciler owns dynamic PVCs and observes administrator-selected storage.
+type Reconciler struct {
 	client.Client
 	Profile runtimeconfig.RuntimeCacheProfile
 }
@@ -45,7 +46,7 @@ type runtimeCacheExpansionState struct {
 }
 
 // Reconcile publishes the selected storage and manages only the cache's own dynamic PVC.
-func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	cache := new(inferencev1alpha1.RuntimeCache)
 	if err := reconciler.Get(ctx, request.NamespacedName, cache); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -68,7 +69,7 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, errors.Join(fmt.Errorf("reconcile RuntimeCache PVC: %w", err), statusErr)
 	}
 	ownsClaim := metav1.IsControlledBy(pvc, cache)
-	if message, failed := pvcResizeFailure(pvc); failed {
+	if message, failed := storage.PVCResizeFailure(pvc); failed {
 		phase, usable := inferencev1alpha1.RuntimeCachePhaseDegraded, false
 		if pvcHasUsableCapacity(pvc) {
 			phase, usable = inferencev1alpha1.RuntimeCachePhaseReady, true
@@ -76,9 +77,9 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		if err := reconciler.updateStatus(ctx, cache, phase, usable, "ResizeFailed", message, pvc); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, nil
+		return ctrl.Result{RequeueAfter: storage.PVCPollInterval}, nil
 	}
-	ready := pvc.Status.Phase == corev1.ClaimBound && pvcCapacityAtLeastRequest(pvc) && !pvcResizePending(pvc)
+	ready := pvc.Status.Phase == corev1.ClaimBound && storage.PVCCapacityAtLeastRequest(pvc) && !storage.PVCResizePending(pvc)
 	phase, reason, message := inferencev1alpha1.RuntimeCachePhasePending, "WaitingForBinding", "Runtime cache PVC is not bound"
 	if resizing || pvc.Status.Phase == corev1.ClaimBound && !ready {
 		phase, reason, message = inferencev1alpha1.RuntimeCachePhaseResizing, "Resizing", "Runtime cache PVC is expanding"
@@ -88,7 +89,7 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 	}
 	result := ctrl.Result{}
 	if ownsClaim && cache.Spec.MaxSize != "" && pvc.Status.Phase == corev1.ClaimBound && !ready {
-		result.RequeueAfter = runtimeCachePollInterval
+		result.RequeueAfter = storage.PVCPollInterval
 	}
 	if ownsClaim && ready && cache.Spec.MaxSize != "" {
 		state, err := reconciler.reconcileAutomaticExpansion(ctx, cache, pvc)
@@ -96,7 +97,7 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 			statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseReady, true, "ExpansionFailed", err.Error(), pvc)
 			return ctrl.Result{}, errors.Join(fmt.Errorf("expand RuntimeCache PVC: %w", err), statusErr)
 		}
-		result.RequeueAfter = runtimeCachePollInterval
+		result.RequeueAfter = storage.PVCPollInterval
 		if state.resizing {
 			phase, ready, reason, message = inferencev1alpha1.RuntimeCachePhaseResizing, false, "Resizing", "Runtime cache PVC is expanding"
 		}
@@ -158,7 +159,7 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 }
 
 // reconcilePVC borrows configured storage or creates and grows the cache's own dynamic claim.
-func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, bool, error) {
+func (reconciler *Reconciler) reconcilePVC(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, bool, error) {
 	if cache.Spec.Directory != "" {
 		claim, err := reconciler.Profile.DirectoryBindings.DirectoryPVC(ctx, reconciler.Client, cache)
 		return claim, false, err
@@ -206,7 +207,7 @@ func pvcHasUsableCapacity(pvc *corev1.PersistentVolumeClaim) bool {
 }
 
 // reconcileAutomaticExpansion applies the controller's proactive growth policy.
-func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim) (runtimeCacheExpansionState, error) {
+func (reconciler *Reconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim) (runtimeCacheExpansionState, error) {
 	maxSize, err := runtimeCacheQuantityBytes(cache.Spec.MaxSize, "maxSize")
 	if err != nil {
 		return runtimeCacheExpansionState{}, err
@@ -222,7 +223,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	shouldExpand := false
 	for _, observation := range observations {
 		available = min(available, observation.AvailableBytes)
-		if observation.AvailableBytes <= observation.CapacityBytes/pvcExpansionFreeSpaceDivisor {
+		if observation.AvailableBytes <= observation.CapacityBytes/storage.PVCExpansionFreeSpaceDivisor {
 			shouldExpand = true
 		}
 	}
@@ -236,7 +237,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	if currentRequest >= maxSize {
 		return runtimeCacheExpansionState{maxSizeReached: available > 0, noSpace: available == 0}, nil
 	}
-	target := nextPVCSize(currentRequest, maxSize)
+	target := storage.NextPVCSize(currentRequest, maxSize)
 	base := pvc.DeepCopy()
 	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = *resource.NewQuantity(target, resource.BinarySI)
 	if err := reconciler.Patch(ctx, pvc, client.MergeFrom(base)); err != nil {
@@ -258,7 +259,7 @@ func runtimeCacheQuantityBytes(value inferencev1alpha1.ResourceQuantity, field s
 }
 
 // reconcileDelete releases or deletes only the cache's own dynamic claim.
-func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (ctrl.Result, error) {
+func (reconciler *Reconciler) reconcileDelete(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(cache, runtimeCacheFinalizer) {
 		return ctrl.Result{}, nil
 	}
@@ -306,14 +307,14 @@ func releaseRuntimeCachePVC(ctx context.Context, kubeClient client.Client, cache
 	return kubeClient.Patch(ctx, pvc, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 }
 
-func (reconciler *RuntimeCacheReconciler) removeFinalizer(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) error {
+func (reconciler *Reconciler) removeFinalizer(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) error {
 	base := cache.DeepCopy()
 	controllerutil.RemoveFinalizer(cache, runtimeCacheFinalizer)
 	return reconciler.Patch(ctx, cache, client.MergeFrom(base))
 }
 
 // updateStatus publishes the selected claim identity, observed capacity, and readiness.
-func (reconciler *RuntimeCacheReconciler) updateStatus(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, phase inferencev1alpha1.RuntimeCachePhase, ready bool, reason, message string, pvc *corev1.PersistentVolumeClaim) error {
+func (reconciler *Reconciler) updateStatus(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, phase inferencev1alpha1.RuntimeCachePhase, ready bool, reason, message string, pvc *corev1.PersistentVolumeClaim) error {
 	base := cache.DeepCopy()
 	cache.Status.ObservedGeneration = cache.Generation
 	cache.Status.Phase = phase
@@ -333,7 +334,7 @@ func (reconciler *RuntimeCacheReconciler) updateStatus(ctx context.Context, cach
 }
 
 // SetupWithManager observes both owned PVCs and borrowed storage bindings.
-func (reconciler *RuntimeCacheReconciler) SetupWithManager(manager ctrl.Manager) error {
+func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.RuntimeCache{}).
 		Owns(&corev1.PersistentVolumeClaim{}).

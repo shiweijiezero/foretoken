@@ -12,8 +12,11 @@ use std::time::{Duration, Instant};
 use axum::serve::ListenerExt;
 use foretoken_model_server::backend::vllm::startup;
 use foretoken_model_server::{
-    api::RuntimeHealth, backend::vllm::config::RuntimeConfig, dt_ingress, engine::ManagedEngine,
-    instance_admission::InstanceAdmissionWatcher, runtime_cache,
+    backend::vllm::config::RuntimeConfig,
+    dt_ingress,
+    engine::ManagedEngine,
+    execution::{InstanceAdmissionWatcher, RuntimeHealth},
+    runtime_cache,
 };
 use foretoken_request_ledger::RequestLedger;
 use tokio::net::TcpListener;
@@ -73,20 +76,15 @@ pub(super) async fn run(
         },
     )
     .await?;
-    let profile_client = reqwest::Client::builder().no_proxy().build()?;
-    let mut profiler = profiling
-        .filter(|_| mode == runtime_cache::Mode::Persistent)
-        .map(|config| {
-            foretoken_model_server::profiling::Supervisor::new(
-                config.clone(),
-                Some(
-                    foretoken_model_server::profiling::CaptureBackend::DraftTarget {
-                        endpoint: endpoint.clone(),
-                        client: profile_client,
-                    },
-                ),
-            )
-        });
+    let mut profiler =
+        if let Some(profile) = profiling.filter(|_| mode == runtime_cache::Mode::Persistent) {
+            Some(foretoken_model_server::profiling::Supervisor::new(
+                profile.clone(),
+                Some(dt_ingress::create_profiler(endpoint.clone())?),
+            ))
+        } else {
+            None
+        };
     let app = dt_ingress::router(
         endpoint.clone(),
         health.clone(),

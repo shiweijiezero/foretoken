@@ -6,26 +6,35 @@
 package storage
 
 import (
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
-const pvcExpansionFreeSpaceDivisor int64 = 5
+const (
+	// PVCPollInterval schedules rechecks while PVC binding or expansion is pending.
+	PVCPollInterval = 5 * time.Second
+	// PVCExpansionFreeSpaceDivisor defines the free-space fraction that prompts proactive growth.
+	PVCExpansionFreeSpaceDivisor int64 = 5
+)
 
-// nextPVCSize doubles the requested capacity without exceeding the owner's configured maximum.
-func nextPVCSize(current, maximum int64) int64 {
+// NextPVCSize doubles a storage owner's requested capacity without exceeding its configured maximum.
+func NextPVCSize(current, maximum int64) int64 {
 	if current <= maximum/2 {
 		return current * 2
 	}
 	return maximum
 }
 
-func pvcCapacityAtLeastRequest(pvc *corev1.PersistentVolumeClaim) bool {
+// PVCCapacityAtLeastRequest reports whether Kubernetes has supplied the claim's requested capacity.
+func PVCCapacityAtLeastRequest(pvc *corev1.PersistentVolumeClaim) bool {
 	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
 	requested := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	return capacity.Cmp(requested) >= 0
 }
 
-func pvcResizePending(pvc *corev1.PersistentVolumeClaim) bool {
+// PVCResizePending reports whether the claim is waiting for controller or filesystem expansion.
+func PVCResizePending(pvc *corev1.PersistentVolumeClaim) bool {
 	for _, condition := range pvc.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && (condition.Type == corev1.PersistentVolumeClaimResizing || condition.Type == corev1.PersistentVolumeClaimFileSystemResizePending) {
 			return true
@@ -37,8 +46,8 @@ func pvcResizePending(pvc *corev1.PersistentVolumeClaim) bool {
 		status == corev1.PersistentVolumeClaimNodeResizeInProgress
 }
 
-// pvcResizeFailure preserves Kubernetes' diagnostic when volume or filesystem expansion fails.
-func pvcResizeFailure(pvc *corev1.PersistentVolumeClaim) (string, bool) {
+// PVCResizeFailure returns Kubernetes' diagnostic when volume or filesystem expansion fails.
+func PVCResizeFailure(pvc *corev1.PersistentVolumeClaim) (string, bool) {
 	for _, condition := range pvc.Status.Conditions {
 		if condition.Status != corev1.ConditionTrue || condition.Type != corev1.PersistentVolumeClaimControllerResizeError && condition.Type != corev1.PersistentVolumeClaimNodeResizeError {
 			continue

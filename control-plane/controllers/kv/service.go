@@ -631,6 +631,7 @@ func kvPoolState(pools []inferencev1alpha1.KVPool, desiredPools []inferencev1alp
 	return converged, available, nil
 }
 
+// reconcileDelete waits for consumers and Pools, retires Master resources, and applies recorded snapshot retention before releasing the service.
 func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, service *inferencev1alpha1.KVService) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(service, kvServiceFinalizer) {
 		return ctrl.Result{}, nil
@@ -698,6 +699,7 @@ func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, servic
 	return ctrl.Result{}, nil
 }
 
+// releaseSnapshotPVC removes this service's ownership so retained data survives configuration removal or service deletion.
 func (reconciler *ServiceReconciler) releaseSnapshotPVC(ctx context.Context, service *inferencev1alpha1.KVService, pvc *corev1.PersistentVolumeClaim) error {
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err != nil {
 		return client.IgnoreNotFound(err)

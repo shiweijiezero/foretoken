@@ -25,10 +25,10 @@ use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
     CumulativeHistogram, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
-use foretoken_model_server::api::{AdmissionPermit, RuntimeHealth};
 use foretoken_model_server::engine::{
     Lifecycle, ManagedEngine, append_engine_arg, python_executable,
 };
+use foretoken_model_server::execution::{AdmissionPermit, RuntimeHealth};
 use foretoken_model_server::model_cache::preparation::{self, PreparationStorage};
 use foretoken_model_server::shutdown_signal;
 

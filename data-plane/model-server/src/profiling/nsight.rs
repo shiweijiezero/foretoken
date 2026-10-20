@@ -36,7 +36,6 @@ pub(crate) fn launch(application: Command, session: &str) -> Command {
             }
         }
     }
-    command.env("VLLM_WORKER_MULTIPROC_METHOD", "spawn");
     command
 }
 
