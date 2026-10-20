@@ -1,50 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Reuse Quick Start storage and frontends with one GPU for each P/D stage.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../quickstart/qwen3-0.6b
-patches:
-  - target:
-      kind: FrontendService
-    patch: |-
-      - op: replace
-        path: /metadata/name
-        value: qwen-nixl
-  - target:
-      kind: ModelService
-    patch: |-
-      - op: replace
-        path: /metadata/name
-        value: qwen-nixl
-      - op: replace
-        path: /spec/model
-        value: Qwen/Qwen2.5-0.5B-Instruct
-      - op: add
-        path: /spec/kvTransfer
-        value:
-          connector: nixl
-          protocol: tcp
-      - op: add
-        path: /spec/modelPools
-        value:
-          - name: prefill
-            role: prefill
-            replicas: 1
-          - name: decode
-            role: decode
-            replicas: 1
-      - op: copy
-        from: /spec/resources
-        path: /spec/modelPools/0/resources
-      - op: copy
-        from: /spec/resources
-        path: /spec/modelPools/1/resources
-      - op: remove
-        path: /spec/resources
-      - op: remove
-        path: /spec/replicas
-      - op: remove
-        path: /spec/nodes
+  - cache.yaml
+  - frontend.yaml
+  - model.yaml

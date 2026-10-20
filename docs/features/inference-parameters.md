@@ -157,7 +157,7 @@ Foretoken enables reuse automatically for full-attention text models without LoR
 
 Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
 
-The [NIXL example](../../examples/feature/nixl-prefix-reuse) serves `Qwen/Qwen2.5-0.5B-Instruct`, requesting one GPU per stage and two frontend replicas. It selects TCP in the model configuration and reuses the Quick Start's storage. On a prepared Foretoken cluster, run from the repository root:
+The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct`, its P/D Pools and TCP transport directly in [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml). It requests one GPU per stage and two frontend replicas; `cache.yaml` stores model files and runtime cache in the repository-root `data/` directory. On a prepared Foretoken cluster, run from the repository root:
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
