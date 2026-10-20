@@ -2537,6 +2537,11 @@ func (in *NormalizedPoolTemplate) DeepCopyInto(out *NormalizedPoolTemplate) {
 		*out = new(KVTransfer)
 		**out = **in
 	}
+	if in.RDMA != nil {
+		in, out := &in.RDMA, &out.RDMA
+		*out = new(RDMAAllocation)
+		**out = **in
+	}
 	in.Features.DeepCopyInto(&out.Features)
 	if in.EngineArgs != nil {
 		in, out := &in.EngineArgs, &out.EngineArgs

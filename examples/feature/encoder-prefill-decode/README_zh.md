@@ -15,7 +15,7 @@
 docker build -f examples/feature/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。选择 RDMA 传输还需要启用 GPUDirect RDMA 并分配 RDMA 设备，默认的 TCP 传输无需这些条件。
+集群需要支持 `ReadWriteMany` 的 StorageClass。默认 StorageClass 不支持共享存储时，在 `encoder-cache.yaml` 中填写适用的 `storageClassName`。
 
 将镜像选择和共享编码缓存设置保存为 `deploy/platform-values.yaml`：
 
@@ -37,13 +37,7 @@ foretoken install -e . --values deploy/platform-values.yaml
 
 ## 部署
 
-P/D 默认使用 Mooncake TCP，通过主机内存暂存 GPU KV 数据。要使用已分配的 RDMA 设备，在 `model.yaml` 中添加：
-
-```yaml
-spec:
-  kvTransfer:
-    protocol: rdma
-```
+P/D 使用 Mooncake。两端的目标节点都有可分配的 RDMA 设备时，Foretoken 自动申请并使用；否则使用 TCP，通过主机内存暂存 GPU KV 数据。无需在 `model.yaml` 中配置传输方式。
 
 从仓库根目录执行：
 

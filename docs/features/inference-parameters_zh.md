@@ -142,22 +142,23 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 预填充（Prefill）计算输入，解码（Decode）生成回答。Mooncake 和 NIXL 都可以让后续 Prefill 复用上一轮 Decode 保留的 KV 缓存。两轮请求可以经过不同的前端和 Prefill 实例；能否复用取决于输入 token 前缀和缓存隔离身份是否匹配，无需提供会话标识。
 
-在 `modelPools` 中配置 `prefill` 和 `decode` 后，通过模型 YAML 为两端统一选择传输方式：
+在 `modelPools` 中配置 `prefill` 和 `decode` 后，默认使用 Mooncake。Foretoken 检查两端的目标节点，有可分配的 RDMA 设备时自动申请并使用，否则使用 TCP。`foretoken install` 会复用集群已有的共享 RDMA 设备插件，或自动准备一个。集群的 GPU 和网卡驱动支持时，原生传输库会使用 GPUDirect RDMA，让网卡直接访问 GPU 内存，无需模型级开关。
+
+使用 NIXL 时只需选择 connector：
 
 ```yaml
 spec:
   kvTransfer:
     connector: nixl
-    protocol: tcp
 ```
 
-默认使用 `connector: mooncake` 和 `protocol: tcp`。需要 RDMA 时设置 `protocol: rdma`，由平台为模型分配 RDMA 设备。修改后执行 `foretoken deploy <配置目录>`，替换该模型的 P/D 实例，其他模型继续使用各自的传输配置。
+只有需要覆盖自动选择时，才设置 `kvTransfer.protocol: tcp` 或 `rdma`。修改后执行 `foretoken deploy <配置目录>`，替换该模型的 P/D 实例，其他模型继续使用各自的传输配置。
 
 在 Foretoken 已适配且不低于 0.31 的 vLLM 环境，以及 Foretoken 提供的沐曦运行环境中，使用完整 attention、不带 LoRA 的文本模型会自动启用复用。所选传输库需要支持加速器的设备内存：Mooncake，或配套 UCX 的 NIXL。Foretoken 的对应运行环境会准备这些依赖。
 
 复用要求每个模型副本位于单个节点，P/D 的 KV 布局兼容，PP/PCP/DCP 均为 1；NIXL 还要求两端 TP 大小相同。其他受支持的配置继续使用普通 P/D。Encoder 分离和 Mooncake Store 使用 Mooncake。
 
-NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml) 中直接声明模型 `Qwen/Qwen2.5-0.5B-Instruct`、P/D 两个 Pool 和 TCP 传输方式。每个阶段申请一张 GPU，前端有两个副本；`cache.yaml` 将模型文件和运行时缓存保存在仓库根目录的 `data/`。在已准备好的 Foretoken 集群上，从仓库根目录执行：
+NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml) 中直接声明模型 `Qwen/Qwen2.5-0.5B-Instruct` 和 P/D 两个 Pool，传输方式自动选择。每个阶段申请一张 GPU，前端有两个副本；`cache.yaml` 将模型文件和运行时缓存保存在仓库根目录的 `data/`。在已准备好的 Foretoken 集群上，从仓库根目录执行：
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m

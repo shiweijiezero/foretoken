@@ -11,7 +11,6 @@ spec:
   backend: vllm
   kvTransfer:
     connector: nixl
-    protocol: tcp
   timeouts:
     startup: 5m
     drain: 2m

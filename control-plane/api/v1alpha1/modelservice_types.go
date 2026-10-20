@@ -54,7 +54,8 @@ type KVTransfer struct {
 	// +kubebuilder:validation:Enum=mooncake;nixl
 	Connector string `json:"connector,omitempty"`
 
-	// Protocol defaults to TCP. RDMA requires devices allocated by the platform.
+	// Protocol is selected automatically when omitted: RDMA when both stages can request
+	// the platform's advertised devices, otherwise TCP. Set it to override that choice.
 	// +optional
 	// +kubebuilder:validation:Enum=tcp;rdma
 	Protocol string `json:"protocol,omitempty"`

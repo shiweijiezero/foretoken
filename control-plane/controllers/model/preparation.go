@@ -258,21 +258,9 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 	if err := reconciler.List(ctx, &nodes, client.MatchingLabels(group.Spec.Accelerator.NodeSelector)); err != nil {
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
 	}
-	resourceName := corev1.ResourceName(group.Spec.Accelerator.DeviceResourceName)
 	var terms []corev1.NodeSelectorTerm
 	for _, node := range nodes.Items {
-		allocatable := node.Status.Allocatable[resourceName]
-		if node.Spec.Unschedulable || allocatable.Value() < int64(group.Spec.Resources.Requests.GPU.Count) {
-			continue
-		}
-		ready := false
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-				ready = true
-				break
-			}
-		}
-		if !ready || !preparationNodeTaintsSupported(node.Spec.Taints, string(resourceName)) {
+		if !modelNodeSupportsDevices(node, group.Spec.Accelerator.DeviceResourceName, group.Spec.Resources.Requests.GPU.Count, group.Spec.RDMA) {
 			continue
 		}
 		// Node field selectors accept one value; separate terms express eligible alternatives.
@@ -286,17 +274,4 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 	return &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 		NodeSelectorTerms: terms,
 	}}, nil
-}
-
-// preparationNodeTaintsSupported excludes nodes neither Pod can use.
-func preparationNodeTaintsSupported(taints []corev1.Taint, accelerator string) bool {
-	for _, taint := range taints {
-		if taint.Effect != corev1.TaintEffectNoSchedule && taint.Effect != corev1.TaintEffectNoExecute {
-			continue
-		}
-		if taint.Key != accelerator || taint.Effect != corev1.TaintEffectNoSchedule {
-			return false
-		}
-	}
-	return true
 }

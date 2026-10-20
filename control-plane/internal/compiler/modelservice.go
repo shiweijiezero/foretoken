@@ -418,7 +418,7 @@ func normalizeQuantity(field string, input inferencev1alpha1.ResourceQuantity) (
 	return inferencev1alpha1.ResourceQuantity(quantity.String()), nil
 }
 
-// normalizeKVTransfer resolves the shared connector and protocol before they are copied to P/D Pools.
+// normalizeKVTransfer defaults the connector and preserves automatic protocol selection for the service owner.
 func normalizeKVTransfer(input *inferencev1alpha1.KVTransfer) (*inferencev1alpha1.KVTransfer, error) {
 	output := inferencev1alpha1.KVTransfer{}
 	if input != nil {
@@ -432,9 +432,7 @@ func normalizeKVTransfer(input *inferencev1alpha1.KVTransfer) (*inferencev1alpha
 		return nil, fmt.Errorf("kvTransfer.connector must be mooncake or nixl")
 	}
 	switch output.Protocol {
-	case "":
-		output.Protocol = "tcp"
-	case "tcp", "rdma":
+	case "", "tcp", "rdma":
 	default:
 		return nil, fmt.Errorf("kvTransfer.protocol must be tcp or rdma")
 	}

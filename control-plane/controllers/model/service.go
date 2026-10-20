@@ -344,6 +344,9 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 		byPoolName[pool.Spec.PoolName] = pool
 	}
 
+	if err := reconciler.resolveModelTransports(ctx, service.Namespace, compiledPools); err != nil {
+		return nil, err
+	}
 	desiredPools, err := reconciler.selectPoolApplications(ctx, service, compiledPools, byPoolName)
 	if err != nil {
 		return nil, err

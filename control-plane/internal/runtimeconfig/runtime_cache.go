@@ -8,6 +8,7 @@ package runtimeconfig
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,8 +19,9 @@ import (
 )
 
 const (
-	CacheVolumeName = "runtime-cache"
-	CacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	CacheVolumeName        = "runtime-cache"
+	CacheClaimEnv          = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	runtimeCacheClaimLabel = "inference.foretoken.io/runtime-cache-claim"
 	// RuntimeCacheDirectoryAnnotation records the filesystem selected by a prepared claim.
 	RuntimeCacheDirectoryAnnotation = "inference.foretoken.io/runtime-cache-directory"
 )
@@ -107,33 +109,71 @@ func (profile RuntimeCacheProfile) Validate() error {
 // Self-affinity lets the first consumer establish placement; later preparation, serving,
 // and frontend Pods follow that node without maintaining a second attachment inventory.
 func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
-	if cache == nil {
-		return nil
+	claim, err := singleNodeCacheClaim(ctx, reader, namespace, cache)
+	if err != nil || claim == nil {
+		return err
 	}
-	claim := new(corev1.PersistentVolumeClaim)
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
-		return fmt.Errorf("read runtime cache access modes: %w", err)
-	}
-	for _, mode := range claim.Spec.AccessModes {
-		if mode == corev1.ReadWriteMany {
-			return nil
-		}
-	}
-	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
-	pod.Labels[claimLabel] = string(claim.UID)
+	pod.Labels[runtimeCacheClaimLabel] = string(claim.UID)
 	if pod.Spec.Affinity == nil {
 		pod.Spec.Affinity = &corev1.Affinity{}
 	}
 	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
 		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
 			TopologyKey:   corev1.LabelHostname,
-			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{runtimeCacheClaimLabel: string(claim.UID)}},
 		}},
 	}
 	return nil
+}
+
+// RuntimeCacheNodes restricts automatic device selection to the cache's existing co-location domain.
+// Without scheduled consumers, placement remains with the scheduler.
+func RuntimeCacheNodes(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, nodes []corev1.Node) ([]corev1.Node, error) {
+	claim, err := singleNodeCacheClaim(ctx, reader, namespace, cache)
+	if err != nil || claim == nil {
+		return nodes, err
+	}
+	var pods corev1.PodList
+	if err := reader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{runtimeCacheClaimLabel: string(claim.UID)}); err != nil {
+		return nil, fmt.Errorf("read runtime cache placement: %w", err)
+	}
+	placed := make(map[string]bool)
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName != "" && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			placed[pod.Spec.NodeName] = true
+		}
+	}
+	if len(placed) == 0 {
+		return nodes, nil
+	}
+	// Required Pod affinity uses the hostname topology label, not an inferred attachment location.
+	hostnames := make(map[string]bool)
+	for _, node := range nodes {
+		if hostname := node.Labels[corev1.LabelHostname]; placed[node.Name] && hostname != "" {
+			hostnames[hostname] = true
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(nodes), func(node corev1.Node) bool {
+		return !hostnames[node.Labels[corev1.LabelHostname]]
+	}), nil
+}
+
+// singleNodeCacheClaim identifies the claims whose consumers need the shared co-location rule.
+func singleNodeCacheClaim(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (*corev1.PersistentVolumeClaim, error) {
+	if cache == nil {
+		return nil, nil
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
+		return nil, fmt.Errorf("read runtime cache access modes: %w", err)
+	}
+	if slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany) {
+		return nil, nil
+	}
+	return claim, nil
 }
 
 // CacheObserverEnv gives preparation and serving processes the same filesystem observer identity.

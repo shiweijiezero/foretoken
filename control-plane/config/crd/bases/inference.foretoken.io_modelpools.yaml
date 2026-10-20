@@ -508,8 +508,9 @@ spec:
                         - nixl
                         type: string
                       protocol:
-                        description: Protocol defaults to TCP. RDMA requires devices
-                          allocated by the platform.
+                        description: |-
+                          Protocol is selected automatically when omitted: RDMA when both stages can request
+                          the platform's advertised devices, otherwise TCP. Set it to override that choice.
                         enum:
                         - tcp
                         - rdma
@@ -559,6 +560,22 @@ spec:
                         type: string
                     required:
                     - engine
+                    type: object
+                  rdma:
+                    description: |-
+                      RDMA is the advertised allocation selected for this Pool's nodes.
+                      Runtime resolution requests it only when the engine or transfer needs it.
+                    properties:
+                      resourceCount:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      resourceName:
+                        minLength: 1
+                        type: string
+                    required:
+                    - resourceCount
+                    - resourceName
                     type: object
                   resources:
                     description: ModelResources defines resources for one runtime

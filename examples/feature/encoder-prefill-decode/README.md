@@ -15,7 +15,7 @@ This example uses a source installation and four NVIDIA GPUs. From the repositor
 docker build -f examples/feature/encoder-prefill-decode/runtime.Dockerfile -t foretoken-vllm:epd .
 ```
 
-The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage. RDMA transport also needs allocated RDMA devices with GPUDirect RDMA enabled; the default TCP transport needs neither.
+The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage.
 
 Save the runtime choice and shared encoder cache settings as `deploy/platform-values.yaml`:
 
@@ -37,13 +37,7 @@ For a remote cluster, also pass `--registry REGISTRY` with a container registry 
 
 ## Deploy
 
-P/D uses Mooncake over TCP by default, staging GPU KV data through host memory. To use allocated RDMA devices instead, add this to `model.yaml`:
-
-```yaml
-spec:
-  kvTransfer:
-    protocol: rdma
-```
+P/D uses Mooncake. Foretoken automatically requests RDMA devices when they are available to both stages; otherwise it uses TCP with host-memory staging. No transport setting is needed in `model.yaml`.
 
 From the repository root:
 

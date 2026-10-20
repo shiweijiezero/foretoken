@@ -22,6 +22,9 @@ func ResolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 		return nil, fmt.Errorf("P/D Pool requires compiled kvTransfer settings")
 	}
 	intent := template.KVTransfer
+	if intent.Protocol != "tcp" && intent.Protocol != "rdma" {
+		return nil, fmt.Errorf("P/D Pool requires a resolved TCP or RDMA transport")
+	}
 	var connector string
 	var preferred, count int64
 	switch intent.Connector {

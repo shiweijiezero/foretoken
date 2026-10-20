@@ -304,8 +304,9 @@ spec:
                     - nixl
                     type: string
                   protocol:
-                    description: Protocol defaults to TCP. RDMA requires devices allocated
-                      by the platform.
+                    description: |-
+                      Protocol is selected automatically when omitted: RDMA when both stages can request
+                      the platform's advertised devices, otherwise TCP. Set it to override that choice.
                     enum:
                     - tcp
                     - rdma
