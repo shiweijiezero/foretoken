@@ -107,11 +107,51 @@
       }
     },
     {
-      "path": "compatibility/v1-031/nixl-retained-prefix.patch",
+      "path": "common/kv-connector-utility.patch",
       "python": {
         "profiles": [
           "v1-031"
         ]
+      }
+    },
+    {
+      "path": "common/kv-connector-utility.patch",
+      "python": {
+        "versions": "==0.30.0.dev0"
+      }
+    },
+    {
+      "path": "compatibility/v1-metax/nixl-peer-lifecycle.patch",
+      "python": {
+        "versions": "==0.30.0.dev0"
+      }
+    },
+    {
+      "path": "common/nixl-retained-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "common/nixl-retained-prefix.patch",
+      "python": {
+        "versions": "==0.30.0.dev0"
+      }
+    },
+    {
+      "path": "common/mooncake-retained-prefix.patch",
+      "python": {
+        "profiles": [
+          "v1-031"
+        ]
+      }
+    },
+    {
+      "path": "common/mooncake-retained-prefix.patch",
+      "python": {
+        "versions": "==0.30.0.dev0"
       }
     },
     {

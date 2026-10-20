@@ -84,10 +84,10 @@ pub(crate) fn project_kv_runtime(
         );
     }
     for component in &snapshot.pd_components {
-        if component.role == ModelServerRole::Prefill
-            || (component.role == ModelServerRole::Decode
-                && component.connector == KvConnector::Nixl)
-        {
+        if matches!(
+            component.role,
+            ModelServerRole::Prefill | ModelServerRole::Decode
+        ) {
             add_route(
                 &component.route_target_id,
                 &component.endpoint,

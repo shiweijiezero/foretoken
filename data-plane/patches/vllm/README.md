@@ -45,8 +45,12 @@ Patches for another library belong in a separate directory alongside `vllm/`.
 Completion marks the end of request scheduling, not GPU synchronization or connector KV release.
 When changing this contract, exercise normal completion, cancellation, and output-consumer drop on the affected transports, checking the independent completion signal as well as the returned output.
 
-## NIXL retained prefixes
+## Retained device prefixes
 
-`compatibility/v1-031/nixl-retained-prefix.patch` extends the native source-reference and read-completion lifecycle used by the [NIXL adapter](../../model-server/python/connectors/nixl/connector.py). The adapter owns token-prefix discovery; native workers retain the actual KV blocks after acquisition. An acquired source outlives the decoder's idle TTL and remains held until all readers finish or an unstarted read is revoked. Loss of the existing native heartbeat retires the engine instead of returning possibly active blocks to the allocator.
+The [retained-prefix directory](../../model-server/python/connectors/retained.py) shares discovery and acquisition across NIXL and Mooncake. Native connectors own KV references and transfer completion. `common/kv-connector-utility.patch` exposes the directory through the existing EngineCore worker RPC; `catalog.json` selects the lifecycle patches for each supported engine interface.
 
-When updating this patch, run real two-turn P/D generation through different frontends, compare reused and recomputed output tokens, and check allocator references during cancellation, expiry, peer exit and TP completion. A successful patch application or request-completion signal does not exercise the transport's buffer lifetime. The [NIXL example](../../../examples/feature/nixl-prefix-reuse) provides the normal deployment path.
+`common/nixl-retained-prefix.patch` keeps acquired sources alive across the decoder's idle TTL. Readers release them after native READ completion; unstarted reads can be revoked. The engine retires with its buffers held if native transfer status is unknown or unavailable, or its heartbeat is lost. The 0.30 compatibility patch supplies the peer-replacement and expiry hooks used by this same lifecycle.
+
+`common/mooncake-retained-prefix.patch` uses the native sender loop for acquisition, revocation and WRITE submission. Idle sources use `kv_lease_duration`, independently of the ordinary send timeout. Revocation and expiry require every admitted reader to have completed its WRITE or confirmed that no WRITE was submitted; remaining unstarted readers then receive a miss. Errors with unknown I/O completion retire the worker. Receivers join all source completions before reporting a load result, and the scheduler waits for every TP worker before freeing blocks.
+
+When updating these patches, run two-turn P/D generation through different frontends, compare reused and recomputed output tokens, and inspect allocator references during cancellation, expiry, peer exit and TP completion. Use the [P/D configuration](../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) to select the transport.

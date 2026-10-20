@@ -28,7 +28,7 @@ pub enum ModelServerRole {
     Decode,
 }
 
-/// Concrete P/D transport selected by the runtime profile and consumed by engine adapters.
+/// Concrete P/D transport selected for a model service and consumed by engine adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KvConnector {
     #[serde(rename = "MooncakeConnector")]
@@ -46,6 +46,9 @@ impl KvConnector {
         }
     }
 }
+
+/// Runtime capability identifying native reuse of a retained device prefix.
+pub const KV_PREFIX_REUSE_CAPABILITY: &str = "kv_prefix_reuse";
 
 /// Effective P/D settings shared by engine launch and frontend runtime observation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,12 +216,24 @@ pub struct RuntimeMetadataResponse {
     pub max_logprobs: Option<i32>,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kv_transfer: Option<RuntimeKvTransferMetadata>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_tokenizer: Option<PreparedTokenizer>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
 }
+
+impl RuntimeMetadataResponse {
+    /// Resolves observed P/D settings for routing from the extensible capability set.
+    pub fn kv_transfer(&self) -> Option<RuntimeKvTransferMetadata> {
+        let connector = [KvConnector::Mooncake, KvConnector::Nixl]
+            .into_iter()
+            .find(|connector| self.capabilities.contains(connector.as_str()))?;
+        Some(RuntimeKvTransferMetadata {
+            connector,
+            bidirectional_kv_xfer: self.capabilities.contains(KV_PREFIX_REUSE_CAPABILITY),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CumulativeHistogramBucket {

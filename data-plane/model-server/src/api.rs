@@ -530,8 +530,7 @@ async fn retained_kv_prefix(
         || !state.health.accepting()
         || !state
             .metadata
-            .kv_transfer
-            .as_ref()
+            .kv_transfer()
             .is_some_and(|kv| kv.bidirectional_kv_xfer)
     {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -571,8 +570,7 @@ async fn claim_kv_prefix(
         || !state.health.accepting()
         || !state
             .metadata
-            .kv_transfer
-            .as_ref()
+            .kv_transfer()
             .is_some_and(|kv| kv.bidirectional_kv_xfer)
         || !state
             .kv_events
@@ -595,8 +593,7 @@ async fn cancel_kv_prefix(
     use foretoken_model_protocol::KvPrefixCancelResult;
     if !state
         .metadata
-        .kv_transfer
-        .as_ref()
+        .kv_transfer()
         .is_some_and(|kv| kv.bidirectional_kv_xfer)
         || !state
             .kv_events

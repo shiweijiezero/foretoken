@@ -151,10 +151,7 @@ impl BackendRegistry {
         metadata: &RuntimeMetadataResponse,
     ) -> bool {
         let configured_connector = self.components.get(id).and_then(Component::connector);
-        let observed_connector = metadata
-            .kv_transfer
-            .as_ref()
-            .map(|transfer| transfer.connector);
+        let observed_connector = metadata.kv_transfer().map(|transfer| transfer.connector);
         // Mooncake may omit KV transfer metadata; NIXL must match discovery.
         let transport_matches = if configured_connector == Some(KvConnector::Nixl)
             || observed_connector == Some(KvConnector::Nixl)
@@ -474,7 +471,7 @@ impl RouteInventory for BackendRegistry {
     }
 
     fn kv_transfer(&self, id: &RouteTargetId) -> Option<RuntimeKvTransferMetadata> {
-        self.metadata.lock().ok()?.get(id)?.kv_transfer.clone()
+        self.metadata.lock().ok()?.get(id)?.kv_transfer()
     }
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {

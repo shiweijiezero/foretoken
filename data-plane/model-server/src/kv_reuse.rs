@@ -120,14 +120,20 @@ impl RemoteKvRead {
                 Ok(false)
             }
             KvPrefixClaimResult::Granted { descriptor } => {
-                if !descriptor.is_object() {
+                let serde_json::Value::Object(descriptor) = descriptor else {
                     return Err(BackendError::Protocol);
-                }
-                request
+                };
+                // Retain the workflow's outgoing handoff identity while adding the source to read.
+                let parameters = request
                     .sampling_params
                     .extra_args
                     .get_or_insert_default()
-                    .insert("kv_transfer_params".into(), descriptor);
+                    .entry("kv_transfer_params".into())
+                    .or_insert_with(|| serde_json::json!({}));
+                parameters
+                    .as_object_mut()
+                    .ok_or(BackendError::Protocol)?
+                    .extend(descriptor);
                 Ok(true)
             }
         }

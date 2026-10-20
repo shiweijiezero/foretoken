@@ -1,19 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
---- a/vllm/distributed/kv_transfer/kv_connector/v1/base.py
-+++ b/vllm/distributed/kv_transfer/kv_connector/v1/base.py
-@@ -224,6 +224,10 @@
-     def role(self) -> KVConnectorRole:
-         return self._role
- 
-+    def handle_utility_call(self, operation: str, payload: dict[str, Any], worker_rpc):
-+        """Handle external scheduler calls; worker_rpc returns each worker's result."""
-+        raise NotImplementedError(f"{type(self).__name__} has no utility {operation!r}")
-+
-     # ==============================
-     # Worker-side methods
-     # ==============================
 --- a/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py
 +++ b/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py
 @@ -20,10 +20,13 @@
@@ -342,16 +329,76 @@
              if req_id in self._reqs_to_send:
                  old = self._reqs_to_send[req_id]
                  self._reqs_to_send[req_id] = max(old, new_expiry)
-@@ -3127,7 +3212,7 @@
+@@ -3115,38 +3200,53 @@
+             Requests with no outstanding handles and requests with observed
+             failures. Failed requests may still have outstanding handles.
+ 
++        Raises:
++            RuntimeError: Native completion cannot be observed; held buffers
++                require engine retirement.
++
+         """
+         done_req_ids: set[str] = set()
+         failed_req_ids: set[str] = set()
+         for req_id, handles in list(transfers.items()):
+             in_progress = []
+             for handle in handles:
++                # Status-query failures must escape failure bookkeeping: the SDK
++                # has not confirmed that DMA stopped, so the engine must retire.
+                 try:
+                     xfer_state = self.nixl_wrapper.check_xfer_state(handle)
+-                    if xfer_state == "DONE":
++                except Exception as error:
++                    raise RuntimeError(
++                        f"NIXL transfer status is unavailable for request {req_id}; "
++                        "engine buffers require retirement"
++                    ) from error
++                if xfer_state not in ("DONE", "ERR", "PROC", "PEND"):
++                    raise RuntimeError(
++                        f"NIXL transfer state {xfer_state!r} is unknown for request "
++                        f"{req_id}; engine buffers require retirement"
++                    )
++                if xfer_state in ("PROC", "PEND"):
++                    in_progress.append(handle)
++                    continue
++                if xfer_state == "DONE":
++                    try:
                          res = self.nixl_wrapper.get_xfer_telemetry(handle)
                          self.xfer_stats.record_transfer(res)
                          self.nixl_wrapper.release_xfer_handle(handle)
 -                    elif xfer_state == "PROC":
-+                    elif xfer_state in ("PROC", "PEND"):
-                         in_progress.append(handle)
-                     else:
+-                        in_progress.append(handle)
+-                    else:
++                        continue
++                    except Exception as error:
                          self._log_failure(
-@@ -3155,15 +3240,22 @@
+-                            failure_type="transfer_failed",
++                            failure_type="transfer_exception",
+                             req_id=req_id,
+-                            xfer_state=xfer_state,
++                            error=error,
+                         )
+-                        if not self._handle_failed_transfer(
+-                            req_id, handle, failed_req_ids
+-                        ):
+-                            in_progress.append(handle)
+-                except Exception as e:
++                else:
+                     self._log_failure(
+-                        failure_type="transfer_exception",
++                        failure_type="transfer_failed",
+                         req_id=req_id,
+-                        error=e,
++                        xfer_state=xfer_state,
+                     )
+-                    if not self._handle_failed_transfer(req_id, handle, failed_req_ids):
+-                        in_progress.append(handle)
++                if not self._handle_failed_transfer(req_id, handle, failed_req_ids):
++                    in_progress.append(handle)
+ 
+             if not in_progress:
+                 done_req_ids.add(req_id)
+@@ -3155,17 +3255,25 @@
                  transfers[req_id] = in_progress
          return done_req_ids, failed_req_ids
  
@@ -368,16 +415,22 @@
 +                if state not in ("DONE", "ERR"):
 +                    return False
              self.nixl_wrapper.release_xfer_handle(handle)
-         except Exception as e:
-             # A status error does not guarantee that the backend stopped DMA.
+-        except Exception as e:
+-            # A status error does not guarantee that the backend stopped DMA.
++        except Exception as error:
++            # Preserve the handle until the primary completion poll can observe
++            # its native state or retire the engine with its buffers still held.
              self._log_failure(
                  failure_type="transfer_release_failed",
 -                msg="Retaining handle and blocks until release succeeds",
-+                msg="Retaining handle and blocks until transfer stops",
++                msg="Retaining handle and blocks for completion polling",
                  req_id=req_id,
-                 error=e,
+-                error=e,
++                error=error,
              )
-@@ -3197,20 +3289,85 @@
+             return False
+         return True
+@@ -3197,20 +3305,85 @@
          return handle is None or self._try_release_xfer_handle(req_id, handle)
  
      def _send_pending_recv_notifs(self, req_id: str) -> None:
@@ -466,7 +519,7 @@
  
      def _send_heartbeats(self, metadata: NixlConnectorMetadata) -> None:
          """Send heartbeats to remote engines, extending the lease on KV blocks."""
-@@ -3610,9 +3767,11 @@
+@@ -3610,9 +3783,11 @@
          """
          return {
              meta.remote.engine_id
@@ -481,7 +534,7 @@
          }
  
      def _track_remote_engine_replacement(
-@@ -3644,12 +3803,22 @@
+@@ -3644,12 +3819,22 @@
              replaced = self._remote_agents.keys() - self._engine_by_address.values()
          if not replaced:
              return
@@ -944,19 +997,3 @@
                      self._reqs_to_send.pop(req_id, None)
 +                    self._claimed_send_leases.pop(req_id, None)
          return notified_req_ids
---- a/vllm/v1/engine/core.py
-+++ b/vllm/v1/engine/core.py
-@@ -457,6 +457,13 @@
-             supported_pooling_tasks,
-         )
- 
-+    def kv_connector_utility(self, operation: str, payload: dict[str, Any]) -> Any:
-+        """Dispatch external utilities to the active connector and its workers."""
-+        connector = self.scheduler.get_kv_connector()
-+        if connector is None:
-+            raise RuntimeError("KV connector is not configured")
-+        return connector.handle_utility_call(operation, payload, self.collective_rpc)
-+
-     def get_kv_cache_group_metadata(self) -> list[dict[str, int | str | None]]:
-         """Return serializable KV cache metadata for external event consumers
-         (e.g., Dynamo). This function has no call sites within vLLM but needs to

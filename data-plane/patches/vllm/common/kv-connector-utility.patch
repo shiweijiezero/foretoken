@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/base.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/base.py
+@@ -224,6 +224,10 @@
+     def role(self) -> KVConnectorRole:
+         return self._role
+ 
++    def handle_utility_call(self, operation: str, payload: dict[str, Any], worker_rpc):
++        """Handle external scheduler calls; worker_rpc returns each worker's result."""
++        raise NotImplementedError(f"{type(self).__name__} has no utility {operation!r}")
++
+     # ==============================
+     # Worker-side methods
+     # ==============================
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -457,6 +457,13 @@
+             supported_pooling_tasks,
+         )
+ 
++    def kv_connector_utility(self, operation: str, payload: dict[str, Any]) -> Any:
++        """Dispatch external utilities to the active connector and its workers."""
++        connector = self.scheduler.get_kv_connector()
++        if connector is None:
++            raise RuntimeError("KV connector is not configured")
++        return connector.handle_utility_call(operation, payload, self.collective_rpc)
++
+     def get_kv_cache_group_metadata(self) -> list[dict[str, int | str | None]]:
+         """Return serializable KV cache metadata for external event consumers
+         (e.g., Dynamo). This function has no call sites within vLLM but needs to

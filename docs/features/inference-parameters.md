@@ -140,7 +140,7 @@ Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP r
 
 ## Prefill/decode separation and KV reuse
 
-Prefill processes the input; Decode generates the answer. With NIXL, a later request can also reuse the KV cache retained by a previous Decode instance. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
+Prefill processes the input; Decode generates the answer. Mooncake and NIXL can also reuse a previous Decode instance's retained KV cache for a later Prefill. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
 
 For a service with `prefill` and `decode` entries in `modelPools`, select their shared transport in the model YAML:
 
@@ -153,13 +153,15 @@ spec:
 
 The defaults are `connector: mooncake` and `protocol: tcp`. Choose `protocol: rdma` to use RDMA devices allocated by the platform. Apply changes with `foretoken deploy <directory>`; this replaces the model's P/D instances while other services keep their own transport choices.
 
-The engine environment must include NIXL and UCX built for the selected accelerator. Decode-to-Prefill reuse requires a Foretoken-supported vLLM release of 0.31 or later and native device-buffer transfer support. Foretoken enables it automatically for full-attention text models without LoRA; other supported configurations retain ordinary P/D behavior. NIXL currently requires one node per model replica, matching P/D TP sizes and KV layouts, and PP/PCP/DCP of 1. Encoder separation and Mooncake Store use Mooncake.
+Foretoken enables reuse automatically for full-attention text models without LoRA in supported vLLM environments of 0.31 or later and in the supplied MetaX runtime. The selected transport must support the accelerator's device memory: Mooncake, or NIXL with UCX. Foretoken's corresponding runtime prepares these dependencies.
+
+Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
 
 The [NIXL example](../../examples/feature/nixl-prefix-reuse) serves `Qwen/Qwen2.5-0.5B-Instruct`, requesting one GPU per stage and two frontend replicas. It selects TCP in the model configuration and reuses the Quick Start's storage. On a prepared Foretoken cluster, run from the repository root:
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint examples/feature/nixl-prefix-reuse)"
+export FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
 
 python3 - <<'PY'
 import json
@@ -196,7 +198,7 @@ NIXL selects network devices automatically. If explicit selection is needed, set
 Remove the example when finished:
 
 ```bash
-foretoken delete examples/feature/nixl-prefix-reuse
+foretoken delete qwen-nixl
 ```
 
 ## Speculative decoding

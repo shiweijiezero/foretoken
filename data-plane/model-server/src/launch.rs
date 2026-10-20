@@ -340,12 +340,12 @@ impl LaunchPlanV1 {
         &self,
         handshake_port: u16,
         member: Option<&crate::config::MemberContext>,
-        vllm_minor: u64,
+        retained_prefixes: bool,
         ports: &RuntimePorts,
     ) -> Result<(ManagedEngineConfig, Option<RuntimeKvTransferMetadata>), String> {
-        let kv_transfer = self
-            .kv
-            .runtime_metadata(vllm_minor, self.node_count, &self.parallelism);
+        let kv_transfer =
+            self.kv
+                .runtime_metadata(retained_prefixes, self.node_count, &self.parallelism);
         let mut config = ManagedEngineConfig {
             python: python_executable(),
             model: self.artifacts.model.clone(),
@@ -413,6 +413,8 @@ impl LaunchPlanV1 {
             ..
         } = &self.kv
         {
+            // Protocol v2 preserves device memory types through software RMA.
+            command.env("UCX_PROTO_ENABLE", "y");
             // Exclude the other network family without filtering native memory transports.
             command.env(
                 "UCX_TLS",
@@ -560,7 +562,7 @@ impl KvPlan {
     // Resolve version-sensitive choices once; argv and runtime metadata consume this result.
     fn runtime_metadata(
         &self,
-        vllm_minor: u64,
+        retained_prefixes: bool,
         node_count: usize,
         parallelism: &Parallelism,
     ) -> Option<RuntimeKvTransferMetadata> {
@@ -570,13 +572,8 @@ impl KvPlan {
         };
         Some(RuntimeKvTransferMetadata {
             connector,
-            bidirectional_kv_xfer: matches!(
-                self,
-                Self::Pd {
-                    connector: KvConnector::Nixl,
-                    ..
-                }
-            ) && vllm_minor >= 31
+            bidirectional_kv_xfer: matches!(self, Self::Pd { .. })
+                && retained_prefixes
                 && node_count == 1
                 && parallelism.pp == 1
                 && parallelism.pcp == 1
@@ -593,38 +590,35 @@ impl KvPlan {
     ) -> Option<serde_json::Value> {
         let pd = |role: KvRole, protocol: PdProtocol, device_name: &str| {
             let settings = kv_transfer.expect("P/D settings are resolved before argv rendering");
-            match settings.connector {
-                KvConnector::Mooncake => json!({
-                    "kv_connector": "MooncakeConnector",
-                    "kv_role": role.as_str(),
-                    "kv_connector_extra_config": {
-                        "mooncake_protocol": protocol.as_str(),
-                        "device_name": device_name,
-                    },
-                }),
-                KvConnector::Nixl => {
-                    let mut config = json!({
-                        "kv_connector": "NixlConnector",
-                        "kv_role": role.as_str(),
-                    });
-                    if settings.bidirectional_kv_xfer {
-                        config["kv_connector_module_path"] = json!("connectors.nixl.connector");
-                        config["kv_connector_extra_config"] = json!({
-                            "bidirectional_kv_xfer": true,
-                        });
-                        if role == KvRole::KvProducer {
-                            config["kv_load_failure_policy"] = json!("recompute");
-                        }
-                    }
-                    config
+            let module = match settings.connector {
+                KvConnector::Mooncake => "connectors.mooncake.connector",
+                KvConnector::Nixl => "connectors.nixl.connector",
+            };
+            let mut config = json!({
+                "kv_connector": settings.connector.as_str(),
+                "kv_role": role.as_str(),
+                "kv_connector_extra_config": {},
+            });
+            if settings.connector == KvConnector::Mooncake {
+                config["kv_connector_extra_config"] = json!({
+                    "mooncake_protocol": protocol.as_str(),
+                    "device_name": device_name,
+                });
+            }
+            if settings.bidirectional_kv_xfer {
+                config["kv_connector_module_path"] = json!(module);
+                config["kv_connector_extra_config"]["bidirectional_kv_xfer"] = json!(true);
+                if role == KvRole::KvProducer {
+                    config["kv_load_failure_policy"] = json!("recompute");
                 }
             }
+            config
         };
         let store = |role: KvRole| {
             let mut config = json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"});
             if shared_prefix_lookup {
                 config["kv_connector_module_path"] =
-                    json!(crate::shared_kv::MOONCAKE_CONNECTOR_MODULE);
+                    json!(crate::shared_kv::MOONCAKE_STORE_CONNECTOR_MODULE);
             }
             config
         };
@@ -665,15 +659,17 @@ impl KvPlan {
                 )
             }
         }?;
-        // Distributed Mooncake workers share their Group identity. NIXL retains its native
-        // per-launch identity so a restarted engine cannot reuse an earlier peer's registration.
-        if !matches!(
-            self,
-            Self::Pd {
-                connector: KvConnector::Nixl,
-                ..
-            }
-        ) && let Some(uid) = model_group_uid
+        // Retained sources use native per-launch identities so restarts cannot reuse
+        // cached peer addresses. Preserve Group identity for older distributed Mooncake.
+        if !kv_transfer.is_some_and(|transfer| transfer.bidirectional_kv_xfer)
+            && !matches!(
+                self,
+                Self::Pd {
+                    connector: KvConnector::Nixl,
+                    ..
+                }
+            )
+            && let Some(uid) = model_group_uid
         {
             config["engine_id"] = json!(uid);
         }

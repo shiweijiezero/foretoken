@@ -11,8 +11,8 @@ use std::time::Instant;
 
 use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::{
-    KvConnector, PreparedTokenizer, RuntimeKvTransferMetadata, RuntimeMetadataResponse,
-    RuntimeModelIdentity,
+    KV_PREFIX_REUSE_CAPABILITY, PreparedTokenizer, RuntimeKvTransferMetadata,
+    RuntimeMetadataResponse, RuntimeModelIdentity,
 };
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::{Backend, BackendError, VllmBackend};
@@ -133,14 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bind before recovering process ownership: another live ingress in this Pod must not have
     // its reservations retired by a second process that will later fail to acquire the port.
     let listener = TcpListener::bind(config.listen_address).await?;
-    let kv_source_endpoint = if matches!(
-        config.launch.kv,
-        KvPlan::Pd {
-            connector: KvConnector::Nixl,
-            ..
-        }
-    ) {
-        let host = required_env("VLLM_NIXL_SIDE_CHANNEL_HOST")?.parse::<std::net::IpAddr>()?;
+    let kv_source_endpoint = if matches!(config.launch.kv, KvPlan::Pd { .. }) {
+        let host = required_env("FORETOKEN_MEMBER_IP")?.parse::<std::net::IpAddr>()?;
         Some(format!(
             "http://{}",
             std::net::SocketAddr::new(host, listener.local_addr()?.port())
@@ -243,6 +237,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(Some)
                     .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))
             })?;
+    // Capabilities preserve the metadata shape understood by older frontends.
+    let mut capabilities = std::collections::BTreeSet::new();
+    if config.launch.ec.enabled() {
+        capabilities.insert("ec_transfer".into());
+    }
+    if let Some(transfer) = &kv_transfer {
+        capabilities.insert(transfer.connector.as_str().into());
+        if transfer.bidirectional_kv_xfer {
+            capabilities.insert(KV_PREFIX_REUSE_CAPABILITY.into());
+        }
+    }
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
@@ -256,14 +261,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .first()
             .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
-        // Preserve Mooncake's legacy wire format; NIXL reports its effective settings.
-        kv_transfer: kv_transfer.filter(|transfer| transfer.connector == KvConnector::Nixl),
         prepared_tokenizer,
-        capabilities: if config.launch.ec.enabled() {
-            ["ec_transfer".into()].into_iter().collect()
-        } else {
-            Default::default()
-        },
+        capabilities,
     };
     let kv_events = if let Some(adapter) = kv_events {
         let remaining = startup_deadline.saturating_duration_since(Instant::now());
@@ -304,10 +303,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = Arc::new(VllmBackend::new(
         Llm::new(client),
         max_concurrent_requests,
-        metadata
-            .kv_transfer
-            .as_ref()
-            .is_some_and(|kv| kv.bidirectional_kv_xfer),
+        kv_transfer.is_some_and(|kv| kv.bidirectional_kv_xfer),
         kv_connector_utility,
     ));
     let profiling = if cache_mode == runtime_cache::Mode::Persistent {
@@ -724,13 +720,7 @@ async fn spawn_engine_attempt(
     }
     if config.member.is_some()
         || config.launch.shared_prefix_lookup()
-        || matches!(
-            config.launch.kv,
-            KvPlan::Pd {
-                connector: KvConnector::Nixl,
-                ..
-            }
-        )
+        || matches!(config.launch.kv, KvPlan::Pd { .. })
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
@@ -786,7 +776,7 @@ async fn spawn_engine_attempt(
             "EngineCore startup deadline elapsed before package inspection",
         )));
     }
-    let (vllm_minor, engine_protocol, model_express_available) = tokio::time::timeout(
+    let (engine_protocol, retained_prefixes, model_express_available) = tokio::time::timeout(
         package_timeout,
         inspect_engine_packages(
             &foretoken_model_server::launch::python_executable(),
@@ -806,7 +796,7 @@ async fn spawn_engine_attempt(
         .managed_engine(
             handshake_port,
             config.member.as_ref(),
-            vllm_minor,
+            retained_prefixes,
             &config.ports,
         )
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
@@ -1096,7 +1086,7 @@ fn local_artifact_path(identifier: &str) -> io::Result<String> {
 async fn inspect_engine_packages(
     python: &str,
     environment: &[(String, String)],
-) -> Result<(u64, EngineCoreProtocol, bool), Box<dyn std::error::Error>> {
+) -> Result<(EngineCoreProtocol, bool, bool), Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .kill_on_drop(true)
         .envs(environment.iter().cloned())
@@ -1133,7 +1123,9 @@ print(json.dumps([vllm_version, model_express]))
                 26..=27 => EngineCoreProtocol::V0_26ToV0_27,
                 _ => EngineCoreProtocol::V0_28ToV0_31,
             };
-            Ok((minor, protocol, model_express_available))
+            // Match the native lifecycle profiles installed by the vLLM patch catalog.
+            let retained_prefixes = minor == 31 || version.split('+').next() == Some("0.30.0.dev0");
+            Ok((protocol, retained_prefixes, model_express_available))
         }
         _ => Err(format!(
             "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"

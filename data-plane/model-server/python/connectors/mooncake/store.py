@@ -13,7 +13,7 @@ from vllm.utils.hashing import get_hash_fn_by_name
 from vllm.v1.core.kv_cache_utils import get_request_block_hasher, init_none_hash
 from vllm.v1.request import Request
 
-from .prefix_lookup import PrefixLookupServer, offset_tcp_endpoint
+from ..prefix_lookup import PrefixLookupServer, offset_tcp_endpoint
 
 logger = logging.getLogger(__name__)
 

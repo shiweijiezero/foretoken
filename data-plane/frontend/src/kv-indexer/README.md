@@ -12,7 +12,7 @@ Provides KV prefix matches to Router filters and scorers:
 - Native CPU and filesystem offload: `HostPinned/Local` and `Disk/Local`.
 - Mooncake shared memory and SSD cache: `External/Remote`.
 
-These locations describe where KV resides, independently of its transfer library. Foretoken currently exposes retained Decode device prefixes through NIXL; Mooncake provides shared-cache lookup and ordinary Prefill-to-Decode transfer. See [P/D transport and reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) for configuration and runtime requirements.
+These locations describe where KV resides, independently of its transfer library. NIXL and Mooncake expose retained Decode device prefixes; Mooncake Store separately provides shared-cache lookup. See [P/D transport and reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) for configuration and runtime requirements.
 
 ## Calling from a routing algorithm
 
