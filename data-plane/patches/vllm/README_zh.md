@@ -47,9 +47,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 设备前缀保留
 
-NIXL 与 Mooncake 共用[前缀目录](../../model-server/python/connectors/retained.py)的查询和领取流程，KV 引用与传输完成仍由原生 connector 管理。`common/kv-connector-utility.patch` 通过已有 EngineCore worker RPC 提供目录入口，`catalog.json` 按引擎接口选择对应的生命周期补丁。
+NIXL 与 Mooncake 共用[前缀目录](../../model-server/python/connectors/retained.py)的查询和领取流程，KV 引用与传输完成仍由原生 connector 管理。`common/kv-connector-utility.patch` 通过已有 EngineCore utility 通道提供目录入口，`catalog.json` 按引擎接口选择对应的生命周期补丁。
 
-`common/nixl-retained-prefix.patch` 让已领取来源越过 Decode 的闲置 TTL，直到原生 READ 完成，或尚未开始的读取被撤销。原生心跳失联、状态查询失败或返回未知状态时，保留缓冲区并退役引擎。0.30 兼容补丁只补齐这套流程所需的对端替换与到期处理接口。
+`common/nixl-retained-prefix.patch` 让原生 pull scheduler 统一管理普通 P→D 与保留前缀 D→P 的来源。授权、取消和过期回收串行执行；先关闭新授权，再请求 worker 释放，最后等待原生 TP 完成汇合后归还缓存块。每个已授权 reader 独立续期；心跳失联或无法确认原生传输状态时，引擎持有缓冲区并退役。取消会阻止迟到回调再次提交 READ，已有 handle 仍等待原生终态。原生握手按协议版本拒绝不支持这套生命周期的对端，即使关闭布局兼容检查也不放行。0.30 兼容补丁提供同一实现所需的对端替换接口。
 
 `common/mooncake-retained-prefix.patch` 在原生 sender loop 中串行化领取、撤销和 WRITE 提交。闲置来源使用 `kv_lease_duration`，与普通发送的超时分开。撤销和到期回收都要求已经接纳的 reader 全部完成 WRITE，或确认没有提交 WRITE；尚未开始的 reader 随后按未命中处理。无法确认 I/O 已停止的错误会使 worker 退役。接收端汇合所有来源的终态后报告加载结果，scheduler 再等待全部 TP worker 完成才释放块。
 

@@ -48,11 +48,15 @@ class NixlConnector(RetainedPrefixConnector, UpstreamNixlConnector):
             and self.kv_transfer_config.kv_role == "kv_consumer"
             and bidirectional,
         )
-        if role == KVConnectorRole.SCHEDULER:
-            native.read_lease_handler = self._authorize_read
-            native.read_lease_state_handler = self._read_lease_released
 
-    def cancel_retained_source(self, *args):
-        """Revoke a native pin after the directory has excluded all READ authorization."""
-        self.connector_worker.cancel_send_lease(*args)
-        return True
+    def _claim_source(self, request_id, lease_id, consumer_id, worker_rpc):
+        """Claim references already retained by the native source scheduler."""
+        return self.connector_scheduler.claim_send_lease(
+            request_id, lease_id, consumer_id
+        )
+
+    def _cancel_source(self, request_id, lease_id, consumer_id, worker_rpc):
+        """Revoke through the same native owner that authorizes both READ directions."""
+        return self.connector_scheduler.cancel_send_lease(
+            request_id, lease_id, consumer_id
+        )

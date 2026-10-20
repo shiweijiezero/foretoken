@@ -659,17 +659,11 @@ impl KvPlan {
                 )
             }
         }?;
-        // Retained sources use native per-launch identities so restarts cannot reuse
-        // cached peer addresses. Preserve Group identity for older distributed Mooncake.
-        if !kv_transfer.is_some_and(|transfer| transfer.bidirectional_kv_xfer)
-            && !matches!(
-                self,
-                Self::Pd {
-                    connector: KvConnector::Nixl,
-                    ..
-                }
-            )
-            && let Some(uid) = model_group_uid
+        // NIXL peers and retained Mooncake sources need per-launch identities.
+        // Preserve Group identity for older distributed Mooncake.
+        if !kv_transfer.is_some_and(|transfer| {
+            transfer.connector == KvConnector::Nixl || transfer.bidirectional_kv_xfer
+        }) && let Some(uid) = model_group_uid
         {
             config["engine_id"] = json!(uid);
         }

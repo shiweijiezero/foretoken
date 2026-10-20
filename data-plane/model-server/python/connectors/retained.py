@@ -5,10 +5,9 @@
 
 from __future__ import annotations
 
-import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from vllm.distributed.kv_transfer import get_kv_transfer_group
@@ -22,7 +21,6 @@ class _RetainedPrefix:
     descriptor: dict[str, Any]
     expires_at: float
     consumer_id: str | None = None
-    authorized_readers: set[int] = field(default_factory=set)
 
     def matches(self, payload: dict[str, Any]) -> bool:
         return self.cache_salt == payload.get("cache_salt") and self.token_ids == tuple(
@@ -34,12 +32,11 @@ class RetainedPrefixConnector:
     """Own a token directory while the native connector owns references and I/O."""
 
     def _initialize_retained_prefixes(self, vllm_config, enabled, retain_sources):
-        """Bind this directory to one engine instance before accepting utility calls."""
+        """Bind the directory to one engine instance; scheduler hooks own its access."""
         self._instance_id = vllm_config.instance_id
         self._dp_rank = vllm_config.parallel_config.data_parallel_index
         self._bidirectional_kv_xfer = enabled
         self._prefixes: dict[str, _RetainedPrefix] = {}
-        self._prefix_lock = threading.Lock()
         self._accepting = True
         self._retain_prefixes = retain_sources
 
@@ -56,116 +53,112 @@ class RetainedPrefixConnector:
         )
 
     def handle_utility_call(self, operation, payload, worker_rpc):
-        """Serve EngineCore utilities; grant a source only after all workers pin it."""
+        """Serve discovery and one-shot claims through the native retention owner."""
         if operation == "configuration":
             return {
                 "connector": self._kv_transfer_config.kv_connector,
                 "bidirectional_kv_xfer": self._bidirectional_kv_xfer,
             }
         result = {"dp_rank": self._dp_rank, "instance_id": self._instance_id}
-        with self._prefix_lock:
-            self._expire_available()
-            if operation == "retained_prefix":
-                matches = [
-                    (offer_id, prefix)
-                    for offer_id, prefix in self._prefixes.items()
-                    if self._accepting
-                    and prefix.consumer_id is None
-                    and prefix.matches(payload)
-                ]
-                match = max(
-                    matches, key=lambda item: len(item[1].token_ids), default=None
-                )
-                result["offer"] = (
-                    {"id": match[0], "matched_tokens": len(match[1].token_ids)}
-                    if match is not None
-                    else None
-                )
-                return result
-            if operation == "drain":
-                self._accepting = False
-                self._prefixes = {
-                    offer_id: prefix
-                    for offer_id, prefix in self._prefixes.items()
-                    if prefix.consumer_id is not None
-                }
-                worker_pending = worker_rpc(
-                    _worker_lease_call, args=("pending_transfers",)
-                )
-                pending = self.connector_scheduler.get_pending_transfers().union(
-                    *worker_pending,
-                    (prefix.request_id for prefix in self._prefixes.values()),
-                )
-                result["active_leases"] = len(pending)
-                return result
-            if operation not in {"claim", "cancel"}:
-                raise ValueError(f"Unknown KV utility operation: {operation}")
-            if (
-                payload["dp_rank"] != self._dp_rank
-                or payload["instance_id"] != self._instance_id
-            ):
-                return {**result, "status": "Miss"}
-            offer_id = payload["offer_id"]
-            prefix = self._prefixes.get(offer_id)
-            consumer_id = payload["consumer_id"]
-            if prefix is None:
-                return {
-                    **result,
-                    "status": "Released" if operation == "cancel" else "Miss",
-                }
-            if operation == "cancel":
-                if prefix.consumer_id not in (None, consumer_id):
-                    return {**result, "status": "Miss"}
-                if prefix.authorized_readers:
-                    return {**result, "status": "InUse"}
-                # Native workers serialize revocation with actual transfer submission.
-                # An active worker keeps the source until the native completion barrier.
-                if prefix.consumer_id is not None:
-                    revoked = worker_rpc(
-                        _worker_lease_call,
-                        args=("cancel", prefix.request_id, offer_id, consumer_id),
-                    )
-                    if not all(revoked):
-                        return {**result, "status": "InUse"}
-                del self._prefixes[offer_id]
-                return {**result, "status": "Released"}
-            if (
-                not self._accepting
-                or prefix.consumer_id is not None
-                or not prefix.matches(payload)
-            ):
-                return {**result, "status": "Miss"}
-            # Preserve claim identity so RPC failures can still be cleaned up.
-            prefix.consumer_id = consumer_id
-            pinned = worker_rpc(
-                _worker_lease_call,
-                args=("claim", prefix.request_id, offer_id, consumer_id),
+        self._expire_available()
+        if operation == "retained_prefix":
+            matches = [
+                (offer_id, prefix)
+                for offer_id, prefix in self._prefixes.items()
+                if self._accepting
+                and prefix.consumer_id is None
+                and prefix.matches(payload)
+            ]
+            match = max(matches, key=lambda item: len(item[1].token_ids), default=None)
+            result["offer"] = (
+                {"id": match[0], "matched_tokens": len(match[1].token_ids)}
+                if match is not None
+                else None
             )
-            if not all(pinned):
-                worker_rpc(
-                    _worker_lease_call,
-                    args=("cancel", prefix.request_id, offer_id, consumer_id),
-                )
-                del self._prefixes[offer_id]
-                return {**result, "status": "Miss"}
-            descriptor = {
-                **prefix.descriptor,
-                "remote_read_lease": offer_id,
-                "remote_consumer_id": consumer_id,
+            return result
+        if operation == "drain":
+            self._accepting = False
+            self._prefixes = {
+                offer_id: prefix
+                for offer_id, prefix in self._prefixes.items()
+                if prefix.consumer_id is not None
             }
-            return {**result, "status": "Granted", "descriptor": descriptor}
+            worker_pending = worker_rpc(_worker_lease_call, args=("pending_transfers",))
+            pending = self.connector_scheduler.get_pending_transfers().union(
+                *worker_pending,
+                (prefix.request_id for prefix in self._prefixes.values()),
+            )
+            result["active_leases"] = len(pending)
+            return result
+        if operation not in {"claim", "cancel"}:
+            raise ValueError(f"Unknown KV utility operation: {operation}")
+        if (
+            payload["dp_rank"] != self._dp_rank
+            or payload["instance_id"] != self._instance_id
+        ):
+            return {**result, "status": "Miss"}
+        offer_id = payload["offer_id"]
+        prefix = self._prefixes.get(offer_id)
+        consumer_id = payload["consumer_id"]
+        if prefix is None:
+            return {
+                **result,
+                "status": "Released" if operation == "cancel" else "Miss",
+            }
+        if operation == "cancel":
+            if prefix.consumer_id not in (None, consumer_id):
+                return {**result, "status": "Miss"}
+            if prefix.consumer_id is not None and not self._cancel_source(
+                prefix.request_id, offer_id, consumer_id, worker_rpc
+            ):
+                return {**result, "status": "InUse"}
+            del self._prefixes[offer_id]
+            return {**result, "status": "Released"}
+        if (
+            not self._accepting
+            or prefix.consumer_id is not None
+            or not prefix.matches(payload)
+        ):
+            return {**result, "status": "Miss"}
+        # Keep the claim identity available for cleanup if native acquisition fails.
+        prefix.consumer_id = consumer_id
+        if not self._claim_source(prefix.request_id, offer_id, consumer_id, worker_rpc):
+            self._cancel_source(prefix.request_id, offer_id, consumer_id, worker_rpc)
+            del self._prefixes[offer_id]
+            return {**result, "status": "Miss"}
+        descriptor = {
+            **prefix.descriptor,
+            "remote_read_lease": offer_id,
+            "remote_consumer_id": consumer_id,
+        }
+        return {**result, "status": "Granted", "descriptor": descriptor}
+
+    def _claim_source(self, request_id, lease_id, consumer_id, worker_rpc):
+        """Acquire native worker references through an EngineCore-main-thread RPC."""
+        return all(
+            worker_rpc(
+                _worker_lease_call, args=("claim", request_id, lease_id, consumer_id)
+            )
+        )
+
+    def _cancel_source(self, request_id, lease_id, consumer_id, worker_rpc):
+        """Ask the native owner whether its admitted I/O allows revocation."""
+        return all(
+            worker_rpc(
+                _worker_lease_call, args=("cancel", request_id, lease_id, consumer_id)
+            )
+        )
 
     def update_connector_output(self, connector_output):
         """Remove completed sources before the scheduler releases their KV references."""
         super().update_connector_output(connector_output)
         finished = connector_output.finished_sending or ()
         if finished:
-            with self._prefix_lock:
-                self._prefixes = {
-                    offer_id: prefix
-                    for offer_id, prefix in self._prefixes.items()
-                    if prefix.request_id not in finished
-                }
+            self._prefixes = {
+                offer_id: prefix
+                for offer_id, prefix in self._prefixes.items()
+                if prefix.request_id not in finished
+            }
 
     def _record_prefix(self, request, result):
         """Publish text prefixes only after the native connector retains their blocks."""
@@ -191,10 +184,12 @@ class RetainedPrefixConnector:
             descriptor=dict(descriptor),
             expires_at=descriptor["remote_blocks_expiry_time"],
         )
-        with self._prefix_lock:
-            if self._accepting:
-                self._expire_available()
-                self._prefixes[uuid.uuid4().hex] = prefix
+        if self._accepting:
+            self._expire_available()
+            lease_id = descriptor.get("remote_read_lease")
+            self._prefixes[lease_id if lease_id is not None else uuid.uuid4().hex] = (
+                prefix
+            )
         # Decode descriptors are owned by this directory, not the output consumer.
         return delay_free, None
 
@@ -205,26 +200,6 @@ class RetainedPrefixConnector:
             for offer_id, prefix in self._prefixes.items()
             if prefix.consumer_id is not None or now < prefix.expires_at
         }
-
-    def _authorize_read(self, request_id, lease_id, consumer_id, reader_rank):
-        """Authorize pull readers under the same lock used to revoke unstarted reads."""
-        with self._prefix_lock:
-            prefix = self._prefixes.get(lease_id)
-            if (
-                prefix is None
-                or prefix.request_id != request_id
-                or prefix.consumer_id is None
-                or prefix.consumer_id != consumer_id
-                or reader_rank in prefix.authorized_readers
-            ):
-                return False
-            prefix.authorized_readers.add(reader_rank)
-            return True
-
-    def _read_lease_released(self, lease_id):
-        """Observe source release without changing native references or completions."""
-        with self._prefix_lock:
-            return lease_id not in self._prefixes
 
 
 def _worker_lease_call(worker, operation: str, *args):
