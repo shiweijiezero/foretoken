@@ -27,6 +27,10 @@ from ..observations import RpcTiming
 from .scheduler import DraftScheduler, ExternalScheduler
 
 
+class DraftAbortedError(RuntimeError):
+    """Report native proposal termination so the session owner can distinguish an explicit close."""
+
+
 @dataclass(frozen=True)
 class ExternalDraftRequest:
     """Identify one logical frontier; KV eviction does not consume or replace this ticket."""
@@ -177,10 +181,10 @@ class ExternalAsyncLLM(AsyncLLM):
             # per-turn finish reason is the proposal boundary, not session close.
             output = stream.collector.get_nowait() or await stream.collector.get()
             if output is STREAM_FINISHED:
-                raise RuntimeError("Draft session closed during proposal")
+                raise DraftAbortedError("Draft session closed during proposal")
             result = output.outputs[0]
             if result.finish_reason == "abort":
-                raise RuntimeError("Draft session aborted during proposal")
+                raise DraftAbortedError("Draft session aborted during proposal")
             tokens.extend(result.token_ids)
             if result.finish_reason is not None:
                 output.outputs[0].token_ids = tokens

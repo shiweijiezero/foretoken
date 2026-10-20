@@ -563,6 +563,8 @@ class RoleService:
         from vllm.inputs import TokensPrompt
         from vllm.sampling_params import RequestOutputKind
 
+        from .vllm.engine import DraftAbortedError
+
         session = self.draft_session(session_id)
         if (
             self.max_candidate_tokens is not None
@@ -640,7 +642,12 @@ class RoleService:
                     self.receive_context(session_id, session, request, ready),
                 )
                 await self.wait_ready(session_id, context_task, ready)
-            output = await generate()
+            try:
+                output = await generate()
+            except DraftAbortedError:
+                if not session.closed.is_set():
+                    raise
+                raise HTTPException(409, "session closed during proposal") from None
             self.check_reclamations(session_id)
             tokens = list(output.outputs[0].token_ids)
             if session.closed.is_set():

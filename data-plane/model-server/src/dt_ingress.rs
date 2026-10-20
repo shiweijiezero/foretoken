@@ -18,6 +18,7 @@ use bytes::Bytes;
 use foretoken_request_ledger::{Outcome, RequestLedger, ReservationRef};
 use futures::StreamExt;
 use serde_json::Value;
+use tracing::warn;
 
 use crate::execution::{
     AdmissionPermit, ExecutionStore, ReservationEnd, RuntimeHealth, finish_shared,
@@ -46,6 +47,8 @@ pub fn router(
         endpoint,
         client: reqwest::Client::builder()
             .no_proxy()
+            // Retire controls before the role's five-second ASGI keep-alive expires.
+            .pool_idle_timeout(Duration::from_secs(1))
             .build()
             .map_err(io::Error::other)?,
         health,
@@ -210,7 +213,10 @@ async fn forward(State(state): State<Ingress>, request: Request) -> Response {
     }
     let response = match request.send().await {
         Ok(response) => response,
-        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+        Err(error) => {
+            warn!(?error, "DT role control request failed");
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
     };
     let status = response.status();
     let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
