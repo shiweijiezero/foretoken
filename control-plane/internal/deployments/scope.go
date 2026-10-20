@@ -11,6 +11,7 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -104,7 +105,12 @@ func (reader *scopedReader) List(ctx context.Context, objects client.ObjectList,
 		return err
 	}
 	if namespaced {
-		options = append(options, client.InNamespace(reader.scope.Namespace), client.MatchingLabels{api.DeploymentUIDLabel: reader.scope.UID})
+		// Shared-cache affinity includes other deployments using the same claim in this namespace.
+		// Only that exact-UID Pod query crosses read membership; writes keep their original scope.
+		options = append(options, client.InNamespace(reader.scope.Namespace))
+		if !sharedCacheConsumerQuery(objects, options) {
+			options = append(options, client.MatchingLabels{api.DeploymentUIDLabel: reader.scope.UID})
+		}
 	}
 	return reader.Reader.List(ctx, objects, options...)
 }
@@ -124,7 +130,24 @@ func (c *scopedClient) Get(ctx context.Context, key client.ObjectKey, object cli
 }
 
 func (c *scopedClient) List(ctx context.Context, objects client.ObjectList, options ...client.ListOption) error {
+	if sharedCacheConsumerQuery(objects, options) {
+		// The instance-filtered informer cannot observe other consumers of a shared claim.
+		return c.reader.List(ctx, objects, options...)
+	}
 	return (&scopedReader{Reader: c.Client, metadata: c.Client, scope: c.scope}).List(ctx, objects, options...)
+}
+
+// sharedCacheConsumerQuery identifies the exact-claim lookup used for shared storage placement.
+func sharedCacheConsumerQuery(objects client.ObjectList, options []client.ListOption) bool {
+	if _, pods := objects.(*corev1.PodList); !pods {
+		return false
+	}
+	selector := new(client.ListOptions).ApplyOptions(options).LabelSelector
+	if selector == nil {
+		return false
+	}
+	uid, exact := selector.RequiresExactMatch(runtimeconfig.RuntimeCacheClaimLabel)
+	return exact && uid != ""
 }
 
 // Namespace KV credentials remain shared and outlive individual deployments.

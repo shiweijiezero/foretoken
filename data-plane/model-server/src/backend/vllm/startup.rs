@@ -8,14 +8,14 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::backend::vllm::config::RuntimeConfig;
-use crate::backend::vllm::launch::KvPlan;
+use crate::backend::vllm::launch::{KvPlan, PdProtocol};
 use crate::backend::vllm::prefix_lookup;
 use crate::backend::vllm::transport::LOOPBACK_HOST;
 use crate::engine::{ManagedEngine, PYTHON_MODULE_PATH};
 use crate::model_cache::preparation;
 use crate::{profiling, runtime_cache};
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::{PreparedTokenizer, RuntimeKvTransferMetadata};
+use foretoken_model_protocol::{KvConnector, PreparedTokenizer, RuntimeKvTransferMetadata};
 use tracing::{info, warn};
 use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
@@ -40,6 +40,14 @@ pub struct SpawnedEngine {
     handshake_port: u16,
     prepared_tokenizer: Option<PreparedTokenizer>,
     kv_transfer: Option<RuntimeKvTransferMetadata>,
+}
+
+/// Package and device facts consumed before one engine process loads its native libraries.
+struct VllmInspection {
+    protocol: EngineCoreProtocol,
+    retained_prefixes: bool,
+    model_express_available: bool,
+    mooncake_dma_buf: bool,
 }
 
 /// Startup error that distinguishes a retryable persistent-cache failure from other failures.
@@ -137,9 +145,30 @@ pub async fn spawn_engine_attempt(
             "EngineCore startup deadline elapsed before package inspection",
         )));
     }
-    let (engine_protocol, retained_prefixes, model_express_available) = tokio::time::timeout(
+    let mooncake_rdma = matches!(
+        config.launch.kv,
+        KvPlan::Pd {
+            connector: KvConnector::Mooncake,
+            protocol: PdProtocol::Rdma,
+            ..
+        } | KvPlan::MultiConnector {
+            connector: KvConnector::Mooncake,
+            protocol: PdProtocol::Rdma,
+            ..
+        }
+    );
+    let VllmInspection {
+        protocol: engine_protocol,
+        retained_prefixes,
+        model_express_available,
+        mooncake_dma_buf,
+    } = tokio::time::timeout(
         package_timeout,
-        inspect_engine_packages(&crate::engine::python_executable(), &environment),
+        inspect_engine_environment(
+            &crate::engine::python_executable(),
+            &environment,
+            mooncake_rdma,
+        ),
     )
     .await
     .map_err(|_| {
@@ -148,6 +177,10 @@ pub async fn spawn_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    if mooncake_dma_buf {
+        // Mooncake reads this choice when its library initializes in the engine process.
+        environment.push(("WITH_NVIDIA_PEERMEM".into(), "0".into()));
+    }
     let handshake_port = config.ports.handshake;
     let (mut managed_engine, kv_transfer) = config
         .launch
@@ -569,17 +602,19 @@ pub async fn wait_cache_write_failure(
     cache.wait_until_unwritable(mode).await
 }
 
-/// Inspect protocol, retained-prefix support and optional weight loading without importing plugins.
-async fn inspect_engine_packages(
+/// Inspect installed packages and optional CUDA registration without importing engine plugins.
+async fn inspect_engine_environment(
     python: &str,
     environment: &[(String, String)],
-) -> Result<(EngineCoreProtocol, bool, bool), Box<dyn std::error::Error>> {
+    mooncake_rdma: bool,
+) -> Result<VllmInspection, Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .kill_on_drop(true)
         .envs(environment.iter().cloned())
         .args([
             "-c",
             r#"import json
+import sys
 from importlib.metadata import version, PackageNotFoundError
 
 vllm_version = version("vllm")
@@ -589,15 +624,24 @@ except PackageNotFoundError:
     model_express = False
 else:
     model_express = True
-print(json.dumps([vllm_version, model_express]))
+dma_buf = False
+if sys.argv[1] == "1":
+    from connectors.mooncake.environment import prefer_dma_buf
+    dma_buf = prefer_dma_buf()
+print(json.dumps([vllm_version, model_express, dma_buf]))
 "#,
         ])
+        .arg(if mooncake_rdma { "1" } else { "0" })
         .output()
         .await?;
     if !output.status.success() {
-        return Err(format!("could not inspect engine packages using {python}").into());
+        return Err(format!(
+            "could not inspect engine environment using {python}: {}",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        )
+        .into());
     }
-    let (version, model_express_available): (String, bool) =
+    let (version, model_express_available, mooncake_dma_buf): (String, bool, bool) =
         serde_json::from_slice(&output.stdout)?;
     let mut parts = version.split('.');
     let major = parts.next().and_then(|part| part.parse::<u64>().ok());
@@ -612,7 +656,12 @@ print(json.dumps([vllm_version, model_express]))
             };
             // Match the native lifecycle profiles installed by the vLLM patch catalog.
             let retained_prefixes = minor == 31 || version.split('+').next() == Some("0.30.0.dev0");
-            Ok((protocol, retained_prefixes, model_express_available))
+            Ok(VllmInspection {
+                protocol,
+                retained_prefixes,
+                model_express_available,
+                mooncake_dma_buf,
+            })
         }
         _ => Err(format!(
             "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.31"

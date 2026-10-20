@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	CacheVolumeName        = "runtime-cache"
-	CacheClaimEnv          = "FORETOKEN_RUNTIME_CACHE_CLAIM"
-	runtimeCacheClaimLabel = "inference.foretoken.io/runtime-cache-claim"
+	CacheVolumeName = "runtime-cache"
+	CacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+	// RuntimeCacheClaimLabel binds co-location and shared consumer reads to one PVC UID.
+	RuntimeCacheClaimLabel = "inference.foretoken.io/runtime-cache-claim"
 	// RuntimeCacheDirectoryAnnotation records the filesystem selected by a prepared claim.
 	RuntimeCacheDirectoryAnnotation = "inference.foretoken.io/runtime-cache-directory"
 )
@@ -116,14 +117,14 @@ func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace stri
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
-	pod.Labels[runtimeCacheClaimLabel] = string(claim.UID)
+	pod.Labels[RuntimeCacheClaimLabel] = string(claim.UID)
 	if pod.Spec.Affinity == nil {
 		pod.Spec.Affinity = &corev1.Affinity{}
 	}
 	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
 		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
 			TopologyKey:   corev1.LabelHostname,
-			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{runtimeCacheClaimLabel: string(claim.UID)}},
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{RuntimeCacheClaimLabel: string(claim.UID)}},
 		}},
 	}
 	return nil
@@ -137,7 +138,7 @@ func RuntimeCacheNodes(ctx context.Context, reader client.Reader, namespace stri
 		return nodes, err
 	}
 	var pods corev1.PodList
-	if err := reader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{runtimeCacheClaimLabel: string(claim.UID)}); err != nil {
+	if err := reader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{RuntimeCacheClaimLabel: string(claim.UID)}); err != nil {
 		return nil, fmt.Errorf("read runtime cache placement: %w", err)
 	}
 	placed := make(map[string]bool)

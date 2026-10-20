@@ -10,6 +10,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
+# Retain verified RDMA devices when a nested node hides the host netdev's link type.
 data:
   config.json: |
     {
@@ -18,7 +19,7 @@ data:
         "resourcePrefix": "rdma",
         "resourceName": {{ include "foretoken.rdmaResourceName" . | trimPrefix "rdma/" | quote }},
         "rdmaHcaMax": 1000,
-        "selectors": {"linkTypes": ["infiniband", "ether"]}
+        "selectors": {"linkTypes": ["infiniband", "ether", ""]}
       }]
     }
 ---
