@@ -41,21 +41,11 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
 		return nil, false, fmt.Errorf("list RuntimeCaches: %w", err)
 	}
-	directoryRequested := false
-	for _, cache := range caches.Items {
-		if cache.Spec.Directory != "" {
-			directoryRequested = true
-			break
-		}
-	}
 	claimName := profile.ClaimName
 	var cache *inferencev1alpha1.RuntimeCache
-	// An explicit directory selects storage; an existing-claim default must not
-	// silently replace it with a different filesystem.
-	if claimName == "" || directoryRequested {
-		if len(caches.Items) == 0 {
-			return nil, true, nil
-		}
+	// RuntimeCache reconciliation owns explicit storage selection. The profile's
+	// prepared claim applies only when no cache object selects storage.
+	if len(caches.Items) != 0 {
 		if len(caches.Items) > 1 {
 			return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
 		}
@@ -71,6 +61,9 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 		}
 		claimName = cache.Status.ClaimName
 	}
+	if claimName == "" {
+		return nil, true, nil
+	}
 	claim := new(corev1.PersistentVolumeClaim)
 	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, claim); err != nil {
 		return nil, false, fmt.Errorf("read runtime cache claim: %w", err)
@@ -81,7 +74,7 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 			return nil, false, fmt.Errorf("directory %q has no matching administrator-prepared claim", cache.Spec.Directory)
 		}
 		directory = cache.Spec.Directory
-	} else if cache == nil {
+	} else if cache == nil || cache.Spec.InitialSize == "" {
 		for authorized, name := range profile.DirectoryBindings {
 			if name == claim.Name {
 				directory = authorized

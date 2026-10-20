@@ -71,7 +71,7 @@ Install with `--values deploy/platform-values.yaml` when using the authenticated
 
 ### Assign external service addresses
 
-If the cluster already provides LoadBalancer addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
+The default shared Gateway needs a LoadBalancer address. If the cluster already provides these addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
 
 ```yaml
 loadBalancer:
@@ -87,9 +87,9 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. Deploy and update code
 
-The Quick Start selects the repository's `data/` directory. Keep that selection when the directory is available on the target nodes, using a shared filesystem for multi-node deployments. Member namespaces use [administrator-prepared directory access](../features/model-storage.md#share-model-files-across-namespaces).
+Keep `spec: {}` in the Quick Start's `cache.yaml` when the platform has prepared shared model storage. Custom `directory` paths must be accessible to the target nodes and [authorized by the administrator](../features/model-storage.md#share-model-files-across-namespaces). Use a shared filesystem for multi-node access.
 
-If the cluster should provide storage instead, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
+If no default model storage is prepared, or you want a separate volume allocated by a StorageClass, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
 
 ```yaml
 spec:

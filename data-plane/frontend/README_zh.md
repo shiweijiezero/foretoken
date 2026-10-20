@@ -15,13 +15,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","input":"你好","max_output_tokens":512}'
 ```
 
-响应包含 `id` 和生成结果 `output`。添加 `"stream": true` 和 `curl --no-buffer` 可实时接收输出。服务启用认证时，使用已签发的密钥添加 `-H "Authorization: Bearer $API_KEY"`；通过域名访问的请求见[网关示例](../../README_zh.md#网关模式)。
+响应包含 `id` 和生成结果 `output`。添加 `"stream": true` 和 `curl --no-buffer` 可实时接收输出。服务启用认证时，使用已签发的密钥添加 `-H "Authorization: Bearer $API_KEY"`；自定义域名和 HTTPS 的设置见[网关配置](../../README_zh.md#网关模式)。
 
 | 接口 | 路径 | 请求内容 |
 | --- | --- | --- |
@@ -43,6 +45,7 @@ Responses 默认保存结果。继续第一轮对话时，将下面的 `resp_...
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","previous_response_id":"resp_...","input":"我刚才说了什么？","max_output_tokens":512}'
 ```
@@ -57,7 +60,8 @@ curl --fail-with-body "$FRONTEND_URL/v1/responses" \
 
 ```bash
 RESPONSE_ID=resp_...
-curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID"
+curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID" \
+  -H "Host: $REQUEST_HOST"
 ```
 
 `status` 为 `queued` 或 `in_progress` 时继续轮询，最终状态为 `completed`、`incomplete`、`failed` 或 `cancelled`。需要取消时，调用 `POST /v1/responses/{id}/cancel`，再等待最终状态。删除响应不会取消生成。
@@ -231,6 +235,8 @@ spec:
 ## 运维
 
 用 `foretoken status` 查看部署实例，`foretoken delete` 删除实例，参数传入对应实例名。也可以传入配置目录；部署时使用了 `--name` 的，操作时沿用该名称。指标、日志和告警见[可观测性指南](../../observability/README_zh.md)。
+
+前端 Service 在集群内提供以下运维接口：
 
 | 接口 | 用途 |
 | --- | --- |

@@ -71,7 +71,7 @@ workload:
 
 ### 分配外部访问地址
 
-集群已经提供 LoadBalancer 地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
+默认的共享 Gateway 需要 LoadBalancer 地址。集群已经提供地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
 
 ```yaml
 loadBalancer:
@@ -87,9 +87,9 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. 部署与更新代码
 
-快速开始示例选择仓库中的 `data/` 目录。目标节点能访问该目录时可保留配置，跨节点部署应使用共享文件系统。成员使用的目录访问由[管理员提前准备](../features/model-storage_zh.md#跨命名空间复用模型文件)。
+平台已准备共享模型存储时，快速开始的 `cache.yaml` 保持 `spec: {}`。若通过 `directory` 选择其他目录，目标节点必须能访问该路径，并由[管理员授权](../features/model-storage_zh.md#跨命名空间复用模型文件)；跨节点访问使用共享文件系统。
 
-如果希望由集群提供存储，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
+平台尚未准备默认模型存储，或需要通过 StorageClass 申请独立卷时，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
 
 ```yaml
 spec:

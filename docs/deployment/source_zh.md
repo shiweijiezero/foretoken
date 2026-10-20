@@ -39,7 +39,7 @@ foretoken install -e .
 
 ## 部署模型服务
 
-在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码：
+在 Foretoken 仓库根目录部署快速开始示例，使用当前目录的代码。平台尚未准备默认模型存储时，先[选择存储](kubernetes_zh.md#3-部署与更新代码)：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
@@ -72,7 +72,7 @@ foretoken delete qwen3-0-6b
 
 ### 并行运行候选方案
 
-为每个候选使用独立的源码目录和实例名，即可在同一个 Kubernetes 命名空间中并行运行不同代码版本。候选共用已安装的平台，各自更新自己的控制器和服务代码。
+为每个候选使用独立的源码目录和实例名，即可在同一个 Kubernetes 命名空间中并行运行不同代码版本。候选共用已安装的平台，各自更新自己的控制器和服务代码，默认通过同一个 Gateway 提供 HTTP 访问。
 
 从仓库根目录执行：
 
@@ -90,7 +90,7 @@ foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-候选沿用快速开始的单卡配置。上述 worktree 的默认 `data/` 会指向主 checkout 的数据目录，复用模型下载，同时为各实例分别保存运行状态。目录需要能被目标节点访问，配置见[共享模型存储](../features/model-storage_zh.md#跨命名空间复用模型文件)；没有共享目录时，可改用[动态存储](../features/model-storage_zh.md#使用动态存储)。
+候选沿用快速开始的单卡配置。平台已准备默认模型存储时，普通文件夹、clone 和 worktree 都会复用该存储，运行状态仍按实例隔离。自定义目录或独立动态存储见[模型存储](../features/model-storage_zh.md)。
 
 每个候选分别需要 GPU、CPU 和内存。限定节点可添加 `spec.nodeSelector`，但它不指定 GPU 编号。
 

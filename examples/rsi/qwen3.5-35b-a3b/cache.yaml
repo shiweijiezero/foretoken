@@ -5,6 +5,4 @@ apiVersion: inference.foretoken.io/v1alpha1
 kind: RuntimeCache
 metadata:
   name: runtime-cache
-spec:
-  directory: ../../../data
-  accessMode: ReadWriteMany
+spec: {}

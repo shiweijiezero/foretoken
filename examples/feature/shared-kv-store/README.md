@@ -12,11 +12,11 @@ Serve `Qwen/Qwen3-0.6B` and `Qwen/Qwen2.5-0.5B-Instruct` through one frontend an
 | `compact` | 1 | 1 GiB | 4 GiB |
 | `large` | 1 | 4 GiB | 16 GiB |
 
-The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynamically provisioned storage, including the Master snapshot. Model files and compilation caches use the repository-root `data/` directory in `cache.yaml`.
+The example requests two GPUs, 14 CPU cores, 44 GiB memory, and 21 GiB of dynamically provisioned storage, including the Master snapshot. Model files and compilation caches use the platform's default storage.
 
 ## Deploy
 
-Use a [source-installed platform](../../../docs/deployment/source.md), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Configure the model directory as described in [Model storage](../../../docs/features/model-storage.md).
+Use a [source-installed platform](../../../docs/deployment/source.md), a model-server image containing vLLM's `MooncakeStoreConnector` and `mooncake-transfer-engine`, and a default StorageClass. Storage choices are described in [Model storage](../../../docs/features/model-storage.md).
 
 Build the Store image from the repository root. For a local k3d cluster, import it into the active cluster:
 
@@ -31,11 +31,13 @@ For another cluster, replace `REGISTRY` with a registry repository accessible to
 ```bash
 foretoken deploy examples/feature/shared-kv-store --timeout 20m
 FRONTEND_URL="$(foretoken endpoint examples/feature/shared-kv-store)"
+REQUEST_HOST="$(foretoken endpoint examples/feature/shared-kv-store --host)"
 
 for MODEL in Qwen/Qwen3-0.6B Qwen/Qwen2.5-0.5B-Instruct; do
   curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+    -H "Host: $REQUEST_HOST" \
     -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"What is a shared cache?\"}],\"max_tokens\":64}"
+    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"What is a shared cache?\"}]}"
   printf '\n'
 done
 ```

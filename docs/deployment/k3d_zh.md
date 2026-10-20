@@ -109,9 +109,9 @@ pip install foretoken
 foretoken install
 ```
 
-### 4.2 本地模式
+### 4.2 部署快速开始示例
 
-部署快速开始示例，解析 k3s ServiceLB 为前端分配的地址。不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`：
+部署模型，获取共享 Gateway 的 URL 和请求所需的 Host。不传 `--name` 时，实例名取自 [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -121,24 +121,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 如需其他实例名，在 `deploy` 中添加 `--name candidate-a`，并在 `endpoint` 中使用 `candidate-a`。
 
-### 4.3 网关模式
-
-启用网关模式并部署快速开始示例。HTTP 路由会自动为各实例分配不同的主机名：
-
-```bash
-foretoken install -e . --frontend-mode gateway
-# 发布安装使用：foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-```
-
-解析已配置的 Gateway 入口：
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
-```
-
-### 4.4 发送 OpenAI API 兼容格式的请求
+### 4.3 发送 OpenAI API 兼容格式的请求
 
 ```bash
 curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -147,7 +130,6 @@ curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
     "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
     "temperature": 0
   }'
 printf '\n'

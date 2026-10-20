@@ -270,9 +270,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if eq (trim .Values.frontend.image) "" -}}
 {{- fail "frontend.image is required when frontend.enabled=true" -}}
 {{- end -}}
-{{- if and .Values.frontend.gateway.create (ne .Values.frontend.mode "gateway") -}}
-{{- fail "frontend.gateway.create requires frontend.mode=gateway" -}}
-{{- end -}}
 {{- if eq .Values.frontend.mode "gateway" -}}
 {{- if .Values.frontend.gateway.create -}}
 {{- if eq (trim .Values.frontend.gateway.controllerName) "" -}}

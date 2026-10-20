@@ -27,14 +27,16 @@ Run from the repository root:
 RECIPE=examples/recipes/glm-5.3-flash/metax-bf16
 foretoken deploy "$RECIPE" --timeout 70m
 FRONTEND_URL="$(foretoken endpoint "$RECIPE")"
+REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host)"
 
 curl --fail-with-body --no-buffer \
   "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"zai-org/GLM-5.3-Flash-BF16","messages":[{"role":"user","content":"Hello, please introduce yourself."}],"max_tokens":512,"stream":true}'
 ```
 
-This example uses the platform's direct LoadBalancer endpoint. For Gateway mode, configure the hostname and request Host as described in the [MetaX deployment guide](../../../../docs/deployment/metax.md).
+For a custom domain or HTTPS, follow the hostname settings in the [MetaX deployment guide](../../../../docs/deployment/metax.md).
 
 Reapply the same `foretoken deploy` command after changing configuration. Inspect or remove the deployment with:
 

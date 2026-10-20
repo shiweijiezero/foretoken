@@ -109,9 +109,9 @@ pip install foretoken
 foretoken install
 ```
 
-### 4.2 Local mode
+### 4.2 Deploy the Quick Start
 
-Deploy the Quick Start and resolve the address assigned by k3s ServiceLB. With `--name` omitted, the instance takes `qwen3-0-6b` from the `FrontendService`'s `metadata.name` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml):
+Deploy the model and resolve its shared Gateway URL and request Host. With `--name` omitted, the instance takes `qwen3-0-6b` from the `FrontendService`'s `metadata.name` in [`frontend.yaml`](../../examples/quickstart/qwen3-0.6b/frontend.yaml):
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -121,24 +121,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 To choose another instance name, add `--name candidate-a` to `deploy` and use `candidate-a` with `endpoint`.
 
-### 4.3 Gateway mode
-
-Enable Gateway mode and deploy the Quick Start. HTTP routing assigns each instance a distinct hostname automatically:
-
-```bash
-foretoken install -e . --frontend-mode gateway
-# For a release installation: foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-```
-
-Resolve the configured Gateway endpoint:
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
-```
-
-### 4.4 Send an OpenAI API-compatible request
+### 4.3 Send an OpenAI API-compatible request
 
 ```bash
 curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -147,7 +130,6 @@ curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
     "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
     "temperature": 0
   }'
 printf '\n'

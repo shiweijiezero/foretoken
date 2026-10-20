@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -194,11 +194,7 @@ class PlatformLifecycle:
             release=plan.platform,
             source_images=prepared.source_images,
             values=command.values,
-            frontend_mode=command.frontend_mode,
-            gateway_name=command.gateway_name,
-            gateway_namespace=command.gateway_namespace,
-            gateway_section_name=command.gateway_section_name,
-            gateway_controller_name=plan.gateway.controller_name,
+            gateway=plan.gateway_config,
             observability_labels=plan.monitoring.labels,
             observability_prometheus=f"{prepared.prometheus.namespace}/{prepared.prometheus.name}",
             grafana_anonymous_access=plan.monitoring.anonymous_access,
@@ -354,7 +350,10 @@ class PlatformLifecycle:
         if load_balancer.blocking:
             _print_plan("LoadBalancer", load_balancer.action, load_balancer.detail)
             raise DeploymentError(load_balancer.detail)
-        gateway_config, gateway = self._gateway.resolve_install(command, platform, platform_exists)
+        gateway_config, gateway = self._gateway.resolve_install(
+            command, platform, platform_exists, values=values, stored_values=stored[0] if stored else None,
+        )
+        gateway_config = replace(gateway_config, controller_name=gateway.controller_name or gateway_config.controller_name)
         leader_worker = self._leader_worker.resolve_install()
         discovery = ExporterDiscovery(self._kubectl, command.timeout)
         runtime = self._resolve_runtime(command, install_source, values, stored, discovery.nodes, source_base_image)

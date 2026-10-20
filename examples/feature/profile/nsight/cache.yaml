@@ -5,5 +5,4 @@ apiVersion: inference.foretoken.io/v1alpha1
 kind: RuntimeCache
 metadata:
   name: models
-spec:
-  directory: ../../../../data
+spec: {}

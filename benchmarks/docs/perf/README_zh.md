@@ -8,15 +8,14 @@
 
 完成[通用准备](../../README_zh.md#开始使用)后，在仓库根目录执行命令。示例均使用 `examples/quickstart/qwen3-0.6b`。
 
-评测已有端点时，将目录换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。默认模式下已部署的快速开始示例可这样获取地址和模型名：
+评测 Foretoken 部署时，直接使用 Kustomize 目录，CLI 会自动解析服务地址、模型和 Gateway 路由请求头。
+
+评测其他 OpenAI 兼容 API 时，将目录换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。按实际服务填写 Chat Completions URL 和公开模型标识，例如：
 
 ```bash
-MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
+export MODEL_SERVICE_URL=http://localhost:8000/v1/chat/completions
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
-
-其他服务使用其实际 Chat Completions URL 和模型名。Gateway 访问使用 Kustomize 目录；Foretoken 会从中查找 Gateway 路由请求头。
 
 ## 命令分类
 

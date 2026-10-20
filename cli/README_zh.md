@@ -80,11 +80,19 @@ foretoken install
 foretoken install -e .
 ```
 
-集群需提供默认 StorageClass，GPU 节点需具备厂商驱动和设备插件。新安装默认通过 `LoadBalancer` 直接访问。平台更新不会重启已有实例；重新部署某个实例后，它才会采用更新后的默认配置。
+集群需提供默认 StorageClass，GPU 节点需具备厂商驱动和设备插件。新安装默认共用一个 Gateway 入口；使用 `--frontend-mode local` 可为每个实例提供独立的 `LoadBalancer` Service。平台更新不会重启已有实例；重新部署某个实例后，它才会采用更新后的默认配置。
 
-用 `--frontend-mode gateway` 启用[网关访问](../README_zh.md#网关模式)。复用已有 Gateway 时，同时指定 `--gateway-name` 和 `--gateway-namespace`；需要选择监听器时，再添加 `--gateway-section-name`。
+复用已有 Gateway 时，指定 `--frontend-mode gateway`、`--gateway-name` 和 `--gateway-namespace`；需要选择监听器时，再添加 `--gateway-section-name`。自定义域名和 HTTPS 见[网关配置](../README_zh.md#网关模式)。
 
 `--values` 应用 [Helm 配置](../deploy/charts/foretoken/values.yaml)，`--oci-registry` 指定默认镜像和 Chart 的仓库前缀。监控设置见[可观测性](../observability/README_zh.md#平台设置)，节点间模型分发见[模型存储](../docs/features/model-storage_zh.md#在节点间分发模型)。
+
+新建的托管 Gateway 默认在 8081 端口监听 HTTP。需要使用其他监听端口时，在 `deploy/platform-values.yaml` 中添加以下配置，并在安装命令中传入 `--values deploy/platform-values.yaml`：
+
+```yaml
+frontend:
+  gateway:
+    port: 8082
+```
 
 源码构建时，标准 kind、k3d context 可直接载入镜像，其他集群需指定 `--registry`。显式执行 `deploy -e PATH` 只更新目标实例的控制器和服务应用；新工作站可以直接使用已安装的源码版平台，不必重新安装。准备步骤、引擎源码和并行候选用法见[源码部署](../docs/deployment/source_zh.md)。
 
