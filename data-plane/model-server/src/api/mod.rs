@@ -3,13 +3,10 @@
 
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
-mod execution;
-mod health;
 mod kv;
 
-use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -25,11 +22,12 @@ use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
-use self::execution::{ExecutionStore, start_execution};
-pub use self::health::{AdmissionPermit, AdmissionRejection, RuntimeHealth};
 use crate::backend::vllm::kv_events::KvEventAdapter;
-use crate::backend::{Backend, BackendError, ExecutionControl, GenerateInput, TokenEvent};
-use crate::instance_admission::InstanceAdmissionStatus;
+use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
+use crate::execution::{
+    AdmissionRejection, ExecutionError, ExecutionRegistry, ExecutionStore, InstanceAdmissionStatus,
+    RuntimeHealth, start_execution,
+};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, RuntimeMetadataResponse, SchedulerLoadResponse,
@@ -50,7 +48,7 @@ pub struct AppState {
     profiling: Option<crate::profiling::Handle>,
     shared_kv: Option<crate::backend::vllm::prefix_lookup::SharedKvLookup>,
     ledger: Option<ExecutionStore>,
-    executions: Arc<Mutex<BTreeMap<String, Arc<ExecutionControl>>>>,
+    executions: ExecutionRegistry,
 }
 
 /// Fixed, wire-safe errors for the internal API.
@@ -141,7 +139,7 @@ impl AppState {
             profiling: None,
             shared_kv: None,
             ledger: None,
-            executions: Arc::default(),
+            executions: ExecutionRegistry::default(),
         }
     }
 
@@ -223,7 +221,19 @@ async fn generate(
         AdmissionRejection::Busy => ApiError::Busy,
     })?;
     let request_id = input.request_id.clone();
-    let stream = start_execution(state, input, permit).await?;
+    let stream = start_execution(
+        state.backend,
+        state.health,
+        state.ledger,
+        state.executions,
+        input,
+        permit,
+    )
+    .await
+    .map_err(|error| match error {
+        ExecutionError::AdmissionUnavailable => ApiError::AdmissionUnavailable,
+        ExecutionError::Backend(error) => ApiError::backend(error),
+    })?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let body_stream = stream.map(move |item| {
         let event = match item {
@@ -377,15 +387,7 @@ async fn abort(
     if input.request_ids.is_empty() {
         return Err(ApiError::InvalidRequest);
     }
-    let executions = state
-        .executions
-        .lock()
-        .expect("execution registry lock poisoned");
-    for request_id in &input.request_ids {
-        if let Some(execution) = executions.get(request_id) {
-            execution.cancel();
-        }
-    }
+    state.executions.cancel(&input.request_ids);
     Ok(StatusCode::NO_CONTENT)
 }
 

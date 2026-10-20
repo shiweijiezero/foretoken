@@ -22,9 +22,10 @@ from lm_eval.utils import (
     simple_parse_args_string,
 )
 
-from benchmarks.config.evaluation import native_arguments, validate_model_transport
+from benchmarks.integrations.lm_eval.cli import parse_arguments
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
 from benchmarks.integrations.lm_eval.responses import LmEvalResponses
+from benchmarks.integrations.quality import validate_model_transport
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def run_lm_eval(
 ) -> None:
     """Resolve native configuration and own the response store for one model-service evaluation."""
     setup_logging()
-    args = native_arguments("lm-eval", arguments)
+    args = parse_arguments(arguments)
     args.output_path = directory
     if args.config:
         configured = EvaluatorConfig.load_yaml_config(args.config).get("model_args") or {}

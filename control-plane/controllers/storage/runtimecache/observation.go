@@ -3,7 +3,7 @@
 
 // Reads mounted cache filesystem measurements from model execution members.
 
-package storage
+package runtimecache
 
 import (
 	"context"
@@ -21,8 +21,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-const runtimeCachePollInterval = 5 * time.Second
 
 // runtimeCacheObservation is a fresh measurement of one workload's mounted filesystem.
 type runtimeCacheObservation struct {

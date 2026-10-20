@@ -20,11 +20,8 @@ from threading import Event
 from typing import Any
 
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
-from benchmarks.integrations.evalscope.evaluation import EvalScopeProgress
-from benchmarks.integrations.quality import PROGRESS_FILENAME
 from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.output import ResultOutputs
-from benchmarks.results.recording.quality import read_quality_metrics
 from benchmarks.results.reporting.evaluation import (
     evaluation_comparison_sinks,
     evaluation_sinks,
@@ -43,6 +40,11 @@ def run_evaluation(
     outputs: ResultOutputs | None = None,
 ) -> BenchmarkRun:
     """Publish one evaluation, borrowing entered outputs when the caller owns service cleanup."""
+    if config.evaluator == "lm-eval":
+        from benchmarks.integrations.lm_eval.reports import read_metrics
+    else:
+        from benchmarks.integrations.evalscope.reports import read_metrics
+
     record: dict[str, Any] = {
         "mode": "evaluation",
         "evaluator": config.evaluator,
@@ -73,7 +75,7 @@ def run_evaluation(
 
         started = time.monotonic()
         code = _execute(config, service, directory, publish_progress, active_outputs)
-        metrics = read_quality_metrics(config.evaluator, directory / "native")
+        metrics = read_metrics(directory / "native")
         run = BenchmarkRun(
             record=record,
             metrics={**metrics, "duration_seconds": time.monotonic() - started},
@@ -161,22 +163,22 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
 def _poll_progress(
     evaluator: str, native: Path, stop: Event, publish: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Observe durable native completions independently of evaluator stdout and flush on shutdown."""
+    """Observe adapter completion counts independently of evaluator stdout and flush on shutdown."""
     started = time.monotonic()
     previous = None
-    reader = EvalScopeProgress() if evaluator == "evalscope" else None
+    if evaluator == "lm-eval":
+        from benchmarks.integrations.quality import read_progress
+    else:
+        from benchmarks.integrations.evalscope.progress import EvalScopeProgress
+
+        read_progress = EvalScopeProgress().read
     while True:
         # A stop received during publication still requires a final snapshot read.
         stopping = stop.is_set()
-        path = native / PROGRESS_FILENAME
-        if path.is_file():
-            snapshot = json.loads(path.read_text(encoding="utf-8"))
-            counts = reader.read(
-                Path(snapshot["cache_directory"]), snapshot["model"], snapshot["cache_files"],
-            ) if reader else snapshot
-            if counts is not None and counts != previous:
-                publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
-                previous = counts
+        counts = read_progress(native)
+        if counts is not None and counts != previous:
+            publish({"Evaluation/Elapsed (s)": time.monotonic() - started, **counts})
+            previous = counts
         if stopping:
             return
         stop.wait(1)

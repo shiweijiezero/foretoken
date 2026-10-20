@@ -3,7 +3,7 @@
 
 // Observes prepared cache bindings without adopting their PVC lifecycle.
 
-package storage
+package runtimecache
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 )
 
 // preparedClaimRequests wakes consumers of default claims and authorized directory bindings.
-func (reconciler *RuntimeCacheReconciler) preparedClaimRequests(ctx context.Context, claim client.Object) []reconcile.Request {
+func (reconciler *Reconciler) preparedClaimRequests(ctx context.Context, claim client.Object) []reconcile.Request {
 	matched := claim.GetName() == reconciler.Profile.ClaimName
 	for _, name := range reconciler.Profile.DirectoryBindings {
 		if name == claim.GetName() {

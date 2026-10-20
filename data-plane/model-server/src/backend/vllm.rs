@@ -7,6 +7,7 @@ pub mod config;
 pub mod kv_events;
 pub mod launch;
 pub mod prefix_lookup;
+mod profiling;
 pub mod startup;
 mod telemetry;
 #[doc(hidden)]
@@ -98,52 +99,6 @@ impl VllmBackend {
     /// Counts unconfirmed remote claims for the supervisor's drain-timeout diagnostics.
     pub fn pending_kv_cleanup(&self) -> usize {
         self.kv_cleanup.len()
-    }
-
-    /// Runs the MetaX worker capture method on every rank; the supervisor owns its deadline.
-    pub async fn set_mctracer(
-        &self,
-        start: bool,
-        directory: &std::path::Path,
-    ) -> Result<(), String> {
-        let guard = self.llm.read().await;
-        let client = guard
-            .as_ref()
-            .ok_or("engine is unavailable")?
-            .engine_core_client();
-        self.closing
-            .run_until_cancelled(client.collective_rpc(
-                "foretoken_mctracer",
-                None,
-                (start, directory.to_string_lossy()),
-                std::collections::BTreeMap::<String, String>::new(),
-            ))
-            .await
-            .ok_or("engine is shutting down")?
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    /// Controls native profiling across every rank using the supervisor's trace prefix.
-    /// The supervisor owns the output directory, deadlines, and failure escalation.
-    pub async fn set_profiling(&self, start: bool, prefix: &str) -> Result<(), String> {
-        let guard = self.llm.read().await;
-        let client = guard
-            .as_ref()
-            .ok_or("engine is unavailable")?
-            .engine_core_client();
-        let result = self
-            .closing
-            .run_until_cancelled(async {
-                if start {
-                    client.start_profile(Some(prefix)).await
-                } else {
-                    client.stop_profile(Some(prefix)).await
-                }
-            })
-            .await
-            .ok_or("engine is shutting down")?;
-        result.map_err(|error| error.to_string())
     }
 
     /// Calls the active connector through EngineCore and decodes each rank's utility response.

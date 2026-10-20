@@ -3,7 +3,7 @@
 
 // Runs CPU-only model-cache collection workers with platform-local claims.
 
-package storage
+package modelcache
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ import (
 )
 
 // collectionJob reuses platform applications and storage identity without changing shared-root permissions.
-func (reconciler *ModelCacheCollectionReconciler) collectionJob(plan modelCacheCollectionPlan) (*batchv1.Job, error) {
+func (reconciler *Reconciler) collectionJob(plan modelCacheCollectionPlan) (*batchv1.Job, error) {
 	payload, err := json.Marshal(plan)
 	if err != nil {
 		return nil, fmt.Errorf("encode model cache collection plan: %w", err)
@@ -27,7 +27,7 @@ func (reconciler *ModelCacheCollectionReconciler) collectionJob(plan modelCacheC
 	job := &batchv1.Job{
 		ObjectMeta: reconciler.collectionMetadata(plan.Record, modelCacheCollectionJobPrefix+string(plan.Record.UID), reconciler.Namespace),
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{ModelCacheCollectionLabel: string(plan.Record.UID)}},
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{CollectionLabel: string(plan.Record.UID)}},
 			Spec: corev1.PodSpec{
 				ServiceAccountName: reconciler.ServiceAccount, AutomountServiceAccountToken: &automount,
 				RestartPolicy: corev1.RestartPolicyNever, ImagePullSecrets: slices.Clone(reconciler.ImagePullSecrets),

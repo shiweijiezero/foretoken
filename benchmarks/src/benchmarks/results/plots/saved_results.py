@@ -96,11 +96,14 @@ def read_saved_results(
             measured = saved.metrics or {}
             quality = saved.conditions.get("mode") == "evaluation"
             if quality:
-                from benchmarks.results.recording.quality import read_quality_conditions
+                if saved.conditions["evaluator"] == "lm-eval":
+                    from benchmarks.integrations.lm_eval.reports import read_conditions
+                else:
+                    from benchmarks.integrations.evalscope.reports import (
+                        read_conditions,
+                    )
 
-                saved.conditions["evaluation"] = read_quality_conditions(
-                    saved.conditions["evaluator"], saved.directory / "native",
-                )
+                saved.conditions["evaluation"] = read_conditions(saved.directory / "native")
             for kind in ("distribution_comparison", "greedy_comparison"):
                 if kind in measured:
                     saved.conditions["protocol"] = measured[kind].get("protocol")
