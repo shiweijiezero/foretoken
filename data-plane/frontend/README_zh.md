@@ -33,6 +33,10 @@ curl --fail-with-body "$FRONTEND_URL/v1/responses" \
 
 `GET /v1/models` 列出已配置的模型；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。支持图片的文本模型接受 base64 编码的图片 `data:` URL。
 
+`/v1/completions` 设置 `return_token_ids: true` 可返回生成的 token IDs。
+流式响应按 choice 的 `index` 分别累积 `token_ids`，也要处理 `text` 为空的 chunk：
+一个 UTF-8 字符可能由多个 token 组成。
+
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具。强制选择工具和严格约束参数需要模型具备[结构化输出能力](#修改服务配置)。
 
 输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。

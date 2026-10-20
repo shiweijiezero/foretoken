@@ -405,7 +405,12 @@ pub(crate) fn text_stream_many(
                             options.return_tokens_as_token_ids,
                         );
                         text_offset += delta.chars().count();
-                        if !options.echo_without_generation && (!delta.is_empty() || logprobs.is_some()) {
+                        // UTF-8 fragments can carry token IDs before any text becomes decodable.
+                        if !options.echo_without_generation
+                            && (!delta.is_empty()
+                                || logprobs.is_some()
+                                || (options.return_token_ids && !token_ids.is_empty()))
+                        {
                             yield Ok::<_, Infallible>(Event::default().json_data(CompletionStreamResponse {
                                 metadata: metadata.clone(), object: "text_completion",
                                 choices: vec![CompletionStreamChoice { index: index as u32, text: delta, logprobs, token_ids: options.return_token_ids.then_some(token_ids), finish_reason: None, stop_reason: None }], usage: None,

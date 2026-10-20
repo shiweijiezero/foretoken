@@ -33,6 +33,10 @@ The response contains an `id` and generated `output`. Add `"stream": true` and `
 
 `GET /v1/models` lists configured model identifiers. `/tokenize` and `/detokenize` convert between text and token IDs. Image-capable text models accept base64 image `data:` URLs.
 
+For text completions, set `return_token_ids: true` to include generated token IDs.
+In streaming responses, accumulate `token_ids` for each choice's `index`, including
+chunks with empty `text`: a UTF-8 character can span multiple tokens.
+
 Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools. Forced tool choice and strict schemas require the model's [structured-output capability](#update-serving-settings).
 
 Output budgets include reasoning tokens. Messages uses `max_tokens`, not `thinking.budget_tokens`; thinking controls depend on the model's chat template. Budget exhaustion produces `max_tokens` in Messages or `status: "incomplete"` in Responses. Execute only complete tool calls.
