@@ -355,7 +355,7 @@ class PlatformLifecycle:
             _print_plan("LoadBalancer", load_balancer.action, load_balancer.detail)
             raise DeploymentError(load_balancer.detail)
         gateway_config, gateway = self._gateway.resolve_install(command, platform, platform_exists)
-        leader_worker = self._leader_worker.resolve_install()
+        leader_worker = self._leader_worker.resolve_install(merged)
         discovery = ExporterDiscovery(self._kubectl, command.timeout)
         runtime = self._resolve_runtime(command, install_source, values, stored, discovery.nodes, source_base_image)
         rdma = select_rdma(
@@ -626,9 +626,11 @@ def _select_runtime(nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrid
 
 def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
     """Read one node's allocatable extended-resource capacity."""
+    from kubernetes.utils.quantity import parse_quantity
+
     value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
     try:
-        return int(str(value))
+        return int(parse_quantity(str(value)))
     except (TypeError, ValueError):
         return 0
 

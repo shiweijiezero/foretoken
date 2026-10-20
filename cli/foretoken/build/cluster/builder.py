@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import re
 import shlex
 import sys
 import time
@@ -16,7 +15,6 @@ import uuid
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 from typing import Any, Self
@@ -1035,34 +1033,12 @@ def _pod_ready(pod: dict[str, Any]) -> bool:
 
 def _cache_gc_limits(quantity: str) -> tuple[str, str, str]:
     """Apply the pinned BuildKit defaults to the execution-volume budget, not the whole host disk."""
-    match = re.fullmatch(
-        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([KMGTPE]i|[numkKMGTPE])?",
-        quantity,
-    )
-    if match is None:
-        raise DeploymentError(f"invalid compiler volume capacity: {quantity}")
-    amount, suffix = match.groups()
-    suffix = suffix or ""
-    if suffix.endswith("i"):
-        multiplier = Decimal(1024) ** ("KMGTPE".index(suffix[0]) + 1)
-    else:
-        multiplier = (
-            Decimal(10)
-            ** {
-                "n": -9,
-                "u": -6,
-                "m": -3,
-                "": 0,
-                "k": 3,
-                "K": 3,
-                "M": 6,
-                "G": 9,
-                "T": 12,
-                "P": 15,
-                "E": 18,
-            }[suffix]
-        )
-    capacity = int(Decimal(amount) * multiplier)
+    from kubernetes.utils.quantity import parse_quantity
+
+    try:
+        capacity = int(parse_quantity(quantity))
+    except ValueError as error:
+        raise DeploymentError(f"invalid compiler volume capacity: {quantity}") from error
     # BuildKit 0.33 reserves 10% (up to 10 GB), keeps 20% free, and uses at most
     # 80% (up to 100 GB). Explicit image configuration remains authoritative.
     return (

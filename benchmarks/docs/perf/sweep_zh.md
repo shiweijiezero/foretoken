@@ -39,7 +39,7 @@ foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
 
 只保留所选模型和服务能支持的长度组合与并发。模型上下文须容纳输入、输出及聊天模板的额外开销。固定输出长度要求服务支持 `min_tokens` 和 `ignore_eos`。tokenizer 从所选模型推导，可通过 `--tokenizer-path` 覆盖。
 
-每行 JSONL 将相关设置放在一起。字段沿用 CLI 名称，将连字符换成下划线，例如 `request_rate`。列表表示扫描维度，同一行中的多个维度会展开为全部组合。每次运行混合两个数据集时，使用嵌套列表：`"dataset": [["first.jsonl", "second.jsonl"]]`。
+每行 JSONL 将相关设置放在一起。字段沿用 CLI 名称，将连字符换成下划线，例如 `request_rate`。列表表示扫描维度，同一行中的多个维度会展开为全部组合。每次运行混合两个数据集时，使用嵌套列表：`"dataset": [["first.jsonl", "second.jsonl"]]`。布尔和整数选项使用对应的 JSON 类型，例如 `"stream": false` 和 `"max_concurrency": 4`；不接受带引号的布尔值或用小数表示的计数。
 
 `--slo-params` 用于统计固定负载的达标情况；添加 `--slo-search` 可[搜索并发](slo_zh.md)。与 sweep 一起使用时，`--num-runs` 控制每个参数点的完整搜索重复次数，每次搜索的探测点测量一轮。
 
@@ -115,7 +115,7 @@ foretoken perf examples/quickstart/qwen3-0.6b examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。sweep 行中的 `service` 列表表达相同选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)用于比较 [BF16 和 4-bit 部署](../../../examples/feature/quantized-model/README_zh.md)：
+多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。使用 sweep 时，未写 `service` 的行会在命令选定的每个服务上运行；行内显式指定的 `service` 则替代命令中的服务选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)用于比较 [BF16 和 4-bit 部署](../../../examples/feature/quantized-model/README_zh.md)：
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \

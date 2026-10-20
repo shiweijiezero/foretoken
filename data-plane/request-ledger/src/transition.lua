@@ -22,9 +22,12 @@ local function save(request_id, request)
     local field = 'r:' .. request_id
     if request.remaining == 0 and (not request.cancelled or request.retired) then
         redis.call('HDEL', key, field)
-        return
+    else
+        redis.call('HSET', key, field, cjson.encode(request))
     end
-    redis.call('HSET', key, field, cjson.encode(request))
+    -- Wakeups are advisory and contain no caller or request content. A denied
+    -- publication cannot undo or turn a committed reservation into an error.
+    redis.pcall('PUBLISH', ARGV[4], key .. ':' .. field)
 end
 
 local function finish_slot(request, slot)
@@ -155,6 +158,7 @@ if action == 'finished' or action == 'acknowledge' then
     if request and request.remaining ~= 0 then return 'pending' end
     if action == 'acknowledge' then
         redis.call('HDEL', key, 'c:' .. id)
+        redis.pcall('PUBLISH', ARGV[4], key .. ':r:' .. id)
         return 'ok'
     end
     return 'completed'

@@ -17,19 +17,20 @@ import (
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
-	Image              string
-	OmniImage          string
-	NsightImage        string
-	AdmissionStore     *inferencev1alpha1.RedisConnection
-	ModelServerPort    int32
-	DeviceResourceName string
-	RuntimeClassName   string
-	NodeSelectorKey    string
-	NodeSelectorValue  string
-	MooncakePD         *runtimeconfig.PDProfile
-	RDMA               *inferencev1alpha1.RDMAAllocation
-	EC                 *runtimeconfig.ECProfile
-	MooncakeStore      *runtimeconfig.MooncakeStoreProfile
+	Image                  string
+	LeaderWorkerScheduling *inferencev1alpha1.LeaderWorkerScheduling
+	OmniImage              string
+	NsightImage            string
+	AdmissionStore         *inferencev1alpha1.RedisConnection
+	ModelServerPort        int32
+	DeviceResourceName     string
+	RuntimeClassName       string
+	NodeSelectorKey        string
+	NodeSelectorValue      string
+	MooncakePD             *runtimeconfig.PDProfile
+	RDMA                   *inferencev1alpha1.RDMAAllocation
+	EC                     *runtimeconfig.ECProfile
+	MooncakeStore          *runtimeconfig.MooncakeStoreProfile
 }
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
@@ -224,14 +225,20 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
-	preparationVersion := runtimeconfig.ModelPreparationVersion(template.Application, template.Backend)
+	var selectedPreparationVersion *int32
 	var admissionStore *inferencev1alpha1.RedisConnection
+	var leaderWorkerScheduling *inferencev1alpha1.LeaderWorkerScheduling
 	var instanceAdmissionProtocol uint32
 	if template.Application != nil {
+		selectedPreparationVersion = template.Application.PreparationVersion
+		if template.NodeCount > 1 {
+			leaderWorkerScheduling = template.Application.LeaderWorkerScheduling.DeepCopy()
+		}
 		applicationURL = template.Application.ApplicationURL
 		admissionStore = template.Application.AdmissionStore.DeepCopy()
 		instanceAdmissionProtocol = template.Application.InstanceAdmissionProtocol
 	}
+	preparationVersion := runtimeconfig.ModelPreparationVersion(selectedPreparationVersion, template.Backend)
 	var startupAdmission *inferencev1alpha1.InstanceAdmissionConfig
 	if instanceAdmissionProtocol == 0 {
 		startupAdmission = template.InstanceAdmission.DeepCopy()
@@ -244,10 +251,11 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			Cache: template.RuntimeCache.DeepCopy(), HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			PreparationVersion: preparationVersion,
-			SourceRevision:     template.SourceRevision,
-			ApplicationURL:     applicationURL,
-			Backend:            template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
+			LeaderWorkerScheduling: leaderWorkerScheduling,
+			PreparationVersion:     preparationVersion,
+			SourceRevision:         template.SourceRevision,
+			ApplicationURL:         applicationURL,
+			Backend:                template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
 			Env:                                   template.DeepCopy().Env,
 			AdmissionStore:                        admissionStore,

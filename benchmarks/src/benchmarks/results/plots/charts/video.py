@@ -5,25 +5,27 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from benchmarks.results.plots.data import Chart, Series, _numeric
+from benchmarks.results.recording.database import read_recorded_requests
 
 
 def _video_phase_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
     """Plot measured and warmup video timings as phase-labeled request series."""
-    paths = [(source / "raw_results.json", "Measurement")]
-    warmup = source / "warmup_raw_output.json"
-    if warmup.is_file():
-        paths.insert(0, (warmup, "Warmup"))
+    phases = [
+        (read_recorded_requests(source, channel), label)
+        for channel, label in (("warmup_raw_output", "Warmup"), ("raw_results", "Measurement"))
+    ]
     charts: list[Chart] = []
     for field in ("e2e_s", "queue_wait_s", "server_generation_s"):
         series = []
-        for path, label in paths:
-            rows = json.loads(path.read_text(encoding="utf-8"))
-            selected = [row for row in rows if row.get("success") and _numeric(row.get(field)) is not None]
+        for rows, label in phases:
+            selected = sorted(
+                (row for row in rows if row.get("success") and _numeric(row.get(field)) is not None),
+                key=lambda row: row["index"],
+            )
             if selected:
                 series.append(Series(label, tuple(float(row["index"]) for row in selected), tuple(float(row[field]) for row in selected), (None,) * len(selected), tuple(row for row in selected)))
         if series:

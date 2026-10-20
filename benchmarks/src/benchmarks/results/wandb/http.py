@@ -27,6 +27,9 @@ from benchmarks.results.observations.replicas import (
     gpu_allocation_history_rows,
     replica_history_rows,
 )
+from benchmarks.results.recording.database import read_record
+from benchmarks.results.recording.requests import read_request_records
+from benchmarks.results.wandb.axes import TRACE_TIME, define_axis_metrics
 
 _TIME_TAKEN = "Benchmark duration (s)"
 _CONCURRENCY = "Concurrency limit"
@@ -52,7 +55,6 @@ _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
 _AVERAGE_TURNS_PER_CONVERSATION = "Mean turn requests per conversation"
 
 _TRACE_MAX_BUCKETS = 10_000
-_TRACE_TIME = "Scheduled trace time (s)"
 _DISTRIBUTION_METRICS = (
     ("latency", "End-to-end latency (E2EL) (s)", 1.0),
     ("ttft", "TTFT (s)", 1.0),
@@ -229,7 +231,7 @@ def _trace_bucket_rows(
         bucket_results = buckets.get(bucket, [])
         successful = [result for result in bucket_results if result["success"]]
         row: dict[str, Any] = {
-            _TRACE_TIME: bucket * bucket_seconds,
+            TRACE_TIME: bucket * bucket_seconds,
             "requests_per_second": len(bucket_results) / bucket_seconds,
             "successful_requests_per_second": len(successful) / bucket_seconds,
         }
@@ -265,8 +267,12 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     )
 
     if run.measurements is not None:
-        sdk_run.define_metric(ELAPSED_TIME)
-        sdk_run.define_metric(REQUEST_INDEX)
+        define_axis_metrics(sdk_run, ELAPSED_TIME)
+        define_axis_metrics(sdk_run, REQUEST_INDEX)
+        if allocation is not None:
+            resources = {resource for sample in allocation["samples"] for resource in sample["gpu_counts"]}
+            for resource in sorted(resources):
+                sdk_run.define_metric(f"Resources/{resource}/*", step_metric=ELAPSED_TIME, step_sync=False)
         request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
         elapsed_rows = [
             *(time_series(
@@ -323,15 +329,12 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             elapsed_rows.extend(gpu_allocation_history_rows(allocation))
         elapsed_rows.sort(key=lambda row: float(row[ELAPSED_TIME]))
         series = (
-            (ELAPSED_TIME, elapsed_rows),
-            (
-                REQUEST_INDEX,
-                request_series(
-                    run.measurements,
-                    stream=bool(run.metrics["stream"]),
-                    slo_met=request_slo_met,
-                ) if not run.http_series_published else (),
-            ),
+            elapsed_rows,
+            request_series(
+                run.measurements,
+                stream=bool(run.metrics["stream"]),
+                slo_met=request_slo_met,
+            ) if not run.http_series_published else (),
         )
         if any(run.metrics.get(name) for name in ("datasets", "models", "request_classes")) or any(
             item.target_output_tokens is not None for item in run.measurements
@@ -346,24 +349,16 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                     request_slo_met[index] if isinstance(request_slo_met, list) else None,
                 ] for index, item in enumerate(run.measurements)],
             )})
-        for axis, rows in series:
-            defined = {axis}
+        for rows in series:
             for row in rows:
-                for key in row.keys() - defined:
-                    sdk_run.define_metric(key, step_metric=axis, step_sync=False)
-                    defined.add(key)
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
     if raw_output is not None and run.record["mode"] == "arrival_trace":
-        rows = _trace_bucket_rows(
-            json.loads(raw_output.read_text(encoding="utf-8"))
-        )
-        sdk_run.define_metric(_TRACE_TIME)
-        for wandb_key in _TRACE_HISTORY_KEYS.values():
-            sdk_run.define_metric(wandb_key, step_metric=_TRACE_TIME)
+        rows = _trace_bucket_rows(read_request_records(raw_output.parent))
+        define_axis_metrics(sdk_run, TRACE_TIME)
         for row in rows:
-            message = {_TRACE_TIME: row[_TRACE_TIME]}
+            message = {TRACE_TIME: row[TRACE_TIME]}
             message.update(
                 {
                     wandb_key: row[key]
@@ -399,8 +394,8 @@ def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     """Publish the shared repeat statistics and data-backed comparison curves."""
     from benchmarks.results.plots import sweep_charts
 
-    points = json.loads(run.artifacts["sweep_points"].read_text(encoding="utf-8"))
-    summary = json.loads(run.artifacts["sweep_summary"].read_text(encoding="utf-8"))
+    points = read_record(run.artifacts["sweep_points"].parent, "sweep_points.json")
+    summary = read_record(run.artifacts["sweep_summary"].parent, "sweep_summary.json")
     columns = ["method", "combination", "parameter_group", "bench", "metric", "requested_runs",
                "runs", "failed_runs", "samples", "mean", "stddev", "median", "min", "max"]
     sdk_run.log({"Sweep/Summary": wandb.Table(

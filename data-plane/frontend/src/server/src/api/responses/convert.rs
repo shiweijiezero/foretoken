@@ -111,35 +111,17 @@ pub(super) fn prepare_responses_request(
             sampling_params.structured_outputs = Some(foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams::json_object());
             Some(json!({"type":"json_object"}))
         }
-        Some(ResponseTextFormat::JsonSchema {
-            name,
-            description,
-            schema,
-            strict,
-        }) => {
-            sampling_params.structured_outputs = Some(foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams::json(schema.clone()));
+        Some(ResponseTextFormat::JsonSchema(format)) => {
+            sampling_params.structured_outputs = Some(foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams::json(format.schema.clone()));
             Some(
-                json!({"type":"json_schema","json_schema":{"name":name,"description":description,"schema":schema,"strict":strict}}),
+                json!({"type":"json_schema","json_schema":{"name":format.name,"description":format.description,"schema":format.schema,"strict":format.strict}}),
             )
         }
     };
     let stop_strings = match request.stop {
         None => Vec::new(),
-        Some(Value::String(s)) => vec![s],
-        Some(Value::Array(values)) => values
-            .into_iter()
-            .map(|v| {
-                v.as_str().map(str::to_owned).ok_or_else(|| {
-                    ApiError::invalid_request("stop entries must be strings", Some("stop"))
-                })
-            })
-            .collect::<Result<_, _>>()?,
-        Some(_) => {
-            return Err(ApiError::invalid_request(
-                "stop must be a string or string array",
-                Some("stop"),
-            ));
-        }
+        Some(StopConfiguration::String(value)) => vec![value],
+        Some(StopConfiguration::StringArray(values)) => values,
     };
     let chat = ChatRequest {
         request_id,
@@ -765,7 +747,7 @@ pub(super) fn build_response(
         id: request_id.into(),
         object: ResponseObject,
         created_at,
-        status,
+        status: status.clone(),
         background: meta.background,
         store: meta.store,
         error: None,

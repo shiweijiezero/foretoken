@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from benchmarks.results.recording.database import read_record
+
 PROGRESS_FILENAME = "evaluation_progress.json"
 
 
@@ -92,7 +94,7 @@ def validate_model_transport(arguments: dict[str, Any]) -> None:
 def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
     """Validate the previous evaluation before delegating its framework-specific restoration."""
     previous_directory = Path(source).expanduser().resolve()
-    previous = json.loads((previous_directory / "config.json").read_text(encoding="utf-8"))
+    previous = read_record(previous_directory, "config.json")
     if previous.get("mode") != "evaluation" or previous.get("evaluator") != evaluator:
         raise ValueError("--resume requires a quality evaluation using the same evaluator")
     if previous.get("model") != model:

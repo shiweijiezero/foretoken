@@ -45,15 +45,20 @@ type replicaRecommendation struct {
 	replicas int32
 }
 
+type targetRecommendations struct {
+	retention time.Duration
+	values    []replicaRecommendation
+}
+
 // RecommendationHistory retains recent replica recommendations used by stabilization windows.
 type RecommendationHistory struct {
 	mu      sync.Mutex
-	targets map[TargetID][]replicaRecommendation
+	targets map[TargetID]*targetRecommendations
 }
 
 // NewRecommendationHistory creates empty in-memory recommendation history for one controller process.
 func NewRecommendationHistory() *RecommendationHistory {
-	return &RecommendationHistory{targets: make(map[TargetID][]replicaRecommendation)}
+	return &RecommendationHistory{targets: make(map[TargetID]*targetRecommendations)}
 }
 
 // Stabilize records one replica recommendation and returns the conservative value for its direction.
@@ -69,10 +74,19 @@ func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, 
 		delete(history.targets, target)
 		return recommended
 	}
-	oldest := now.Add(-retention)
+	record := history.targets[target]
+	if record == nil {
+		record = &targetRecommendations{}
+		history.targets[target] = record
+	}
+	record.retention = retention
+	record.values = append(record.values, replicaRecommendation{at: now, replicas: recommended})
+
+	// Each target owns its retention even when another target drives cleanup.
 	for candidate, recommendations := range history.targets {
-		kept := recommendations[:0]
-		for _, recommendation := range recommendations {
+		oldest := now.Add(-recommendations.retention)
+		kept := recommendations.values[:0]
+		for _, recommendation := range recommendations.values {
 			if !recommendation.at.Before(oldest) {
 				kept = append(kept, recommendation)
 			}
@@ -80,14 +94,13 @@ func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, 
 		if len(kept) == 0 {
 			delete(history.targets, candidate)
 		} else {
-			history.targets[candidate] = kept
+			recommendations.values = kept
 		}
 	}
 
-	history.targets[target] = append(history.targets[target], replicaRecommendation{at: now, replicas: recommended})
 	if recommended < current && scaleDownWindow > 0 {
 		cutoff := now.Add(-scaleDownWindow)
-		for _, recommendation := range history.targets[target] {
+		for _, recommendation := range record.values {
 			if !recommendation.at.Before(cutoff) && recommendation.replicas > recommended {
 				recommended = recommendation.replicas
 			}
@@ -97,7 +110,7 @@ func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, 
 		}
 	} else if recommended > current && scaleUpWindow > 0 {
 		cutoff := now.Add(-scaleUpWindow)
-		for _, recommendation := range history.targets[target] {
+		for _, recommendation := range record.values {
 			if !recommendation.at.Before(cutoff) && recommendation.replicas < recommended {
 				recommended = recommendation.replicas
 			}

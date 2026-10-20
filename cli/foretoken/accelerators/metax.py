@@ -82,10 +82,12 @@ class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable MetaX GPU."""
+        from kubernetes.utils.quantity import parse_quantity
+
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         for resource in METAX_GPU_RESOURCES:
             try:
-                if int(str(allocatable.get(resource))) > 0:
+                if parse_quantity(allocatable.get(resource)) > 0:
                     return True
             except (TypeError, ValueError):
                 continue

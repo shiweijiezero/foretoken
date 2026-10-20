@@ -11,8 +11,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from tabulate import tabulate
+
 from benchmarks.config.evaluation import EvaluationConfig
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.evaluation import (
@@ -31,8 +32,7 @@ def evaluation_sinks(
     publisher: Callable[[Any, BenchmarkRun], None] = publish_quality_wandb,
 ) -> list[ResultSink]:
     """Use the existing publication lifecycle with evaluation-specific presentation."""
-    sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
-    sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
+    sinks: list[ResultSink] = [console_sink if console_sink is not None else EvaluationConsoleSink()]
     if config.outputs.saves_local:
         sinks.append(LocalDirectorySink(directory))
     if config.outputs.includes("wandb"):
@@ -59,7 +59,7 @@ def evaluation_comparison_sinks(config: EvaluationConfig, record: dict[str, Any]
         console_sink=EvaluationComparisonConsoleSink(),
         publisher=publish_evaluation_comparison_wandb,
     )
-    return [sinks[0], EvaluationComparisonArtifactSink(directory), *sinks[1:]]
+    return [EvaluationComparisonArtifactSink(directory), *sinks]
 
 
 def _display(row: dict[str, Any]) -> str:
@@ -100,7 +100,6 @@ class EvaluationConsoleSink:
                     str(row["stderr"]) if row["stderr"] is not None else "—",
                 ]
             )
-        widths = [max(len(line[i]) for line in table) for i in range(len(table[0]))]
         status = "failed" if run.exit_code else "completed"
         if not run.exit_code and any(
             item.get("incomplete") for item in run.metrics["execution"].values()
@@ -112,10 +111,10 @@ class EvaluationConsoleSink:
             f"Status: {status}    Duration: {run.metrics['duration_seconds']:.1f}s",
             "",
         ]
-        for line in table:
-            lines.append(
-                "  ".join(value.ljust(width) for value, width in zip(line, widths))
-            )
+        lines.append(tabulate(
+            table[1:], headers=table[0], tablefmt="plain", disable_numparse=True,
+            colalign=("left", "left", "left", "right", "right", "right"),
+        ))
         if not visible:
             lines.append("No scored tasks. See evaluator.log and native outputs.")
         if any(row["level"] in ("category", "subset") for row in rows):
@@ -124,23 +123,6 @@ class EvaluationConsoleSink:
             )
         lines.extend(_execution_lines(run.metrics["execution"]))
         logger.info("\n%s", "\n".join(lines))
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-class EvaluationArtifactSink:
-    """Save evaluation invocation identity beside native artifacts and shared metrics."""
-
-    def __init__(self, config: EvaluationConfig, directory: str) -> None:
-        self.config = config
-        self.directory = directory
-
-    def open(self, record: dict[str, Any]) -> None:
-        write_json(self.directory, "config.json", {**self.config.to_dict(), **record})
-
-    def publish(self, run: BenchmarkRun) -> None:
-        run.artifacts["config"] = Path(self.directory) / "config.json"
 
     def close(self, *, exit_code: int = 0) -> None:
         return None

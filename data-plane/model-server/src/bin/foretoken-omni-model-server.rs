@@ -11,11 +11,12 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderName, Method, Request, Response, StatusCode};
+use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
+use hyproxy::headers::hopby::StripHopByHopLayer;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::net::TcpListener;
@@ -195,11 +196,14 @@ fn router(state: AppState) -> Router {
         .route("/health", get(healthz))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics).layer(StripHopByHopLayer::new()))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
         .route("/v1/internal/admission/close", post(close_admission))
-        .route("/v1/videos/sync", post(proxy_video))
+        .route(
+            "/v1/videos/sync",
+            post(proxy_video).layer(StripHopByHopLayer::new()),
+        )
         .with_state(state)
 }
 
@@ -309,19 +313,18 @@ async fn proxy_request(
     state: &AppState,
     method: Method,
     path: &str,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Body,
     guard: Option<AdmissionPermit>,
 ) -> Response<Body> {
     let has_body = method != Method::GET && method != Method::HEAD;
+    headers.remove(axum::http::header::HOST);
+    // This transport forwards data frames only, so neither direction advertises trailers.
+    headers.remove(axum::http::header::TRAILER);
     let mut request = state
         .client
-        .request(method, format!("{}{path}", state.upstream));
-    for (name, value) in &headers {
-        if !hop_by_hop(name) && name != axum::http::header::HOST {
-            request = request.header(name, value);
-        }
-    }
+        .request(method, format!("{}{path}", state.upstream))
+        .headers(headers);
     if has_body {
         request = request.body(reqwest::Body::wrap_stream(body.into_data_stream()));
     }
@@ -330,7 +333,8 @@ async fn proxy_request(
         Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
     let status = upstream.status();
-    let headers = upstream.headers().clone();
+    let mut headers = upstream.headers().clone();
+    headers.remove(axum::http::header::TRAILER);
     let mut bytes = Box::pin(upstream.bytes_stream());
     let stream = async_stream::stream! {
         let _guard = guard;
@@ -338,31 +342,10 @@ async fn proxy_request(
             yield item;
         }
     };
-    let mut response = Response::builder().status(status);
-    if let Some(response_headers) = response.headers_mut() {
-        for (name, value) in &headers {
-            if !hop_by_hop(name) {
-                response_headers.append(name, value.clone());
-            }
-        }
-    }
+    let mut response = Response::new(Body::from_stream(stream));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
     response
-        .body(Body::from_stream(stream))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-fn hop_by_hop(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
 }
 
 /// Build the native Omni command from the model snapshot supplied by shared preparation.

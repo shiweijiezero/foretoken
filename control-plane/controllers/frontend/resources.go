@@ -67,11 +67,11 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	modelCache := runtimeconfig.ModelCacheDirectory(cacheMountPath)
 	deploymentUID := frontend.Labels[inferencev1alpha1.DeploymentUIDLabel]
 	runtimeRoot := runtimeconfig.DeploymentCacheDirectory(cacheMountPath, deploymentUID)
-	var application *inferencev1alpha1.ApplicationSelection
+	var selectedPreparationVersion *int32
 	if frontend.Status.Application != nil {
-		application = &frontend.Status.Application.ApplicationSelection
+		selectedPreparationVersion = frontend.Status.Application.PreparationVersion
 	}
-	preparationVersion := runtimeconfig.ModelPreparationVersion(application, "")
+	preparationVersion := runtimeconfig.ModelPreparationVersion(selectedPreparationVersion, "")
 	sharedCache := preparationVersion >= runtimeconfig.SharedModelCachePreparationVersion
 	huggingFaceHome := modelRoot
 	if sharedCache {

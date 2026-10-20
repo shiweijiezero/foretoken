@@ -25,6 +25,9 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
+	if _, err := runtimeconfig.ResolveLeaderWorkerScheduling(group.Spec.Runtime.LeaderWorkerScheduling); err != nil {
+		return err
+	}
 	if group.Spec.Runtime.SourceRevision != "" && group.Spec.Runtime.Backend != "vllm" {
 		return fmt.Errorf("source bundles support the vLLM model-server only")
 	}

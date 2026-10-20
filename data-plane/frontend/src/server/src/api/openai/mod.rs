@@ -16,6 +16,7 @@ use foretoken_chat::{
     ChatOptions, ChatRequest, GenerationPromptMode, ParserSelection, ResolvedToolContext,
 };
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
+use hyproxy::headers::hopby::StripHopByHopLayer;
 use serde_json::{Value, json};
 
 mod async_video;
@@ -53,7 +54,10 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/generate", post(completions))
         .route("/v1/completions", post(completions))
         .route("/v1/chat/completions", post(chat_completions))
-        .route("/v1/videos/sync", post(video::generate))
+        .route(
+            "/v1/videos/sync",
+            post(video::generate).layer(StripHopByHopLayer::new()),
+        )
         .merge(async_video::router())
         .merge(stored::router())
 }

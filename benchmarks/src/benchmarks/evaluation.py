@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from collections.abc import Sequence
 
@@ -30,7 +31,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         configure_logging(not config.outputs.includes("quiet"))
         with experiment_output(config, "eval", arguments) as config:
             _run(config)
-    except ValueError as error:
+    except (sqlite3.Error, ValueError) as error:
         raise SystemExit(str(error)) from error
 
 

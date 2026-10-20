@@ -78,6 +78,7 @@ type servingOptions struct {
 	cacheClaimName                        string
 	cacheMountPath                        string
 	cacheDirectoryBindings                runtimeconfig.RuntimeCacheDirectoryBindings
+	leaderWorkerScheduling                *inferencev1alpha1.LeaderWorkerScheduling
 	admissionStoreURLSecretName           string
 	admissionStoreURLSecretKey            string
 	responseStoreURLSecretName            string
@@ -180,6 +181,15 @@ func parseServingOptions() servingOptions {
 			}
 		}
 		return nil
+	})
+	flag.Func("leader-worker-scheduling", "JSON selection of native placement and quota admission queues for distributed model groups.", func(value string) error {
+		var selection *inferencev1alpha1.LeaderWorkerScheduling
+		if err := json.Unmarshal([]byte(value), &selection); err != nil {
+			return err
+		}
+		var err error
+		options.leaderWorkerScheduling, err = runtimeconfig.ResolveLeaderWorkerScheduling(selection)
+		return err
 	})
 	flag.StringVar(&options.admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&options.admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
@@ -346,19 +356,20 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 		observabilityPrometheus:               options.observabilityPrometheus,
 		observabilityLabelsJSON:               options.observabilityLabelsJSON,
 		runtimeProfile: resolver.RuntimeProfile{
-			Image:              options.inferenceEngineImage,
-			OmniImage:          options.omniInferenceEngineImage,
-			NsightImage:        options.nsightImage,
-			AdmissionStore:     admissionStore,
-			ModelServerPort:    int32(options.modelServerPort),
-			DeviceResourceName: options.gpuResourceName,
-			RuntimeClassName:   options.runtimeClassName,
-			NodeSelectorKey:    options.gpuNodeSelectorKey,
-			NodeSelectorValue:  options.gpuNodeSelectorValue,
-			MooncakePD:         mooncakePD,
-			RDMA:               rdma,
-			EC:                 ec,
-			MooncakeStore:      mooncakeStore,
+			Image:                  options.inferenceEngineImage,
+			LeaderWorkerScheduling: options.leaderWorkerScheduling,
+			OmniImage:              options.omniInferenceEngineImage,
+			NsightImage:            options.nsightImage,
+			AdmissionStore:         admissionStore,
+			ModelServerPort:        int32(options.modelServerPort),
+			DeviceResourceName:     options.gpuResourceName,
+			RuntimeClassName:       options.runtimeClassName,
+			NodeSelectorKey:        options.gpuNodeSelectorKey,
+			NodeSelectorValue:      options.gpuNodeSelectorValue,
+			MooncakePD:             mooncakePD,
+			RDMA:                   rdma,
+			EC:                     ec,
+			MooncakeStore:          mooncakeStore,
 		},
 	}
 }

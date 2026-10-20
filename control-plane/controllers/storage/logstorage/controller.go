@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	statsv1alpha1 "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -116,21 +117,7 @@ func (r *Reconciler) filesystem(ctx context.Context, pod *corev1.Pod, claim stri
 	if err != nil {
 		return 0, fmt.Errorf("read log volume usage on node %s: %w", pod.Spec.NodeName, err)
 	}
-	var summary struct {
-		Pods []struct {
-			PodRef struct {
-				UID string `json:"uid"`
-			} `json:"podRef"`
-			Volumes []struct {
-				PVCRef *struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"pvcRef"`
-				Used     *int64 `json:"usedBytes"`
-				Capacity *int64 `json:"capacityBytes"`
-			} `json:"volume"`
-		} `json:"pods"`
-	}
+	var summary statsv1alpha1.Summary
 	if err := json.Unmarshal(data, &summary); err != nil {
 		return 0, err
 	}
@@ -138,19 +125,19 @@ func (r *Reconciler) filesystem(ctx context.Context, pod *corev1.Pod, claim stri
 		if entry.PodRef.UID != string(pod.UID) {
 			continue
 		}
-		for _, volume := range entry.Volumes {
+		for _, volume := range entry.VolumeStats {
 			if volume.PVCRef == nil || volume.PVCRef.Name != claim || volume.PVCRef.Namespace != pod.Namespace {
 				continue
 			}
-			if volume.Used == nil || volume.Capacity == nil || *volume.Capacity <= 0 || *volume.Used < 0 || *volume.Used > *volume.Capacity {
+			if volume.UsedBytes == nil || volume.CapacityBytes == nil || *volume.CapacityBytes == 0 || *volume.UsedBytes > *volume.CapacityBytes {
 				return 0, fmt.Errorf("log claim %s has no valid filesystem measurement", claim)
 			}
 			// Directory provisioners may report the entire backing filesystem. Growing
 			// a claim cannot relieve unrelated usage on a filesystem larger than its allocation.
-			if *volume.Capacity > allocatedBytes {
-				return 0, fmt.Errorf("log claim %s reports filesystem capacity %d above allocated capacity %d; volume-scoped statistics are required", claim, *volume.Capacity, allocatedBytes)
+			if *volume.CapacityBytes > uint64(allocatedBytes) {
+				return 0, fmt.Errorf("log claim %s reports filesystem capacity %d above allocated capacity %d; volume-scoped statistics are required", claim, *volume.CapacityBytes, allocatedBytes)
 			}
-			return *volume.Used, nil
+			return int64(*volume.UsedBytes), nil
 		}
 	}
 	return 0, fmt.Errorf("kubelet has not reported usage for log claim %s", claim)

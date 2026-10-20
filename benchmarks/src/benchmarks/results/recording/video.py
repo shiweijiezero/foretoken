@@ -11,7 +11,6 @@ from typing import Any
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.integrations.video.types import VideoSampleResult
 from benchmarks.results.measurements.video import aggregate_video_results
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.types import BenchmarkRun
 
 
@@ -41,17 +40,12 @@ def create_video_benchmark_run(
     results: list[VideoSampleResult],
     run_dir: Path,
 ) -> BenchmarkRun:
-    """Aggregate video results and materialize their per-request artifact."""
+    """Aggregate completed video results; ResultOutputs commits them before exporting request records."""
     metrics = aggregate_video_results(results)
-    raw_results = write_json(
-        str(run_dir),
-        "raw_results.json",
-        [video_result_record(item, run_dir) for item in results],
-    )
     return BenchmarkRun(
         record=record,
         metrics=metrics,
         measurements=None,
-        artifacts={"raw_results": raw_results},
+        artifacts={"raw_results": run_dir / "raw_results.json"},
         exit_code=0 if metrics["success_num"] else 1,
     )

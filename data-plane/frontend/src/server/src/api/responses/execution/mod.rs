@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use foretoken_request_ledger::RequestLedger;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
+use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio_util::task::TaskTracker;
 
 use super::error::ApiError;
@@ -31,7 +31,7 @@ pub(crate) struct ResponseDelivery {
 }
 
 /// Cancels foreground work when its HTTP consumer leaves; background work has no such guard.
-pub(crate) struct Disconnect(Option<CancellationToken>);
+pub(crate) type Disconnect = Option<DropGuard>;
 
 /// Frontend-owned response tasks, retained through HTTP disconnects and bounded shutdown drain.
 pub struct ResponseTasks {
@@ -76,14 +76,6 @@ impl ResponseTasks {
             .expect("response task lock poisoned")
             .get(id)
         {
-            token.cancel();
-        }
-    }
-}
-
-impl Drop for Disconnect {
-    fn drop(&mut self) {
-        if let Some(token) = &self.0 {
             token.cancel();
         }
     }

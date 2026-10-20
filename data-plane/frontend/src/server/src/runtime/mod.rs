@@ -151,6 +151,7 @@ pub struct ModelRuntime {
 struct PreparationTargets {
     candidates: Vec<RouteTargetSet>,
     next: AtomicU64,
+    _metrics: foretoken_metrics::QueueMetricsScope,
 }
 
 /// Backend dependencies for models whose engine owns video request preprocessing.
@@ -401,6 +402,7 @@ impl RuntimeState {
             self.preparation_targets.insert(
                 model,
                 PreparationTargets {
+                    _metrics: foretoken_metrics::QueueMetricsScope::new(&candidates),
                     candidates,
                     next: AtomicU64::new(0),
                 },

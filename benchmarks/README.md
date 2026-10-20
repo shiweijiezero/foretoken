@@ -72,6 +72,7 @@ Local results use a separate directory under `results/` for each run; `--output-
 
 | Record | Use |
 | --- | --- |
+| `records.sqlite3` | Retain measured requests and run state for recovery; keep it with the result directory |
 | `metrics.json` | Read the measured aggregate results |
 | `context.json` | Check the run outcome and phase separately from the measurement exit status |
 | `run.log` | Inspect preparation, execution, and errors |

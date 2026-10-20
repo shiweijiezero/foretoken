@@ -46,26 +46,12 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
         self, managed_daemonset: ResourceRef | None = None
     ) -> NvidiaMetrics | None:
         """Return NVIDIA metric collection or managed exporter placement."""
-        candidate_nodes = tuple(
+        # Native DaemonSet tolerations can come from its owner's Helm values.
+        # Discovery verifies actual Ready coverage instead of predicting placement.
+        nodes = tuple(
             node
             for node in self._exporters.nodes
             if not (node.get("spec") or {}).get("unschedulable")
-        )
-        blocked_gpu_nodes = tuple(
-            name
-            for node in candidate_nodes
-            if self.has_capacity(node) and self.unsupported_taints(node)
-            for name in (object_name(node),)
-            if name
-        )
-        if blocked_gpu_nodes:
-            raise DeploymentError(
-                "NVIDIA GPU nodes have NoSchedule or NoExecute taints that the "
-                "managed DCGM Exporter does not tolerate: "
-                + ", ".join(sorted(blocked_gpu_nodes))
-            )
-        nodes = tuple(
-            node for node in candidate_nodes if not self.unsupported_taints(node)
         )
         gpu_nodes = self.gpu_node_names(nodes)
         if not gpu_nodes:
@@ -128,11 +114,13 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""
+        from kubernetes.utils.quantity import parse_quantity
+
         value = ((node.get("status") or {}).get("allocatable") or {}).get(
             NVIDIA_GPU_RESOURCE
         )
         try:
-            return int(str(value)) > 0
+            return parse_quantity(value) > 0
         except (TypeError, ValueError):
             return False
 
@@ -174,27 +162,6 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
             "NVIDIA GPU nodes need a GPU-only label before Foretoken can install "
             "DCGM Exporter; use nvidia.com/gpu.present=true or "
             "feature.node.kubernetes.io/pci-10de.present=true"
-        )
-
-    def unsupported_taints(self, node: dict[str, Any]) -> tuple[str, ...]:
-        """Return scheduling taints not covered by managed chart defaults."""
-        tolerated = {
-            ("node-role.kubernetes.io/control-plane", "NoSchedule"),
-            ("node.kubernetes.io/disk-pressure", "NoSchedule"),
-            ("node.kubernetes.io/memory-pressure", "NoSchedule"),
-            ("node.kubernetes.io/not-ready", "NoExecute"),
-            ("node.kubernetes.io/pid-pressure", "NoSchedule"),
-            ("node.kubernetes.io/unreachable", "NoExecute"),
-            ("node.kubernetes.io/unschedulable", "NoSchedule"),
-        }
-        taints = (node.get("spec") or {}).get("taints") or []
-        return tuple(
-            str(taint.get("key") or "")
-            for taint in taints
-            if isinstance(taint, dict)
-            and taint.get("effect") in {"NoSchedule", "NoExecute"}
-            and (str(taint.get("key") or ""), str(taint.get("effect") or ""))
-            not in tolerated
         )
 
     def gpu_node_names(

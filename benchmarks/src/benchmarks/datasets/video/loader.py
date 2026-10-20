@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from benchmarks.config.video import (
     VideoDatasetDefaults,
     VideoGenerationRequest,
@@ -24,6 +26,37 @@ from benchmarks.datasets.video.videoargus import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _VideoFileRow(BaseModel):
+    """Decode the explicit multipart-file fields accepted by native video JSONL."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
+
+    field: str
+    path: str
+    content_type: str | None = None
+
+
+class _VideoRequestRow(BaseModel):
+    """Decode native video rows before resolving files or applying request-domain rules."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
+
+    id: str
+    task: str
+    prompt: str
+    width: int
+    height: int
+    num_frames: int
+    num_inference_steps: int
+    fps: int = VideoDatasetDefaults.fps
+    aspect_ratio: str | None = None
+    flow_shift: float | None = None
+    audio_flow_shift: float | None = None
+    seed: int | None = None
+    frame_indices: list[int] = Field(default_factory=list)
+    files: list[_VideoFileRow] = Field(default_factory=list)
 
 
 def load_video_dataset(
@@ -105,144 +138,35 @@ def _load_request(
     raw: Any, *, line_number: int, dataset_dir: Path
 ) -> VideoGenerationRequest:
     """Validate one native dataset row and resolve its multipart files relative to the manifest."""
-    if not isinstance(raw, dict):
-        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-            f"video dataset line {line_number} must be a JSON object"
-        )
-    allowed = {
-        "id",
-        "task",
-        "prompt",
-        "width",
-        "height",
-        "num_frames",
-        "fps",
-        "num_inference_steps",
-        "aspect_ratio",
-        "flow_shift",
-        "audio_flow_shift",
-        "seed",
-        "frame_indices",
-        "files",
-    }
-    unknown = set(raw) - allowed
-    if unknown:
-        raise ValueError(
-            f"video dataset line {line_number} has unknown fields: "
-            f"{', '.join(sorted(unknown))}"
-        )
-    required = {
-        "id",
-        "task",
-        "prompt",
-        "width",
-        "height",
-        "num_frames",
-        "num_inference_steps",
-    }
-    missing = required - set(raw)
-    if missing:
-        raise ValueError(
-            f"video dataset line {line_number} is missing: "
-            f"{', '.join(sorted(missing))}"
-        )
-    for name in ("id", "task", "prompt"):
-        if not isinstance(raw[name], str):
-            raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-                f"video dataset line {line_number} has invalid {name}: {raw[name]!r}"
-            )
-    if raw.get("aspect_ratio") is not None and not isinstance(
-        raw["aspect_ratio"], str
-    ):
-        raise ValueError(
-            f"video dataset line {line_number} has invalid aspect_ratio: "
-            f"{raw['aspect_ratio']!r}"
-        )
+    try:
+        row = _VideoRequestRow.model_validate(raw)
+    except ValidationError as error:
+        raise ValueError(f"Invalid video dataset line {line_number}: {error}") from error
     files: list[VideoInputFile] = []
-    file_rows = raw.get("files", [])
-    if not isinstance(file_rows, list):
-        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-            f"video dataset line {line_number} files must be a list"
-        )
-    for item in file_rows:
-        if not isinstance(item, dict) or not {"field", "path"} <= set(item):
-            raise ValueError(
-                f"video dataset line {line_number} file entries require field and path"
-            )
-        unknown_file_fields = set(item) - {"field", "path", "content_type"}
-        if unknown_file_fields:
-            raise ValueError(
-                f"video dataset line {line_number} file has unknown fields: "
-                f"{', '.join(sorted(unknown_file_fields))}"
-            )
-        path = Path(os.path.expandvars(os.path.expanduser(str(item["path"]))))
+    for item in row.files:
+        path = Path(os.path.expandvars(os.path.expanduser(item.path)))
         if not path.is_absolute():
             path = (dataset_dir / path).resolve()
-        files.append(
-            VideoInputFile(
-                field=str(item["field"]),
-                path=str(path),
-                content_type=str(
-                    item.get("content_type")
-                    or mimetypes.guess_type(path.name)[0]
-                    or "application/octet-stream"
-                ),
-            )
-        )
-    frame_indices_raw = raw.get("frame_indices", [])
-    if not isinstance(frame_indices_raw, list):
-        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-            f"video dataset line {line_number} frame_indices must be a list"
-        )
-    num_frames = _row_int(raw["num_frames"], "num_frames", line_number)
+        files.append(VideoInputFile(
+            field=item.field,
+            path=str(path),
+            content_type=item.content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        ))
     request = VideoGenerationRequest(
-        sample_id=raw["id"],
-        task=raw["task"].lower(),
-        prompt=raw["prompt"],
-        width=_row_int(raw["width"], "width", line_number),
-        height=_row_int(raw["height"], "height", line_number),
-        num_frames=num_frames,
-        fps=_row_int(raw.get("fps", 24), "fps", line_number),
-        num_inference_steps=_row_int(
-            raw["num_inference_steps"], "num_inference_steps", line_number
-        ),
-        aspect_ratio=raw.get("aspect_ratio"),
-        flow_shift=(
-            _row_float(raw["flow_shift"], "flow_shift", line_number)
-            if raw.get("flow_shift") is not None
-            else None
-        ),
-        audio_flow_shift=(
-            _row_float(raw["audio_flow_shift"], "audio_flow_shift", line_number)
-            if raw.get("audio_flow_shift") is not None
-            else None
-        ),
-        seed=(
-            _row_int(raw["seed"], "seed", line_number)
-            if raw.get("seed") is not None
-            else None
-        ),
-        frame_indices=tuple(
-            _row_int(value, "frame_indices", line_number)
-            for value in frame_indices_raw
-        ),
+        sample_id=row.id,
+        task=row.task.lower(),
+        prompt=row.prompt,
+        width=row.width,
+        height=row.height,
+        num_frames=row.num_frames,
+        fps=row.fps,
+        num_inference_steps=row.num_inference_steps,
+        aspect_ratio=row.aspect_ratio,
+        flow_shift=row.flow_shift,
+        audio_flow_shift=row.audio_flow_shift,
+        seed=row.seed,
+        frame_indices=tuple(row.frame_indices),
         files=tuple(files),
     )
     request.validate()
     return request
-
-
-def _row_int(value: Any, name: str, line_number: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-            f"video dataset line {line_number} has invalid {name}: {value!r}"
-        )
-    return value
-
-
-def _row_float(value: Any, name: str, line_number: int) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(  # noqa: TRY004 - preserve the CLI's dataset error boundary.
-            f"video dataset line {line_number} has invalid {name}: {value!r}"
-        )
-    return float(value)

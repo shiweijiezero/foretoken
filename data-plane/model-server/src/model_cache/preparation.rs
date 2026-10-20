@@ -5,6 +5,7 @@
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -587,10 +588,14 @@ async fn publish_source(
 }
 
 fn publish_json(directory: &Path, name: &str, value: &impl Serialize) -> io::Result<()> {
-    let temporary = directory.join(format!(".publication-{}", uuid::Uuid::new_v4()));
-    fs::write(
-        &temporary,
-        serde_json::to_vec(value).map_err(io::Error::other)?,
-    )?;
-    fs::rename(temporary, directory.join(name))
+    // Keep the shared directory's group inheritance and the original umask-filtered file mode.
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".publication-")
+        .permissions(fs::Permissions::from_mode(0o666))
+        .tempfile_in(directory)?;
+    temporary.write_all(&serde_json::to_vec(value).map_err(io::Error::other)?)?;
+    temporary
+        .persist(directory.join(name))
+        .map_err(|error| error.error)?;
+    Ok(())
 }

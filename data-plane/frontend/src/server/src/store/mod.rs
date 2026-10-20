@@ -8,9 +8,9 @@ mod conversations;
 mod records;
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
-use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use foretoken_redis_client::{KeyWatch, RedisConnection};
+use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -49,8 +49,8 @@ pub(crate) enum StoreError {
 
 /// One service's shared cache connection and process registration, independent of model snapshots.
 pub(crate) struct ApiStore {
-    client: redis::Client,
-    connection: OnceCell<ConnectionManager>,
+    connection: RedisConnection,
+    registered: OnceCell<()>,
     prefix: String,
     completion_prefix: String,
     ledger: Option<String>,
@@ -112,17 +112,15 @@ impl ApiStore {
                 .filter(|value| *value > 0)
                 .ok_or(StoreError::Configuration)
         };
-        let client = redis::Client::open(url).map_err(|_| StoreError::Configuration)?;
+        let connection =
+            RedisConnection::new(&url, "foretoken:api").map_err(|_| StoreError::Configuration)?;
         let namespace = required("FORETOKEN_RESPONSE_STORE_NAMESPACE")?;
-        let connection = client.get_connection_info();
+        let info = connection.connection_info();
         // Completion cleanup must distinguish caches without retaining passwords or API credentials.
-        let completion_prefix = format!(
-            "api:{}:",
-            json!([connection.addr.to_string(), connection.redis.db])
-        );
+        let completion_prefix = format!("api:{}:", json!([info.addr.to_string(), info.redis.db]));
         Ok(Some(Arc::new(Self {
-            client,
-            connection: OnceCell::new(),
+            connection,
+            registered: OnceCell::new(),
             prefix: format!("foretoken:api:{namespace}:"),
             completion_prefix,
             ledger: ledger.map(foretoken_request_ledger::RequestLedger::storage_identity),
@@ -165,6 +163,17 @@ impl ApiStore {
         self.transition("exists", &None, json!(response)).await
     }
 
+    /// Registers replay observation before reading the caller-scoped response and its committed events.
+    pub(crate) fn response_changes(&self, id: &str) -> KeyWatch {
+        self.connection.watch(format!("{}record:{id}", self.prefix))
+    }
+
+    /// Observes cancellation independently of output-token notifications from the same execution.
+    fn cancellation_changes(&self, id: &str) -> KeyWatch {
+        self.connection
+            .watch(format!("{}record:{id}:cancel", self.prefix))
+    }
+
     /// Runs a service-scoped atomic transition using the shared upstream Redis connection.
     async fn transition<T: redis::FromRedisValue>(
         &self,
@@ -172,24 +181,14 @@ impl ApiStore {
         caller: &Caller,
         input: Value,
     ) -> Result<T, StoreError> {
-        let connection = self
-            .connection
+        let mut connection = self.connection.get().await?;
+        self.registered
             .get_or_try_init(|| async {
-                let mut connection = self
-                    .client
-                    .get_connection_manager_with_config(
-                        ConnectionManagerConfig::new()
-                            .set_connection_timeout(Duration::from_secs(5))
-                            .set_max_delay(1_000),
-                    )
-                    .await?;
                 self.invoke::<()>(&mut connection, "register", &None, json!({}))
-                    .await?;
-                Ok::<_, StoreError>(connection)
+                    .await
             })
             .await?;
-        self.invoke(&mut connection.clone(), action, caller, input)
-            .await
+        self.invoke(&mut connection, action, caller, input).await
     }
 
     /// Keeps the script's domain errors separate from transport errors and malformed cache data.
@@ -208,6 +207,7 @@ impl ApiStore {
             .arg(&self.pod)
             .arg(&self.instance)
             .arg(self.retention_seconds.max(self.replay_seconds))
+            .arg(self.connection.channel())
             .invoke_async(connection)
             .await?;
         match status.as_str() {

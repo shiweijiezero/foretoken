@@ -15,13 +15,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from email.parser import Parser
 from pathlib import Path
 
 import torch
 from build import ProjectBuilder
 from engine_sources import generated_engine_file
-from packaging.requirements import Requirement
+from packaging.metadata import Metadata
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 from vllm_patches import apply_patches, engine_patches
@@ -460,11 +459,12 @@ def prepare_metadata(
                     else distribution.version
                 ),
                 VLLM_VERSION_OVERRIDE=distribution.version,
-                VLLM_TARGET_DEVICE="empty" if metax and package == "vllm" else "cuda",
                 VLLM_USE_PRECOMPILED="0",
                 VLLM_USE_PRECOMPILED_RUST="0",
                 USE_PRECOMPILED_KERNEL="1",
             )
+            if metax:
+                environment["VLLM_TARGET_DEVICE"] = "empty" if package == "vllm" else "cuda"
 
             def run_backend(
                 command, cwd=None, extra_environ=None, *, environment=environment
@@ -485,27 +485,26 @@ def prepare_metadata(
                     "engine backend does not provide a metadata-only wheel hook"
                 )
             dist_info = Path(prepared)
-            metadata = Parser().parsestr((dist_info / "METADATA").read_text())
-            for value in metadata.get_all("Requires-Dist", []):
-                requirement = Requirement(value)
-                if (
-                    requirement.url
-                    and canonicalize_name(requirement.name) in constraints
-                    and (
-                        requirement.marker is None
-                        or requirement.marker.evaluate({"extra": ""})
-                    )
-                ):
-                    raise RuntimeError(
-                        f"{requirement.name} is supplied by the runtime image; "
-                        "a different accelerator package source requires a matching base image"
-                    )
+            metadata = Metadata.from_email((dist_info / "METADATA").read_bytes(), validate=False)
+            for requirement in metadata.requires_dist or ():
+                if requirement.marker is not None and not requirement.marker.evaluate({"extra": ""}):
+                    continue
+                name = canonicalize_name(requirement.name)
                 # The bound engines are delivered as files, not resolver candidates.
-                if canonicalize_name(requirement.name) not in engine_names and (
-                    requirement.marker is None
-                    or requirement.marker.evaluate({"extra": ""})
-                ):
-                    requirements.add(str(requirement))
+                if name in engine_names:
+                    continue
+                if requirement.url and name in constraints:
+                    origin = importlib.metadata.distribution(name).read_text("direct_url.json")
+                    if origin is None or json.loads(origin)["url"] != requirement.url:
+                        raise RuntimeError(
+                            f"{requirement.name} is supplied by the runtime image; "
+                            "a different accelerator package source requires a matching base image"
+                        )
+                    # Keep the installed wheel; resolve any requested extras against its pinned version.
+                    if not requirement.extras:
+                        continue
+                    requirement.url = None
+                requirements.add(str(requirement))
             destination = output / "engine" / dist_info.name
             shutil.copytree(dist_info, destination)
             # Reused or rebuilt native outputs retain this interpreter and accelerator ABI.
