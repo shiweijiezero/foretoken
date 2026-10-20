@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::serve::ListenerExt;
 use foretoken_model_server::backend::vllm::startup;
 use foretoken_model_server::{
     api::RuntimeHealth, backend::vllm::config::RuntimeConfig, dt_ingress, engine::ManagedEngine,
@@ -38,7 +39,14 @@ pub(super) async fn run(
         .map(|path| InstanceAdmissionWatcher::load(path, health.clone()))
         .transpose()?;
     // Port ownership must precede backend epoch recovery, as on the ordinary engine path.
-    let listener = TcpListener::bind(config.listen_address).await?;
+    let listener = TcpListener::bind(config.listen_address)
+        .await?
+        .tap_io(|stream| {
+            // Per-round control replies and streamed output must not wait for a delayed TCP ACK.
+            if let Err(error) = stream.set_nodelay(true) {
+                warn!(%error, "could not enable TCP_NODELAY on DT ingress");
+            }
+        });
     let execution_store = if let Some(ledger) = ledger {
         let pod_uid = super::required_env("FORETOKEN_POD_UID")?;
         let epoch = ledger.register_backend(&pod_uid).await?;
