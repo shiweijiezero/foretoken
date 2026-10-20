@@ -11,8 +11,6 @@ import time
 import uuid
 from typing import Any
 
-import yaml
-
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.deployment.instances import (
     DEPLOYMENT_RESOURCE,
@@ -28,6 +26,7 @@ from foretoken.kubernetes.client import (
     ResourceRef,
     timeout_seconds,
 )
+from foretoken.kubernetes.documents import decode_resources, encode_resource
 from foretoken.kubernetes.mutation import (
     _SERVICE_OPERATION_ANNOTATION,
     DeploymentMutation,
@@ -198,9 +197,7 @@ class DeploymentSubmission:
         """Record actual creations while applying service and dependency intent under one lock."""
         services = []
         dependencies = []
-        for value in yaml.safe_load_all(rendered):
-            if value is None:
-                continue
+        for value in decode_resources(rendered):
             metadata = value.get("metadata") or {}
             ref = ResourceRef(
                 value["kind"],
@@ -353,7 +350,7 @@ class DeploymentSubmission:
                                 "--filename=-",
                                 "--output=json",
                             ],
-                            input_text=yaml.safe_dump(payload, sort_keys=False),
+                            input_text=encode_resource(payload),
                             timeout=remaining,
                         ).stdout
                     )
@@ -388,7 +385,7 @@ class DeploymentSubmission:
                             "--filename=-",
                             "--output=json",
                         ],
-                        input_text=yaml.safe_dump(payload, sort_keys=False),
+                        input_text=encode_resource(payload),
                         timeout=remaining,
                     )
                 return
@@ -460,7 +457,7 @@ class DeploymentSubmission:
                 else:
                     applied = self.kubectl.run(
                         ["apply", "--server-side", "--filename=-", "--output=json"],
-                        input_text=yaml.safe_dump(payload, sort_keys=False),
+                        input_text=encode_resource(payload),
                         timeout=remaining,
                     )
                 result = json.loads(applied.stdout)

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -213,7 +214,7 @@ class ModelDistributionLifecycle:
         )
         completed = self._kubectl.run(
             [operation, "--field-manager=foretoken-model-downloads", "--filename=-"],
-            input_text=yaml.safe_dump(desired),
+            input_text=json.dumps(desired),
             check=False,
         )
         if execution := CommandExecution.current():

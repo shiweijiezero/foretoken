@@ -8,8 +8,6 @@ from __future__ import annotations
 import copy
 import time
 
-import yaml
-
 from foretoken.arguments import DeleteCommand, DeployCommand, StopCommand
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import resolve_deployment_target
@@ -18,6 +16,7 @@ from foretoken.deployment.manifest import load_deployment
 from foretoken.deployment.status import ResourceProgress, wait_for_resources
 from foretoken.deployment.submission import DeploymentSubmission
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.kubernetes.documents import encode_resources
 from foretoken.profiling import ProfileRun
 
 
@@ -70,7 +69,7 @@ def stop(command: StopCommand) -> None:
             stopped = copy.deepcopy(value)
             stopped["spec"]["suspend"] = True
             objects.append(stopped)
-        submission.apply(yaml.safe_dump_all(objects, sort_keys=False), patch_services=True)
+        submission.apply(encode_resources(objects), patch_services=True)
 
         def report(elapsed: float, progress: ResourceProgress) -> None:
             print(f"[{elapsed:6.1f}s] {progress.resource.display_name}: {progress.state} — {progress.detail or progress.reason}", flush=True)

@@ -458,8 +458,9 @@ class PlatformLifecycle:
                 # can concurrently create resources in that namespace.
                 origin = helm.prepare_source_origin(
                     Path(command.editable).expanduser().resolve(),
-                    (*stored_values, *values),
+                    command.values,
                     command.timeout,
+                    stored_values=stored_values[0] if platform_exists else None,
                     download_proxy_url=download_proxy,
                 )
                 context = prepare_source_images(
