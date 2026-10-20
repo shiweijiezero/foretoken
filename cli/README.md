@@ -39,7 +39,7 @@ cd foretoken
 
 For CLI development, use `pip install -e .` in this directory. For uv, create and activate a virtual environment with `uv venv` and `source .venv/bin/activate`, then use `uv pip install foretoken`.
 
-Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Benchmarking an existing URL and plotting local results do not require Kubernetes.
+Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Each platform or service command keeps its initial Kubernetes context. Benchmarking an existing URL and plotting local results do not require Kubernetes.
 
 ## Environment and platform
 
@@ -97,7 +97,7 @@ kubectl create rolebinding foretoken-operator --namespace team-inference \
   --clusterrole foretoken-operator --user MEMBER_ID
 ```
 
-Installation does not grant permissions to users. This RoleBinding permits instance deployment, inspection, stop and deletion without platform administration. Source development with `deploy -e` requires separate build permissions.
+This RoleBinding permits members to deploy, inspect, stop and delete instances. Source builds with `deploy -e` require platform-level access and are run by the administrator or an authorized, trusted developer.
 
 Members select the assigned namespace in their kubeconfig once:
 
@@ -157,7 +157,7 @@ Managed model downloads are collected after their last service reference is rele
 
 ### endpoint
 
-Print the public frontend URL for an API client. Use `--host` to get the request's `Host` value, including the routing hostname for an HTTP Gateway.
+Print the frontend URL, or its request `Host` with `--host`. HTTP Gateway routing is configured automatically for each instance. For a custom domain, HTTPS or a hostname-restricted listener, see [Gateway configuration](../README.md#gateway-mode).
 
 ```bash
 # Public URL

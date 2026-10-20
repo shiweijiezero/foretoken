@@ -124,11 +124,7 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
-	current := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), current); err != nil {
-		return ctrl.Result{}, err
-	}
-	podReady := workload.DeploymentAvailable(current)
+	podReady := workload.DeploymentAvailable(deployment)
 	storageEnabled := storageRegistrationEnabled(group)
 	storageReady := true
 	storageCondition := kvGroupCondition{}
@@ -391,7 +387,7 @@ func storageRegistrationEnabled(group *inferencev1alpha1.KVGroup) bool {
 
 // storageManagementPort resolves the client HTTP port used by registration checks.
 func storageManagementPort(group *inferencev1alpha1.KVGroup) int32 {
-	if registration := group.Spec.Client.StorageRegistration; registration != nil && registration.Port != 0 {
+	if registration := group.Spec.Client.StorageRegistration; registration != nil {
 		return registration.Port
 	}
 	return inferencev1alpha1.DefaultStorageRegistrationPort

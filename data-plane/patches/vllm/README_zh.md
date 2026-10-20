@@ -54,3 +54,9 @@ NIXL 与 Mooncake 共用[前缀目录](../../model-server/python/connectors/reta
 `common/mooncake-retained-prefix.patch` 在原生 sender loop 中串行化领取、撤销和 WRITE 提交。闲置来源使用 `kv_lease_duration`，与普通发送的超时分开。撤销和到期回收都要求已经接纳的 reader 全部完成 WRITE，或确认没有提交 WRITE；尚未开始的 reader 随后按未命中处理。无法确认 I/O 已停止的错误会使 worker 退役。接收端汇合所有来源的终态后报告加载结果，scheduler 再等待全部 TP worker 完成才释放块。
 
 更新这些补丁后，通过不同前端执行两轮 P/D 生成，对比复用与重算的输出 token，并在取消、到期、对端退出和 TP 完成期间检查 allocator 引用。传输选择使用[模型级 P/D 配置](../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)。
+
+## Chat token 元数据
+
+`rust/chat-token-metadata.patch` 基于上游的[解码归属](https://github.com/vllm-project/vllm/commit/b911fe85c42ae984f27d183a0b1de309adab9bf2)和[推理内容归属](https://github.com/vllm-project/vllm/commit/21a22110404d98dcab5f51cd90e9acb0acc15e47)实现，将采样位置及完整解码范围传过解析器的缓冲阶段，也覆盖多个 token 共同解码成一个 UTF-8 片段的情况。
+
+`ChatTokenMetadataMode::Sampled` 保留原始元数据及其输出节奏。`VisibleContent` 等待整个 token 的解码范围都被确认为解析器的可见内容后，再释放元数据；跨越隐藏内容或被排除的停止文本时，整个 token 的元数据都不输出。usage 仍按原始生成结果统计。更新补丁后，应使用真实 tokenizer 和输出处理器，在两种模式下验证停止文本缓冲、截断和解析失败后的恢复。

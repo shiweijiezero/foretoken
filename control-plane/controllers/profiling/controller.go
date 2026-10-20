@@ -405,100 +405,54 @@ func (r *Reconciler) prepareProfile(ctx context.Context, run *inferencev1alpha1.
 	return plan, nil
 }
 
-// verifyProfilePod checks the complete workload ownership chain rather than trusting a Pod label.
+// verifyProfilePod shares membership provenance and checks the selected diagnostic workload's topology.
 func (r *Reconciler) verifyProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount > 1 {
-		return r.verifyLeaderWorkerSetProfilePod(ctx, pod, group)
+	ownership, err := workload.ModelGroupForPod(ctx, r.APIReader, pod)
+	if err != nil {
+		return err
 	}
-	return r.verifyDeploymentProfilePod(ctx, pod, group)
-}
+	if ownership.Group.UID != group.UID {
+		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup")
+	}
+	if group.Spec.NodeCount == 1 {
+		deployment, ok := ownership.Workload.(*appsv1.Deployment)
+		if !ok || deployment.Name != group.Name {
+			return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup Deployment")
+		}
+		return nil
+	}
 
-// verifyDeploymentProfilePod preserves the single-node Deployment ownership contract.
-func (r *Reconciler) verifyDeploymentProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	owner := metav1.GetControllerOf(pod)
-	if owner == nil || owner.Kind != "ReplicaSet" {
-		return fmt.Errorf("diagnostic Pod is not owned by a ReplicaSet")
-	}
-	replicaSet := new(appsv1.ReplicaSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, replicaSet); err != nil {
-		return err
-	}
-	deployment := new(appsv1.Deployment)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: group.Name}, deployment); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(pod, replicaSet) || !metav1.IsControlledBy(replicaSet, deployment) || !metav1.IsControlledBy(deployment, group) {
-		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup Deployment")
-	}
-	return nil
-}
-
-// verifyLeaderWorkerSetProfilePod follows the distinct leader and worker ownership chains
-// back to the single LWS execution group controlled by the ModelGroup.
-func (r *Reconciler) verifyLeaderWorkerSetProfilePod(ctx context.Context, pod *corev1.Pod, group *inferencev1alpha1.ModelGroup) error {
-	workloadName := workload.ModelGroupLeaderWorkerSetName(group)
-	executionWorkload := new(lwsv1.LeaderWorkerSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: workloadName}, executionWorkload); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(executionWorkload, group) {
+	executionWorkload, ok := ownership.Workload.(*lwsv1.LeaderWorkerSet)
+	if !ok || executionWorkload.Name != workload.ModelGroupLeaderWorkerSetName(group) {
 		return fmt.Errorf("diagnostic LeaderWorkerSet ownership does not match ModelGroup")
 	}
 	if executionWorkload.Spec.Replicas == nil || *executionWorkload.Spec.Replicas != 1 || executionWorkload.Spec.LeaderWorkerTemplate.Size == nil || *executionWorkload.Spec.LeaderWorkerTemplate.Size != group.Spec.MemberCount {
 		return fmt.Errorf("diagnostic LeaderWorkerSet must contain one complete ModelGroup")
 	}
-	if pod.Labels[workload.ModelGroupLabel] != group.Name || pod.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || pod.Labels[lwsv1.GroupIndexLabelKey] != "0" {
+	if pod.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || pod.Labels[lwsv1.GroupIndexLabelKey] != "0" {
 		return fmt.Errorf("diagnostic Pod identity does not match ModelGroup LeaderWorkerSet")
 	}
 	workerIndex, err := strconv.Atoi(pod.Labels[lwsv1.WorkerIndexLabelKey])
 	if err != nil || workerIndex < 0 || int32(workerIndex) >= group.Spec.MemberCount {
 		return fmt.Errorf("diagnostic Pod has an invalid LeaderWorkerSet worker index")
 	}
-
 	owner := metav1.GetControllerOf(pod)
-	if owner == nil || owner.Kind != "StatefulSet" {
-		return fmt.Errorf("diagnostic LeaderWorkerSet Pod is not owned by a StatefulSet")
-	}
-	statefulSet := new(appsv1.StatefulSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, statefulSet); err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(pod, statefulSet) {
-		return fmt.Errorf("diagnostic Pod ownership does not match its StatefulSet")
-	}
+	leader := ownership.Leader
 	if workerIndex == 0 {
-		statefulSetOwner := metav1.GetControllerOf(statefulSet)
-		if statefulSet.Name != executionWorkload.Name || statefulSetOwner == nil || statefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(statefulSet, executionWorkload) {
+		if owner.Name != executionWorkload.Name || leader.UID != pod.UID {
 			return fmt.Errorf("diagnostic leader Pod ownership does not match ModelGroup LeaderWorkerSet")
 		}
 		return nil
 	}
 
 	leaderName := pod.Annotations[lwsv1.LeaderPodNameAnnotationKey]
-	if leaderName == "" || statefulSet.Name != leaderName {
+	if leaderName == "" || owner.Name != leaderName || leader.Name != leaderName || leader.UID == pod.UID {
 		return fmt.Errorf("diagnostic worker Pod does not identify its LeaderWorkerSet leader")
-	}
-	leader := new(corev1.Pod)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: leaderName}, leader); err != nil {
-		return err
 	}
 	if leader.Labels[workload.ModelGroupLabel] != group.Name || leader.Labels[lwsv1.SetNameLabelKey] != executionWorkload.Name || leader.Labels[lwsv1.GroupIndexLabelKey] != "0" || leader.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
 		return fmt.Errorf("diagnostic worker Pod leader identity does not match ModelGroup LeaderWorkerSet")
 	}
-	statefulSetOwner := metav1.GetControllerOf(statefulSet)
-	if statefulSetOwner == nil || statefulSetOwner.Kind != "Pod" || !metav1.IsControlledBy(statefulSet, leader) {
-		return fmt.Errorf("diagnostic worker StatefulSet ownership does not match its LeaderWorkerSet leader")
-	}
-	leaderOwner := metav1.GetControllerOf(leader)
-	if leaderOwner == nil || leaderOwner.Kind != "StatefulSet" {
-		return fmt.Errorf("diagnostic LeaderWorkerSet leader is not owned by a StatefulSet")
-	}
-	leaderStatefulSet := new(appsv1.StatefulSet)
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: leader.Namespace, Name: leaderOwner.Name}, leaderStatefulSet); err != nil {
-		return err
-	}
-	leaderStatefulSetOwner := metav1.GetControllerOf(leaderStatefulSet)
-	if leaderStatefulSet.Name != executionWorkload.Name || leaderStatefulSetOwner == nil || leaderStatefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(leader, leaderStatefulSet) || !metav1.IsControlledBy(leaderStatefulSet, executionWorkload) {
+	if metav1.GetControllerOf(leader).Name != executionWorkload.Name {
 		return fmt.Errorf("diagnostic leader ownership does not match ModelGroup LeaderWorkerSet")
 	}
 	return nil

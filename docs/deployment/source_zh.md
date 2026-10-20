@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，并选择具备 GPU 的 Kubernetes 集群。集群需要允许运行源码构建任务，并为应用文件提供默认存储类（StorageClass）。
+准备 Python 3.11+、Git、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -49,7 +49,9 @@ foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
@@ -110,6 +112,8 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 ```
 
 后续从这个 Foretoken 目录部署时，会沿用选定的 vLLM 目录。修改 Python、Triton 或 NVIDIA CUDA/C++ 代码后，部署时添加 `-e .`，即可自动构建并应用改动。每个 Foretoken 源码目录的引擎目录需分别指定。
+
+需要限制引擎原生编译并发时，在部署命令前加 `BUILD_JOBS=4`，使用四个编译作业。该选项不设置 Go/Rust 编译并发或内存上限。
 
 修改沐曦原生 kernel 时，还需同时指定插件目录及与其匹配的 vLLM 目录：
 

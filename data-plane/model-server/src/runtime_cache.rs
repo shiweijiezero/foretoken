@@ -14,9 +14,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use prometheus_client::collector::Collector;
+use prometheus_client::encoding::DescriptorEncoder;
+use prometheus_client::metrics::MetricType;
 use serde::Serialize;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 const OBSERVATION_VERSION: u8 = 1;
@@ -56,7 +59,7 @@ impl Mode {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub(crate) claim_name: String,
     pub(crate) mount_path: PathBuf,
@@ -219,34 +222,50 @@ impl Config {
             Mode::Temporary => &self.temporary_root,
         }
     }
+}
 
-    /// Renders RuntimeCache filesystem metrics for the model-server scrape endpoint.
-    pub fn render_openmetrics(&self) -> String {
+impl Collector for Config {
+    /// Collects filesystem capacity and the active cache mode for each model-server scrape.
+    fn encode(&self, mut encoder: DescriptorEncoder<'_>) -> Result<(), std::fmt::Error> {
         let measurement = filesystem_capacity(self);
         if let Err(error) = &measurement {
             warn!(path = %self.mount_path.display(), %error, "could not inspect RuntimeCache filesystem for metrics");
         }
-        let mut output = format!(
-            "# HELP foretoken_runtime_cache_observation_success Whether the RuntimeCache filesystem could be inspected.\n\
-             # TYPE foretoken_runtime_cache_observation_success gauge\n\
-             foretoken_runtime_cache_observation_success {}\n\
-             # HELP foretoken_runtime_cache_temporary Whether EngineCore is using Pod-scoped temporary cache storage.\n\
-             # TYPE foretoken_runtime_cache_temporary gauge\n\
-             foretoken_runtime_cache_temporary {}\n",
-            u8::from(measurement.is_ok()),
-            u8::from(self.temporary.load(Ordering::Acquire))
-        );
-        if let Ok((capacity_bytes, available_bytes)) = measurement {
-            output.push_str("# HELP foretoken_runtime_cache_capacity_bytes RuntimeCache filesystem capacity in bytes.\n# TYPE foretoken_runtime_cache_capacity_bytes gauge\n");
-            output.push_str(&format!(
-                "foretoken_runtime_cache_capacity_bytes {capacity_bytes}\n"
-            ));
-            output.push_str("# HELP foretoken_runtime_cache_available_bytes RuntimeCache filesystem bytes available to the model-server.\n# TYPE foretoken_runtime_cache_available_bytes gauge\n");
-            output.push_str(&format!(
-                "foretoken_runtime_cache_available_bytes {available_bytes}\n"
-            ));
+        for (name, help, value) in [
+            (
+                "foretoken_runtime_cache_observation_success",
+                "Whether the RuntimeCache filesystem could be inspected",
+                u64::from(measurement.is_ok()),
+            ),
+            (
+                "foretoken_runtime_cache_temporary",
+                "Whether EngineCore is using Pod-scoped temporary cache storage",
+                u64::from(self.temporary.load(Ordering::Acquire)),
+            ),
+        ] {
+            encoder
+                .encode_descriptor(name, help, None, MetricType::Gauge)?
+                .encode_gauge(&value)?;
         }
-        output
+        if let Ok((capacity_bytes, available_bytes)) = measurement {
+            for (name, help, value) in [
+                (
+                    "foretoken_runtime_cache_capacity_bytes",
+                    "RuntimeCache filesystem capacity in bytes",
+                    capacity_bytes,
+                ),
+                (
+                    "foretoken_runtime_cache_available_bytes",
+                    "RuntimeCache filesystem bytes available to the model-server",
+                    available_bytes,
+                ),
+            ] {
+                encoder
+                    .encode_descriptor(name, help, None, MetricType::Gauge)?
+                    .encode_gauge(&value)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -254,13 +273,13 @@ impl Config {
 pub async fn serve(
     listener: TcpListener,
     config: Config,
-    shutdown: std::sync::Arc<Notify>,
+    shutdown: CancellationToken,
 ) -> std::io::Result<()> {
     let app = Router::new()
         .route("/v1/internal/cache", get(observe))
         .with_state(config);
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move { shutdown.notified().await })
+        .with_graceful_shutdown(shutdown.cancelled_owned())
         .await
 }
 
@@ -268,10 +287,12 @@ pub async fn serve(
 pub async fn wait_for_server(
     server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
 ) -> String {
-    let Some(server) = server else {
+    let Some(task) = server.as_mut() else {
         return std::future::pending().await;
     };
-    match server.await {
+    let result = task.await;
+    server.take();
+    match result {
         Ok(Ok(())) => "cache observation server stopped unexpectedly".into(),
         Ok(Err(error)) => format!("cache observation server failed: {error}"),
         Err(error) => format!("cache observation task failed: {error}"),

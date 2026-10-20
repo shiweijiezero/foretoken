@@ -7,7 +7,7 @@ use foretoken_model_protocol::KvConnector;
 use futures::StreamExt;
 use vllm_llm::{FinishReason, GenerateRequest};
 
-use crate::http::{MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
+use crate::http::{MODEL_SERVER_CLIENT, MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
 use crate::{LlmFacadeError, TokenStream};
 
 /// Consumes the encoder completion barrier and returns its opaque connector descriptor.
@@ -110,11 +110,12 @@ pub async fn pd_stage_requests(
     let decode_params = if connector == KvConnector::Mooncake {
         let transfer_id = format!("xfer-{}", request.request_id);
         let endpoint = bootstrap_endpoint.ok_or(LlmFacadeError::Configuration)?;
-        let client = reqwest::Client::builder()
-            .timeout(MODEL_SERVER_REQUEST_START_TIMEOUT)
-            .build()
-            .map_err(|_| LlmFacadeError::Configuration)?;
-        let engine_id = bootstrap_engine_id(&client, endpoint, prefill_data_parallel_rank).await?;
+        let engine_id = tokio::time::timeout(
+            MODEL_SERVER_REQUEST_START_TIMEOUT,
+            bootstrap_engine_id(&MODEL_SERVER_CLIENT, endpoint, prefill_data_parallel_rank),
+        )
+        .await
+        .map_err(|_| LlmFacadeError::Unavailable)??;
         prefill_params["transfer_id"] = serde_json::json!(transfer_id);
         Some(serde_json::json!({
             "do_remote_decode": false,

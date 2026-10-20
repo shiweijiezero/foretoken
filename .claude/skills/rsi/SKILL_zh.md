@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 使用交互式 Agent Team。创建成员前确认 Teams 已启用；未启用时，按[启动说明](../../../rsi-playbooks/README_zh.md#claude-code)打开专用会话。SDK 或非交互会话中的命名子 Agent 不是 Team 成员。
 
-用户在主会话设置一个 `/goal`，涵盖任务结果、团队推进和交付，成员不需要分别设置目标。共享 Task 工具可用时，用它记录负责人和依赖，并通过消息交流结果。
+用户在主会话设置一个 `/goal`，涵盖任务结果、团队推进和交付，成员不需要分别设置目标。共享 Task 工具可用时，用它记录负责人和依赖。
 
 并行写入使用任务分支和独立工作区，在任务中给出绝对路径。创建 Team 成员时，不在 Agent 调用中传 `isolation`，该选项会创建普通子 Agent；工作区单独准备。
 

@@ -5,16 +5,21 @@
 
 from __future__ import annotations
 
-import http.client
 import json
-import re
 import ssl
+import subprocess
+import sys
 import time
 import urllib.parse
 from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from functools import cache, partial
+from pathlib import Path
+from urllib.request import parse_http_list, parse_keqv_list
+
+import httpx
 
 _PROBE_TIMEOUT_SECONDS = 4.0
 _PROBE_READ_BYTES = 64 * 1024
@@ -101,7 +106,7 @@ def select_platform_image_sources(
             selection = (reference, prior)
             if selection not in pending:
                 pending[selection] = executor.submit(
-                    platform_image_reference, reference, registry, previous=prior
+                    copy_context().run, platform_image_reference, reference, registry, previous=prior
                 )
             futures[key] = pending[selection]
         return {key: future.result() for key, future in futures.items()}
@@ -142,9 +147,9 @@ def select_platform_oci_reference(reference: str, previous: str | None = None) -
     )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
         official = executor.submit(
-            _measure_oci_manifest, official_host, repository, revision
+            copy_context().run, _measure, "oci", official_host, repository, revision
         )
-        futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
+        futures = tuple(executor.submit(copy_context().run, mirror.measure) for mirror in mirrors)
         selected = _select_mirror(
             official.result(),
             mirrors,
@@ -164,12 +169,12 @@ def select_github_download(url: str, mirror: str | None = None) -> str:
     if mirror:
         return mirror.rstrip("/") + path
     mirrors = tuple(
-        _SourceMirror(partial(_measure_url, base + path), base + path)
+        _SourceMirror(partial(_measure, "url", base + path), base + path)
         for base in _GITHUB_MIRRORS
     )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
-        official = executor.submit(_measure_url, url)
-        futures = tuple(executor.submit(candidate.measure) for candidate in mirrors)
+        official = executor.submit(copy_context().run, _measure, "url", url)
+        futures = tuple(executor.submit(copy_context().run, candidate.measure) for candidate in mirrors)
         selected = _select_mirror(
             official.result(), mirrors, tuple(future.result() for future in futures)
         )
@@ -190,7 +195,8 @@ def select_build_sources(
                 _SourceProbe(
                     "Docker Hub",
                     "FORETOKEN_DOCKER_IO_REGISTRY",
-                    lambda: _measure_oci_manifest(
+                    lambda: _measure(
+                        "oci",
                         "registry-1.docker.io",
                         "library/rust",
                         "1.97.1-slim-bookworm",
@@ -201,7 +207,8 @@ def select_build_sources(
                 _SourceProbe(
                     "GCR",
                     "FORETOKEN_GCR_REGISTRY",
-                    lambda: _measure_oci_manifest(
+                    lambda: _measure(
+                        "oci",
                         "gcr.io", "distroless/static-debian13", "nonroot"
                     ),
                     _oci_mirrors("gcr.io", "distroless/static-debian13", "nonroot"),
@@ -210,7 +217,8 @@ def select_build_sources(
                 _SourceProbe(
                     "GHCR",
                     "FORETOKEN_GHCR_REGISTRY",
-                    lambda: _measure_oci_manifest(
+                    lambda: _measure(
+                        "oci",
                         "ghcr.io",
                         "shiweijiezero/foretoken/model-server",
                         "latest",
@@ -227,9 +235,9 @@ def select_build_sources(
             _SourceProbe(
                 "PyPI",
                 "UV_DEFAULT_INDEX",
-                lambda: _measure_url("https://pypi.org/simple/modelscope/"),
+                partial(_measure, "url", "https://pypi.org/simple/modelscope/"),
                 tuple(
-                    _SourceMirror(partial(_measure_url, f"{index}/modelscope/"), index)
+                    _SourceMirror(partial(_measure, "url", f"{index}/modelscope/"), index)
                     for index in (
                         "https://pypi.tuna.tsinghua.edu.cn/simple",
                         "https://mirrors.ustc.edu.cn/pypi/simple",
@@ -240,12 +248,13 @@ def select_build_sources(
             _SourceProbe(
                 "Go module proxy",
                 "GOPROXY",
-                lambda: _measure_url(
-                    "https://proxy.golang.org/golang.org/x/sync/@v/v0.20.0.info"
+                partial(
+                    _measure, "url",
+                    "https://proxy.golang.org/golang.org/x/sync/@v/v0.20.0.info",
                 ),
                 tuple(
                     _SourceMirror(
-                        partial(_measure_url, f"{proxy}/golang.org/x/sync/@v/v0.20.0.info"),
+                        partial(_measure, "url", f"{proxy}/golang.org/x/sync/@v/v0.20.0.info"),
                         proxy,
                     )
                     for proxy in (
@@ -258,9 +267,9 @@ def select_build_sources(
             _SourceProbe(
                 "Cargo registry",
                 "FORETOKEN_CARGO_REGISTRY",
-                partial(_measure_cargo, "https://index.crates.io"),
+                partial(_measure, "cargo", "https://index.crates.io"),
                 tuple(
-                    _SourceMirror(partial(_measure_cargo, index), f"sparse+{index}/")
+                    _SourceMirror(partial(_measure, "cargo", index), f"sparse+{index}/")
                     for index in (
                         "https://rsproxy.cn/index",
                         "https://mirrors.sjtug.sjtu.edu.cn/crates.io-index",
@@ -270,9 +279,9 @@ def select_build_sources(
             _SourceProbe(
                 "GitHub",
                 "FORETOKEN_GITHUB_MIRROR",
-                partial(_measure_github, "https://github.com"),
+                partial(_measure, "github", "https://github.com"),
                 tuple(
-                    _SourceMirror(partial(_measure_github, base), base)
+                    _SourceMirror(partial(_measure, "github", base), base)
                     for base in _GITHUB_MIRRORS
                 ),
             ),
@@ -288,9 +297,9 @@ def select_build_sources(
         measurements = tuple(
             (
                 probe,
-                executor.submit(probe.official),
+                executor.submit(copy_context().run, probe.official),
                 tuple(
-                    executor.submit(mirror.measure) for mirror in probe.mirrors
+                    executor.submit(copy_context().run, mirror.measure) for mirror in probe.mirrors
                 ),
             )
             for probe in probes
@@ -343,12 +352,12 @@ def select_huggingface_endpoint(
     encoded = urllib.parse.quote(repository, safe="/")
     official_endpoint = "https://huggingface.co"
     mirrors = tuple(
-        _SourceMirror(partial(_measure_url, f"{endpoint}/api/models/{encoded}"), endpoint)
+        _SourceMirror(partial(_measure, "url", f"{endpoint}/api/models/{encoded}"), endpoint)
         for endpoint in ("https://hf-mirror.com",)
     )
     with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
-        official = executor.submit(_measure_url, f"{official_endpoint}/api/models/{encoded}")
-        futures = tuple(executor.submit(mirror.measure) for mirror in mirrors)
+        official = executor.submit(copy_context().run, _measure, "url", f"{official_endpoint}/api/models/{encoded}")
+        futures = tuple(executor.submit(copy_context().run, mirror.measure) for mirror in mirrors)
         official_time = official.result()
         selected = _select_mirror(
             official_time, mirrors, tuple(future.result() for future in futures)
@@ -358,106 +367,126 @@ def select_huggingface_endpoint(
     return official_endpoint if official_time is not None else None
 
 
+def _measure(probe: str, *arguments: str) -> float | None:
+    """Own the complete resolver and HTTP lifetime through the operation's command executor."""
+    # The same file runs standalone in the probe process; only its parent needs
+    # the CLI lifecycle. A stuck system resolver must terminate with that process.
+    # Safe-path mode retains user-site installs without importing from this source directory.
+    from foretoken.command_execution import CommandExecution, run_command
+    from foretoken.errors import DeploymentError
+
+    execution = CommandExecution.current()
+    try:
+        completed = run_command(
+            [sys.executable, "-P", "-B", str(Path(__file__).resolve())],
+            input=json.dumps({"probe": probe, "arguments": arguments}),
+            text=True,
+            capture_output=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+    except DeploymentError as error:
+        if execution is not None:
+            execution.check()
+        cause = error.__cause__
+        # A stricter inherited operation deadline must remain an operation failure.
+        if isinstance(cause, subprocess.TimeoutExpired) and cause.timeout == _PROBE_TIMEOUT_SECONDS:
+            return None
+        raise
+    if execution is not None:
+        execution.check()
+    if completed.returncode:
+        raise DeploymentError(
+            "source probe failed: " + (completed.stderr.strip() or f"exit status {completed.returncode}")
+        )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise DeploymentError("source probe returned invalid JSON") from error
+    if value is not None and not isinstance(value, float):
+        raise DeploymentError("source probe returned an unexpected result")
+    return value
+
+
+def _require_https(request: httpx.Request) -> None:
+    """Keep anonymous probes and registry token redirects on credential-free HTTPS URLs."""
+    if request.url.scheme != "https" or request.url.username or request.url.password:
+        raise ValueError("source probes require HTTPS URLs without embedded credentials")
+
+
 def _https_get(
     url: str,
-    deadline: float,
     headers: dict[str, str] | None = None,
-) -> tuple[int, dict[str, str], bytes]:
-    """Read one direct HTTPS resource under a single connection and transfer deadline."""
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise ValueError(f"source probe requires HTTPS: {url}")
-    timeout = deadline - time.monotonic()
-    if timeout <= 0:
-        raise TimeoutError
-    connection = http.client.HTTPSConnection(
-        parsed.hostname,
-        parsed.port,
-        timeout=timeout,
-        context=ssl.create_default_context(),
-    )
-    path = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-    try:
-        connection.request("GET", path, headers=headers or {})
-        response = connection.getresponse()
-        body = bytearray()
-        while len(body) < _PROBE_READ_BYTES:
-            timeout = deadline - time.monotonic()
-            if timeout <= 0:
-                raise TimeoutError
-            if connection.sock is not None:
-                connection.sock.settimeout(timeout)
-            chunk = response.read(
-                min(
-                    8192,
-                    _PROBE_READ_BYTES - len(body),
-                )
-            )
-            if not chunk:
-                break
-            body.extend(chunk)
-        response_headers = {key.lower(): value for key, value in response.getheaders()}
-        return response.status, response_headers, bytes(body)
-    finally:
-        connection.close()
+) -> tuple[httpx.Response, bytes]:
+    """Read a bounded sample inside the process whose parent owns the complete probe deadline."""
+    with httpx.Client(
+        timeout=None,
+        verify=ssl.create_default_context(),
+        event_hooks={"request": [_require_https]},
+        headers={"User-Agent": "foretoken-source-probe", "Accept-Encoding": "identity"},
+    ) as client:
+        request = client.build_request("GET", url, headers=headers)
+        for _ in range(4):
+            response = client.send(request, stream=True)
+            try:
+                # HTTPX owns redirect construction and credential stripping.
+                # Skip redirect bodies rather than buffering an unbounded response.
+                if response.next_request is not None:
+                    request = response.next_request
+                    continue
+                body = bytearray()
+                for chunk in response.iter_raw():
+                    body.extend(chunk[:_PROBE_READ_BYTES - len(body)])
+                    if len(body) == _PROBE_READ_BYTES:
+                        break
+                return response, bytes(body)
+            finally:
+                response.close()
+        raise httpx.TooManyRedirects("source probe returned too many redirects", request=request)
 
 
-def _read_url(url: str, deadline: float) -> bytes:
-    """Follow a short redirect chain while preserving one end-to-end deadline."""
-    for _ in range(4):
-        status, headers, body = _https_get(
-            url,
-            deadline,
-            {"User-Agent": "foretoken-source-probe"},
-        )
-        if status not in {301, 302, 303, 307, 308}:
-            if status != 200:
-                raise OSError(f"source probe returned HTTP {status}")
-            return body
-        location = headers.get("location")
-        if not location:
-            raise OSError("source probe redirect has no location")
-        url = urllib.parse.urljoin(url, location)
-    raise OSError("source probe returned too many redirects")
+def _read_url(url: str) -> bytes:
+    """Read one anonymous source inside the owning probe process."""
+    response, body = _https_get(url)
+    if response.status_code != 200:
+        raise OSError(f"source probe returned HTTP {response.status_code}")
+    return body
 
 
-def _measure_url(url: str) -> float | None:
+def _probe_url(url: str) -> float | None:
     """Measure a bounded anonymous GET of one package or source resource."""
     started = time.monotonic()
     try:
-        _read_url(url, started + _PROBE_TIMEOUT_SECONDS)
-    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError):
+        _read_url(url)
+    except (OSError, httpx.HTTPError, httpx.InvalidURL, ValueError):
         return None
     return time.monotonic() - started
 
 
-def _measure_github(base: str) -> float | None:
+def _probe_github(base: str) -> float | None:
     """Probe archive and Git access because build consumers use both transports."""
     started = time.monotonic()
-    deadline = started + _PROBE_TIMEOUT_SECONDS
     repository = f"{base}/shiweijiezero/foretoken"
     try:
-        refs = _read_url(f"{repository}.git/info/refs?service=git-upload-pack", deadline)
+        refs = _read_url(f"{repository}.git/info/refs?service=git-upload-pack")
         if b"# service=git-upload-pack" not in refs:
             return None
-        archive = _read_url(f"{repository}/archive/refs/heads/main.tar.gz", deadline)
+        archive = _read_url(f"{repository}/archive/refs/heads/main.tar.gz")
         if not archive.startswith(b"\x1f\x8b"):
             return None
-    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError):
+    except (OSError, httpx.HTTPError, httpx.InvalidURL, ValueError):
         return None
     return time.monotonic() - started
 
 
-def _measure_cargo(index: str) -> float | None:
+def _probe_cargo(index: str) -> float | None:
     """Probe a sparse index and its advertised crate download under one deadline."""
     started = time.monotonic()
-    deadline = started + _PROBE_TIMEOUT_SECONDS
     try:
-        configuration = json.loads(_read_url(f"{index}/config.json", deadline))
+        configuration = json.loads(_read_url(f"{index}/config.json"))
         download = configuration.get("dl")
         if not isinstance(download, str):
             return None
-        entry = _read_url(f"{index}/it/oa/itoa", deadline)
+        entry = _read_url(f"{index}/it/oa/itoa")
         if not any(json.loads(line).get("vers") == "1.0.18" for line in entry.splitlines()):
             return None
         if "{" in download:
@@ -466,24 +495,22 @@ def _measure_cargo(index: str) -> float | None:
             )
         else:
             download = f"{download.rstrip('/')}/itoa/1.0.18/download"
-        if not _read_url(download, deadline).startswith(b"\x1f\x8b"):
+        if not _read_url(download).startswith(b"\x1f\x8b"):
             return None
-    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError, KeyError):
+    except (OSError, httpx.HTTPError, httpx.InvalidURL, ValueError, KeyError):
         return None
     return time.monotonic() - started
 
 
 def _bearer_parameters(header: str) -> dict[str, str]:
     """Decode the standard registry Bearer challenge fields used for anonymous pulls."""
-    if not header.startswith("Bearer "):
-        return {}
-    return dict(re.findall(r'(\w+)="([^"]+)"', header[7:]))
+    scheme, _, parameters = header.partition(" ")
+    return parse_keqv_list(parse_http_list(parameters)) if scheme.lower() == "bearer" else {}
 
 
-def _measure_oci_manifest(host: str, repository: str, reference: str) -> float | None:
+def _probe_oci_manifest(host: str, repository: str, reference: str) -> float | None:
     """Measure an anonymous OCI manifest fetch, including its registry token exchange."""
     started = time.monotonic()
-    deadline = started + _PROBE_TIMEOUT_SECONDS
     url = f"https://{host}/v2/{repository}/manifests/{reference}"
     headers = {
         "Accept": (
@@ -496,36 +523,28 @@ def _measure_oci_manifest(host: str, repository: str, reference: str) -> float |
     }
     try:
         for _ in range(4):
-            status, response_headers, _ = _https_get(url, deadline, headers)
-            if status == 200:
+            response, _ = _https_get(url, headers)
+            if response.status_code == 200:
                 return time.monotonic() - started
-            if status in {301, 302, 303, 307, 308}:
-                location = response_headers.get("location")
-                if not location:
-                    return None
-                target = urllib.parse.urljoin(url, location)
-                if urllib.parse.urlsplit(target).netloc != urllib.parse.urlsplit(url).netloc:
-                    headers.pop("Authorization", None)
-                url = target
-                continue
-            if status != 401 or "Authorization" in headers:
+            if response.status_code != 401 or "Authorization" in response.request.headers:
                 return None
-            parameters = _bearer_parameters(
-                response_headers.get("www-authenticate", "")
-            )
+            # HTTPX removes Authorization on cross-origin redirects. Continue at
+            # that final origin so its token is never sent to the original host.
+            url = str(response.url)
+            parameters = _bearer_parameters(response.headers.get("www-authenticate", ""))
             realm = parameters.pop("realm", "")
             if not realm:
                 return None
-            token_url = f"{realm}?{urllib.parse.urlencode(parameters)}"
-            token_status, _, token_body = _https_get(token_url, deadline)
-            if token_status != 200:
+            token_url = str(httpx.URL(realm).copy_merge_params(parameters))
+            token_response, token_body = _https_get(token_url)
+            if token_response.status_code != 200:
                 return None
             token = json.loads(token_body)
             access_token = token.get("token") or token.get("access_token")
             if not isinstance(access_token, str) or not access_token:
                 return None
             headers["Authorization"] = f"Bearer {access_token}"
-    except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError):
+    except (OSError, httpx.HTTPError, httpx.InvalidURL, ValueError):
         return None
     return None
 
@@ -587,9 +606,25 @@ def _oci_mirrors(
         candidates.append(
             _SourceMirror(
                 partial(
-                    _measure_oci_manifest, mirror_host, mirror_repository, revision
+                    _measure, "oci", mirror_host, mirror_repository, revision
                 ),
                 prefix,
             )
         )
     return tuple(candidates)
+
+
+def _run_probe() -> None:
+    """Execute the parent's private probe request and publish only network elapsed time or null."""
+    request = json.load(sys.stdin)
+    probes = {
+        "url": _probe_url,
+        "github": _probe_github,
+        "cargo": _probe_cargo,
+        "oci": _probe_oci_manifest,
+    }
+    print(json.dumps(probes[request["probe"]](*request["arguments"])), flush=True)
+
+
+if __name__ == "__main__":
+    _run_probe()

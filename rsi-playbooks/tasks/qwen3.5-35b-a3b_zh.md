@@ -4,11 +4,11 @@
 
 ```text
 模型：Qwen3.5-35B-A3B
-起始配置：examples/rsi/qwen3.5-35b-a3b；BF16 TP4、四步 MTP、500G 本地 CPU KV offload，可在优化中调整
+起始配置：examples/rsi/qwen3.5-35b-a3b；BF16 TP4、四步 MTP、128G 本地 CPU KV offload，可在优化中调整
 优化目标：提升单并发解码速度和 16 并发总输出吞吐（token/s），降低两组的解码延迟（TPOT）
 精度：固定 BF16
 部署形态：在最终单机 GPU 预算内自主选择并行方式和各阶段安排
-最终部署预算：单机 4 卡；模型与 frontend 工作负载合计不超过 32 核 CPU、512 GiB 内存
+最终部署预算：单机 4 卡；模型与 frontend 工作负载合计不超过 32 核 CPU、250G 主机内存
 实验规模：服务候选遵守最终预算；算子、编译或正确性等局部实验按需使用更少资源，包括单卡
 可用资源：2 台节点，每台可用 8 张 GPU、64 核 CPU、1 TiB 内存
 最小并行工作子 Agent 数：6
@@ -27,20 +27,21 @@
   - 性能指标：各负载在并发 1／16 下的输出吞吐（token/s）与平均 TPOT（ms/token），写入同一 iteration.md 的“性能指标”表。
   - 对照分析：相同负载下，与初始方案和上一轮的数值对照、变化百分比及原因分析，写入同一 iteration.md 的“对照分析”部分。
   - 结果证据：W&B 链接、图表和原始结果路径，写入同一 iteration.md 的“结果证据”部分；命令自动保存的原始产物保留在 results/qwen3.5-35b-a3b/iterations/<iteration>/runs/ 下。
-  - 执行效率：按任务开始至结束的完整时间区间，统计正在执行任务的子 Agent 数的时间加权平均值，并分别统计两台节点的 GPU 平均利用率，写入 results/qwen3.5-35b-a3b/notes/experiment.md 的“执行效率”部分；注明统计时段、资源范围、采样覆盖及低利用率原因，并引用原始记录。
-  - 最终方案：保留方案、对应代码／配置、各负载实测结果及逐轮对照汇总，写入 results/qwen3.5-35b-a3b/notes/experiment.md。
-  - 用户报告：按 rsi-playbooks/templates/report-template_zh.md 和实验记录手册中的报告维护流程，创建并持续维护 rsi-playbooks/tasks/qwen3.5-35b-a3b/<experiment>/report.md。包含各负载在并发 1／16 下的对照、相对 base 的变化、结论、执行效率和 W&B 结果链接；关键图表放在报告旁的 figures/ 中，用相对路径引用。
+  - 执行效率：按任务开始至结束的完整时间区间，统计正在执行任务的子 Agent 数的时间加权平均值，并分别统计两台节点的 GPU 平均利用率，写入报告的“执行效率”部分；注明统计时段、资源范围、采样覆盖及低利用率原因，并引用原始记录。
+  - 用户报告：按 rsi-playbooks/templates/report-template_zh.md 和实验记录手册中的报告维护流程，创建并持续维护 rsi-playbooks/tasks/qwen3.5-35b-a3b/<experiment>/report.md。包含各负载在并发 1／16 下的对照、相对 base 的变化、保留方案及其代码／配置、结论、执行效率、迭代笔记和 W&B 结果链接；关键图表放在报告旁的 figures/ 中，用相对路径引用。
 ```
 
 执行与资源安排遵循 [RSI skill](../../.agents/skills/rsi/SKILL_zh.md)，记录方法见[实验记录手册](../experiment-records_zh.md)。
 
 ## 起始部署
 
-示例启用四步多 token 预测（MTP），由模型验证草稿 token 后输出，并配置异步调度，保留图加速与自动 GPU KV 缓存容量计算。
+按目标硬件调整[四卡示例](../../examples/rsi/qwen3.5-35b-a3b/)中的引擎参数和环境变量。准备好[源码版平台](../../docs/deployment/source_zh.md)，由管理员授权[仓库 `data/` 的共享访问](../../docs/features/model-storage_zh.md#跨命名空间复用模型文件)，再从候选源码目录部署：
 
-本地 KV offload 使用 `500G` 主机内存，即 500 GB、约 465.7 GiB，由该实例的四个 TP worker 合计使用。模型的内存请求与上限均为 508Gi，包含这部分缓存；frontend 上限为 4Gi，合计上限保持 512Gi。评估该配置时，还需计入模型加载与稳态运行的内存占用。另用于模型文件和运行时缓存的存储卷初始为 128Gi；StorageClass 支持在线扩容时，可增长至最多 256Gi。
+```bash
+foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi -e . --timeout 60m
+```
 
-[四卡起始配置](../../examples/rsi/qwen3.5-35b-a3b/)需要已配置兼容运行环境的 Foretoken 平台、Gateway 前端访问，以及支持 `ReadWriteOnce` 的默认 StorageClass。部署前按实际硬件调整示例中的引擎参数和环境变量；并行运行的 Gateway 候选还需在各自 `frontend.yaml` 中使用不同的 `hostname`。执行 `foretoken deploy examples/rsi/qwen3.5-35b-a3b --name qwen-rsi --timeout 60m`，在当前 kubeconfig 的命名空间中创建 `qwen-rsi` 实例，再在任务预算内演进。通过 `foretoken status qwen-rsi` 查看状态，`stop`、`delete` 和 `endpoint` 也使用该实例名。服务收益采用可比的四卡结果判断，小型验证用于回答局部问题，不代替最终服务评测。交付前在没有竞争实验负载的条件下验证保留方案。
+模型与前端的内存请求及上限分别为 `246G` 和 `4G`。模型额度内包含四个 TP worker 合计 `128G` 的 CPU KV offload。最终对照使用可比的四卡服务结果，小型验证用于诊断。
 
 ## 评测命令
 

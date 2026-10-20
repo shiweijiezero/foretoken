@@ -5,6 +5,7 @@
 # Build, export, or publish one version of runtime environments, applications, and the Helm chart.
 set -euo pipefail
 
+# Parse release options, resolve the immutable version, and dispatch one release mode.
 main() {
   ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
   SOURCE_URL=${FORETOKEN_SOURCE_URL:-https://github.com/shiweijiezero/foretoken}
@@ -162,67 +163,75 @@ PY
   printf 'Mode: %s\n' "$MODE"
 
   if [[ "$MODE" == build || "$MODE" == export ]]; then
-    export DOCKER_DEFAULT_PLATFORM=linux/amd64
-    images_selected && require_command make
-    [[ "$MODE" != build ]] || { selected chart && require_command helm; }
+    build_or_export
+  else
+    push_release
+  fi
+}
 
-    if [[ "$MODE" == build ]]; then
-      if selected control-plane; then
-        run make -C "$ROOT" image-control-plane \
-          "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
-          "OCI_SOURCE=$SOURCE_URL" \
-          "OCI_REVISION=$OCI_REVISION"
-      fi
-      if selected frontend; then
-        run make -C "$ROOT" image-frontend \
-          "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
-          "OCI_SOURCE=$SOURCE_URL" \
-          "OCI_REVISION=$OCI_REVISION"
-      fi
-      if selected model-server; then
-        build_model_server \
-          "$MODEL_SERVER_IMAGE" \
-          "${INFERENCE_ENGINE_IMAGE:-}" \
-          "${FORETOKEN_VLLM_PYTHON:-}"
-      fi
-      if selected model-server-metax; then
-        if [[ "$DRY_RUN" == true ]]; then
-          (
-            unset FORETOKEN_VLLM_PYTHON
-            build_model_server \
-              "$MODEL_SERVER_METAX_IMAGE" \
-              "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
-              "${METAX_VLLM_PYTHON:-}"
-          )
-        else
-          [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
-            printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
-            exit 2
-          }
-          (
-            unset FORETOKEN_VLLM_PYTHON
-            build_model_server \
-              "$MODEL_SERVER_METAX_IMAGE" \
-              "$METAX_INFERENCE_ENGINE_IMAGE" \
-              "${METAX_VLLM_PYTHON:-}"
-          )
-        fi
+# build_or_export owns environment image, application archive, and chart creation.
+build_or_export() {
+  export DOCKER_DEFAULT_PLATFORM=linux/amd64
+  images_selected && require_command make
+  [[ "$MODE" != build ]] || { selected chart && require_command helm; }
+
+  if [[ "$MODE" == build ]]; then
+    if selected control-plane; then
+      run make -C "$ROOT" image-control-plane \
+        "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
+    fi
+    if selected frontend; then
+      run make -C "$ROOT" image-frontend \
+        "FRONTEND_IMAGE=$FRONTEND_IMAGE" "IMAGE_TARGET=environment" \
+        "OCI_SOURCE=$SOURCE_URL" \
+        "OCI_REVISION=$OCI_REVISION"
+    fi
+    if selected model-server; then
+      build_model_server \
+        "$MODEL_SERVER_IMAGE" \
+        "${INFERENCE_ENGINE_IMAGE:-}" \
+        "${FORETOKEN_VLLM_PYTHON:-}"
+    fi
+    if selected model-server-metax; then
+      if [[ "$DRY_RUN" == true ]]; then
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
+      else
+        [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
+          printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
+          exit 2
+        }
+        (
+          unset FORETOKEN_VLLM_PYTHON
+          build_model_server \
+            "$MODEL_SERVER_METAX_IMAGE" \
+            "$METAX_INFERENCE_ENGINE_IMAGE" \
+            "${METAX_VLLM_PYTHON:-}"
+        )
       fi
     fi
-    # A release archive contains all applications; partial environment builds skip it.
-    if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
-      run mkdir -p "$OUTPUT_DIR"
-      if [[ "$DRY_RUN" != true ]]; then
-        PAYLOAD_DIR=$(mktemp -d "$OUTPUT_DIR/application.XXXXXX")
-        trap 'rm -rf "$PAYLOAD_DIR"' EXIT
-      fi
-      run make -C "$ROOT" image-control-plane "IMAGE_TARGET=source-export" \
-        "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/control-plane"
-      run make -C "$ROOT" image-frontend "IMAGE_TARGET=source-export" \
-        "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
-      run make -C "$ROOT" image-model-server "IMAGE_TARGET=source-export" \
-        "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server"
-      run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
+  fi
+  # A release archive contains all applications; partial environment builds skip it.
+  if selected control-plane && selected frontend && { selected model-server || selected model-server-metax; }; then
+    run mkdir -p "$OUTPUT_DIR"
+    if [[ "$DRY_RUN" != true ]]; then
+      PAYLOAD_DIR=$(mktemp -d "$OUTPUT_DIR/application.XXXXXX")
+      trap 'rm -rf "$PAYLOAD_DIR"' EXIT
+    fi
+    run make -C "$ROOT" image-control-plane "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/control-plane"
+    run make -C "$ROOT" image-frontend "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/frontend"
+    run make -C "$ROOT" image-model-server "IMAGE_TARGET=source-export" \
+      "IMAGE_OUTPUT=type=local,dest=$PAYLOAD_DIR/model-server"
+    run "$PYTHON" - "$PAYLOAD_DIR" "$APPLICATION_PACKAGE" <<'PY'
 from pathlib import Path
 import sys
 import tarfile
@@ -233,17 +242,17 @@ with tarfile.open(output, "w:gz") as archive:
         archive.add(payload / component, arcname=component)
 print(f"Application release asset: {output}")
 PY
-    fi
-    if [[ "$MODE" == build ]] && selected chart; then
-      run mkdir -p "$OUTPUT_DIR"
-      if [[ "$DRY_RUN" == true ]]; then
-        run helm package "$ROOT/deploy/charts/foretoken" --destination "$OUTPUT_DIR"
-      else
-        # Published chart defaults select the matching ordinary GitHub Release asset.
-        # The checkout remains usable with already-published image-only releases.
-        chart_root=$(mktemp -d "$OUTPUT_DIR/chart.XXXXXX")
-        cp -R "$ROOT/deploy/charts/foretoken" "$chart_root/foretoken"
-        "$PYTHON" - "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
+  fi
+  if [[ "$MODE" == build ]] && selected chart; then
+    run mkdir -p "$OUTPUT_DIR"
+    if [[ "$DRY_RUN" == true ]]; then
+      run helm package "$ROOT/deploy/charts/foretoken" --destination "$OUTPUT_DIR"
+    else
+      # Published chart defaults select the matching ordinary GitHub Release asset.
+      # The checkout remains usable with already-published image-only releases.
+      chart_root=$(mktemp -d "$OUTPUT_DIR/chart.XXXXXX")
+      cp -R "$ROOT/deploy/charts/foretoken" "$chart_root/foretoken"
+      "$PYTHON" - "$chart_root/foretoken/values.yaml" "$SOURCE_URL" "$PYTHON_VERSION" "$OCI_VERSION" "$REGISTRY" <<'PY'
 from pathlib import Path
 import sys
 import yaml
@@ -260,43 +269,45 @@ values["runtime"]["vllm"]["environmentImages"] = {
 }
 path.write_text(yaml.safe_dump(values, sort_keys=False))
 PY
-        helm package "$chart_root/foretoken" --destination "$OUTPUT_DIR"
-        rm -rf "$chart_root"
-      fi
+      helm package "$chart_root/foretoken" --destination "$OUTPUT_DIR"
+      rm -rf "$chart_root"
     fi
-  else
-    images_selected && require_command docker
-    selected chart && require_command helm
+  fi
+}
 
-    selected control-plane && push_image "$CONTROL_PLANE_IMAGE"
-    selected frontend && push_image "$FRONTEND_IMAGE"
-    selected model-server && push_image "$MODEL_SERVER_IMAGE"
-    selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE"
+# push_release owns immutable remote-tag checks and OCI publication.
+push_release() {
+  images_selected && require_command docker
+  selected chart && require_command helm
 
-    if selected chart; then
-      CHART_REGISTRY="oci://$REGISTRY/charts"
-      CHART_NAME=foretoken
-      if [[ "$DRY_RUN" == true ]]; then
+  selected control-plane && push_image "$CONTROL_PLANE_IMAGE"
+  selected frontend && push_image "$FRONTEND_IMAGE"
+  selected model-server && push_image "$MODEL_SERVER_IMAGE"
+  selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE"
+
+  if selected chart; then
+    CHART_REGISTRY="oci://$REGISTRY/charts"
+    CHART_NAME=foretoken
+    if [[ "$DRY_RUN" == true ]]; then
+      push_chart "$CHART_REGISTRY"
+    else
+      set +e
+      chart_output=$(show_remote_chart "$CHART_REGISTRY/$CHART_NAME" 2>&1)
+      chart_status=$?
+      set -e
+      if ((chart_status == 0)); then
+        printf 'Remote tag already exists, leaving unchanged: %s/%s:%s\n' "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION"
+      elif [[ "$chart_output" == *"manifest unknown"* || \
+        "$chart_output" == *"failed to perform"*"FetchReference"*": not found"* ]]; then
+        [[ -f "$CHART_PACKAGE" ]] || {
+          printf 'chart package not found: %s\n' "$CHART_PACKAGE" >&2
+          exit 1
+        }
         push_chart "$CHART_REGISTRY"
       else
-        set +e
-        chart_output=$(show_remote_chart "$CHART_REGISTRY/$CHART_NAME" 2>&1)
-        chart_status=$?
-        set -e
-        if ((chart_status == 0)); then
-          printf 'Remote tag already exists, leaving unchanged: %s/%s:%s\n' "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION"
-        elif [[ "$chart_output" == *"manifest unknown"* || \
-          "$chart_output" == *"failed to perform"*"FetchReference"*": not found"* ]]; then
-          [[ -f "$CHART_PACKAGE" ]] || {
-            printf 'chart package not found: %s\n' "$CHART_PACKAGE" >&2
-            exit 1
-          }
-          push_chart "$CHART_REGISTRY"
-        else
-          printf 'cannot determine whether chart exists: %s/%s:%s\n%s\n' \
-            "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION" "$chart_output" >&2
-          exit 1
-        fi
+        printf 'cannot determine whether chart exists: %s/%s:%s\n%s\n' \
+          "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION" "$chart_output" >&2
+        exit 1
       fi
     fi
   fi

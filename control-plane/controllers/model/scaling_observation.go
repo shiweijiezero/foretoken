@@ -37,7 +37,10 @@ type schedulerEngineLoad struct {
 	KVCapacityTokens        uint64  `json:"kv_capacity_tokens"`
 }
 
-const frontendAutoscalingTelemetryVersion = 2
+const (
+	frontendAutoscalingTelemetryVersion = 2
+	modelGroupPoolUIDIndex              = ".spec.modelPoolRef.uid"
+)
 
 type frontendAutoscalingTarget struct {
 	ServiceUID             string `json:"service_uid"`
@@ -245,7 +248,7 @@ func (provider *HTTPScalingMetricsProvider) copyOptions(ctx context.Context) Aut
 // frontendQueue sums target-attributed queue samples from ready frontend Pods.
 func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID, options AutoscalingTelemetryOptions) (uint64, uint64, int64, time.Time, error) {
 	var pods corev1.PodList
-	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
+	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace), client.HasLabels{workload.FrontendServiceLabel}); err != nil {
 		return 0, 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
 	}
 	type queueSample struct {
@@ -316,23 +319,20 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return modelDemandObservation{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
-	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
+	var selectedPool *inferencev1alpha1.ModelPool
 	for index := range pools.Items {
 		pool := &pools.Items[index]
-		if !pool.DeletionTimestamp.IsZero() || pool.Spec.ModelServiceRef.UID != target.ServiceUID {
-			continue
+		if pool.DeletionTimestamp.IsZero() && pool.Spec.ModelServiceRef.UID == target.ServiceUID && string(pool.UID) == target.UID {
+			selectedPool = pool
+			break
 		}
-		if string(pool.UID) != target.UID {
-			continue
-		}
-		selectedPools[string(pool.UID)] = pool
 	}
-	if len(selectedPools) == 0 {
-		return modelDemandObservation{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
+	if selectedPool == nil {
+		return modelDemandObservation{}, fmt.Errorf("no ModelPool found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
-	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
+	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace), client.MatchingFields{modelGroupPoolUIDIndex: target.UID}); err != nil {
 		return modelDemandObservation{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
 	type modelDemandSample struct {
@@ -347,8 +347,7 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 	requestGroup.SetLimit(options.Concurrency)
 	for index := range groups.Items {
 		modelGroup := &groups.Items[index]
-		pool := selectedPools[modelGroup.Spec.ModelPoolRef.UID]
-		if pool == nil || !modelGroup.DeletionTimestamp.IsZero() || !servingconfig.ModelGroupOwnedBy(modelGroup, pool) || modelGroup.Spec.Revision != servingconfig.ServingRevision(service, pool) || !servingconfig.RoutingGroupReady(modelGroup) {
+		if !modelGroup.DeletionTimestamp.IsZero() || !servingconfig.ModelGroupOwnedBy(modelGroup, selectedPool) || modelGroup.Spec.Revision != servingconfig.ServingRevision(service, selectedPool) || !servingconfig.RoutingGroupReady(modelGroup) {
 			continue
 		}
 		name := modelGroup.Name

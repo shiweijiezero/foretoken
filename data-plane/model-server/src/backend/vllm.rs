@@ -3,7 +3,14 @@
 
 //! Adapts vLLM's public Llm facade, completion ownership, and metrics to the model-server backend.
 
+pub mod config;
+pub mod kv_events;
+pub mod launch;
+pub mod prefix_lookup;
+pub mod startup;
 mod telemetry;
+#[doc(hidden)]
+pub mod transport;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -20,7 +27,7 @@ use vllm_metrics::{EngineLabels, METRICS};
 use self::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 use super::{
     Backend, BackendError, BackendGeneration, BackendTelemetry, ExecutionControl, GenerateInput,
-    MetricsError, TokenErrorCode, TokenEvent, TokenStream,
+    TokenErrorCode, TokenEvent, TokenStream,
 };
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -186,7 +193,7 @@ impl Backend for VllmBackend {
             .take()
             .filter(|_| self.bidirectional_kv_xfer)
         {
-            let mut read = crate::kv_reuse::RemoteKvRead::new(
+            let mut read = super::kv_reuse::RemoteKvRead::new(
                 source,
                 execution.owner.clone(),
                 self.kv_client.clone(),
@@ -420,8 +427,8 @@ impl Backend for VllmBackend {
         }
     }
 
-    fn render_openmetrics(&self) -> Result<String, MetricsError> {
-        METRICS.render().map_err(|_| MetricsError)
+    fn encode_metrics(&self, output: &mut String) -> Result<(), std::fmt::Error> {
+        prometheus_client::encoding::text::encode_registry(output, METRICS.registry())
     }
 
     async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError> {

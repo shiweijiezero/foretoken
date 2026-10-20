@@ -5,6 +5,14 @@
 
 use std::collections::HashMap;
 
+pub(super) use async_openai::types::chat::{
+    ChatCompletionMessageToolCalls as OpenAiToolCall,
+    ChatCompletionRequestUserMessageContent as OpenAiChatContent,
+    ChatCompletionRequestUserMessageContentPart as OpenAiContentPart,
+    ChatCompletionToolChoiceOption as OpenAiToolChoice, ChatCompletionTools as OpenAiTool,
+    Prompt as CompletionPrompt, ResponseFormat as OpenAiResponseFormat, StopConfiguration as Stop,
+    ToolChoiceOptions as OpenAiToolChoiceMode,
+};
 use foretoken_chat::ReasoningEffort;
 use foretoken_text::Prompt;
 use serde::{Deserialize, Serialize};
@@ -67,15 +75,6 @@ pub(super) struct TokenizeResponse {
 #[derive(Serialize)]
 pub(super) struct DetokenizeResponse {
     pub(super) prompt: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub(super) enum CompletionPrompt {
-    Text(String),
-    TokenIds(Vec<u32>),
-    Texts(Vec<String>),
-    TokenIdBatches(Vec<Vec<u32>>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,13 +151,6 @@ pub(super) struct OpenAiStreamOptions {
     pub(super) include_usage: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub(super) enum Stop {
-    One(String),
-    Many(Vec<String>),
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ChatCompletionRequest {
@@ -209,6 +201,8 @@ pub(super) struct ChatCompletionRequest {
     #[serde(default)]
     pub(super) top_logprobs: Option<u32>,
     #[serde(default)]
+    pub(super) max_completion_tokens: Option<u32>,
+    #[serde(default)]
     pub(super) priority: i32,
     #[serde(default)]
     pub(super) cache_salt: Option<String>,
@@ -230,6 +224,7 @@ pub(super) struct ChatCompletionRequest {
     pub(super) include_reasoning: Option<bool>,
 }
 
+/// Supported message fields and reasoning history shared by generation and token counting.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OpenAiMessage {
@@ -240,137 +235,18 @@ pub(super) struct OpenAiMessage {
     pub(super) tool_calls: Vec<OpenAiToolCall>,
     #[serde(default)]
     pub(super) tool_call_id: Option<String>,
+    #[serde(default, alias = "reasoning_content")]
+    pub(super) reasoning: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub(super) enum OpenAiChatContent {
-    Text(String),
-    Parts(Vec<OpenAiContentPart>),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum OpenAiContentPart {
-    Text { text: String },
-    ImageUrl { image_url: OpenAiImageUrl },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiImageUrl {
-    pub(super) url: String,
-    #[serde(default)]
-    pub(super) detail: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiToolCall {
-    pub(super) id: String,
-    #[serde(rename = "type")]
-    pub(super) kind: OpenAiFunctionType,
-    pub(super) function: OpenAiFunctionCall,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum OpenAiFunctionType {
-    Function,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiFunctionCall {
-    pub(super) name: String,
-    pub(super) arguments: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiTool {
-    #[serde(rename = "type")]
-    pub(super) kind: OpenAiFunctionType,
-    pub(super) function: OpenAiToolFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiToolFunction {
-    pub(super) name: String,
-    #[serde(default)]
-    pub(super) description: Option<String>,
-    pub(super) parameters: Value,
-    #[serde(default)]
-    pub(super) strict: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub(super) enum OpenAiToolChoice {
-    Mode(OpenAiToolChoiceMode),
-    Function(OpenAiNamedToolChoice),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum OpenAiToolChoiceMode {
-    None,
-    Auto,
-    Required,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiNamedToolChoice {
-    #[serde(rename = "type")]
-    pub(super) kind: OpenAiFunctionType,
-    pub(super) function: OpenAiNamedFunction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiNamedFunction {
-    pub(super) name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum OpenAiResponseFormat {
-    Text,
-    JsonObject,
-    JsonSchema { json_schema: OpenAiJsonSchema },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OpenAiJsonSchema {
-    pub(super) name: String,
-    pub(super) schema: Value,
-    #[serde(default)]
-    pub(super) description: Option<String>,
-    #[serde(default)]
-    pub(super) strict: Option<bool>,
-}
-
-impl CompletionPrompt {
-    /// Expands HTTP completion prompts into request-ordered generation inputs.
-    pub(super) fn into_prompts(self) -> Vec<Prompt> {
-        match self {
-            Self::Text(text) => vec![Prompt::Text(text)],
-            Self::TokenIds(token_ids) => vec![Prompt::TokenIds(token_ids)],
-            Self::Texts(texts) => texts.into_iter().map(Prompt::Text).collect(),
-            Self::TokenIdBatches(batches) => batches.into_iter().map(Prompt::TokenIds).collect(),
-        }
-    }
-}
-
-impl Stop {
-    /// Normalizes completion stop strings for the shared request decoder.
-    pub(super) fn into_vec(self) -> Vec<String> {
-        match self {
-            Self::One(s) => vec![s],
-            Self::Many(v) => v,
+/// Expands standard completion prompts into request-ordered generation inputs.
+pub(super) fn completion_prompts(prompt: CompletionPrompt) -> Vec<Prompt> {
+    match prompt {
+        CompletionPrompt::String(text) => vec![Prompt::Text(text)],
+        CompletionPrompt::IntegerArray(token_ids) => vec![Prompt::TokenIds(token_ids)],
+        CompletionPrompt::StringArray(texts) => texts.into_iter().map(Prompt::Text).collect(),
+        CompletionPrompt::ArrayOfIntegerArray(batches) => {
+            batches.into_iter().map(Prompt::TokenIds).collect()
         }
     }
 }

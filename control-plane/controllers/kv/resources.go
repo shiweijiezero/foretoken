@@ -11,10 +11,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -64,18 +64,12 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (kvMasterRes
 	if service.Spec.Master.HighAvailability != nil {
 		podLabels[kvMasterModeLabel] = "ha"
 	}
-	rpcPort, metadataPort, metricsPort := masterPorts(service.Spec.Master)
-	snapshotIntervalSeconds, err := mooncakeSnapshotIntervalSeconds(service.Spec.Master.SnapshotInterval)
+	rpcPort, metadataPort, metricsPort := service.Spec.Master.RPCPort, service.Spec.Master.MetadataPort, service.Spec.Master.MetricsPort
+	snapshotIntervalSeconds, err := runtimeconfig.WholeDurationSeconds(service.Spec.Master.SnapshotInterval)
 	if err != nil {
-		return output, err
+		return output, fmt.Errorf("parse master snapshot interval: %w", err)
 	}
 	snapshotRetentionCount := service.Spec.Master.SnapshotRetentionCount
-	if snapshotRetentionCount == 0 {
-		snapshotRetentionCount = 3
-	}
-	if snapshotRetentionCount < 1 {
-		return output, fmt.Errorf("master.snapshotRetentionCount must be positive")
-	}
 	requesterConfig, err := desiredKVRequesterConfig(service, connection)
 	if err != nil {
 		return output, err
@@ -152,9 +146,6 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (kvMasterRes
 	}
 	size := *resource.NewQuantity(snapshotBytes, resource.DecimalSI)
 	retention := service.Spec.Master.Snapshot.RetentionPolicy
-	if retention == "" {
-		retention = inferencev1alpha1.RetentionPolicyDelete
-	}
 	output.pvc = &corev1.PersistentVolumeClaim{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"}, ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: service.Namespace, Labels: labels, Annotations: map[string]string{snapshotRetentionAnnotation: string(retention)}}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: size}}}}
 	if service.Spec.Master.Snapshot.StorageClassName != "" {
 		output.pvc.Spec.StorageClassName = &service.Spec.Master.Snapshot.StorageClassName
@@ -192,10 +183,9 @@ func kvMasterHeadlessServiceName(service *inferencev1alpha1.KVService) string {
 
 // resolveKVMasterConnection is the single owner for native Master and client addressing.
 func resolveKVMasterConnection(service *inferencev1alpha1.KVService) (kvMasterConnection, error) {
-	rpcPort, _, _ := masterPorts(service.Spec.Master)
 	_, _, _, serviceName := kvMasterNames(service)
 	if service.Spec.Master.HighAvailability == nil {
-		return kvMasterConnection{ServerAddress: fmt.Sprintf("%s.%s.svc:%d", serviceName, service.Namespace, rpcPort)}, nil
+		return kvMasterConnection{ServerAddress: fmt.Sprintf("%s.%s.svc:%d", serviceName, service.Namespace, service.Spec.Master.RPCPort)}, nil
 	}
 	if service.Spec.Master.Snapshot != nil {
 		return kvMasterConnection{}, fmt.Errorf("master.highAvailability cannot be combined with master.snapshot")
@@ -252,31 +242,6 @@ func kvResources(resources inferencev1alpha1.KVResources) (corev1.ResourceList, 
 		limits[corev1.ResourceMemory] = value
 	}
 	return requests, limits, nil
-}
-
-func masterPorts(master inferencev1alpha1.KVMasterSpec) (int32, int32, int32) {
-	rpc, metadata, metrics := master.RPCPort, master.MetadataPort, master.MetricsPort
-	if rpc == 0 {
-		rpc = 50051
-	}
-	if metadata == 0 {
-		metadata = 8080
-	}
-	if metrics == 0 {
-		metrics = 9003
-	}
-	return rpc, metadata, metrics
-}
-
-func mooncakeSnapshotIntervalSeconds(value inferencev1alpha1.Duration) (int64, error) {
-	if value == "" {
-		value = "60s"
-	}
-	interval, err := time.ParseDuration(string(value))
-	if err != nil || interval <= 0 || interval%time.Second != 0 {
-		return 0, fmt.Errorf("master.snapshotInterval must be a positive whole number of seconds")
-	}
-	return int64(interval / time.Second), nil
 }
 
 func mooncakeMasterConfig(service *inferencev1alpha1.KVService, connection kvMasterConnection, rpcPort, metadataPort, metricsPort int32, snapshotIntervalSeconds int64, snapshotRetentionCount int32) string {

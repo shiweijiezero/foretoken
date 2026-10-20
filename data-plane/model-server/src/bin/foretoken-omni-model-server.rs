@@ -19,16 +19,17 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use foretoken_artifacts::{ModelArtifacts, ModelSource};
 use foretoken_model_protocol::{
     CumulativeHistogram, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_model_server::api::{AdmissionPermit, RuntimeHealth};
-use foretoken_model_server::launch::{Lifecycle, append_engine_arg, python_executable};
-use foretoken_model_server::managed_engine::ManagedEngine;
-use foretoken_model_server::preparation::{self, PreparationStorage};
+use foretoken_model_server::engine::{
+    Lifecycle, ManagedEngine, append_engine_arg, python_executable,
+};
+use foretoken_model_server::model_cache::preparation::{self, PreparationStorage};
 use foretoken_model_server::shutdown_signal;
 
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_OMNI_LAUNCH_PLAN";
@@ -55,6 +56,7 @@ struct AppState {
     health: Arc<RuntimeHealth>,
 }
 
+/// Dispatch model preparation or serve video requests while owning the native engine lifetime.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let python = python_executable();
@@ -83,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_secs(plan.lifecycle.startup_seconds);
     // Remote sources consume the fixed publication through the shared preparation lifecycle.
     let model = if plan.artifacts.source == ModelSource::Local {
-        local_artifact_path(&plan.artifacts.model)?
+        preparation::local_artifact_path(&plan.artifacts.model)?
     } else {
         let model_root = foretoken_artifacts::model_cache_root()
             .ok_or("FORETOKEN_MODEL_CACHE_ROOT must be set for model preparation")?;
@@ -126,11 +128,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(state);
     eprintln!("Foretoken vLLM-Omni adapter ready on {listen}");
 
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let server_shutdown = shutdown.clone();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, app)
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(server_shutdown.cancelled_owned())
             .await
     });
     enum Stop {
@@ -160,17 +162,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     eprintln!("Stopping Foretoken vLLM-Omni adapter: {stop_reason}");
     health.set_accepting(false);
-    if graceful {
-        drain(&health, Duration::from_secs(plan.lifecycle.drain_seconds)).await;
+    if graceful
+        && tokio::time::timeout(
+            Duration::from_secs(plan.lifecycle.drain_seconds),
+            health.wait_drained(),
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("Accepted requests did not finish before the drain deadline");
     }
     health.set_process_alive(false);
-    shutdown.notify_waiters();
+    shutdown.cancel();
     if !server.is_finished()
         && tokio::time::timeout(Duration::from_secs(5), &mut server)
             .await
             .is_err()
     {
         server.abort();
+        let _ = server.await;
     }
     child.shutdown(Duration::from_secs(10)).await?;
     if let Stop::Error(error) = stop {
@@ -179,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Build video and control routes sharing the adapter's execution-admission state.
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(healthz))
@@ -293,6 +304,7 @@ async fn proxy_video(State(state): State<AppState>, request: Request<Body>) -> R
     .await
 }
 
+/// Proxy one upstream request, retaining its admission permit until the response stream ends.
 async fn proxy_request(
     state: &AppState,
     method: Method,
@@ -353,7 +365,7 @@ fn hop_by_hop(name: &HeaderName) -> bool {
     )
 }
 
-// 已登记的本地快照由共享准备流程提供，Omni 只负责加载和执行。
+/// Build the native Omni command from the model snapshot supplied by shared preparation.
 fn engine_command(plan: &LaunchPlan, model: &str) -> Result<Command, Box<dyn std::error::Error>> {
     let executable = std::env::var(EXECUTABLE_ENV).unwrap_or_else(|_| "vllm".into());
     let mut command = Command::new(executable);
@@ -371,23 +383,6 @@ fn engine_command(plan: &LaunchPlan, model: &str) -> Result<Command, Box<dyn std
     Ok(command)
 }
 
-fn local_artifact_path(identifier: &str) -> std::io::Result<String> {
-    let root = foretoken_artifacts::model_root();
-    let path =
-        foretoken_artifacts::resolve_directory(root.as_deref(), identifier)?.ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("local artifact {identifier:?} was not found"),
-            )
-        })?;
-    path.into_os_string().into_string().map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "local artifact path is not UTF-8",
-        )
-    })
-}
-
 fn render_engine_args(args: &BTreeMap<String, Value>) -> Result<Vec<String>, String> {
     let mut output = Vec::new();
     for (name, value) in args {
@@ -402,6 +397,7 @@ fn render_engine_args(args: &BTreeMap<String, Value>) -> Result<Vec<String>, Str
     Ok(output)
 }
 
+/// Observe native health and child exit until the startup budget is exhausted.
 async fn wait_until_ready(
     client: &reqwest::Client,
     upstream: &str,
@@ -429,13 +425,7 @@ async fn wait_until_ready(
     }
 }
 
-async fn drain(health: &RuntimeHealth, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while health.running_requests() != 0 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
+/// Validate the controller's Omni launch contract before allocating serving resources.
 fn validate_plan(plan: &LaunchPlan) -> Result<(), String> {
     if plan.version != 2 {
         return Err(format!(

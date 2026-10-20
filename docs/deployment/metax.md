@@ -18,22 +18,13 @@ You need the Foretoken CLI, kubectl, curl, cluster access supplied by your admin
 Confirm the following with the administrator:
 
 - The platform has MetaX-compatible images, GPU resources, and storage for the model cache. The default example requests one GPU, 8 CPU, and 52 GiB memory.
-- Your kubeconfig selects a namespace where you have service access. For the Gateway path below, obtain a hostname assigned to this model service.
+- Your kubeconfig selects a namespace where you have service access.
 
-If the platform exposes services directly through a `LoadBalancer` instead of Gateway, omit the `hostname` setting below. The deployment and request commands remain the same.
+The commands below work with direct LoadBalancer access and HTTP Gateway. Gateway routing assigns each instance a hostname automatically; the CLI resolves the required Host header.
 
 ## 1. Deploy the example model
 
-Configure `examples/quickstart/qwen3-0.6b/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](../features/model-storage.md).
-
-Add `hostname` under the existing `spec` in `examples/quickstart/qwen3-0.6b/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
-
-```yaml
-spec:
-  hostname: foretoken.example.com
-```
-
-Deploy the example:
+The example uses the repository's `data/` directory. Once the administrator has prepared access to it, deploy directly. If the cluster uses different storage, update `examples/quickstart/qwen3-0.6b/cache.yaml` first using the [model storage guide](../features/model-storage.md). Custom domains and HTTPS or hostname-restricted listeners require [a matching hostname](../../README.md#gateway-mode).
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -87,5 +78,5 @@ Deletion removes only this instance and its controller, releasing its model-cach
 ## If the request does not succeed
 
 - Deployment keeps waiting or a Pod is Pending: find the affected Pod in `foretoken status qwen3-0-6b`, then run `kubectl describe pod` with that Pod's name. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
-- HTTP 404: check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
+- HTTP 404: use the Host returned by `foretoken endpoint qwen3-0-6b --host`. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
 - HTTP 503: inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.

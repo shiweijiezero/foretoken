@@ -56,6 +56,7 @@ pub(crate) async fn watch_serving_snapshot(
     }
 }
 
+/// Prepares the current snapshot and reports whether the watcher can mark its input as processed.
 async fn process_serving_snapshot(
     generation: &RuntimeGeneration,
     path: &Path,

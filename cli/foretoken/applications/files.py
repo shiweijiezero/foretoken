@@ -10,10 +10,11 @@ import math
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import copy_context
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,7 @@ from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 
 if TYPE_CHECKING:
-    from foretoken.build.cluster import ClusterBuilder
+    from foretoken.build.cluster.builder import ClusterBuilder
 
 SOURCE_REVISION = "inference.foretoken.io/source-revision"
 SERVICE_COMPONENTS = {"ModelService": "model-server", "FrontendService": "frontend"}
@@ -33,10 +34,25 @@ _SOURCE_CONSUMER_LABEL = "foretoken.io/application-source-consumer"
 _SOURCE_ARCHIVE = "/source-evidence/inputs.tar.gz"
 
 
+@dataclass(frozen=True)
+class ApplicationPublication:
+    """Describe one completed export selected by a source-build publication cohort."""
+
+    component: str
+    source: str
+    revision: str
+    previous: str
+    sources: dict[str, Any] | None
+    image: str | None
+    parts: list[str] | None
+    previous_image: str | None = None
+
+
 class ApplicationFiles:
     """Resolve the installed file origin without taking ownership of model storage."""
 
     def __init__(self, kubectl: Kubectl, namespace: str) -> None:
+        """Resolve origin access for readers; prepare selects current storage before publisher operations."""
         self.kubectl = kubectl
         self.namespace = namespace
         configurations = kubectl.list_resources(
@@ -101,6 +117,29 @@ class ApplicationFiles:
         objects = application_consumers(self.kubectl)
         references.update(application_references(objects))
         return references
+
+    def publish_batch(
+        self,
+        builder: ClusterBuilder,
+        publications: Sequence[ApplicationPublication],
+        references: set[str] | None,
+        *,
+        timeout: str,
+    ) -> dict[str, str]:
+        """Join a source build's publishers before returning their actual immutable revisions."""
+        with ThreadPoolExecutor(max_workers=len(publications)) as writers, builder.cancellation:
+            pending = {
+                publication.component: writers.submit(
+                    builder.cancellation.run_stage, self.publish,
+                    builder, publication.source, publication.component,
+                    publication.revision, publication.previous, references,
+                    timeout=timeout, reuse_previous=True,
+                    sources=publication.sources, image=publication.image,
+                    parts=publication.parts, previous_image=publication.previous_image,
+                )
+                for publication in publications
+            }
+            return {component: future.result() for component, future in pending.items()}
 
     def publish(
         self,
@@ -394,6 +433,106 @@ class ApplicationFiles:
         input_name = "foretoken-publish-input-" + uuid.uuid4().hex[:12]
         seconds = math.ceil(timeout_seconds(timeout))
         execution = builder.cancellation if builder is not None else CommandExecution.current()
+        job = self._publisher_job(
+            arguments, binding, name=name, input_name=input_name, seconds=seconds,
+            builder=builder, source_revision=source_revision,
+            credentials_secret=credentials_secret,
+        )
+        deadline = time.monotonic() + seconds
+        metadata = None
+        uncertain_create = False
+
+        def stop() -> None:
+            """Recover a lost create response without claiming another release publisher."""
+            receipt = metadata
+            if receipt is None:
+                if not uncertain_create:
+                    return
+                current = self.kubectl.get_if_exists("job", name, self.namespace)
+                if current is None or current["metadata"].get("labels", {}).get(_BINDING_LABEL) != binding:
+                    return
+                if not any(
+                    owner["kind"] == "PersistentVolumeClaim" and owner["uid"] == self.claim_uid
+                    for owner in current["metadata"].get("ownerReferences", [])
+                ):
+                    return
+                receipt = current["metadata"]
+            self._delete_owned("jobs", receipt, timeout)
+
+        try:
+            if execution is not None:
+                execution.register(stop)
+            while True:
+                if execution is not None:
+                    execution.check()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DeploymentError(f"application publication {self.namespace}/{name} exceeded its creation deadline")
+                try:
+                    uncertain_create = True
+                    created = self.kubectl.run(
+                        ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=remaining,
+                    )
+                    metadata = json.loads(created.stdout)["metadata"]
+                    uncertain_create = False
+                    break
+                except DeploymentError as exc:
+                    # An occupied name proves that this request created nothing.
+                    if "AlreadyExists" not in str(exc):
+                        raise
+                    uncertain_create = False
+                    if not wait_for_slot:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise DeploymentError(
+                            f"application release operation {self.namespace}/{name} is occupied after {timeout}"
+                        ) from None
+                    time.sleep(min(1, max(0.0, deadline - time.monotonic())))
+            if execution is not None:
+                execution.check()
+            # A create whose response was lost can still commit after cancellation.
+            # Without these UID-owned inputs, that Job cannot read exports or collect
+            # publications and expires through its native deadline and TTL.
+            with self.kubectl.until(deadline):
+                data = inputs() if inputs is not None else {}
+                data["publish.py"] = files("foretoken.applications").joinpath("publish.py").read_text()
+                selection = {
+                    "apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {
+                        "name": input_name, "namespace": self.namespace,
+                        "ownerReferences": [{
+                            "apiVersion": "batch/v1", "kind": "Job",
+                            "name": metadata["name"], "uid": metadata["uid"],
+                        }],
+                    },
+                    "immutable": True,
+                    "data": data,
+                }
+                self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(selection))
+            if execution is not None:
+                execution.check()
+            yield metadata, deadline
+        finally:
+            if execution is not None:
+                execution.unregister(stop)
+                execution.cleanup(stop, sys.exception())
+            else:
+                with cleanup_commands(timeout=seconds):
+                    stop()
+
+    def _publisher_job(
+        self,
+        arguments: list[str],
+        binding: str,
+        *,
+        name: str,
+        input_name: str,
+        seconds: int,
+        builder: ClusterBuilder | None,
+        source_revision: str,
+        credentials_secret: str,
+    ) -> dict[str, Any]:
+        """Render publisher storage and identity without taking ownership of borrowed compiler files."""
         labels = {
             "foretoken.io/application-files": "publisher",
             _BINDING_LABEL: binding,
@@ -553,87 +692,7 @@ class ApplicationFiles:
                     },
                 }
             ]
-        deadline = time.monotonic() + seconds
-        metadata = None
-        uncertain_create = False
-
-        def stop() -> None:
-            """Recover a lost create response without claiming another release publisher."""
-            receipt = metadata
-            if receipt is None:
-                if not uncertain_create:
-                    return
-                current = self.kubectl.get_if_exists("job", name, self.namespace)
-                if current is None or current["metadata"].get("labels", {}).get(_BINDING_LABEL) != binding:
-                    return
-                if not any(
-                    owner["kind"] == "PersistentVolumeClaim" and owner["uid"] == self.claim_uid
-                    for owner in current["metadata"].get("ownerReferences", [])
-                ):
-                    return
-                receipt = current["metadata"]
-            self._delete_owned("jobs", receipt, timeout)
-
-        try:
-            if execution is not None:
-                execution.register(stop)
-            while True:
-                if execution is not None:
-                    execution.check()
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise DeploymentError(f"application publication {self.namespace}/{name} exceeded its creation deadline")
-                try:
-                    uncertain_create = True
-                    created = self.kubectl.run(
-                        ["create", "-f", "-", "-o", "json"], input_text=json.dumps(job), timeout=remaining,
-                    )
-                    metadata = json.loads(created.stdout)["metadata"]
-                    uncertain_create = False
-                    break
-                except DeploymentError as exc:
-                    # An occupied name proves that this request created nothing.
-                    if "AlreadyExists" not in str(exc):
-                        raise
-                    uncertain_create = False
-                    if not wait_for_slot:
-                        raise
-                    if time.monotonic() >= deadline:
-                        raise DeploymentError(
-                            f"application release operation {self.namespace}/{name} is occupied after {timeout}"
-                        ) from None
-                    time.sleep(min(1, max(0.0, deadline - time.monotonic())))
-            if execution is not None:
-                execution.check()
-            # A create whose response was lost can still commit after cancellation.
-            # Without these UID-owned inputs, that Job cannot read exports or collect
-            # publications and expires through its native deadline and TTL.
-            with self.kubectl.until(deadline):
-                data = inputs() if inputs is not None else {}
-                data["publish.py"] = files("foretoken.applications").joinpath("publish.py").read_text()
-                selection = {
-                    "apiVersion": "v1", "kind": "ConfigMap",
-                    "metadata": {
-                        "name": input_name, "namespace": self.namespace,
-                        "ownerReferences": [{
-                            "apiVersion": "batch/v1", "kind": "Job",
-                            "name": metadata["name"], "uid": metadata["uid"],
-                        }],
-                    },
-                    "immutable": True,
-                    "data": data,
-                }
-                self.kubectl.run(["create", "-f", "-"], input_text=json.dumps(selection))
-            if execution is not None:
-                execution.check()
-            yield metadata, deadline
-        finally:
-            if execution is not None:
-                execution.unregister(stop)
-                execution.cleanup(stop, sys.exception())
-            else:
-                with cleanup_commands(timeout=seconds):
-                    stop()
+        return job
 
     def _delete_owned(
         self, resource: str, metadata: dict[str, Any], timeout: str

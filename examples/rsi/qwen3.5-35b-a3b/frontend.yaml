@@ -4,17 +4,16 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: FrontendService
 metadata:
-  name: qwen3-5-35b-a3b-frontend
+  name: qwen3-5-35b-a3b
 spec:
   replicas: 1
-  hostname: qwen3-5-35b-a3b.rsi.example.com
   resources:
     requests:
       cpu: "1"
-      memory: 2Gi
+      memory: 4G
     limits:
       cpu: "2"
-      memory: 4Gi
+      memory: 4G
   timeouts:
     request: 10m
     streamIdle: 5m

@@ -2,7 +2,7 @@
 
 English | [简体中文](report-template_zh.md)
 
-Use this for the task's continuously maintained `report.md`, following the [report workflow](../experiment-records.md#maintain-the-user-facing-report). Deliver a file by default; keep the report updated on a document platform when the user specifies one. Begin with the experiment's objective, current status and last update time.
+Use this for the task's continuously maintained `report.md`, following the [report workflow](../experiment-records.md#maintain-the-user-facing-report). Deliver a file by default; keep the report updated on a document platform when the user specifies one. Begin with the experiment's objective, current status and last update time. For a time-bounded task, include its original start and deadline. Link the task and experiment result directory.
 
 ## Results summary
 
@@ -19,8 +19,11 @@ Here `n` is the number of measured repeats for that metric; show a single value 
 
 ## Iterations
 
-Give each iteration a short paragraph: why it was tried, what changed, what happened, and whether it was retained. Use the names from the summary table and link original results. Explain operations and effects in natural language, briefly defining necessary terms on first use.
+Introduce each approach or research question with a short summary, including work awaiting measurement. Use the names from the results summary and link its `iterations/<name>/notes/iteration.md`, which leads to the complete plans, analyses and original results. Resolve links from the report's location.
+
+| Iteration | Approach and findings | Detailed notes |
+| --- | --- | --- |
 
 ## Currently retained approach
 
-Describe the retained changes, measured effect and pending validation. State when no approach has been selected yet. Link configurations, code and figures. Briefly summarize time and resource use as required by the task, with the observation interval and sampling coverage; keep full commands and logs in run records. When the experiment pauses or ends, explain why and what remains unresolved.
+Describe the retained changes, measured effect and pending validation. State when no approach has been selected yet. Link configurations, code and figures. Briefly summarize time and resource use as required by the task, with the observation interval and sampling coverage; keep full commands and logs in run records. State the next question or comparison and any unresolved disagreements, with links to supporting notes. When the experiment pauses or ends, explain why.

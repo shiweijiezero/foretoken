@@ -6,7 +6,5 @@ kind: RuntimeCache
 metadata:
   name: runtime-cache
 spec:
-  initialSize: 128Gi
-  maxSize: 256Gi
-  accessMode: ReadWriteOnce
-  retentionPolicy: Delete
+  directory: ../../../data
+  accessMode: ReadWriteMany

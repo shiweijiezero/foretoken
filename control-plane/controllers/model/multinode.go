@@ -110,9 +110,7 @@ func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group 
 		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
 			return modelGroupWorkloadState{}, fmt.Errorf("apply LeaderWorkerSet: %w", err)
 		}
-	}
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
-		return modelGroupWorkloadState{}, fmt.Errorf("get applied LeaderWorkerSet: %w", err)
+		current = desired
 	}
 	state := modelGroupWorkloadState{createdAt: current.CreationTimestamp.Time}
 	if current.Status.ObservedGeneration != current.Generation || current.Status.ReadyReplicas != 1 ||

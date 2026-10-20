@@ -23,7 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.video import VideoBenchmarkConfig
-from benchmarks.results.console import capture_run_logs
+from benchmarks.results.recording.logs import capture_run_logs
 
 logger = logging.getLogger(__name__)
 _Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)
@@ -44,10 +44,6 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     else:
         iteration = _numbered_directory(iterations)
     run = _numbered_directory(iteration / "runs", f"{command}-")
-    _create_note(
-        root / "notes" / "experiment.md",
-        "# Experiment Notes\n\n## Goal\n\n## Scope\n\n## Comparison\n\n## Findings\n\n## Next questions\n",
-    )
     _create_note(
         iteration / "notes" / "iteration.md",
         "# Iteration Notes\n\n## Question and analysis\n\n## Hypothesis and design\n\n"
@@ -162,7 +158,7 @@ def _snapshot_repository(root: Path, destination: Path, output_root: Path) -> di
         # Results may be outside the repository's ignore rules. Never snapshot
         # the running experiment itself, or dereference a changed symlink.
         if output_root == root or root.is_relative_to(output_root):
-            if any(source.is_relative_to(output_root / name) for name in ("iterations", "notes")):
+            if source.is_relative_to(output_root / "iterations"):
                 continue
         elif source.is_relative_to(output_root):
             continue

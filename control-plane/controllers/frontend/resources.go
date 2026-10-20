@@ -219,9 +219,6 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	if profile.Gateway == nil {
 		return deployment, service, nil, nil
 	}
-	if frontend.Spec.Hostname == "" {
-		return nil, nil, nil, fmt.Errorf("frontend hostname is required in gateway mode")
-	}
 	return deployment, service, desiredHTTPRoute(frontend, profile, requestTimeout), nil
 }
 
@@ -256,7 +253,12 @@ func frontendResources(resources inferencev1alpha1.FrontendResources) (corev1.Re
 	return requests, limits, nil
 }
 
+// desiredHTTPRoute exposes public API paths under the explicit host or the frontend's own Service identity.
 func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile FrontendRuntimeProfile, requestTimeout gatewayv1.Duration) *gatewayv1.HTTPRoute {
+	hostname := frontend.Spec.Hostname
+	if hostname == "" {
+		hostname = fmt.Sprintf("%s.%s.svc", frontend.Name, frontend.Namespace)
+	}
 	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
 	gatewayKind := gatewayv1.Kind("Gateway")
 	pathType := gatewayv1.PathMatchPathPrefix
@@ -281,7 +283,7 @@ func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile Front
 		ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: map[string]string{workload.FrontendServiceLabel: frontend.Name}},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
-			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(frontend.Spec.Hostname)},
+			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
 			Rules: []gatewayv1.HTTPRouteRule{{
 				Matches:  matches,
 				Timeouts: &gatewayv1.HTTPRouteTimeouts{Request: &requestTimeout},

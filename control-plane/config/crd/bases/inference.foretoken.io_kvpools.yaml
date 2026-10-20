@@ -76,8 +76,9 @@ spec:
                 - uid
                 type: object
               masterAdminPort:
-                description: MasterAdminPort is the resolved Master HTTP admin port
-                  used by enabled Groups.
+                description: |-
+                  MasterAdminPort is retained for deployed controllers without complete execution templates.
+                  Current controllers resolve registration endpoints only through Template.
                 format: int32
                 maximum: 65535
                 minimum: 1
@@ -91,9 +92,9 @@ spec:
                 type: string
               template:
                 description: |-
-                  NormalizedKVPoolTemplate is the immutable client configuration compiled from
-                  a KVService storagePools entry. Capacities are decimal byte strings; Pool identity
-                  and desiredGroups stay outside it.
+                  NormalizedKVPoolTemplate freezes the Group execution inputs resolved by KVService.
+                  Capacities are decimal byte strings; Pool identity and desiredGroups stay outside it.
+                  Unresolved templates can retire but cannot create Groups.
                 properties:
                   client:
                     description: |-
@@ -285,9 +286,48 @@ spec:
                       rule: '!has(self.resources.limits) || !has(self.resources.limits.memory)
                         || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory))
                         < 0'
+                  masterAdminEndpoint:
+                    description: MasterAdminEndpoint is the resolved HTTP endpoint
+                      for enabled registration checks.
+                    minLength: 1
+                    type: string
+                  masterClusterID:
+                    description: MasterClusterID is the native HA namespace used by
+                      Group clients.
+                    type: string
+                  masterServerAddress:
+                    description: MasterServerAddress is the resolved native Master
+                      entry used by Group clients.
+                    minLength: 1
+                    type: string
                   nodeSelector:
                     additionalProperties:
                       type: string
+                    type: object
+                  timeouts:
+                    description: Timeouts supplies the resolved lifecycle budgets
+                      for Group clients.
+                    properties:
+                      drain:
+                        description: Drain is the Kubernetes termination grace period
+                          for a leaving Store client.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                      startup:
+                        description: Duration is a positive Go-style duration.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    required:
+                    - drain
+                    - startup
                     type: object
                 required:
                 - client

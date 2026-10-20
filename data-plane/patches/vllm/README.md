@@ -54,3 +54,9 @@ The [retained-prefix directory](../../model-server/python/connectors/retained.py
 `common/mooncake-retained-prefix.patch` uses the native sender loop for acquisition, revocation and WRITE submission. Idle sources use `kv_lease_duration`, independently of the ordinary send timeout. Revocation and expiry require every admitted reader to have completed its WRITE or confirmed that no WRITE was submitted; remaining unstarted readers then receive a miss. Errors with unknown I/O completion retire the worker. Receivers join all source completions before reporting a load result, and the scheduler waits for every TP worker before freeing blocks.
 
 When updating these patches, run two-turn P/D generation through different frontends, compare reused and recomputed output tokens, and inspect allocator references during cancellation, expiry, peer exit and TP completion. Use the [P/D configuration](../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) to select the transport.
+
+## Chat token metadata
+
+`rust/chat-token-metadata.patch` builds on upstream [decoder attribution](https://github.com/vllm-project/vllm/commit/b911fe85c42ae984f27d183a0b1de309adab9bf2) and [reasoning attribution](https://github.com/vllm-project/vllm/commit/21a22110404d98dcab5f51cd90e9acb0acc15e47). It carries sampled positions and complete decoded spans through parser buffering, including tokens that jointly produce one UTF-8 fragment.
+
+`ChatTokenMetadataMode::Sampled` preserves raw metadata and its update cadence. `VisibleContent` releases metadata only after the complete token span is classified as parser-visible content; a token crossing hidden content or excluded stop text is omitted as a whole. Keep usage independent of this filtering. When updating the patch, exercise stop buffering, truncation, and parser recovery in both modes, using the real tokenizer and output processors.

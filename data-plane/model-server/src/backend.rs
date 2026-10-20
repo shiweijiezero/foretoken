@@ -3,7 +3,8 @@
 
 //! Engine-neutral operations, output ownership, and failures consumed by internal HTTP handlers.
 
-mod vllm;
+mod kv_reuse;
+pub mod vllm;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -76,11 +77,6 @@ pub enum BackendError {
     RequestFailed,
 }
 
-/// Backend-neutral failure to encode the active inference engine's metrics.
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("backend metrics rendering failed")]
-pub struct MetricsError;
-
 /// Minimal inference backend operations that this group-local server needs.
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -128,8 +124,8 @@ pub trait Backend: Send + Sync {
     /// Failure leaves ordinary inference and telemetry available without inventing zero load.
     async fn scheduler_load(&self) -> Result<Vec<SchedulerLoad>, BackendError>;
 
-    /// Renders the OpenMetrics payload published by the metrics handler as an owned response body.
-    fn render_openmetrics(&self) -> Result<String, MetricsError>;
+    /// Appends engine metrics to the scrape body; the HTTP handler owns the document's EOF marker.
+    fn encode_metrics(&self, output: &mut String) -> Result<(), std::fmt::Error>;
 }
 
 impl Default for ExecutionControl {

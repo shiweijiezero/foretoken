@@ -29,6 +29,7 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
     parse_duration_seconds,
 )
+from benchmarks.config.video import VideoEndpointConfig
 
 
 def parse_benchmark_arguments(
@@ -210,7 +211,7 @@ def _add_benchmark_arguments(
     )
     if video:
         parser.set_defaults(
-            timeout=3600.0,
+            timeout=_default(VideoEndpointConfig, "timeout_s"),
             num_prompts=0,
             output=("local",),
             output_dir="results/video",
@@ -504,6 +505,7 @@ def _add_benchmark_arguments(
 
 
 def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
+    """Map the explicit CLI surface to typed service, workload, and result choices for execution."""
     paths = tuple(namespace.kustomize_paths or ())
     urls = tuple(namespace.url or ())
     models = tuple(namespace.model or ())

@@ -57,6 +57,39 @@ pub struct RuntimeBuilder {
     routing_load: foretoken_router::RoutingLoadState,
 }
 
+pub struct PreparedRuntime {
+    version: u64,
+    state: Arc<RuntimeState>,
+    control: Arc<dyn RuntimeControl>,
+    admission: PreparedAdmissions,
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeBuildError {
+    #[error("invalid routing configuration: {0}")]
+    Router(#[from] RouterPipelineConfigError),
+    #[error("could not parse serving snapshot: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("could not validate serving snapshot: {0}")]
+    InvalidSnapshot(String),
+    #[error("model-server backend is not ready")]
+    BackendUnavailable,
+    #[error("could not prepare model runtime: {0}")]
+    ModelRuntime(String),
+    #[error("candidate model-server backend became unready during runtime preparation")]
+    BackendBecameUnavailable,
+}
+
+struct RegistryRuntimeControl {
+    request_length_targets: BTreeSet<RouteTargetId>,
+    logging: Arc<foretoken_tracing::LogControl>,
+    log_level: tracing::level_filters::LevelFilter,
+    pipeline: Arc<RouterPipelines>,
+    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
+    backends: Arc<CachedBackends>,
+    published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
+}
+
 impl RuntimeBuilder {
     /// Creates the snapshot builder retained by the frontend watcher for successive updates.
     ///
@@ -307,13 +340,6 @@ impl RuntimeBuilder {
     }
 }
 
-pub struct PreparedRuntime {
-    version: u64,
-    state: Arc<RuntimeState>,
-    control: Arc<dyn RuntimeControl>,
-    admission: PreparedAdmissions,
-}
-
 impl PreparedRuntime {
     /// Atomically hands this prepared candidate to the long-lived serving generation.
     ///
@@ -322,32 +348,6 @@ impl PreparedRuntime {
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
         generation.replace_state(self.version, self.state, self.control, self.admission)
     }
-}
-
-#[derive(Debug, Error)]
-pub enum RuntimeBuildError {
-    #[error("invalid routing configuration: {0}")]
-    Router(#[from] RouterPipelineConfigError),
-    #[error("could not parse serving snapshot: {0}")]
-    Parse(#[from] serde_json::Error),
-    #[error("could not validate serving snapshot: {0}")]
-    InvalidSnapshot(String),
-    #[error("model-server backend is not ready")]
-    BackendUnavailable,
-    #[error("could not prepare model runtime: {0}")]
-    ModelRuntime(String),
-    #[error("candidate model-server backend became unready during runtime preparation")]
-    BackendBecameUnavailable,
-}
-
-struct RegistryRuntimeControl {
-    request_length_targets: BTreeSet<RouteTargetId>,
-    logging: Arc<foretoken_tracing::LogControl>,
-    log_level: tracing::level_filters::LevelFilter,
-    pipeline: Arc<RouterPipelines>,
-    published_pipeline: Arc<Mutex<Option<Arc<RouterPipelines>>>>,
-    backends: Arc<CachedBackends>,
-    published_backends: Arc<Mutex<Option<Arc<CachedBackends>>>>,
 }
 
 #[async_trait]

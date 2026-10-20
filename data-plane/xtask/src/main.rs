@@ -47,6 +47,7 @@ struct PreparedPatch {
     contents: String,
 }
 
+/// Run repository build tooling and report task failures to the invoking command.
 fn main() {
     if let Err(error) = run() {
         eprintln!("foretoken-xtask: {error}");

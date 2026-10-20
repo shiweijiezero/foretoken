@@ -23,25 +23,27 @@ The lead begins an assignment by explaining the question, the findings already a
 
 Members also need to know what may change, which workloads and generation settings must remain comparable, and how much time and resource they can use. Every experiment has a named executor, checkout, deployment environment and result location. With those arrangements in place, members can continue without approval for each command. They return to the lead when the next step needs additional resources, a shared environment change or different comparison conditions.
 
-The first update should explain the chosen reference and planned comparison. This gives the lead a chance to catch misunderstandings before implementation and measurement are complete.
+Write the complete proposal in `<output-dir>/iterations/<name>/notes/`, where `<output-dir>` is the assigned experiment result directory. The first exchange includes a summary and the full document paths; relevant members read the proposal, code and evidence, discuss the approach and validation plan, and record decisions and open questions. See the [document collaboration guide](../../../../rsi-playbooks/experiment-records.md#share-documents-and-code) for the layout.
 
 ## Prepare candidates while evaluations run
 
 When different members develop and evaluate an approach, record them as two tasks with a dependency between them. The Worker provides a reproducible version, explains the change and expected effect, and supplies the reference results, workload and execution requirements. These inputs let the Experimenter determine how to deploy and evaluate the candidate.
 
-The delivered version stays unchanged while it waits or runs. The Worker can develop in a different checkout or preserve a separate copy for evaluation before continuing. This keeps the measured version consistent with the handoff.
+The delivered checkout and execution environment stay unchanged while the candidate waits, builds or runs. Reuse the checkout after evaluation; create a separate development or evaluation copy only when further implementation needs to overlap those stages.
 
 The lead uses one set of task records to track candidates being prepared, waiting for evaluation and executing. Preparation and evaluation concurrency can be adjusted separately. When preparation is slow and evaluation resources often sit idle, Workers can prepare a small set of useful, independent candidates ahead. When the queue is already long, they can spend more time interpreting results or improving work not yet delivered. The lead also accounts for the time needed to evaluate and analyze candidates before the budget ends.
 
-Use native task owners, dependencies and completion states when available. Members may self-claim when the tools prevent duplicate claims and the lead has assigned the necessary resources. Otherwise, the lead assigns an owner explicitly. Without task tools, keep these arrangements in the experiment overview.
+Use native task owners, dependencies and completion states when available. Members may self-claim when the tools prevent duplicate claims and the lead has assigned the necessary resources. Otherwise, the lead assigns an owner explicitly. Without task tools, keep these arrangements in the relevant iteration notes.
 
 ## Coordinate resources and environments
 
-One member is responsible for running and cleaning up each deployment. The lead allocates resources within the user's authorization and coordinates changes to CRDs, drivers and shared platform installations. Code changes also need clear owners and scope so members do not overwrite one another's files.
+The lead records each deployment's owner, nodes, resource budget and usage window in the task records. On shared hosts, the administrator confirms GPU availability against both host processes and Kubernetes workloads. Coordinate changes to shared platforms and drivers with the administrator.
 
-Use Kubernetes requests, limits and device plugins to place managed model workloads, while also budgeting for builds, preparation jobs and benchmark clients. Separate namespaces and caches prevent data conflicts, but workloads on one node may still compete for CPU, storage and network capacity. Before a comparison that requires isolation, the affected members therefore confirm that competing work has stopped.
+Budget serving, builds, model/data preparation and benchmark clients against current node capacity and existing Pod requests. Adjust [native build concurrency](../../../../docs/deployment/source.md#edit-an-inference-engine) when needed.
 
-An executor can continue with another authorized candidate in the same allocation. Resources become available to another task only after their processes and services stop or the receiving member accepts the handoff. After an SSH disconnect, inspect the original remote job before deciding whether to start it again.
+Preparation and evaluation can overlap when resources allow. For final comparisons, agree on a measurement window with the owners of workloads sharing the nodes, storage or network. Finish or stop this task's competing workloads, then measure the reference and retained approaches under the same conditions.
+
+Release resources after their processes and services exit, or hand the running jobs and collectors to an owner who accepts them. After an SSH disconnect, inspect the original job before restarting it.
 
 ## Return results as work finishes
 
@@ -49,7 +51,7 @@ Existing sweeps can run fixed workload groups and repetitions continuously. Task
 
 After each group of measurements, the Experimenter sends the results directly to the members who need them, along with their location, resource state and proposed next action. If the lead needs to decide something, explain why. The lead handles resulting scheduling changes before returning to its own research, while members continue unaffected work when part of an assignment is blocked.
 
-Experimenters maintain their iteration notes, and the lead assigns one writer to update the overview and report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
+Experimenters maintain their iteration notes, and the lead assigns one writer to update the report. Summaries link to the original data so conclusions can be traced. Reviewed results remain useful while their inputs and conditions still apply. See the [experiment records guide](../../../../rsi-playbooks/experiment-records.md) for the record layout.
 
 ## Review claims independently
 
