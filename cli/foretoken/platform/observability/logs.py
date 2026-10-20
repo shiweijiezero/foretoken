@@ -5,15 +5,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-import yaml
-
 from foretoken.errors import DeploymentError
 from foretoken.network_sources import select_platform_image_sources
-from foretoken.platform.helm_client import HelmClient, image_repository_tag, merge_values
+from foretoken.platform.helm_client import (
+    HelmClient,
+    image_repository_tag,
+    merge_values,
+)
 from foretoken.platform.types import ReleaseRef
 
 
@@ -115,7 +118,7 @@ class LogCollectionLifecycle:
             args = helm.upgrade_args(self.loki, str(prepared), timeout)
             helm.set_chart_image_sources(prepared, ("loki.image",), release=self.loki, overrides=values)
             args.extend(["--reset-values", "--values", "-"])
-            helm.run(args, input_text=yaml.safe_dump(values))
+            helm.run(args, input_text=json.dumps(values))
 
     def _install_collector(self, values: dict[str, Any], timeout: str) -> None:
         """Upgrade native collectors while retaining checkpoint and unsent-buffer locations."""
@@ -136,7 +139,7 @@ class LogCollectionLifecycle:
             if "image" not in values:
                 # cr.fluentbit.io fronts Docker Hub; resolve its canonical publication.
                 helm.set_chart_defaults(prepared, {"image.repository": "docker.io/fluent/fluent-bit"})
-                for document in helm.render_chart(args, input_text=yaml.safe_dump(values)):
+                for document in helm.render_chart(args, input_text=json.dumps(values)):
                     if document["kind"] == "DaemonSet":
                         image = document["spec"]["template"]["spec"]["containers"][0]["image"]
                         selected = select_platform_image_sources(
@@ -145,7 +148,7 @@ class LogCollectionLifecycle:
                         )["image"]
                         repository, tag = image_repository_tag(selected)
                         helm.set_chart_defaults(prepared, {"image.repository": repository, "image.tag": tag})
-            helm.run(args, input_text=yaml.safe_dump(values))
+            helm.run(args, input_text=json.dumps(values))
 
 
 def log_config_from_values(values: tuple[dict[str, Any], ...]) -> LogConfig:

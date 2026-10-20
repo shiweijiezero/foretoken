@@ -12,8 +12,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import yaml
-
 from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -21,6 +19,8 @@ from foretoken.kubernetes.client import Kubectl, timeout_seconds
 _IMAGE_OWNER_LABEL = "inference.foretoken.io/source-image-owner"
 SOURCE_BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"
 SOURCE_BUILD_POD_LABEL = "inference.foretoken.io/source-builder"
+SOURCE_BUILD_STORAGE_LABEL = "inference.foretoken.io/source-build-storage"
+SOURCE_IMAGE_HELPER_LABEL = "inference.foretoken.io/source-image-helper"
 _PIN_LABEL = "io.cri-containerd.pinned"
 _CONTAINERD_CLIENT = "/usr/local/bin/ctr"
 _CONTAINERD_SOCKET = "/run/foretoken-containerd.sock"
@@ -30,7 +30,7 @@ class NodeImageStore:
     """Operate on source image records through one node's images container."""
 
     def __init__(
-        self, kubectl: Kubectl, namespace: str, pod: str, binding: str = ""
+        self, kubectl: Kubectl, namespace: str, pod: str, binding: str
     ) -> None:
         self.kubectl = kubectl
         self.namespace = namespace
@@ -118,12 +118,11 @@ class NodeImageStore:
         return image_manifest_digest(node_digest, self._descriptor) == digest
 
     def owned_images(self) -> dict[str, str]:
-        """Return owned references and bindings, scoped to this binding when specified."""
-        selector = f'labels."{_IMAGE_OWNER_LABEL}"==foretoken'
-        if self.binding:
-            selector += (
-                f',labels."{SOURCE_BUILD_BINDING_LABEL}"=={json.dumps(self.binding)}'
-            )
+        """Return only the references whose producer is this binding."""
+        selector = (
+            f'labels."{_IMAGE_OWNER_LABEL}"==foretoken,'
+            f'labels."{SOURCE_BUILD_BINDING_LABEL}"=={json.dumps(self.binding)}'
+        )
         output = self.run(
             [*self.containerd(), "images", "list", selector], capture=True
         )
@@ -291,7 +290,7 @@ def node_image_store(
     tools_image: str,
     timeout: str,
     *,
-    binding: str = "",
+    binding: str,
     pull_secrets: tuple[str, ...] = (),
 ) -> Iterator[NodeImageStore]:
     """Borrow a Ready builder or own a socket-only helper until node cleanup finishes."""
@@ -301,11 +300,7 @@ def node_image_store(
         label_selector=SOURCE_BUILD_POD_LABEL + "=true",
     ):
         if (
-            (
-                binding
-                and pod["metadata"].get("labels", {}).get(SOURCE_BUILD_BINDING_LABEL)
-                != binding
-            )
+            pod["metadata"].get("labels", {}).get(SOURCE_BUILD_BINDING_LABEL) != binding
             or pod["spec"].get("nodeName") != node
             or pod["metadata"].get("deletionTimestamp")
             or pod.get("status", {}).get("phase") != "Running"
@@ -325,6 +320,12 @@ def node_image_store(
             continue
         yield NodeImageStore(kubectl, namespace, pod["metadata"]["name"], binding)
         return
+    storage = kubectl.list_resources(
+        ("configmaps",), namespace, label_selector=f"{SOURCE_BUILD_STORAGE_LABEL}={namespace}",
+    )
+    if len(storage) != 1:
+        raise DeploymentError("source build storage metadata is unavailable")
+    owner = storage[0]["metadata"]
     container, volumes = images_container_spec(tools_image, containerd_socket)
     name = "foretoken-node-images-" + uuid.uuid4().hex[:12]
     pod = {
@@ -334,9 +335,11 @@ def node_image_store(
             "name": name,
             "namespace": namespace,
             "labels": {
-                "inference.foretoken.io/source-image-helper": "true",
+                SOURCE_IMAGE_HELPER_LABEL: "true",
+                SOURCE_BUILD_POD_LABEL: "true",
                 SOURCE_BUILD_BINDING_LABEL: binding,
             },
+            "ownerReferences": [{"apiVersion": "v1", "kind": "ConfigMap", "name": owner["name"], "uid": owner["uid"]}],
         },
         "spec": {
             "nodeName": node,
@@ -349,8 +352,17 @@ def node_image_store(
             "volumes": volumes,
         },
     }
-    kubectl.run(["create", "-f", "-"], input_text=yaml.safe_dump(pod))
+    metadata = None
+    attempted = False
     try:
+        attempted = True
+        try:
+            result = kubectl.run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(pod))
+            metadata = json.loads(result.stdout)["metadata"]
+        except DeploymentError as error:
+            if "AlreadyExists" in str(error):
+                attempted = False
+            raise
         kubectl.run(
             [
                 "wait",
@@ -364,18 +376,20 @@ def node_image_store(
         yield NodeImageStore(kubectl, namespace, name, binding)
     finally:
         with cleanup_commands(timeout=timeout_seconds(timeout)):
-            kubectl.run(
-                [
-                    "delete",
-                    "pod",
-                    name,
-                    "-n",
-                    namespace,
-                    "--ignore-not-found",
-                    "--wait=true",
-                    "--timeout=" + timeout,
-                ]
-            )
+            current = kubectl.get_if_exists("pod", name, namespace) if attempted else None
+            if current is not None and (
+                metadata is not None and current["metadata"]["uid"] == metadata["uid"]
+                or metadata is None and all(
+                    current["metadata"].get("labels", {}).get(key) == value for key, value in pod["metadata"]["labels"].items()
+                )
+                and any(reference.get("uid") == owner["uid"] for reference in current["metadata"].get("ownerReferences", []))
+            ):
+                try:
+                    kubectl.delete_object(current, timeout, match_version=False)
+                except DeploymentError:
+                    remaining = kubectl.get_if_exists("pod", name, namespace)
+                    if remaining is not None and remaining["metadata"]["uid"] == current["metadata"]["uid"]:
+                        raise
 
 
 def image_manifest_digest(

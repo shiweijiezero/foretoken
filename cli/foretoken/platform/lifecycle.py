@@ -14,21 +14,28 @@ from typing import TYPE_CHECKING, Any
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.accelerators.discovery import ExporterDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
-from foretoken.build.cluster.storage import managed_build_storage_resources, remove_build_storage
+from foretoken.build.cluster.storage import (
+    managed_build_storage_resources,
+    remove_build_storage,
+)
 from foretoken.build.source import prepare_source_images
 from foretoken.build.state import (
     forget_install,
-    has_source_state,
     reconcile_source_resources,
     record_install,
-    remove_build_caches,
     resolve_source_base_image,
     source_operation,
+    source_uninstall,
 )
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref, timeout_seconds
+from foretoken.kubernetes.client import (
+    Kubectl,
+    ResourceRef,
+    resource_ref,
+    timeout_seconds,
+)
 from foretoken.kubernetes.mutation import DeploymentMutation
 from foretoken.observability import PrometheusRef
 from foretoken.platform.config import (
@@ -42,15 +49,35 @@ from foretoken.platform.config import (
 from foretoken.platform.helm import Helm
 from foretoken.platform.helm_client import owned_by_release
 from foretoken.platform.leader_worker import LeaderWorkerLifecycle, LeaderWorkerPlan
-from foretoken.platform.networking.gateway import GatewayControllerLifecycle, GatewayControllerPlan
-from foretoken.platform.networking.load_balancer import LoadBalancerLifecycle, LoadBalancerPlan
-from foretoken.platform.observability.logs import LogCollectionLifecycle, LogConfig, log_config_from_values
-from foretoken.platform.observability.monitoring import MonitoringLifecycle, MonitoringPlan
-from foretoken.platform.rdma import RDMASelection, require_unused_managed_rdma, select_rdma
+from foretoken.platform.networking.gateway import (
+    GatewayControllerLifecycle,
+    GatewayControllerPlan,
+)
+from foretoken.platform.networking.load_balancer import (
+    LoadBalancerLifecycle,
+    LoadBalancerPlan,
+)
+from foretoken.platform.observability.logs import (
+    LogCollectionLifecycle,
+    LogConfig,
+    log_config_from_values,
+)
+from foretoken.platform.observability.monitoring import (
+    MonitoringLifecycle,
+    MonitoringPlan,
+)
+from foretoken.platform.rdma import (
+    RDMASelection,
+    require_unused_managed_rdma,
+    select_rdma,
+)
 from foretoken.platform.storage.admission import AdmissionStoreRetirement
 from foretoken.platform.storage.application_files import PlatformApplicationFiles
 from foretoken.platform.storage.directories import remove_directory_bindings
-from foretoken.platform.storage.model_distribution import DragonflyPlan, ModelDistributionLifecycle
+from foretoken.platform.storage.model_distribution import (
+    DragonflyPlan,
+    ModelDistributionLifecycle,
+)
 from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef, RuntimeOverrides
 
 if TYPE_CHECKING:
@@ -140,7 +167,7 @@ class PlatformLifecycle:
         """Retire deployment instances and owned dependencies under exclusive source cleanup ownership."""
         with (
             CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout)),
-            source_operation(self._kubectl, command.timeout),
+            source_operation(self._kubectl, command.timeout, prepare=False),
         ):
             self._uninstall(command)
 
@@ -206,10 +233,12 @@ class PlatformLifecycle:
             configuration = helm.set_platform_retiring(kubectl, configuration, retiring=True)
         platform_uid = configuration["metadata"]["uid"] if configuration is not None else ""
         source_storage = managed_build_storage_resources(kubectl, platform.namespace)
-        source_builds = (
-            platform_exists and helm.release_install_source(platform) == "source"
-        ) or has_source_state(kubectl) or bool(source_storage)
-        unadopted_origin = () if platform_exists else self._application_files.resources()
+        application_origin = self._application_files.resources()
+        origin_claims = tuple(
+            document["metadata"] for document in application_origin
+            if document["kind"] == "PersistentVolumeClaim"
+        )
+        unadopted_origin = () if platform_exists else application_origin
         admission_claims = {claim["uid"]: claim for claim in self._admission_store.claims()}
         monitoring = self._monitoring.resolve_uninstall()
         managed_logs = self._logs.managed_releases()
@@ -264,15 +293,17 @@ class PlatformLifecycle:
         if remove_directory_bindings(kubectl, platform_uid, command.timeout):
             _print_plan("Directory bindings", "Removed", "retained directory files")
         helm.stop_platform_tasks(kubectl, command.timeout)
-        if source_builds:
-            reconcile_source_resources(kubectl, command.timeout, uninstall=True)
-        self._logs.uninstall(managed_logs, command.timeout)
-        if platform_exists:
-            helm.uninstall(platform, command.timeout)
-            _print_plan("Foretoken platform", "Removed", platform.display_name)
-        elif unadopted_origin:
-            self._application_files.retire(unadopted_origin, command.timeout)
-            _print_plan("Application file storage", "Removed", platform.display_name)
+        with source_uninstall(
+            kubectl, command.timeout, namespace=platform.namespace,
+            origins=origin_claims, storage=source_storage,
+        ):
+            self._logs.uninstall(managed_logs, command.timeout)
+            if platform_exists:
+                helm.uninstall(platform, command.timeout)
+                _print_plan("Foretoken platform", "Removed", platform.display_name)
+            elif unadopted_origin:
+                self._application_files.retire(unadopted_origin, command.timeout)
+                _print_plan("Application file storage", "Removed", platform.display_name)
         for claim in admission_claims.values():
             kubectl.wait_deleted("persistentvolumeclaim", claim, command.timeout)
         if admission_claims:
@@ -287,8 +318,6 @@ class PlatformLifecycle:
         result = self._load_balancer.finish_uninstall(command.timeout)
         if result is not None:
             _print_plan("LoadBalancer", *result)
-        if source_builds:
-            remove_build_caches(kubectl, command.timeout)
         if source_storage:
             _print_plan("Source build storage", *remove_build_storage(kubectl, platform.namespace, command.timeout))
         forget_install(kubectl)
@@ -427,7 +456,8 @@ class PlatformLifecycle:
                 # objects in its namespace. Only the source worker enters its contexts.
                 merged = (*((plan.stored_values,) if plan.stored_values is not None else ()), *plan.values)
                 rendered = self._helm.render_source_origin(
-                    Path(command.editable).expanduser().resolve(), merged, command.timeout,
+                    Path(command.editable).expanduser().resolve(), command.values, command.timeout,
+                    stored_values=plan.stored_values,
                     download_proxy_url=download_proxy,
                 )
                 origin = self._application_files.prepare(rendered, command.timeout)

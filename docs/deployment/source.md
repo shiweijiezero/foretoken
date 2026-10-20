@@ -5,11 +5,11 @@
 
 [English](source.md) | [中文](source_zh.md)
 
-Build Foretoken from a local checkout and deploy source changes to Kubernetes.
+Build Foretoken from a local source directory and deploy changes to Kubernetes. Ordinary folders, clones and worktrees use the same commands; build dependencies are prepared automatically from the versions declared with the source.
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
+Prepare Python 3.11+, kubectl and [Helm 4](../../cli/README.md#before-you-start), and select a GPU-enabled Kubernetes cluster with a default StorageClass. On a shared cluster, ask the administrator for [source-build access](../../cli/README.md#prepare-a-namespace-for-members).
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -33,7 +33,9 @@ foretoken install -e .
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
-Source builds automatically reuse persistent node-local compiler caches. To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
+Source directories reuse available toolchain and runtime images, dependency downloads and compatible compiler caches. Each directory retains its own incremental build state.
+
+To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
 
 ## Deploy a model service
 
@@ -88,7 +90,7 @@ foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidates keep the Quick Start's single-GPU configuration. Their default `data/` selections resolve to the primary checkout's data directory, sharing model downloads while keeping runtime state private to each instance. The directory must be available to the target nodes; see [shared model storage](../features/model-storage.md#share-model-files-across-namespaces), or choose [dynamic storage](../features/model-storage.md#use-dynamic-storage) when no shared directory is available.
+The candidates keep the Quick Start's single-GPU configuration. In this worktree example, their default `data/` selections resolve to the primary checkout's data directory, sharing model downloads while keeping runtime state private to each instance. The directory must be available to the target nodes; see [shared model storage](../features/model-storage.md#share-model-files-across-namespaces), or choose [dynamic storage](../features/model-storage.md#use-dynamic-storage) when no shared directory is available.
 
 Each candidate needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 
@@ -101,7 +103,7 @@ foretoken delete candidate-a
 foretoken delete candidate-b
 ```
 
-Deleting one candidate removes only that instance and its controller, not the neighboring candidate or Kubernetes namespace. Source directories, experiment results and administrator-provided storage are retained. See the [CLI guide](../../cli/README.md#clean-up) for model-cache and dynamic-volume cleanup.
+Deleting one candidate removes only that instance and its controller, not the neighboring candidate or Kubernetes namespace. Source directories, incremental build state, experiment results and administrator-provided storage are retained. See the [CLI guide](../../cli/README.md#clean-up) for model-cache and dynamic-volume cleanup.
 
 ## Edit an inference engine
 
@@ -113,7 +115,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
 
-For native engine compilation, prefix the deployment command with `BUILD_JOBS=4` to use four build jobs. This does not set Go/Rust concurrency or a memory limit.
+To limit build concurrency, prefix a source installation or deployment command with `BUILD_JOBS=4`. This sets four jobs per Go, Rust or native-engine compiler.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 
@@ -149,7 +151,7 @@ MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](metax-
 
 ### vLLM-Omni runtime
 
-vLLM-Omni uses a separate model-server image. Build it from the repository root on a machine with Docker BuildKit, Make, and a rustup-managed Rust toolchain:
+vLLM-Omni uses a separate model-server image. Build it from the repository root on a machine with Docker BuildKit and Make:
 
 ```bash
 make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest

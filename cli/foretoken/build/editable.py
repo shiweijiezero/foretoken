@@ -9,6 +9,7 @@ import copy
 import json
 import os
 import shutil
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -25,24 +26,25 @@ from foretoken.applications.files import (
     ApplicationPublication,
 )
 from foretoken.arguments import InstallCommand
-from foretoken.build.cluster.builder import (
-    ClusterBuilder,
-    find_build_cache,
-    registry_credentials,
-)
-from foretoken.build.engine import export_engine_source
+from foretoken.build.cluster.builder import registry_credentials
+from foretoken.build.cluster.compiler import CompilerWorkspace
+from foretoken.build.cluster.images import image_tools_image, node_image_store
+from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
 from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
-    pinned_rust_revision,
     snapshot_versions,
     source_checkout,
 )
-from foretoken.build.cluster.images import image_tools_image
-from foretoken.build.source import prepare_source_images
-from foretoken.build.state import (
+from foretoken.build.records import (
+    BUILD_TRANSPORT_ARGUMENTS,
     SOURCE_BUILD_KEY,
+    restore_build,
+    retain_workspace,
+)
+from foretoken.build.source import build_arguments, prepare_source_images
+from foretoken.build.state import (
     SOURCE_INSTALL_ANNOTATION,
     checkout_operation,
     checkout_state_directory,
@@ -50,17 +52,17 @@ from foretoken.build.state import (
     context_identity,
     local_candidates,
     reconcile_source_resources,
-    record_source_deployment,
     runtime_settings,
     write_source_state,
 )
-from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
+from foretoken.command_execution import cleanup_commands
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
     service_requires_execution,
 )
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.network_sources import select_build_sources
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 
@@ -88,7 +90,7 @@ class EditableDeployment:
         self.cluster = cluster
         self.configuration = platform
         self.root = root
-        self.directory = checkout_state_directory(cluster, root, timeout)
+        self.directory = checkout_state_directory(cluster, root, timeout, context=context_identity(kubectl))
         self.engine_sources = engine_sources
         self.selected: dict[tuple[str, str, str], str] = {}
         installed = cluster / "install.json"
@@ -112,6 +114,7 @@ class EditableDeployment:
             }
         else:
             raise DeploymentError("The installed platform has no source-build settings; its administrator must update the platform")
+        self.origin = ApplicationFiles(kubectl, platform["metadata"]["namespace"])
 
     @classmethod
     def discover(
@@ -129,24 +132,14 @@ class EditableDeployment:
         return cls(kubectl, cluster_state_directory(kubectl), platform, source_checkout(editable), engine_sources, timeout)
 
     @contextmanager
-    def operation(self, deployment: ForetokenDeployment, timeout: str) -> Iterator[None]:
-        """Register an instance UID and own this checkout's builds through their submission."""
+    def operation(self, timeout: str) -> Iterator[None]:
+        """Own this workspace's builds and retain its environment through service submission."""
         with checkout_operation(self.directory, self.kubectl, timeout):
-            record_source_deployment(self.directory, deployment, self.kubectl)
+            self.origin.prepare(timeout)
             path = self.directory / "install.json"
             self.state = json.loads(path.read_text()) if path.is_file() else None
-            # Reuse only a complete snapshot actually captured on this workstation.
-            # Another workstation starts through the same builder, with its own binding.
-            if self.state is None and self.platform is not None and (self.cluster / self.platform["inputs"]).is_dir():
-                self.state = copy.deepcopy(self.platform)
-                snapshot = self.directory / ("inputs-" + uuid.uuid4().hex)
-                shutil.copytree(self.cluster / self.platform["inputs"], snapshot)
-                self.state.update(root=str(self.root), inputs=snapshot.name)
-                self.state["build"]["binding"] = self.directory.name
-                self.state["build"]["caches"] = []
-                self.state["build"]["borrowed_images"] = True
-                if str(self.root) != self.platform["root"]:
-                    self.state["engines"] = {}
+            if self.state is None:
+                self.state = self._adopt_build(timeout)
             self.engines = engine_source_roots(self.engine_sources) if self.engine_sources else (self.state or {}).get("engines", {})
             self.build_arguments = None
             self.environment_changed = True
@@ -163,7 +156,7 @@ class EditableDeployment:
                         ("runtime_backend", "runtimeBackend"), ("build_metax_runtime", "buildMetaXRuntime"),
                     ))
                 )
-                self.build_arguments = None if platform_changed else dict(build["arguments"])
+                self.build_arguments = None if platform_changed else {**build["arguments"], **build_arguments(dict(os.environ))}
                 if self.build_arguments is not None and self.recipe["buildMetaXRuntime"] and "MOONCAKE_VERSION" in os.environ:
                     self.build_arguments["MOONCAKE_VERSION"] = os.environ["MOONCAKE_VERSION"]
                 self.mooncake_version = (
@@ -172,7 +165,14 @@ class EditableDeployment:
                 )
                 manifest = self.directory / self.state["inputs"] / "engine/manifest.json"
                 old_engines = set(json.loads(manifest.read_text())) if manifest.is_file() else set()
-                self.environment_changed = platform_changed or old_engines != self.engines.keys() or self.build_arguments != build["arguments"]
+                self.environment_changed = platform_changed or old_engines != self.engines.keys() or (
+                    {key: value for key, value in (self.build_arguments or {}).items() if key not in BUILD_TRANSPORT_ARGUMENTS}
+                    != {key: value for key, value in build["arguments"].items() if key not in BUILD_TRANSPORT_ARGUMENTS}
+                )
+                if self.build_arguments is not None:
+                    build["arguments"].update({
+                        key: value for key, value in self.build_arguments.items() if key in BUILD_TRANSPORT_ARGUMENTS
+                    })
                 self.state["engines"] = self.engines
                 self.state["command"]["editable"] = str(self.root)
                 self.state["command"]["engine_sources"] = [f"{name}={root}" for name, root in self.engines.items()]
@@ -185,7 +185,12 @@ class EditableDeployment:
             print(f"Source checkout: {self.root}", flush=True)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
-            yield
+            self._retain_workspace()
+            try:
+                yield
+            finally:
+                with cleanup_commands(sys.exception(), timeout=timeout_seconds(timeout)):
+                    self._retain_workspace()
             if self.state is not None and self.state["build"]["images"] != previous_images:
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
@@ -352,11 +357,75 @@ class EditableDeployment:
                         f"{namespace}/{pod} did not activate source {revision}"
                     )
 
+    def _retain_workspace(self) -> None:
+        """Publish only recovery references so other workstations can collect images without dropping this environment."""
+        if self.state is None:
+            return
+        applications = {
+            self.origin.reference(component, revision)
+            for bundles in (self.state["build"]["applications"], self.state["bundles"])
+            for component, bundle in bundles.items()
+            for key in ("revision", "previous")
+            if (revision := bundle.get(key))
+        }
+        retain_workspace(self.origin, self.directory.name, applications, self.state["build"]["images"].values())
+
+    def _adopt_build(self, timeout: str) -> dict[str, Any] | None:
+        """Start a workspace from completed platform inputs without borrowing mutable compiler state."""
+        if selection := self.recipe.get("completedBuild"):
+            retain_workspace(self.origin, self.directory.name, selection["applications"].values(), selection["images"].values())
+            snapshot, record = restore_build(self.origin, selection, self.directory, timeout)
+            build = record["build"]
+            environment = dict(os.environ)
+            if self.recipe["ociRegistry"]:
+                environment["FORETOKEN_OCI_REGISTRY"] = self.recipe["ociRegistry"]
+            sources = select_build_sources(environment)
+            transport = build_arguments({**environment, **sources.environment})
+            build["arguments"] = {
+                **record["arguments"],
+                **{key: value for key, value in transport.items() if key in BUILD_TRANSPORT_ARGUMENTS},
+            }
+            build["registry_mirrors"] = sources.registry_mirrors
+        elif self.platform is not None and (self.cluster / self.platform["inputs"]).is_dir():
+            snapshot = self.directory / ("inputs-" + uuid.uuid4().hex)
+            shutil.copytree(self.cluster / self.platform["inputs"], snapshot)
+            build = copy.deepcopy(self.platform["build"])
+        else:
+            return None
+        build.update(binding=self.directory.name, caches=[], borrowed_images=True)
+        build.pop("engine_cache_scope", None)
+        # An archive-backed engine selection has its own stable directory; advancing
+        # or collecting input snapshots must not remove the next build's source.
+        engines = {}
+        manifest = snapshot / "engine/manifest.json"
+        if manifest.is_file():
+            destination = self.directory / "engine-inputs"
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(snapshot / "engine", destination)
+            engines = engine_source_roots(tuple(f"{name}={destination / name}" for name in json.loads(manifest.read_text())))
+        build["engine_caches"] = {
+            "" if build["registry"] else self.origin.node: self.directory.name + "-" + uuid.uuid4().hex,
+        } if engines else {}
+        command = InstallCommand(
+            values=(), editable=str(self.root), registry=self.recipe["registry"] or None,
+            oci_registry=self.recipe["ociRegistry"], prometheus=None, frontend_mode=None,
+            gateway_name="", gateway_namespace="", gateway_section_name="", timeout=timeout,
+            engine_sources=tuple(f"{name}={path}" for name, path in engines.items()),
+        )
+        runtime = runtime_settings(self.configuration)
+        runtime.update({key: build["images"][component] for component, key in _APPLICATION_IMAGE_KEYS.items()})
+        return {
+            "root": str(self.root), "context": context_identity(self.kubectl),
+            "engines": engines, "command": asdict(command), "inputs": snapshot.name,
+            "build": build, "bundles": copy.deepcopy(build["applications"]),
+            "platform_uid": self.configuration["metadata"]["uid"],
+            "base_image": self.recipe["baseImage"], "runtime": runtime,
+        }
+
     def _prepare(self, timeout: str) -> None:
         """Compare this checkout's inputs and prepare its runtime application or environment update."""
-        if self.environment_changed or not self.state.get("build") or self.state["build"]["arguments"].get(
-            "VLLM_REVISION"
-        ) != pinned_rust_revision(self.root):
+        if self.environment_changed or not self.state["build"].get("compilers"):
             print(
                 "Source plan: prepare this checkout's runtime environments",
                 flush=True,
@@ -365,7 +434,7 @@ class EditableDeployment:
             return
         engines = self.state.get("engines", {})
         old = self.directory / self.state["inputs"]
-        current = BuildInputs.select(self.root, engines, old, mooncake_version=self.mooncake_version)
+        current = BuildInputs.select(self.root, engines, mooncake_version=self.mooncake_version)
         changed = current.changed(old)
         if not changed:
             print(
@@ -540,9 +609,33 @@ class EditableDeployment:
             ) is None:
                 bundle.pop("parts")
         build = self.state["build"]
+        build_engine = (
+            "model-server" in missing
+            and bool(self.state.get("engines"))
+            and "engine" in self.state["bundles"]["model-server"].get("parts", _APPLICATION_PARTS["model-server"])
+        )
+        compilers = {component: build["compilers"][component] for component in missing}
+        if build_engine:
+            compilers["engine"] = build["compilers"]["engine"]
+        if not build["registry"]:
+            with node_image_store(
+                self.kubectl, namespace, origin.node, build["containerd_socket"],
+                image_tools_image(build["arguments"], build.get("registry_mirrors", {})),
+                timeout, binding=build["binding"], pull_secrets=origin.pull_secrets,
+            ) as store:
+                available = all(
+                    (digest := build["environments"]["compiler-" + component]["digests"].get(origin.node))
+                    and store.matches(image, digest)
+                    for component, image in compilers.items()
+                )
+            if not available:
+                print("Compiler image is unavailable on this node; restoring the development environment", flush=True)
+                self._rebuild(timeout)
+                return
+        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
         with self._application_workspace(
-            origin, snapshot, missing, helm, timeout,
-        ) as (builder, build_engine, references):
+            origin, snapshot, compilers, helm, timeout,
+        ) as (builder, references):
 
             def build_application(component: str) -> None:
                 """Build a component's files and assemble its engine overlay before publication."""
@@ -556,9 +649,8 @@ class EditableDeployment:
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
                 builder.export_application(component, payload, arguments, list(parts))
                 if component == "model-server" and build_engine:
-                    export_engine_source(
-                        builder, payload, build["arguments"],
-                        runtime_image=self.state["runtime"]["model_image"],
+                    builder.export_engine(
+                        payload, build["arguments"],
                         cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
                         build_native=build["engine_native"],
                     )
@@ -573,8 +665,7 @@ class EditableDeployment:
                 for future in pending_builds:
                     future.result()
             BuildInputs.select(
-                self.root, self.state.get("engines", {}), snapshot,
-                mooncake_version=self.mooncake_version,
+                self.root, self.state.get("engines", {}), mooncake_version=self.mooncake_version,
             ).validate(snapshot)
             # Join every publisher before committing selections or releasing their exports.
             published_at = time.monotonic()
@@ -625,29 +716,21 @@ class EditableDeployment:
         self,
         origin: ApplicationFiles,
         snapshot: Path,
-        missing: set[str],
+        compilers: dict[str, str],
         helm: Helm,
         timeout: str,
-    ) -> Iterator[tuple[ClusterBuilder, bool, set[str] | None]]:
+    ) -> Iterator[tuple[CompilerWorkspace, set[str] | None]]:
         """Hold one origin compiler and its retention snapshot through incremental application publication."""
         namespace = origin.namespace
         build = self.state["build"]
-        mount = "/var/cache/foretoken"
-        claim = find_build_cache(
-            self.kubectl, namespace, build["binding"], origin.node, mount
-        )
         local_caches = local_build_nodes(
             self.kubectl, build["registry"], build["containerd_socket"]
         )
-        socket = next(
-            (socket for node, socket, _ in local_caches if node == origin.node), ""
-        )
-        if claim is None:
-            node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
-            claim = next(
-                (claim for node, _, claim in local_caches if node == origin.node),
-                "foretoken-application-compiler-" + node_uid,
-            ) + "-" + build["binding"][:12]
+        node_uid = self.kubectl.get("node", origin.node)["metadata"]["uid"][:8]
+        claim = next(
+            (claim for node, _, claim in local_caches if node == origin.node),
+            "foretoken-application-compiler-" + node_uid,
+        ) + "-" + build["binding"][:12]
 
         def record_cache(identity: dict[str, Any]) -> None:
             """Keep each volume UID recoverable if paired allocation or publication fails."""
@@ -671,14 +754,7 @@ class EditableDeployment:
                 "uid": origin.claim_uid,
             },
         )
-        build_engine = (
-            "model-server" in missing
-            and bool(self.state.get("engines"))
-            and "engine" in self.state["bundles"]["model-server"].get(
-                "parts", _APPLICATION_PARTS["model-server"]
-            )
-        )
-        if build_engine and not build["registry"] and origin.node not in build["engine_caches"]:
+        if "engine" in compilers and not build["registry"] and origin.node not in build["engine_caches"]:
             # A newly prepared origin node needs a cold cache, not another node's native outputs.
             build["engine_caches"][origin.node] = (
                 build["binding"] + "-" + uuid.uuid4().hex
@@ -694,49 +770,18 @@ class EditableDeployment:
             references.update(
                 bundle["revision"] for bundle in self.state["bundles"].values()
             )
-        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
-        with ClusterBuilder(
-            self.kubectl,
-            namespace,
-            claim,
-            mount,
-            build["configuration"]["image"],
-            build["binding"],
-            timeout,
-            tools_image=image_tools_image(
-                build["arguments"], build.get("registry_mirrors", {})
-            ),
-            registry_mirrors=build.get("registry_mirrors", {}),
+        tools_image = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
+        with CompilerWorkspace(
+            self.kubectl, namespace, claim, build["binding"], origin.node,
+            compilers, build["configuration"], timeout,
+            tools_image=tools_image,
             execution_claim=execution["name"] if execution is not None else "",
-            node=origin.node,
-            containerd_socket=socket if build_engine else "",
-            credentials=registry_credentials(
-                [
-                    build["configuration"]["image"],
-                    self.state["runtime"]["model_image"],
-                    self.state.get("base_image") or "",
-                    build["arguments"].get("UV_IMAGE", ""),
-                ],
-                registries=[
-                    "docker.io",
-                    "gcr.io",
-                    "ghcr.io",
-                    *(
-                        endpoint
-                        for endpoints in build.get("registry_mirrors", {}).values()
-                        for endpoint in endpoints
-                    ),
-                    *(
-                        value
-                        for key, value in build["arguments"].items()
-                        if key.endswith("REGISTRY")
-                    ),
-                ]
-            ),
+            owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+            credentials=registry_credentials([tools_image, *compilers.values()]),
             pull_secrets=origin.pull_secrets,
         ) as builder:
             builder.sync(inputs, build["versions"])
-            yield builder, build_engine, references
+            yield builder, references
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str

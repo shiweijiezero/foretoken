@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-
-import yaml
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
@@ -109,7 +108,7 @@ class LeaderWorkerLifecycle:
             args = helm.upgrade_args(plan.release, str(prepared), timeout)
             helm.set_chart_image_sources(prepared, ("image.manager",), release=plan.release, overrides=values)
             args.extend(["--reset-values", "--values", "-"])
-            helm.run(args, input_text=yaml.safe_dump(values))
+            helm.run(args, input_text=json.dumps(values))
         self._kubectl.wait_for_crds((_RESOURCE,), timeout)
         self._require_api()
 

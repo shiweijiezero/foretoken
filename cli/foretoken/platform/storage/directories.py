@@ -15,12 +15,15 @@ from pathlib import Path
 from typing import Any
 
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, KubernetesVersionConflictError, timeout_seconds
+from foretoken.kubernetes.client import (
+    Kubectl,
+    KubernetesVersionConflictError,
+    timeout_seconds,
+)
 from foretoken.working_directory import (
     repository_data_directory,
     resolve_runtime_directory,
 )
-
 
 _PLATFORM_UID_LABEL = "inference.foretoken.io/platform-uid"
 

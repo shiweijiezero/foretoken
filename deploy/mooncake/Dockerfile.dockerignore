@@ -10,6 +10,8 @@
 !deploy/mooncake/
 !deploy/mooncake/Dockerfile
 !deploy/mooncake/NOTICE
+!deploy/mooncake/prepare-source
+!deploy/mooncake/source-environment.json
 !deploy/mooncake/patches/
 !deploy/mooncake/patches/**
 third_party/mooncake/**/.git

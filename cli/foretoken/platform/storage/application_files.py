@@ -9,11 +9,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from foretoken.applications.files import ApplicationFiles, application_references
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
+from foretoken.kubernetes.documents import encode_resource, encode_resources
 from foretoken.platform.helm_client import owned_by_release
 
 if TYPE_CHECKING:
@@ -55,7 +54,7 @@ class PlatformApplicationFiles:
         # Verify every existing object before writing. Native preconditions prevent
         # taking over an object replaced during bootstrap.
         for operation, document in operations:
-            kubectl.run([operation, "-f", "-"], input_text=yaml.safe_dump(document))
+            kubectl.run([operation, "-f", "-"], input_text=encode_resource(document))
         origin = ApplicationFiles(kubectl, release.namespace)
         origin.prepare(timeout)
         return origin
@@ -132,7 +131,7 @@ class PlatformApplicationFiles:
                     "delete", "job", job["metadata"]["name"], "-n", release.namespace,
                     "--cascade=foreground", "--wait=true", "--timeout=" + timeout,
                 ])
-        self._kubectl.delete(yaml.safe_dump_all(resources), timeout)
+        self._kubectl.delete(encode_resources(resources), timeout)
 
     @staticmethod
     def _resources(rendered: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:

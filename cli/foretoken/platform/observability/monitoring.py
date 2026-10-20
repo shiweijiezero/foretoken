@@ -9,11 +9,13 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-import yaml
-
 from foretoken.accelerators.config import METAX_GPU_RESOURCES, NVIDIA_GPU_RESOURCE
 from foretoken.accelerators.discovery import ExporterDiscovery
-from foretoken.accelerators.metax import MetaXExporterLifecycle, MetaXMetrics, MetaXMetricsDiscovery
+from foretoken.accelerators.metax import (
+    MetaXExporterLifecycle,
+    MetaXMetrics,
+    MetaXMetricsDiscovery,
+)
 from foretoken.accelerators.nvidia import NvidiaMetrics, NvidiaMetricsDiscovery
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
@@ -266,7 +268,7 @@ class MonitoringLifecycle:
         with helm.prepared_chart(chart.source, chart.version) as prepared:
             args[3] = str(prepared)
             # Keep quota and throttled-time counters in upstream defaults; explicit relabelings still win.
-            defaults = yaml.safe_load((prepared / "values.yaml").read_text())
+            defaults = json.loads(helm.run(["show", "values", str(prepared), "--jsonpath", "{@}"]).stdout)
             rules = defaults["kubelet"]["serviceMonitor"]["cAdvisorMetricRelabelings"]
             for rule in rules:
                 if rule.get("sourceLabels") != ["__name__"] or rule.get("action") != "drop":
@@ -289,7 +291,7 @@ class MonitoringLifecycle:
                 version_prefixes=("kube-state-metrics.image", "prometheus-node-exporter.image"),
                 distroless_paths=("prometheus-node-exporter.image",),
             )
-            helm.run(args, input_text=yaml.safe_dump(values))
+            helm.run(args, input_text=json.dumps(values))
 
     def _install_dcgm(
         self, metrics: NvidiaMetrics, labels: tuple[tuple[str, str], ...], reuse_values: bool, timeout: str,
@@ -319,4 +321,4 @@ class MonitoringLifecycle:
         with helm.prepared_chart(chart.source, chart.version) as prepared:
             args[3] = str(prepared)
             helm.set_chart_image_sources(prepared, ("image",), release=self.dcgm, overrides=stored)
-            helm.run(args, input_text=yaml.safe_dump(stored) if reuse_values else None)
+            helm.run(args, input_text=json.dumps(stored) if reuse_values else None)

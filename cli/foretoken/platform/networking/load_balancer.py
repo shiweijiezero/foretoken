@@ -9,10 +9,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import yaml
-
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
+from foretoken.kubernetes.documents import encode_resources
 from foretoken.platform.config import load_balancer_config_from_values
 from foretoken.platform.helm_client import HelmClient
 from foretoken.platform.types import LoadBalancerConfig, ReleaseRef
@@ -151,7 +150,7 @@ class LoadBalancerLifecycle:
                 prepared, ("controller.image", "speaker.image"), release=plan.release, overrides=values,
             )
             args.extend(["--reset-values", "--values", "-"])
-            helm.run(args, input_text=yaml.safe_dump(values))
+            helm.run(args, input_text=json.dumps(values))
         self._kubectl.wait_for_crds(
             tuple(kind.resource for kind in _MANAGED_KINDS), timeout
         )
@@ -398,11 +397,7 @@ def _managed_configuration(
     if addresses:
         pool["spec"] = {"addresses": list(addresses)}
         advertisement["spec"] = {"ipAddressPools": [release.name]}
-    return yaml.safe_dump_all(
-        (pool, advertisement),
-        explicit_start=True,
-        sort_keys=False,
-    )
+    return encode_resources((pool, advertisement))
 
 
 def _has_label(value: dict[str, Any], label: tuple[str, str]) -> bool:

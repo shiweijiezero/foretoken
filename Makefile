@@ -15,14 +15,11 @@ DOCKER_REGISTRY := $(patsubst %/,%,$(or $(strip $(FORETOKEN_DOCKER_IO_REGISTRY))
 GCR_REGISTRY := $(patsubst %/,%,$(or $(strip $(FORETOKEN_GCR_REGISTRY)),$(OCI_REGISTRY)))
 GHCR_REGISTRY := $(patsubst %/,%,$(or $(strip $(FORETOKEN_GHCR_REGISTRY)),$(OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
-OCI_REVISION ?= $(shell git rev-parse HEAD)
+OCI_REVISION ?= $(shell if [ "$$(git rev-parse --show-toplevel 2>/dev/null)" = "$(CURDIR)" ]; then git rev-parse --verify HEAD 2>/dev/null; fi)
 IMAGE_TARGET ?= runtime
 IMAGE_OUTPUT ?=
-VLLM_REVISION ?= $(shell git ls-files --stage -- data-plane/third_party/vllm | cut -d' ' -f2)
 
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
-
-GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
@@ -45,8 +42,7 @@ docs-serve:
 	uv run --no-project --isolated --with-requirements docs/requirements.txt mkdocs serve --config-file mkdocs.yml $(if $(DOCS_ADDR),--dev-addr "$(DOCS_ADDR)",)
 
 vllm-source:
-	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \
-		$(GIT) submodule update --init data-plane/third_party/vllm
+	"$(or $(FORETOKEN_PYTHON),python3)" -I data-plane/prepare-vllm
 	cd data-plane && cargo xtask prepare-vllm
 
 build-data-plane: vllm-source
@@ -67,6 +63,10 @@ image-control-plane:
 		$(if $(GCR_REGISTRY),--build-arg DISTROLESS_IMAGE_REGISTRY="$(GCR_REGISTRY)",) \
 		--build-arg GOPROXY \
 		--build-arg GOSUMDB \
+		--build-arg BUILD_JOBS \
+		--build-arg FORETOKEN_GITHUB_MIRROR \
+		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
+		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
@@ -75,20 +75,23 @@ image-control-plane:
 image-frontend:
 	docker build \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \
+		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
+		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
+		--build-arg BUILD_JOBS \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
-		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
-image-vllm-metax: mooncake-source
+image-vllm-metax:
 	docker build \
 		$(if $(METAX_SDK_IMAGE),--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)",) \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \
 		--build-arg MACA_PATH \
+		--build-arg MOONCAKE_VERSION \
 		$(if $(UV_PYTHON),--build-arg UV_PYTHON="$(UV_PYTHON)",) \
 		$(if $(BUILD_JOBS),--build-arg BUILD_JOBS="$(BUILD_JOBS)",) \
 		$(if $(GHCR_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(GHCR_REGISTRY)",) \
@@ -112,11 +115,11 @@ image-model-server:
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
+		--build-arg BUILD_JOBS \
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		--target "$(IMAGE_TARGET)" $(if $(IMAGE_OUTPUT),--output "$(IMAGE_OUTPUT)",) \
-		--build-arg VLLM_REVISION="$(VLLM_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
 
 image-vllm-omni:
@@ -127,7 +130,7 @@ image-vllm-omni:
 		--build-arg UV_DEFAULT_INDEX \
 		-f deploy/inference-engines/vllm-omni/Dockerfile -t "$(VLLM_OMNI_IMAGE)" .
 
-image-model-server-omni: vllm-source
+image-model-server-omni:
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
 		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible vLLM-Omni image.' >&2; exit 1)
 	docker build --target omni-runtime \
@@ -138,6 +141,7 @@ image-model-server-omni: vllm-source
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
+		--build-arg BUILD_JOBS \
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(OMNI_MODEL_SERVER_IMAGE)" .
@@ -154,8 +158,9 @@ mooncake-source:
 
 # Match the standard model-server's transfer package unless a version is selected explicitly.
 image-mooncake: MOONCAKE_VERSION ?= $(shell tr -d '\n' < "$(CURDIR)/data-plane/patches/vllm/mooncake.version")
-image-mooncake: mooncake-source
+image-mooncake:
 	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
+		--build-arg MOONCAKE_VERSION="$(MOONCAKE_VERSION)" \
 		$(if $(DOCKER_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(DOCKER_REGISTRY)",) \
 		$(if $(MOONCAKE_BUILD_IMAGE),--build-arg BUILD_IMAGE="$(MOONCAKE_BUILD_IMAGE)",) \
 		$(if $(MOONCAKE_RUNTIME_IMAGE),--build-arg RUNTIME_IMAGE="$(MOONCAKE_RUNTIME_IMAGE)",) \

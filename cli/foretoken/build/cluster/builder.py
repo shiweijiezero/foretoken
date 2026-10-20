@@ -6,13 +6,11 @@
 from __future__ import annotations
 
 import base64
-import io
 import json
 import os
 import re
 import shlex
-import tarfile
-import tempfile
+import sys
 import time
 import uuid
 from collections.abc import Iterable
@@ -24,8 +22,6 @@ from threading import Lock
 from typing import Any, Self
 from urllib.parse import urlsplit
 
-import yaml
-
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
 from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -35,15 +31,13 @@ from foretoken.build.cluster.images import (
     images_container_spec,
 )
 from foretoken.build.cluster.storage import SOURCE_BUILD_UID
+from foretoken.build.cluster.transfer import synchronize_inputs
 from foretoken.command_execution import CommandExecution, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
-_BUILD_MIRRORS_ANNOTATION = "inference.foretoken.io/source-build-registry-mirrors"
-_BUILD_LAYOUT_ANNOTATION = "inference.foretoken.io/source-build-layout"
-_BUILD_LAYOUT = "storage-tiers-v1"
 
 
 class ImageNotFoundError(DeploymentError):
@@ -220,23 +214,9 @@ class ClusterBuilder(AbstractContextManager):
         return result
 
     def __enter__(self) -> Self:
-        """Reuse or start the compiler daemon on the cache's node."""
+        """Start this operation's image builder on its persistent cache node."""
         self.cancellation.check()
         self.cancellation.register(self.retire)
-        try:
-            reusable = self._reuse_or_retire_pods()
-        except BaseException:
-            self.cancellation.unregister(self.retire)
-            raise
-        if reusable is not None:
-            self.name = reusable["metadata"]["name"]
-            print(f"Reusing cluster builder {self.namespace}/{self.name}", flush=True)
-            try:
-                self._prepare_outputs()
-            except BaseException as error:
-                self.__exit__(type(error), error, error.__traceback__)
-                raise
-            return self
         artifact_nfs_isolated = False
         if self.execution_claim != self.claim:
             try:
@@ -276,14 +256,14 @@ class ClusterBuilder(AbstractContextManager):
         try:
             self.cancellation.check()
             created = self.kubectl.run(
-                ["create", "-f", "-", "-o", "json"], input_text=yaml.safe_dump(pod)
+                ["create", "-f", "-", "-o", "json"], input_text=json.dumps(pod)
             )
             self.cancellation.check()
             pod_uid = json.loads(created.stdout)["metadata"]["uid"]
             if self.credentials:
                 self.kubectl.run(
                     ["create", "-f", "-"],
-                    input_text=yaml.safe_dump(self._registry_secret(pod_uid)),
+                    input_text=json.dumps(self._registry_secret(pod_uid)),
                 )
             wait_for_object(
                 lambda: self.kubectl.get(
@@ -301,20 +281,15 @@ class ClusterBuilder(AbstractContextManager):
         return self
 
     def __exit__(self, exc_type: object, exc_value: BaseException | None, traceback: object) -> None:
-        """Retain successful builders and clean transient or failed build state."""
+        """Retain completed cache files, then stop this operation's daemon and executor processes."""
         try:
-            if exc_type is not None:
-                # A disconnected buildctl can leave executor children alive in the
-                # rootless worker's shared PID namespace. Retire reused Pods as well.
-                self.cancellation.cleanup(self.retire, exc_value)
-                return
-            try:
+            if exc_type is None:
                 self._retain_build_cache()
-            except BaseException as error:
-                self.cancellation.cleanup(self.retire, error)
-                raise
         finally:
-            self.cancellation.unregister(self.retire)
+            try:
+                self.cancellation.cleanup(self.retire, exc_value or sys.exception())
+            finally:
+                self.cancellation.unregister(self.retire)
 
     def retire(self) -> None:
         """Stop this binding's daemon and executors while retaining its last saved artifacts."""
@@ -584,12 +559,10 @@ fi
             "metadata": {
                 "name": self.name,
                 "namespace": self.namespace,
-                "annotations": {
-                    _BUILD_LAYOUT_ANNOTATION: _BUILD_LAYOUT,
-                    _BUILD_MIRRORS_ANNOTATION: json.dumps(
-                        self.registry_mirrors, sort_keys=True
-                    ),
-                },
+                "ownerReferences": [{
+                    "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                    "name": self.execution_claim, "uid": pvc["metadata"]["uid"],
+                }],
                 "labels": {
                     _BUILD_POD_LABEL: "true",
                     _BUILD_BINDING_LABEL: self.binding,
@@ -623,116 +596,6 @@ fi
                 ).decode()
             },
         }
-
-    def _reuse_or_retire_pods(self) -> dict[str, Any] | None:
-        """Select a compatible daemon and retire other builders sharing its compiler cache."""
-        selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={self.binding}"
-        occupants = []
-        candidates = []
-        for pod in self.kubectl.list_resources(
-            ("pods",), self.namespace, label_selector=selector
-        ):
-            if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
-                occupants.append(pod)
-                continue
-            if not any(
-                volume["name"] == "cache"
-                and volume.get("persistentVolumeClaim", {}).get("claimName")
-                == self.claim
-                for volume in pod["spec"].get("volumes", [])
-            ):
-                continue
-            occupants.append(pod)
-            if self.execution_claim != self.claim and not any(
-                volume["name"] == "execution"
-                and volume.get("persistentVolumeClaim", {}).get("claimName") == self.execution_claim
-                for volume in pod["spec"].get("volumes", [])
-            ):
-                continue
-            if self.execution_claim == self.claim and any(volume["name"] == "execution" for volume in pod["spec"].get("volumes", [])):
-                continue
-            if not _pod_ready(pod) or pod.get("metadata", {}).get("deletionTimestamp"):
-                continue
-            if self.node and pod.get("spec", {}).get("nodeName") != self.node:
-                continue
-            if pod["metadata"].get("annotations", {}).get(
-                _BUILD_MIRRORS_ANNOTATION, "{}"
-            ) != json.dumps(self.registry_mirrors, sort_keys=True):
-                continue
-            containers = pod.get("spec", {}).get("containers", [])
-            if self.execution_claim != self.claim and not any(
-                item["name"] == "artifacts" and item["image"] == self.tools_image
-                for item in containers
-            ):
-                continue
-            builder = next(
-                (
-                    container
-                    for container in containers
-                    if container.get("name") == "builder"
-                ),
-                None,
-            )
-            if builder is None or builder.get("image") != self.image:
-                continue
-            if builder.get("securityContext", {}).get("runAsUser") != SOURCE_BUILD_UID:
-                continue
-            images = next(
-                (
-                    container
-                    for container in containers
-                    if container.get("name") == "images"
-                ),
-                None,
-            )
-            # File-only exports can reuse a daemon with an idle image-import helper.
-            if self.containerd_socket and (
-                images is None or images.get("image") != self.tools_image
-            ):
-                continue
-            auth = next(
-                (
-                    volume.get("secret")
-                    for volume in pod["spec"].get("volumes", [])
-                    if volume["name"] == "registry-auth"
-                ),
-                None,
-            )
-            if bool(auth) != bool(self.credentials):
-                continue
-            if auth is not None:
-                secret = self.kubectl.get_if_exists(
-                    "secret", auth["secretName"], self.namespace
-                )
-                # A new Pod mounts current credentials before its first build starts.
-                if secret is None or json.loads(
-                    base64.b64decode(secret["data"][".dockerconfigjson"])
-                ) != self.credentials:
-                    continue
-            candidates.append(pod)
-        reusable = min(
-            candidates,
-            key=lambda pod: pod.get("metadata", {}).get("creationTimestamp", ""),
-            default=None,
-        )
-        # The caller owns this binding's operation lock. Stop its previous daemon
-        # before changing image or placement: the PVC still holds its root lock.
-        for pod in occupants:
-            if pod is reusable:
-                continue
-            self.kubectl.run(
-                [
-                    "delete",
-                    "pod",
-                    pod["metadata"]["name"],
-                    "--namespace",
-                    self.namespace,
-                    "--ignore-not-found",
-                    "--wait=true",
-                    "--timeout=" + self.timeout,
-                ]
-            )
-        return reusable
 
     def _prepare_outputs(self) -> None:
         """Clear interrupted outputs under the binding lock, retaining only recorded OCI layouts."""
@@ -872,109 +735,8 @@ done
         return json.loads(text)
 
     def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
-        """Apply a path-level delta; an interrupted upload is replaced completely on retry."""
-        started = time.monotonic()
-        marker = self.execution_root + "/inputs.json"
-        previous = self.read_json(marker)
-        changed = [name for name in files if previous.get(name) != versions[name]]
-        removed = sorted(previous.keys() - versions.keys())
-        if not changed and not removed:
-            print("Source transfer: reused unchanged workspace", flush=True)
-            return
-        # The receipt is installed last. Without it a retry starts from an empty managed
-        # workspace, rather than accepting files left by a partially received archive.
-        reset = not previous
-        script = """set -eu
-root=$1; workspace=$2; reset=$3; incoming="$root/incoming"
-rm -rf "$incoming"; mkdir -p "$incoming"
-tar --no-same-owner -xzf - -C "$incoming"
-rm -f "$root/inputs.json"
-if test "$reset" = true; then rm -rf "$workspace"; fi
-mkdir -p "$workspace"; cd "$workspace"
-xargs -0 -r rm -f -- < "$incoming/.foretoken-removed"
-find . -mindepth 1 -depth -type d -empty -delete
-rm "$incoming/.foretoken-removed"
-mv "$incoming/.foretoken-inputs" "$root/inputs.next"
-# Cargo and Ninja must observe changed bytes even when client timestamps were restored.
-find "$incoming" -type f -exec touch {} +
-cp -pRf "$incoming/." "$workspace/"
-mv "$root/inputs.next" "$root/inputs.json"
-rm -rf "$incoming"
-"""
-        with tempfile.TemporaryFile() as stream:
-            with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-                for name in changed:
-                    archive.add(files[name], arcname=name, recursive=False)
-                for name, data in (
-                    (".foretoken-removed", b"\0".join(p.encode() for p in removed)),
-                    (".foretoken-inputs", json.dumps(versions).encode()),
-                ):
-                    entry = tarfile.TarInfo(name)
-                    entry.size = len(data)
-                    entry.mode = 0o644
-                    archive.addfile(entry, io.BytesIO(data))
-            print(
-                f"Source transfer: {len(changed)} changed files, {len(removed)} removed files, {stream.tell()} compressed bytes",
-                flush=True,
-            )
-            stream.seek(0)
-            result = self.cancellation.run(
-                self.command(
-                    [
-                        "sh",
-                        "-c",
-                        script,
-                        "sync",
-                        self.execution_root,
-                        self.workspace,
-                        str(reset).lower(),
-                    ]
-                ),
-                stdin=stream,
-            )
-        if result.returncode:
-            raise DeploymentError("source delta upload failed")
-        print(
-            f"Source transfer completed in {time.monotonic() - started:.1f}s",
-            flush=True,
-        )
-
-    def export_application(
-        self,
-        component: str,
-        destination: str,
-        arguments: dict[str, str],
-        parts: list[str] | None = None,
-    ) -> None:
-        """Export selected first-party application parts; callers assemble engine files separately."""
-        if parts is None or "rust" in parts or "go" in parts:
-            dockerfile = (
-                "control-plane/Dockerfile" if component == "control-plane"
-                else f"data-plane/{component}/Dockerfile"
-            )
-            # Runtime stages are outside the application export graph. Do not
-            # materialize SDK images merely to supply their unused Dockerfile ARGs.
-            arguments = {
-                key: value for key, value in arguments.items()
-                if not key.endswith("_IMAGE")
-                or key in {"RUST_BUILDER_IMAGE", "GO_BUILDER_IMAGE", "BUILDKIT_SYNTAX_IMAGE"}
-            }
-            if component == "model-server":
-                arguments["INFERENCE_ENGINE_IMAGE"] = "scratch"
-            self.build(dockerfile, target="source-export", destination=destination, arguments=arguments)
-            return
-        local_output = self.execution_root + "/exports/" + uuid.uuid4().hex if self.execution_claim != self.claim else destination
-        script = 'rm -rf "$1"; mkdir -p "$1"'
-        if "python" in parts:
-            script += (
-                '; mkdir "$1/python"; '
-                'if test -d "$2"; then cp -pR "$2/." "$1/python/"; fi'
-            )
-        self.run([
-            "sh", "-ec", script, "export", local_output,
-            self.workspace + "/data-plane/model-server/python",
-        ])
-        self._deliver_output(local_output, destination)
+        """Capture environment inputs using the same complete-inventory transfer as native builds."""
+        synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
 
     def _deliver_output(self, source: str, destination: str) -> None:
         """Hand complete local exports to the persistent volume's ordinary writer."""
@@ -1179,81 +941,13 @@ rm -rf "$incoming"
             ).remove_owned(self._built_images - retained)
 
 
-def remove_build_pods(
-    kubectl: Kubectl,
-    timeout: str,
-    *,
-    binding: str = "",
-    preserve_ready: bool = False,
-) -> None:
-    """Retire abandoned builders, or all builders during source uninstall."""
-    selector = _BUILD_POD_LABEL + "=true"
-    if binding:
-        selector += "," + _BUILD_BINDING_LABEL + "=" + binding
-    if not preserve_ready:
-        kubectl.run(
-            [
-                "delete",
-                "pods",
-                "--all-namespaces",
-                "--selector",
-                selector,
-                "--ignore-not-found",
-                "--wait=true",
-                "--timeout=" + timeout,
-            ]
-        )
-        return
-    for pod in kubectl.list_all_resources(("pods",), label_selector=selector):
-        # Retire obsolete cache-mounted publishers even when their compiler is healthy.
-        if _pod_ready(pod) and not any(
-            container["name"] == "publisher" for container in pod["spec"]["containers"]
-        ):
-            continue
-        metadata = pod.get("metadata", {})
-        name, namespace = metadata.get("name"), metadata.get("namespace")
-        if name and namespace:
-            kubectl.run(
-                [
-                    "delete",
-                    "pod",
-                    name,
-                    "--namespace",
-                    namespace,
-                    "--ignore-not-found",
-                    "--wait=true",
-                    "--timeout=" + timeout,
-                ]
-            )
-
-
-def find_build_cache(
-    kubectl: Kubectl, namespace: str, binding: str, node: str, mount: str
-) -> str | None:
-    """Find this binding's existing compiler volume on the requested node and mount."""
-    selector = f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={binding}"
-    for pod in kubectl.list_resources(("pods",), namespace, label_selector=selector):
-        if pod["spec"].get("nodeName") != node:
-            continue
-        if pod["metadata"].get("annotations", {}).get(_BUILD_LAYOUT_ANNOTATION) != _BUILD_LAYOUT:
-            continue
-        builders = [
-            container
-            for container in pod["spec"]["containers"]
-            if container["name"] == "builder"
-        ]
-        if not any(
-            volume["name"] == "cache" and volume["mountPath"] == mount
-            for builder in builders
-            for volume in builder.get("volumeMounts", [])
-        ):
-            continue
-        return next(
-            volume["persistentVolumeClaim"]["claimName"]
-            for volume in pod["spec"]["volumes"]
-            if volume["name"] == "cache"
-        )
-    return None
+def remove_build_pods(kubectl: Kubectl, timeout: str, *, binding: str) -> None:
+    """Stop an earlier operation's processes before the binding reuses its persistent compiler state."""
+    kubectl.run([
+        "delete", "pods", "--all-namespaces", "--selector",
+        f"{_BUILD_POD_LABEL}=true,{_BUILD_BINDING_LABEL}={binding}",
+        "--ignore-not-found", "--wait=true", "--timeout=" + timeout,
+    ])
 
 
 def registry_credentials(

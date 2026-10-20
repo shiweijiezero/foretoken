@@ -230,7 +230,7 @@ class ModelDistributionLifecycle:
                 release=release, overrides=values,
             )
             args.extend(["--reset-values", "--values", "-"])
-            completed = helm.run(args, input_text=yaml.safe_dump(values), check=False)
+            completed = helm.run(args, input_text=json.dumps(values), check=False)
             if execution := CommandExecution.current():
                 execution.check()
             if completed.returncode:
@@ -342,7 +342,7 @@ class ModelDistributionLifecycle:
         )
         completed = self._kubectl.run(
             [operation, "--field-manager=foretoken-model-downloads", "--filename=-"],
-            input_text=yaml.safe_dump(desired),
+            input_text=json.dumps(desired),
             check=False,
         )
         if execution := CommandExecution.current():

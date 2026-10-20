@@ -44,14 +44,21 @@ ARG MACA_PATH=/opt/maca
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential ca-certificates cmake ninja-build pkg-config python3-dev \
+      build-essential ca-certificates cmake git ninja-build pkg-config python3-dev \
       libasio-dev libboost-dev libcurl4-openssl-dev libgflags-dev \
       libgoogle-glog-dev libibverbs-dev libjsoncpp-dev libmsgpack-dev libnuma-dev \
       libssl-dev liburing-dev libxxhash-dev libyaml-cpp-dev libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /usr/local/bin/uv
-COPY third_party/mooncake/ /src/mooncake/
+ARG MOONCAKE_VERSION
+ARG FORETOKEN_GITHUB_MIRROR
+RUN --mount=type=bind,target=/input \
+    --mount=type=cache,id=foretoken-mooncake-source,target=/var/cache/foretoken/mooncake \
+    mkdir -p /src \
+    && if test -d /input/third_party/mooncake; then cp -R /input/third_party/mooncake /src/mooncake; fi \
+    && python3 -I /input/deploy/mooncake/prepare-source \
+      --destination /src/mooncake --cache /var/cache/foretoken/mooncake
 
 ENV MACA_PATH=${MACA_PATH} \
     MACA_HOME=${MACA_PATH} \

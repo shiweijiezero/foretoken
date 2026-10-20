@@ -31,7 +31,7 @@ RUN apt-get update \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"; \
     fi \
     && if [ -n "$FORETOKEN_GITHUB_MIRROR" ]; then \
-      git config --global "url.${FORETOKEN_GITHUB_MIRROR%/}/.insteadOf" https://github.com/; \
+      git config --system "url.${FORETOKEN_GITHUB_MIRROR%/}/.insteadOf" https://github.com/; \
     fi \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /usr/local/bin/uv
@@ -41,6 +41,7 @@ RUN python="${FORETOKEN_VLLM_PYTHON:-python3}" \
       'setuptools-scm>=8' 'setuptools-rust>=1.9' wheel jinja2 build
 ENV PATH=/opt/foretoken-engine-build/python/bin:${PATH}
 COPY deploy/inference-engines/vllm/source-build.py /opt/foretoken-engine-build/source-build.py
+COPY cli/foretoken/build/engine_sources.py /opt/foretoken-engine-build/engine_sources.py
 COPY data-plane/patches/vllm/ /opt/foretoken-engine-build/patches/
 COPY data-plane/patches/vllm/vllm_patches.py /opt/foretoken-engine-build/
 COPY deploy/inference-engines/vllm-metax/source-environment.json \
@@ -59,28 +60,10 @@ RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
         --source-root /input/engine --cache /cache --output /out --dependencies-only \
     '
 
-FROM toolchain AS engine-build
-ARG CACHE_ID
-ARG BUILD_NATIVE=false
-ARG BUILD_JOBS
-ARG TARGET_CUDA_ARCH_LIST
-COPY engine/ /input/engine/
-# The cache identity belongs to the installation binding and runtime environment.
-# All compiler state and successful native outputs survive Python-only updates.
-RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
-    bash -euc ' \
-      if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
-      export PYTHONPATH=/opt/foretoken-engine-build/python${PYTHONPATH:+:$PYTHONPATH}; \
-      if test -n "$2"; then export MAX_JOBS="$2"; fi; \
-      if test -n "$3"; then export TORCH_CUDA_ARCH_LIST="$3"; fi; \
-      arguments=(--source-root /input/engine --cache /cache --output /out); \
-      if test "$1" = true; then arguments+=(--build-native); fi; \
-      "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-build.py "${arguments[@]}" \
-    ' source-build "${BUILD_NATIVE}" "${BUILD_JOBS}" "${TARGET_CUDA_ARCH_LIST}"
-
-# Only resolver inputs cross this boundary; source and native outputs remain ordinary files.
+# The runtime owns dependency resolution; native compilation consumes this completed image.
 FROM scratch AS engine-dependencies
 COPY --from=engine-metadata /out/dependencies/ /dependencies/
+COPY --from=engine-metadata /out/engine/ /metadata/
 
 FROM ${RUNTIME_IMAGE} AS environment
 ARG UV_DEFAULT_INDEX
@@ -88,53 +71,38 @@ ARG UV_EXTRA_INDEX_URL
 ARG RUNTIME_USER
 USER root
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    --mount=from=engine-dependencies,source=/dependencies,target=/tmp/foretoken-engine-dependencies \
-    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
-    bash -euc ' \
-      if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi; \
-      python="${FORETOKEN_VLLM_PYTHON:-python3}"; \
-      python=$("$python" -c "import sys; print(sys.executable)"); \
-      PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
-        "from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()"; \
-      if "$python" -c "import torch; raise SystemExit(not bool(getattr(torch.version, \"maca\", None)))"; then \
-        export UV_EXTRA_INDEX_URL=${UV_EXTRA_INDEX_URL:-https://repos.metax-tech.com/r/maca-pypi/simple}; \
-        export UV_INDEX_STRATEGY=${UV_INDEX_STRATEGY:-unsafe-best-match}; \
-      fi; \
-      uv pip install --no-cache --python "$python" \
-        --constraint /tmp/foretoken-engine-dependencies/runtime-native-constraints.txt \
-        --requirement /tmp/foretoken-engine-dependencies/requirements.txt \
-    '
-USER ${RUNTIME_USER}
-
-# Check the complete environment against source metadata without adding it to the image.
-FROM ${RUNTIME_IMAGE} AS engine-validation
-USER root
-COPY --from=engine-build /out/ /out/
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=from=engine-dependencies,source=/,target=/tmp/foretoken-engine-dependencies \
     --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches bash <<'EOF'
 set -euo pipefail
 if test -f /opt/foretoken-vllm/activate; then source /opt/foretoken-vllm/activate; fi
 python="${FORETOKEN_VLLM_PYTHON:-python3}"
+python=$("$python" -c 'import sys; print(sys.executable)')
+PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
+  'from vllm_patches import repair_installed_dependencies; repair_installed_dependencies()'
+if "$python" -c 'import torch; raise SystemExit(not bool(getattr(torch.version, "maca", None)))'; then
+    export UV_EXTRA_INDEX_URL=${UV_EXTRA_INDEX_URL:-https://repos.metax-tech.com/r/maca-pypi/simple}
+    export UV_INDEX_STRATEGY=${UV_INDEX_STRATEGY:-unsafe-best-match}
+fi
+uv pip install --no-cache --python "$python" \
+  --constraint /tmp/foretoken-engine-dependencies/dependencies/runtime-native-constraints.txt \
+  --requirement /tmp/foretoken-engine-dependencies/dependencies/requirements.txt
 "$python" - <<'PY'
 import importlib.metadata
 import shutil
 import sysconfig
 from pathlib import Path
 
-for metadata in Path("/out/engine").glob("*.dist-info"):
-    name = importlib.metadata.PathDistribution(metadata).metadata["Name"]
+for metadata in Path('/tmp/foretoken-engine-dependencies/metadata').glob('*.dist-info'):
+    name = importlib.metadata.PathDistribution(metadata).metadata['Name']
     distribution = importlib.metadata.distribution(name)
     installed_metadata = next(
         path for path in distribution.files
-        if path.name == "METADATA" and path.parent.name.endswith(".dist-info")
+        if path.name == 'METADATA' and path.parent.name.endswith('.dist-info')
     )
     shutil.rmtree(distribution.locate_file(installed_metadata).parent)
-    shutil.copytree(metadata, Path(sysconfig.get_path("purelib")) / metadata.name)
+    shutil.copytree(metadata, Path(sysconfig.get_path('purelib')) / metadata.name)
 PY
 PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python" -c \
   'from vllm_patches import check_installed_dependencies; check_installed_dependencies()'
 EOF
-
-FROM scratch AS source-export
-COPY --from=engine-validation /out/engine/ /engine/
-COPY --from=engine-validation /out/engine-environment.json /engine-environment.json
+USER ${RUNTIME_USER}

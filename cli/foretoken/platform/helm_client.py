@@ -19,14 +19,10 @@ from typing import Any
 
 import yaml
 
-try:
-    from yaml import CSafeLoader as _SafeLoader
-except ImportError:
-    from yaml import SafeLoader as _SafeLoader
-
 from foretoken.command_execution import CommandExecution, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.kubernetes.documents import decode_resources
 from foretoken.network_sources import (
     select_github_download,
     select_platform_image_sources,
@@ -127,10 +123,7 @@ class HelmClient:
             if value in {"--namespace", "--values", "--set", "--set-string", "--set-json"}:
                 command.extend([value, args[index + 1]])
         rendered = self.run(command, input_text=input_text).stdout
-        return tuple(
-            document for document in yaml.load_all(rendered, Loader=_SafeLoader)
-            if document is not None
-        )
+        return tuple(decode_resources(rendered))
 
     def chart_resource(
         self, release: ReleaseRef, *, api_version: str, kind: str,
@@ -142,7 +135,7 @@ class HelmClient:
         ).stdout
         try:
             resources = [
-                item for item in yaml.load_all(rendered, Loader=_SafeLoader)
+                item for item in decode_resources(rendered)
                 if isinstance(item, dict)
                 and item.get("apiVersion") == api_version and item.get("kind") == kind
             ]
@@ -205,20 +198,19 @@ class HelmClient:
                 updates[f"{path}.repository"] = repository
         self.set_chart_defaults(chart, updates)
 
-    @staticmethod
-    def set_chart_defaults(chart: Path, updates: dict[str, Any]) -> None:
+    def set_chart_defaults(self, chart: Path, updates: dict[str, Any]) -> None:
         """Keep automatic choices in the private chart rather than stored user values."""
         if not updates:
             return
         path = chart / "values.yaml"
-        values = yaml.safe_load(path.read_text())
+        values = json.loads(self.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
         for name, value in updates.items():
             target = values
             *parents, key = name.split(".")
             for parent in parents:
                 target = target.setdefault(parent, {})
             target[key] = value
-        path.write_text(yaml.safe_dump(values))
+        path.write_text(json.dumps(values))
 
     def installed_chart_manifest(self, release: ReleaseRef) -> tuple[dict[str, Any], ...]:
         """Read an installed release's choices without freezing its chart defaults."""
@@ -227,10 +219,7 @@ class HelmClient:
         manifest = self.run([
             "get", "manifest", release.name, "--namespace", release.namespace,
         ]).stdout
-        return tuple(
-            document for document in yaml.load_all(manifest, Loader=_SafeLoader)
-            if document is not None
-        )
+        return tuple(decode_resources(manifest))
 
     def installed_chart_images(self, release: ReleaseRef) -> set[str]:
         """Read prior workload images and images owned by Prometheus Operator resources."""
@@ -346,14 +335,14 @@ class HelmClient:
         self, chart: Path, subcharts: tuple[str, ...],
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """Read native image defaults and app versions without interpreting templates."""
-        values = yaml.safe_load((chart / "values.yaml").read_text())
+        values = json.loads(self.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
         metadata = yaml.safe_load((chart / "Chart.yaml").read_text())
         versions = {"": str(metadata["appVersion"])}
         for name in subcharts:
             dependency = chart / "charts" / name
             if not dependency.is_dir():
                 (dependency,) = (chart / "charts").glob(f"{name}-*.tgz")
-            child = yaml.safe_load(self.run(["show", "values", str(dependency)]).stdout)
+            child = json.loads(self.run(["show", "values", str(dependency), "--jsonpath", "{@}"]).stdout)
             child_metadata = yaml.safe_load(self.run(["show", "chart", str(dependency)]).stdout)
             values[name] = merge_values(child, values.get(name, {}))
             versions[name] = str(child_metadata["appVersion"])

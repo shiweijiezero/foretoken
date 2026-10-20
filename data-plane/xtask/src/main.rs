@@ -164,23 +164,6 @@ fn parse_string(value: &str) -> Result<String, String> {
 /// Prepare the complete selected stack privately before updating Cargo's source tree.
 /// The retained stack travels with captured Rust inputs so removals and interrupted writes recover.
 fn prepare_vllm(metadata: &WorkspaceMetadata) -> Result<(), String> {
-    let rust_manifest = metadata.vllm_source.join("rust/Cargo.toml");
-    if !rust_manifest.is_file() {
-        run_command(
-            metadata
-                .data_plane_root
-                .parent()
-                .ok_or("data plane has no repository parent")?,
-            "git",
-            [
-                "submodule",
-                "update",
-                "--init",
-                "--",
-                "data-plane/third_party/vllm",
-            ],
-        )?;
-    }
     let staging = tempfile::Builder::new()
         .prefix("foretoken-vllm-")
         .tempdir()

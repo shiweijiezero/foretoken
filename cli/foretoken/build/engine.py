@@ -8,14 +8,12 @@ from __future__ import annotations
 import argparse
 import json
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from foretoken.build.cluster.builder import ClusterBuilder
     from foretoken.build.environments import BuildEnvironments
-    from foretoken.command_execution import CommandExecution
 
 
 def _main() -> None:
@@ -46,28 +44,6 @@ def resolve_vllm_base_image(
     return f"{docker_registry.rstrip('/') or 'docker.io'}/{image}"
 
 
-def prepare_mooncake_source(
-    root: Path,
-    previous: Path | None,
-    version: str,
-    environment: dict[str, str],
-    cancellation: CommandExecution,
-) -> None:
-    """Prepare the MetaX runtime's fixed dependency before source inputs are captured."""
-    from foretoken.build.inputs import mooncake_inputs
-    from foretoken.errors import DeploymentError
-
-    _, dependency = mooncake_inputs(root, previous, version)
-    if not dependency["prepared"]:
-        prepared = cancellation.run(
-            [str(root / "deploy/mooncake/prepare-source")],
-            cwd=root,
-            env=environment,
-        )
-        if prepared.returncode:
-            raise DeploymentError("could not prepare the MetaX runtime's Mooncake source")
-
-
 def build_metax_environment(
     environments: BuildEnvironments, arguments: dict[str, str],
 ) -> str:
@@ -77,7 +53,7 @@ def build_metax_environment(
         if key in {
             "METAX_SDK_IMAGE", "UV_IMAGE_REGISTRY", "UV_IMAGE", "MACA_PATH", "UV_PYTHON",
             "FORETOKEN_GITHUB_MIRROR", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
-            "BUILDKIT_SYNTAX_IMAGE",
+            "BUILDKIT_SYNTAX_IMAGE", "MOONCAKE_VERSION",
         }
     }
     if not runtime_arguments.get("METAX_SDK_IMAGE"):
@@ -120,18 +96,14 @@ def build_engine_environment(
     runtime_image: str,
     base_image: str,
     cache_prefix: str,
-    record_caches: Callable[[dict[str, str]], None],
-) -> dict[str, Any]:
-    """Return the vLLM source environment after recording ABI-scoped compiler identities before its solve."""
+) -> tuple[dict[str, Any], str]:
+    """Prepare the source runtime and native toolchain, returning runtime metadata and its compiler image."""
     engine_arguments = {
         key: value for key, value in engine_build_arguments(arguments).items()
         if key != "TARGET_CUDA_ARCH_LIST"
     }
     engine_arguments["RUNTIME_IMAGE"] = runtime_image
     node_arguments = {}
-    engine_caches = {}
-    # A rebuilt dependency image can have a new OCI identity without changing
-    # the engine ABI. Native workspaces follow the base and interpreter instead.
     python_executable = arguments.get("FORETOKEN_VLLM_PYTHON") or "python3"
     for builder in environments.builders:
         base_digest = builder.resolve_image(base_image)
@@ -139,21 +111,24 @@ def build_engine_environment(
             "RUNTIME_USER": builder.image_user(runtime_image),
             "CACHE_ID": f"{cache_prefix}-metadata-{base_digest}-{python_executable}",
         }
-        key = "" if environments.push else builder.node
-        engine_caches[key] = f"{cache_prefix}-native-{base_digest}-{python_executable}"
-    record_caches(engine_caches)
-    return environments.build(
+    prefixes = (
+        "cli/foretoken/build/engine_sources.py",
+        "deploy/inference-engines/vllm/source-build.py",
+        "deploy/inference-engines/vllm-metax/source-environment.json",
+        "deploy/inference-engines/vllm-metax/sdk_audio.py",
+        "deploy/inference-engines/vllm-metax/patches/", "data-plane/patches/vllm/",
+    )
+    runtime = environments.build(
         "engine-source", "deploy/inference-engines/vllm/source-build.Dockerfile",
         target="environment", arguments=engine_arguments,
-        node_arguments=node_arguments,
-        input_prefixes=(
-            "engine/", "deploy/inference-engines/vllm/source-build.py",
-            "deploy/inference-engines/vllm-metax/source-environment.json",
-            "deploy/inference-engines/vllm-metax/sdk_audio.py",
-            "deploy/inference-engines/vllm-metax/patches/",
-            "data-plane/patches/vllm/",
-        ),
+        node_arguments=node_arguments, input_prefixes=("engine/", *prefixes),
     )
+    compiler = environments.build(
+        "compiler-engine", "deploy/inference-engines/vllm/source-build.Dockerfile",
+        target="toolchain", arguments={**engine_arguments, "RUNTIME_IMAGE": runtime["image"]},
+        input_prefixes=prefixes,
+    )
+    return runtime, compiler["image"]
 
 
 def engine_cache_scope(
@@ -187,28 +162,6 @@ def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
         )
         if name in arguments
     }
-
-
-def export_engine_source(
-    builder: ClusterBuilder, payload: str, arguments: dict[str, str], *,
-    runtime_image: str, cache_id: str, build_native: bool,
-) -> None:
-    """Build and merge engine sources into a completed model-server export before publication."""
-    output = payload + "-engine"
-    builder.build(
-        "deploy/inference-engines/vllm/source-build.Dockerfile",
-        target="source-export", destination=output,
-        arguments={
-            **engine_build_arguments(arguments),
-            "RUNTIME_IMAGE": runtime_image,
-            "CACHE_ID": cache_id,
-            "BUILD_NATIVE": str(build_native).lower(),
-        },
-    )
-    builder.run(
-        ["sh", "-ec", 'cp -R "$1/." "$2/"', "assemble", output, payload],
-        container=builder.artifact_container,
-    )
 
 
 if __name__ == "__main__":

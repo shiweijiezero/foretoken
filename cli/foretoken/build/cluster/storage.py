@@ -16,11 +16,13 @@ import yaml
 from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
     SOURCE_BUILD_POD_LABEL,
+    SOURCE_BUILD_STORAGE_LABEL,
     image_tools_image,
     node_containerd_socket,
 )
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, resource_ref, timeout_seconds
+from foretoken.kubernetes.documents import encode_resources
 
 SOURCE_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 SOURCE_BUILD_UID = 65531
@@ -28,7 +30,6 @@ SOURCE_BUILD_STORAGE_CLASS = "foretoken-source-build"
 SOURCE_BUILD_PROVISIONER = "inference.foretoken.io/source-build"
 SOURCE_BUILD_PROVISIONER_IMAGE = "docker.io/rancher/local-path-provisioner:v0.0.37"
 
-_OWNER_LABEL = "inference.foretoken.io/source-build-storage"
 _NODE_DIRECTORY = "/var/lib/foretoken/source-build"
 _NAMESPACED_KINDS = (
     "deployments",
@@ -97,14 +98,14 @@ def ensure_build_storage(
         existing = kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
         if (
             existing is not None
-            and existing["metadata"].get("labels", {}).get(_OWNER_LABEL) != namespace
+            and existing["metadata"].get("labels", {}).get(SOURCE_BUILD_STORAGE_LABEL) != namespace
         ):
             raise DeploymentError(
                 f"cannot prepare source storage: {ref.display_name} already exists outside this installation"
             )
     if not kubectl.exists("namespace", namespace):
         kubectl.apply(
-            yaml.safe_dump(
+            json.dumps(
                 {
                     "apiVersion": "v1",
                     "kind": "Namespace",
@@ -113,13 +114,13 @@ def ensure_build_storage(
             )
         )
     deployment = next(document for document in resources if document["kind"] == "Deployment")
-    kubectl.apply(yaml.safe_dump_all((document for document in resources if document is not deployment), sort_keys=False))
+    kubectl.apply(encode_resources(document for document in resources if document is not deployment))
     configuration = kubectl.get("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
     # Start with the current path selection before any new claim can be provisioned.
     deployment["spec"]["template"]["metadata"]["annotations"] = {
         "inference.foretoken.io/source-build-config-revision": configuration["metadata"]["resourceVersion"],
     }
-    kubectl.apply(yaml.safe_dump(deployment, sort_keys=False))
+    kubectl.apply(json.dumps(deployment))
     kubectl.rollout_status(resource_ref(deployment), timeout)
     return SOURCE_BUILD_STORAGE_CLASS
 
@@ -185,11 +186,47 @@ def ensure_build_volumes(
     return artifact, execution
 
 
+def ensure_shared_build_cache(
+    kubectl: Kubectl, namespace: str, node: str, configuration: dict[str, str], owner: dict[str, str],
+) -> str:
+    """Reuse one platform-owned dependency cache per node across independent compiler workspaces."""
+    node_uid = kubectl.get("node", node)["metadata"]["uid"]
+    name = "foretoken-development-" + owner["uid"][:8] + "-" + node_uid[:8]
+    existing = kubectl.get_if_exists("pvc", name, namespace)
+    if existing is None:
+        document = {
+            "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+            "metadata": {
+                "name": name, "namespace": namespace,
+                "labels": {SOURCE_BUILD_CACHE_LABEL: "true"},
+                "ownerReferences": [owner],
+            },
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "storageClassName": SOURCE_BUILD_STORAGE_CLASS,
+                "resources": {"requests": {"storage": configuration["storageSize"]}},
+            },
+        }
+        try:
+            existing = json.loads(kubectl.run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(document)).stdout)
+        except DeploymentError as error:
+            if "AlreadyExists" not in str(error):
+                raise
+            existing = kubectl.get("pvc", name, namespace)
+    if (
+        existing["metadata"].get("deletionTimestamp")
+        or existing["spec"].get("storageClassName") != SOURCE_BUILD_STORAGE_CLASS
+        or not any(reference.get("uid") == owner["uid"] for reference in existing["metadata"].get("ownerReferences", []))
+    ):
+        raise DeploymentError(f"development cache {namespace}/{name} is not available to this platform")
+    return name
+
+
 def managed_build_storage_resources(
     kubectl: Kubectl, namespace: str
 ) -> tuple[dict[str, Any], ...]:
     """Discover owned storage resources, including a bootstrap without workstation state."""
-    selector = f"{_OWNER_LABEL}={namespace}"
+    selector = f"{SOURCE_BUILD_STORAGE_LABEL}={namespace}"
     return (
         *kubectl.list_resources(_NAMESPACED_KINDS, namespace, label_selector=selector),
         *kubectl.list_cluster_resources(_CLUSTER_KINDS, label_selector=selector),
@@ -205,7 +242,7 @@ def remove_build_storage(
     retained volumes preserve the provisioner; a failed teardown leaves it running.
     The platform namespace and unrelated storage resources are never removed.
     """
-    selector = f"{_OWNER_LABEL}={namespace}"
+    selector = f"{SOURCE_BUILD_STORAGE_LABEL}={namespace}"
     owned = managed_build_storage_resources(kubectl, namespace)
     if not owned:
         return "Preserve", "no managed source storage provisioner"
@@ -327,7 +364,7 @@ def _resources(
     """Render the dedicated local-path-provisioner v0.0.37 resources and helper configuration."""
     name = SOURCE_BUILD_STORAGE_CLASS
     labels = {
-        _OWNER_LABEL: namespace,
+        SOURCE_BUILD_STORAGE_LABEL: namespace,
         "app.kubernetes.io/name": name,
         "app.kubernetes.io/managed-by": "foretoken",
     }
@@ -452,7 +489,7 @@ chmod "$VOL_PERM" "$VOL_DIR"
 set -eu
 rm -rf "$VOL_DIR"
 """,
-                "helperPod.yaml": yaml.safe_dump(helper, sort_keys=False),
+                "helperPod.yaml": json.dumps(helper),
             },
         },
         {
@@ -460,7 +497,7 @@ rm -rf "$VOL_DIR"
             "kind": "Deployment",
             "spec": {
                 "replicas": 1,
-                "selector": {"matchLabels": {_OWNER_LABEL: namespace}},
+                "selector": {"matchLabels": {SOURCE_BUILD_STORAGE_LABEL: namespace}},
                 "template": {
                     "metadata": {"labels": labels},
                     "spec": {
@@ -572,7 +609,7 @@ def superseded_build_volume(kubectl: Kubectl, claim: dict[str, Any]) -> dict[str
     if claim["spec"].get("storageClassName") != SOURCE_BUILD_STORAGE_CLASS or not claim["spec"].get("volumeName"):
         return None
     storage_class = kubectl.get_if_exists("storageclass", SOURCE_BUILD_STORAGE_CLASS)
-    namespace = (storage_class or {}).get("metadata", {}).get("labels", {}).get(_OWNER_LABEL)
+    namespace = (storage_class or {}).get("metadata", {}).get("labels", {}).get(SOURCE_BUILD_STORAGE_LABEL)
     if not namespace:
         return None
     configuration = kubectl.get_if_exists("configmap", SOURCE_BUILD_STORAGE_CLASS, namespace)
@@ -703,7 +740,7 @@ def _ensure_build_cache(
     }
     created = kubectl.run(
         ["create", "-f", "-", "-o", "json"],
-        input_text=yaml.safe_dump(
+        input_text=json.dumps(
             {
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",

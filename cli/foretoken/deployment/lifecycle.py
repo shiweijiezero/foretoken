@@ -11,11 +11,9 @@ from contextlib import ExitStack
 from dataclasses import replace
 from typing import Any
 
-import yaml
-
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
-from foretoken.build.state import release_source_deployment, source_operation
+from foretoken.build.state import source_operation
 from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.deployment.manifest import (
@@ -28,11 +26,11 @@ from foretoken.deployment.submission import DeploymentSubmission
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
     Kubectl,
-    KubernetesPermissionError,
     ResourceRef,
     resource_ref,
     timeout_seconds,
 )
+from foretoken.kubernetes.documents import encode_resources
 from foretoken.kubernetes.mutation import DeploymentMutation
 from foretoken.working_directory import resolve_runtime_directory
 
@@ -62,11 +60,6 @@ class DeploymentLifecycle:
                 instance.uid = deployment.uid
                 mutation = DeploymentMutation(self.kubectl, deployment.namespace, deployment.name, timeout, uid=deployment.uid)
                 self._delete_instance(instance, mutation, timeout)
-            try:
-                with CommandExecution(timeout_seconds(timeout)):
-                    release_source_deployment(self.kubectl, deployment, timeout)
-            except KubernetesPermissionError:
-                print("Source build resources retained; repeat deletion with source-development access to reclaim them", flush=True)
 
     def _apply(
         self, deployment: ForetokenDeployment, timeout: str, *,
@@ -91,7 +84,7 @@ class DeploymentLifecycle:
         runtime_required = len(stopping) != len(services)
         # Suspension takes effect before source compilation and does not select a new executable.
         if stopping:
-            submission.apply(yaml.safe_dump_all(stopping, sort_keys=False))
+            submission.apply(encode_resources(stopping))
 
         source = None
         with ExitStack() as locks:
@@ -99,7 +92,7 @@ class DeploymentLifecycle:
                 locks.enter_context(source_operation(self.kubectl, timeout, required=True, shared=True))
                 source = EditableDeployment.discover(self.kubectl, timeout, editable, engine_sources)
                 assert source is not None
-                locks.enter_context(source.operation(deployment, timeout))
+                locks.enter_context(source.operation(timeout))
                 source.prepare(timeout)
                 deployment = source.apply(deployment, timeout)
             revision = self.prepare_controller(

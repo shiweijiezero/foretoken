@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,7 @@ from foretoken.arguments import InstallCommand
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
 from foretoken.network_sources import select_platform_image_sources
+from foretoken.platform.helm_client import HelmClient, value_at
 from foretoken.platform.networking.gateway_resources import (
     _discover_gateway_class,
     _gateway_classes_for_controller,
@@ -22,7 +24,6 @@ from foretoken.platform.networking.gateway_resources import (
     _validate_reused_gateway,
     _wait_foretoken_gateway_class,
 )
-from foretoken.platform.helm_client import HelmClient, value_at
 from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
 
 
@@ -218,7 +219,7 @@ class GatewayControllerLifecycle:
             "config.envoyGateway.gateway.controllerName=" + helm.config.envoy_gateway_controller,
         ])
         values = helm.stored_chart_values(plan.release)
-        input_text = yaml.safe_dump(values)
+        input_text = json.dumps(values)
         args.extend(["--reset-values", "--values", "-"])
         with helm.prepared_chart(chart.source, chart.version) as prepared:
             args[3] = str(prepared)

@@ -10,17 +10,11 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
-try:
-    from yaml import CSafeLoader as _SafeLoader
-except ImportError:
-    from yaml import SafeLoader as _SafeLoader
-
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import application_references
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
+from foretoken.kubernetes.documents import decode_resources
 from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.config import load_platform_values
 from foretoken.platform.helm_client import (
@@ -70,7 +64,7 @@ class Helm(HelmClient):
         """Install resolved platform intent while storage owners retain bootstrap and publication lifetimes."""
         source_mode = source_images is not None
         chart = (
-            str(source_images.source_root / "deploy" / "charts" / "foretoken")
+            str(source_images.inputs / "deploy" / "charts" / "foretoken")
             if source_images is not None else self.config.platform.source
         )
         chart_version = None if source_mode else self.config.platform.version
@@ -117,7 +111,7 @@ class Helm(HelmClient):
                 "--set-string", f"frontend.image={source_images.frontend}",
                 "--set-string", f"runtime.vllm.image={source_images.model_server}",
             ])
-        input_text = yaml.safe_dump(stored_values) if stored_values is not None else None
+        input_text = json.dumps(stored_values) if stored_values is not None else None
         overrides = stored_values or {}
         for value in load_platform_values(values):
             overrides = merge_values(overrides, value)
@@ -167,7 +161,7 @@ class Helm(HelmClient):
         clear_source_build: bool = False,
     ) -> dict[str, Any]:
         """Change instance acceptance with native version preconditions and retire obsolete source recipes."""
-        from foretoken.build.state import SOURCE_BUILD_KEY
+        from foretoken.build.records import SOURCE_BUILD_KEY
 
         metadata = configuration["metadata"]
         annotation = "inference.foretoken.io/retiring"
@@ -189,19 +183,24 @@ class Helm(HelmClient):
         ]).stdout)
 
     def render_source_origin(
-        self, root: Path, values: tuple[dict[str, Any], ...], timeout: str, *, download_proxy_url: str,
+        self, root: Path, values: tuple[str, ...], timeout: str,
+        *, stored_values: dict[str, Any] | None, download_proxy_url: str,
     ) -> tuple[dict[str, Any], ...]:
-        """Render bootstrap storage intent for the platform's application-file owner."""
+        """Render bootstrap storage, leaving user values interpretation to the selected Helm chart."""
         args = self.upgrade_args(self.platform_release(), str(root / "deploy/charts/foretoken"), timeout)
-        merged: dict[str, Any] = {}
-        for value in values:
+        merged = stored_values or {}
+        for value in load_platform_values(values):
             merged = merge_values(merged, value)
+        input_text = json.dumps(stored_values) if stored_values is not None else None
+        if stored_values is not None:
+            args.extend(["--values", "-"])
+        for path in values:
+            args.extend(["--values", path])
         args.extend([
-            "--values", "-", "--set", "development.enabled=true",
+            "--set", "development.enabled=true",
             "--set-string", "observability.mode=disabled", "--set-string", "applicationFiles.releaseURL=",
         ])
         self._add_download_proxy(args, download_proxy_url)
-        input_text = yaml.safe_dump(merged)
         with self.prepared_chart(args[3], None) as chart:
             args[3] = str(chart)
             self._set_platform_image_sources(args, merged, True, input_text)
@@ -372,8 +371,5 @@ class Helm(HelmClient):
                 "get", "manifest", release.name, "--namespace", release.namespace,
                 "--revision", str(item["revision"]),
             ]).stdout
-            references.update(extract(
-                document for document in yaml.load_all(manifest, Loader=_SafeLoader)
-                if document is not None
-            ))
+            references.update(extract(decode_resources(manifest)))
         return references

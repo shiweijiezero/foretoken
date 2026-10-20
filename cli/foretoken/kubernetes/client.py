@@ -190,8 +190,11 @@ class Kubectl:
             input_text=rendered,
         )
 
-    def delete_object(self, value: dict[str, Any], timeout: str, *, wait: bool = True, propagation: str = "Foreground") -> None:
-        """Delete an observed UID/version, letting lifecycle finalizers order children with Background propagation."""
+    def delete_object(
+        self, value: dict[str, Any], timeout: str, *, wait: bool = True,
+        propagation: str = "Foreground", match_version: bool = True,
+    ) -> None:
+        """Delete an observed UID, fence its version by default, and optionally wait for finalizers."""
         metadata = value["metadata"]
         version = value["apiVersion"]
         base = f"/api/{version}" if "/" not in version else f"/apis/{version}"
@@ -205,7 +208,10 @@ class Kubectl:
             ["delete", "--raw", path, "--filename=-"],
             input_text=json.dumps({
                 "apiVersion": "v1", "kind": "DeleteOptions",
-                "preconditions": {"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]},
+                "preconditions": {
+                    "uid": metadata["uid"],
+                    **({"resourceVersion": metadata["resourceVersion"]} if match_version else {}),
+                },
                 "propagationPolicy": propagation,
             }),
             timeout=timeout_seconds(timeout),

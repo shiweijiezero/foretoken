@@ -155,8 +155,9 @@ PY
   PAYLOAD_DIR="$OUTPUT_DIR/application-payload"
   CHART_PACKAGE="$OUTPUT_DIR/foretoken-$OCI_VERSION.tgz"
   OCI_REVISION=
-  if [[ "$MODE" == build ]] && images_selected; then
-    OCI_REVISION=$(git -C "$ROOT" rev-parse HEAD)
+  if [[ "$MODE" == build ]] && images_selected && \
+    [[ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)" == "$ROOT" ]]; then
+    OCI_REVISION=$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)
   fi
 
   printf 'Release: Python %s, OCI/Chart %s\n' "$PYTHON_VERSION" "$OCI_VERSION"
