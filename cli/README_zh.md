@@ -39,7 +39,7 @@ cd foretoken
 
 开发 CLI 时，在该目录执行 `pip install -e .`。使用 uv 时，通过 `uv venv` 和 `source .venv/bin/activate` 创建并激活虚拟环境，再执行 `uv pip install foretoken`。
 
-部署服务需要 `kubectl` 和目标集群的 kubeconfig。安装平台或开发源码时，还需 Helm 4.2.4 或更高版本。评测已有 URL、绘制本地结果时无需 Kubernetes。
+部署服务需要 `kubectl` 和目标集群的 kubeconfig。安装平台或开发源码时，还需 Helm 4.2.4 或更高版本。平台和服务命令会始终使用启动时选定的 Kubernetes context。评测已有 URL、绘制本地结果时无需 Kubernetes。
 
 ## 环境与平台
 

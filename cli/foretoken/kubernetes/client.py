@@ -52,9 +52,14 @@ class Kubectl:
     """Run kubectl in the selected context, optionally sharing one monotonic operation deadline."""
 
     def __init__(self, context: str | None = None, *, deadline: float | None = None) -> None:
-        self.context = context
+        """Capture one kubeconfig selection for the caller's complete operation."""
+        self.context = context or ""
         self.deadline = deadline
         self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
+        configuration = _decode_object(self.run(["config", "view", "--minify", "-o", "json"]).stdout)
+        self.context = context or configuration["current-context"]
+        self.namespace = configuration["contexts"][0]["context"].get("namespace") or "default"
+        self.server = configuration["clusters"][0]["cluster"]["server"]
 
     @contextmanager
     def until(self, deadline: float) -> Iterator[float]:
@@ -74,7 +79,7 @@ class Kubectl:
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
-        context = ["--context", self.context] if self.context is not None else []
+        context = ["--context", self.context] if self.context else []
         return [self.executable, *context, *args]
 
     def run(
@@ -158,10 +163,8 @@ class Kubectl:
         raise DeploymentError(f"{' '.join(command)} failed: {detail}")
 
     def current_namespace(self) -> str:
-        """Resolve the selected context's namespace for namespace-local deployment ownership."""
-        return self.run([
-            "config", "view", "--minify", "-o", "jsonpath={.contexts[0].context.namespace}",
-        ]).stdout.strip() or "default"
+        """Return the namespace selected when this operation's client was created."""
+        return self.namespace
 
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
@@ -416,8 +419,8 @@ class Kubectl:
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
     def current_context(self) -> str:
-        """Return the active kubeconfig context used by deployment operations."""
-        return self.run(["config", "current-context"]).stdout.strip()
+        """Return this operation's fixed kubeconfig context."""
+        return self.context
 
 
 def _decode_object(output: str) -> dict[str, Any]:

@@ -205,7 +205,7 @@ class Helm(HelmClient):
                 raise DeploymentError("The selected platform chart does not support deployment instances")
             template = json.loads(configuration["data"]["deployment-template.json"])
             directories = prepare_directory_bindings(
-                Kubectl(), template["directories"],
+                self._kubectl, template["directories"],
                 source_images.source_root if source_images is not None else Path.cwd(),
                 release.name + "-data", timeout,
             )
@@ -216,7 +216,7 @@ class Helm(HelmClient):
                 self._finish_upgrade(args, timeout)
                 self.run(args, input_text=input_text)
                 self.set_platform_retiring(
-                    Kubectl(), self.platform_configuration(), retiring=False,
+                    self._kubectl, self.platform_configuration(), retiring=False,
                     clear_source_build=not source_mode,
                 )
 
@@ -224,10 +224,10 @@ class Helm(HelmClient):
         """Return the single Foretoken platform release managed by the CLI."""
         return ReleaseRef(self._config.platform.release_name, self._config.namespace)
 
-    def platform_configuration(self, kubectl: Kubectl | None = None) -> dict[str, Any]:
+    def platform_configuration(self) -> dict[str, Any]:
         """Read the installed platform identity and resolved defaults for deployment and source owners."""
         release = self.platform_release()
-        configuration = (kubectl or Kubectl()).get_if_exists(
+        configuration = self._kubectl.get_if_exists(
             "configmap", f"{release.name}-platform", release.namespace,
         )
         if configuration is None:
@@ -528,7 +528,7 @@ class Helm(HelmClient):
                 overrides=values,
             )
             args.extend(["--reset-values", "--values", "-", f"--timeout={timeout}"])
-            completed = self._execute([self._helm, *args], input_text=yaml.safe_dump(values))
+            completed = self._execute(self.command(args), input_text=yaml.safe_dump(values))
             if execution := CommandExecution.current():
                 execution.check()
             if completed.returncode:
@@ -864,7 +864,7 @@ class Helm(HelmClient):
         if not documents:
             yield
             return
-        kubectl = Kubectl()
+        kubectl = self._kubectl
         if not kubectl.exists("namespace", release.namespace):
             kubectl.run(["create", "namespace", release.namespace])
         operations = []
@@ -951,7 +951,7 @@ class Helm(HelmClient):
     def application_origin_resources(self) -> tuple[dict[str, Any], ...]:
         """Find native file-origin resources owned by this release, including failed bootstraps."""
         release = self.platform_release()
-        kubectl = Kubectl()
+        kubectl = self._kubectl
         if not kubectl.exists("namespace", release.namespace):
             return ()
         return tuple(
@@ -970,7 +970,7 @@ class Helm(HelmClient):
         """Remove an unadopted file origin and its PVC-owned writers during explicit uninstall."""
         if not resources:
             return
-        kubectl = Kubectl()
+        kubectl = self._kubectl
         release = self.platform_release()
         claims = {
             document["metadata"]["uid"]

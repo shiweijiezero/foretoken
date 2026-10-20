@@ -26,7 +26,7 @@ GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GIT
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build \
 	image-control-plane image-frontend image-vllm-metax image-model-server image-model-server-omni \
-	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers docs docs-serve
+	image-model-server-metax image-vllm-omni dashboard alert-receivers docs docs-serve
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
@@ -145,9 +145,6 @@ image-model-server-omni: vllm-source
 image-model-server-metax: image-vllm-metax
 	$(MAKE) image-model-server \
 		INFERENCE_ENGINE_IMAGE="$(VLLM_METAX_IMAGE)"
-
-image-benchmark:
-	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
 
 .PHONY: mooncake-source image-mooncake
 mooncake-source:

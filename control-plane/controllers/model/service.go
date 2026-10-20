@@ -802,6 +802,11 @@ func (reconciler *ServiceReconciler) autoscalingRecommendationHistory() *core.Re
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	reconciler.APIReader = manager.GetAPIReader()
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &inferencev1alpha1.ModelGroup{}, modelGroupPoolUIDIndex, func(object client.Object) []string {
+		return []string{object.(*inferencev1alpha1.ModelGroup).Spec.ModelPoolRef.UID}
+	}); err != nil {
+		return fmt.Errorf("index ModelGroups for scaling observations: %w", err)
+	}
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).

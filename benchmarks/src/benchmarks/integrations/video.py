@@ -229,24 +229,38 @@ def video_request_form_data(request: VideoGenerationRequest) -> dict[str, str]:
     }
 
 
+async def _run_ffprobe(executable: str, *arguments: str) -> tuple[int, bytes, bytes]:
+    """Return exit status and output for both video probe stages, reaping on cancellation."""
+    process = await asyncio.create_subprocess_exec(
+        executable,
+        *arguments,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    # Keep pipe draining alive so cancellation can kill and reap the same process.
+    communication = asyncio.create_task(process.communicate())
+    try:
+        stdout, stderr = await asyncio.shield(communication)
+    finally:
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+        await communication
+    return process.returncode, stdout, stderr
+
+
 async def _resolve_ffprobe() -> tuple[str | None, str | None]:
     """Resolve and launch-check ffprobe once for a video client run."""
     executable = shutil.which("ffprobe")
     if executable is None:
         return None, "ffprobe is not installed"
     try:
-        process = await asyncio.create_subprocess_exec(
-            executable,
-            "-version",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        code, _, stderr = await _run_ffprobe(executable, "-version")
     except OSError as exc:
         return None, f"ffprobe could not start: {exc}"
-    _, stderr = await process.communicate()
-    if process.returncode:
+    if code:
         message = stderr.decode("utf-8", "replace").strip()
-        detail = message or f"exit status {process.returncode}"
+        detail = message or f"exit status {code}"
         return None, f"ffprobe is unavailable: {detail}"
     return executable, None
 
@@ -254,7 +268,7 @@ async def _resolve_ffprobe() -> tuple[str | None, str | None]:
 async def probe_video(path: Path, executable: str = "ffprobe") -> dict[str, Any]:
     """Return ffprobe metadata or a structured media validation error."""
     try:
-        process = await asyncio.create_subprocess_exec(
+        code, stdout, stderr = await _run_ffprobe(
             executable,
             "-v",
             "error",
@@ -267,8 +281,6 @@ async def probe_video(path: Path, executable: str = "ffprobe") -> dict[str, Any]
             "-of",
             "json",
             str(path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
         return {
@@ -277,10 +289,9 @@ async def probe_video(path: Path, executable: str = "ffprobe") -> dict[str, Any]
                 f"{exc}"
             )
         }
-    stdout, stderr = await process.communicate()
-    if process.returncode:
+    if code:
         message = stderr.decode("utf-8", "replace").strip()
-        detail = message or f"exit status {process.returncode}"
+        detail = message or f"exit status {code}"
         return {"error": f"ffprobe failed: {detail}"}
     try:
         metadata = json.loads(stdout)

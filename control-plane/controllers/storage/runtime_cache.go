@@ -135,13 +135,7 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 		return nil, fmt.Errorf("runtime cache initialSize must be a positive Kubernetes quantity")
 	}
 	accessMode := corev1.PersistentVolumeAccessMode(cache.Spec.AccessMode)
-	if accessMode == "" {
-		accessMode = corev1.ReadWriteMany
-	}
 	retention := cache.Spec.RetentionPolicy
-	if retention == "" {
-		retention = inferencev1alpha1.RuntimeCacheRetentionPolicyRetain
-	}
 	pvc := &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"},
 		ObjectMeta: metav1.ObjectMeta{

@@ -62,18 +62,23 @@ func ModelGroupServiceSelector(group *inferencev1alpha1.ModelGroup) map[string]s
 
 // FrontendPodEndpoint resolves the named HTTP listener used to observe one frontend replica.
 func FrontendPodEndpoint(pod *corev1.Pod) (string, error) {
+	return PodEndpoint(pod, frontendHTTPPortName)
+}
+
+// PodEndpoint resolves a declared HTTP listener for controllers observing the actual Pod runtime.
+func PodEndpoint(pod *corev1.Pod, portName string) (string, error) {
 	if pod.Status.PodIP == "" {
-		return "", fmt.Errorf("frontend Pod %q has no Pod IP", pod.Name)
+		return "", fmt.Errorf("Pod %q has no Pod IP", pod.Name)
 	}
 	for _, container := range pod.Spec.Containers {
 		for _, port := range container.Ports {
-			if port.Name == frontendHTTPPortName {
+			if port.Name == portName {
 				address := net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(port.ContainerPort)))
 				return "http://" + address, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
+	return "", fmt.Errorf("Pod %q has no %q port", pod.Name, portName)
 }
 
 // ModelGroupLeaderWorkerSetName reserves a separate headless Service name for LWS

@@ -35,7 +35,7 @@ curl --fail-with-body "$FRONTEND_URL/v1/responses" \
 
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和自定义文本工具。强制选择工具和严格约束参数需要模型具备[结构化输出能力](#修改服务配置)。
 
-输出 token 预算包含思考内容。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。
+输出 token 预算包含思考内容。Chat Completions 支持 `max_completion_tokens` 和 `max_tokens`，同时传入时以前者为准。Messages 使用 `max_tokens`，不接受 `thinking.budget_tokens`；思考控制取决于模型的聊天模板。预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `status: "incomplete"`。客户端只应执行完整的工具调用。
 
 ### 延续对话
 

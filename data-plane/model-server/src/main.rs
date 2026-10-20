@@ -24,7 +24,8 @@ use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use foretoken_model_server::shared_kv;
 use foretoken_model_server::shutdown_signal;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
 use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
@@ -72,8 +73,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(runtime_cache::Config::observation_port),
     )
     .map_err(std::io::Error::other)?;
+    // Ancillary tasks remain owned through serving and drain, including failed startup.
+    let tasks = TaskTracker::new();
+    let shutdown = CancellationToken::new();
+    let result = run_engine_runtime(config, cache_config, &tasks, shutdown.clone()).await;
+    shutdown.cancel();
+    tasks.close();
+    tasks.wait().await;
+    result
+}
+
+/// Runs leader or worker supervision; the entrypoint joins ancillary tasks on every exit path.
+async fn run_engine_runtime(
+    config: RuntimeConfig,
+    cache_config: Option<runtime_cache::Config>,
+    tasks: &TaskTracker,
+    background_shutdown: CancellationToken,
+) -> Result<(), Box<dyn std::error::Error>> {
     let request_ledger = foretoken_request_ledger::RequestLedger::from_env()?.map(Arc::new);
-    let cache_shutdown = Arc::new(Notify::new());
+    let cache_shutdown = background_shutdown.child_token();
     let profiling_config = if let Some(cache) = &cache_config {
         let workers = config.launch.parallelism.tp
             * config.launch.parallelism.pp
@@ -96,9 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let address = (config.listen_address.ip(), server_config.observation_port());
         let listener = TcpListener::bind(address).await?;
         let shutdown = cache_shutdown.clone();
-        Some(tokio::spawn(async move {
-            runtime_cache::serve(listener, server_config, shutdown).await
-        }))
+        Some(tasks.spawn(runtime_cache::serve(listener, server_config, shutdown)))
     } else {
         None
     };
@@ -255,7 +271,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || LOOPBACK_HOST.to_string(),
             |member| member.address.to_string(),
         );
-        tokio::spawn(adapter.clone().serve(host, config.ports, ready_tx));
+        let events = adapter.clone();
+        let stopped = background_shutdown.clone();
+        tasks.spawn(async move {
+            stopped
+                .run_until_cancelled(events.serve(host, config.ports, ready_tx))
+                .await;
+        });
         if ready_rx.await != Ok(true) {
             warn!("KV event subscriber is unavailable; live engine observations remain available");
         }
@@ -285,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profiling.map(|config| profiling::Supervisor::new(config, Some(backend.clone())));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
     if let Some((ledger, pod_uid, epoch)) = execution_store {
@@ -315,7 +337,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.launch.internal_generate_request_body_limit_bytes,
             ),
         )
-        .with_graceful_shutdown(async move { server_shutdown.notified().await })
+        .with_graceful_shutdown(server_shutdown.cancelled_owned())
         .into_future(),
     );
 
@@ -367,8 +389,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     health.set_accepting(false);
     health.set_client_healthy(false);
-    shutdown.notify_waiters();
-    cache_shutdown.notify_waiters();
+    shutdown.cancel();
+    cache_shutdown.cancel();
     let deadline = Instant::now() + config.launch.drain_timeout();
     // Only an active native capture requires forced profiler stop. Merely preparing
     // profiling must not bypass normal request draining on SIGTERM.
@@ -474,7 +496,7 @@ async fn run_worker(
     cache: Option<&runtime_cache::Config>,
     profiling: Option<&profiling::Config>,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-    cache_shutdown: Arc<Notify>,
+    cache_shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(config.listen_address).await?;
     let (engine, _, _, _) = spawn_engine_attempt(
@@ -490,7 +512,7 @@ async fn run_worker(
         .filter(|_| config.launch.profiling.engine == profiling::Engine::Nsight)
         .cloned()
         .map(|profile| profiling::Supervisor::new(profile, None));
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let server_shutdown = shutdown.clone();
     let app = axum::Router::new()
         .route(
@@ -506,13 +528,17 @@ async fn run_worker(
         ));
     let mut server = Box::pin(
         axum::serve(listener, app)
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(server_shutdown.cancelled_owned())
             .into_future(),
     );
+    let mut server_stopped = false;
     let failure = tokio::select! {
         signal = shutdown_signal() => signal.err().map(|error| format!("shutdown signal handler failed: {error}")),
         status = engine.wait_for_exit() => Some(format!("managed worker exited: {status}")),
-        result = &mut server => Some(format!("worker health server stopped: {result:?}")),
+        result = &mut server => {
+            server_stopped = true;
+            Some(format!("worker health server stopped: {result:?}"))
+        },
         reason = runtime_cache::wait_for_server(cache_server) => Some(reason),
         error = wait_cache_write_failure(cache, runtime_cache::Mode::Persistent) => Some(error.to_string()),
         result = async {
@@ -525,11 +551,19 @@ async fn run_worker(
     if let Some(profiler) = &profiler {
         profiler.handle().close();
     }
-    shutdown.notify_waiters();
-    cache_shutdown.notify_waiters();
+    shutdown.cancel();
+    cache_shutdown.cancel();
+    let deadline = Instant::now() + config.launch.drain_timeout();
     engine.shutdown(config.launch.drain_timeout()).await?;
     if let Some(profiler) = &mut profiler {
         profiler.engine_stopped("worker runtime terminated").await;
+    }
+    if !server_stopped {
+        match tokio::time::timeout_at(deadline.into(), &mut server).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(%error, "worker health server failed while draining"),
+            Err(_) => warn!("worker health server exceeded the drain deadline"),
+        }
     }
     match failure {
         Some(message) => Err(io::Error::other(message).into()),

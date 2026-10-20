@@ -71,7 +71,7 @@ async fn status(State(state): State<ApiState>, Path(id): Path<String>) -> Respon
     };
     match client.get(&id).await {
         Ok(task) => Json(json!({
-            "id": task.metadata.name,
+            "id": task.id,
             "phase": if task.status.phase.is_empty() { "Pending" } else { &task.status.phase },
             "reason": task.status.reason,
             "message": task.status.message,

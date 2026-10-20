@@ -55,7 +55,7 @@ from foretoken.build.storage import (
 )
 from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.kubernetes.client import timeout_seconds
 from foretoken.network_sources import select_build_sources
 
 
@@ -97,7 +97,7 @@ def prepare_source_images(
     cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(command.timeout))
     cancellation.check()
     root = source_checkout(command.editable)
-    kubectl = Kubectl()
+    kubectl = origin.kubectl
     engines = engine_source_roots(command.engine_sources)
     state_directory = checkout if checkout is not None else cluster_state_directory(kubectl)
     state_path = state_directory / "install.json"
@@ -273,22 +273,17 @@ def prepare_source_images(
         credentials = registry_credentials(
             [
                 configuration["image"],
-                prefix,
                 base_image or "",
+                *(value for key, value in arguments.items() if key.endswith("_IMAGE")),
+            ],
+            registries=[
+                registry,
                 "docker.io",
                 "gcr.io",
                 "ghcr.io",
-                *(
-                    endpoint
-                    for endpoints in registry_mirrors.values()
-                    for endpoint in endpoints
-                ),
-                *(
-                    value
-                    for key, value in arguments.items()
-                    if key.endswith(("REGISTRY", "_IMAGE"))
-                ),
-            ]
+                *(endpoint for endpoints in registry_mirrors.values() for endpoint in endpoints),
+                *(value for key, value in arguments.items() if key.endswith("REGISTRY")),
+            ],
         )
         versions = snapshot_versions(snapshot, old, build.get("versions", {}))
         files = {
@@ -505,7 +500,7 @@ def prepare_source_images(
             from foretoken.platform.helm import Helm
 
             retained_applications = origin.references(
-                Helm(default_platform_config(command.oci_registry)).application_history()
+                Helm(default_platform_config(command.oci_registry), kubectl).application_history()
             )
             if retained_applications is not None:
                 retained_applications.add(suffix)

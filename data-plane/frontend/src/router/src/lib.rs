@@ -22,7 +22,7 @@ pub use algorithm::{
     RouteScorer,
 };
 pub use inventory::{ModelRouteTable, RouteDecision, RouteInventory};
-pub use metrics::render_metrics;
+pub use metrics::encode_metrics;
 pub use request::RouterRequest;
 pub use route_target_stats::RouteTargetStatsReader;
 pub use selection::{

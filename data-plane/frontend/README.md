@@ -35,7 +35,7 @@ The response contains an `id` and generated `output`. Add `"stream": true` and `
 
 Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and custom-text tools. Forced tool choice and strict schemas require the model's [structured-output capability](#update-serving-settings).
 
-Output budgets include reasoning tokens. Messages uses `max_tokens`, not `thinking.budget_tokens`; thinking controls depend on the model's chat template. Budget exhaustion produces `max_tokens` in Messages or `status: "incomplete"` in Responses. Execute only complete tool calls.
+Output budgets include reasoning tokens. Chat Completions accepts `max_completion_tokens` or `max_tokens`; when both are set, `max_completion_tokens` takes precedence. Messages uses `max_tokens`, not `thinking.budget_tokens`; thinking controls depend on the model's chat template. Budget exhaustion produces `max_tokens` in Messages or `status: "incomplete"` in Responses. Execute only complete tool calls.
 
 ### Continue a conversation
 

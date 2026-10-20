@@ -28,7 +28,7 @@ def deploy(command: DeployCommand) -> None:
         deployment = load_deployment(command.kustomize_path, kubectl, name=command.name)
         # Resolve profiling intent before changing the deployment.
         capture = (
-            ProfileRun(command.profile, deployment=deployment)
+            ProfileRun(command.profile, deployment=deployment, kubectl=kubectl)
             if command.profile is not None else None
         )
         DeploymentLifecycle(kubectl).apply(

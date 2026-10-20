@@ -27,9 +27,6 @@ def view(command: ProfileViewCommand) -> None:
     if timeout_seconds(command.timeout) <= 0:
         raise DeploymentError("--timeout must be positive")
     kubectl = Kubectl()
-    # A long-lived viewer must not switch clusters when another terminal changes context.
-    context = kubectl.run(["config", "current-context"]).stdout.strip()
-    kubectl = Kubectl(context=context)
     history = CaptureDirectories(kubectl, command.namespace)
     history.refresh()
     with (

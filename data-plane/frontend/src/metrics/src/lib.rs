@@ -4,6 +4,7 @@
 //! vLLM-compatible Prometheus metrics and Foretoken-owned admission telemetry.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,6 +14,11 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use foretoken_router::{RouteTargetSet, ScalingTarget};
+use prometheus_client::collector::Collector;
+use prometheus_client::encoding::text::{encode_eof, encode_registry};
+use prometheus_client::encoding::{DescriptorEncoder, EncodeLabelSet};
+use prometheus_client::metrics::MetricType;
+use prometheus_client::registry::Registry;
 use serde::Serialize;
 
 pub use vllm_metrics::*;
@@ -28,7 +34,7 @@ pub const EXCLUDED_HANDLERS: &[&str] = &[
     "/internal/autoscaling/telemetry",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, EncodeLabelSet)]
 pub struct QueuedTarget {
     pub service_uid: String,
     pub target_kind: String,
@@ -60,6 +66,11 @@ enum QueueStage {
 struct QueueCounts {
     runtime_preparation: u64,
     backend_dispatch: u64,
+}
+
+#[derive(Debug)]
+struct FrontendCollector {
+    kv_index: Option<(String, Option<String>, usize, usize)>,
 }
 
 static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, QueueCounts>>> = OnceLock::new();
@@ -209,55 +220,85 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-// Combines upstream, Router, admission, and optional KV-index families under one OpenMetrics EOF marker.
+// All owners encode into one OpenMetrics document; only the endpoint writes its EOF marker.
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
-    match (
-        METRICS.render(),
-        foretoken_router::render_metrics(),
-        foretoken_admission::render_metrics(),
-    ) {
-        (Ok(mut body), Ok(router), Ok(admission)) => {
-            if let Some(without_eof) = body.strip_suffix("# EOF\n") {
-                body = without_eof.to_owned();
-            }
-            body.push_str(router.strip_suffix("# EOF\n").unwrap_or(&router));
-            body.push_str(admission.strip_suffix("# EOF\n").unwrap_or(&admission));
-            body.push_str(&render_admission_metrics());
-            if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
-                body.push_str(&format!("# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n", usize::from(!matches!(state, "disabled" | "unavailable")), escape_label(reason.unwrap_or("none")), usize::from(state == "degraded"), sources_healthy, sources_total));
-            }
-            body.push_str("# EOF\n");
-            (
-                [(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
-                )],
-                body,
-            )
-                .into_response()
-        }
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let encoded = (|| {
+        let mut body = String::new();
+        encode_registry(&mut body, METRICS.registry())?;
+        foretoken_router::encode_metrics(&mut body)?;
+        foretoken_admission::encode_metrics(&mut body)?;
+        let mut registry = Registry::default();
+        registry.register_collector(Box::new(FrontendCollector {
+            kv_index: kv_index.map(|(state, reason, healthy, total)| {
+                (state.to_owned(), reason.map(str::to_owned), healthy, total)
+            }),
+        }));
+        encode_registry(&mut body, &registry)?;
+        encode_eof(&mut body)?;
+        Ok::<_, fmt::Error>(body)
+    })();
+    match encoded {
+        Ok(body) => (
+            [(
+                CONTENT_TYPE,
+                HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
+            )],
+            body,
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
-fn render_admission_metrics() -> String {
-    let values = queued_lock();
-    let mut body = String::from(
-        "# TYPE foretoken_upstream_queued_requests gauge\n# HELP foretoken_upstream_queued_requests Requests waiting for admission to a scaling target.\n",
-    );
-    for (target, counts) in values.iter() {
-        let value = counts
-            .runtime_preparation
-            .saturating_add(counts.backend_dispatch);
-        body.push_str(&format!("foretoken_upstream_queued_requests{{service_uid=\"{}\",target_kind=\"{}\",target_id=\"{}\"}} {}\n", escape_label(&target.service_uid), escape_label(&target.target_kind), escape_label(&target.target_id), value));
+impl Collector for FrontendCollector {
+    /// Encodes owner-held queues and the scrape's KV snapshot without mirrored gauge state.
+    fn encode(&self, mut encoder: DescriptorEncoder<'_>) -> Result<(), fmt::Error> {
+        let mut queues = encoder.encode_descriptor(
+            "foretoken_upstream_queued_requests",
+            "Requests waiting for admission to a scaling target",
+            None,
+            MetricType::Gauge,
+        )?;
+        for (target, counts) in queued_lock().iter() {
+            let count = counts
+                .runtime_preparation
+                .saturating_add(counts.backend_dispatch);
+            queues.encode_family(target)?.encode_gauge(&count)?;
+        }
+        if let Some((state, reason, healthy, total)) = &self.kv_index {
+            for (name, help, value) in [
+                (
+                    "foretoken_kv_index_enabled",
+                    "Whether KV locality indexing is enabled",
+                    u64::from(!matches!(state.as_str(), "disabled" | "unavailable")),
+                ),
+                (
+                    "foretoken_kv_index_sources_healthy",
+                    "Healthy KV event sources",
+                    *healthy as u64,
+                ),
+                (
+                    "foretoken_kv_index_sources_total",
+                    "Configured KV event sources",
+                    *total as u64,
+                ),
+            ] {
+                encoder
+                    .encode_descriptor(name, help, None, MetricType::Gauge)?
+                    .encode_gauge(&value)?;
+            }
+            encoder
+                .encode_descriptor(
+                    "foretoken_kv_index_degraded",
+                    "Whether KV locality observations are degraded",
+                    None,
+                    MetricType::Gauge,
+                )?
+                .encode_family(&[("reason", reason.as_deref().unwrap_or("none"))])?
+                .encode_gauge(&u64::from(state == "degraded"))?;
+        }
+        Ok(())
     }
-    body
-}
-fn escape_label(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('\n', "\\n")
-        .replace('"', "\\\"")
 }
 
 fn status_group(status: u16) -> &'static str {

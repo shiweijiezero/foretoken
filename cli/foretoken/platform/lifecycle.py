@@ -87,9 +87,9 @@ class PlatformLifecycle:
 
     def __init__(self, oci_registry: str | None = None) -> None:
         config = default_platform_config(oci_registry)
-        self._helm = Helm(config)
-        self._oci_registry = config.image_registry
         self._kubectl = Kubectl()
+        self._helm = Helm(config, self._kubectl)
+        self._oci_registry = config.image_registry
         self._metax_exporter = MetaXExporterLifecycle(
             self._kubectl,
             config.management_label,

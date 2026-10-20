@@ -44,3 +44,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 `common/engine-abort-completion.patch` 让 Python EngineCore 在各传输路径上发布调度器已确认终止的请求 ID，包括即时取消。上游请求注册、调度终止或输出传递发生变化时，须同步核对这两个补丁。
 完成信号表示请求调度结束，不表示 GPU 同步或连接器释放 KV。
 修改该契约后，在受影响的传输路径上执行正常完成、取消和丢弃输出消费者的流程，同时检查独立完成信号和返回的输出。
+
+## Chat token 元数据
+
+`rust/chat-token-metadata.patch` 基于上游的[解码归属](https://github.com/vllm-project/vllm/commit/b911fe85c42ae984f27d183a0b1de309adab9bf2)和[推理内容归属](https://github.com/vllm-project/vllm/commit/21a22110404d98dcab5f51cd90e9acb0acc15e47)实现，将采样位置及完整解码范围传过解析器的缓冲阶段，也覆盖多个 token 共同解码成一个 UTF-8 片段的情况。
+
+`ChatTokenMetadataMode::Sampled` 保留原始元数据及其输出节奏。`VisibleContent` 等待整个 token 的解码范围都被确认为解析器的可见内容后，再释放元数据；跨越隐藏内容或被排除的停止文本时，整个 token 的元数据都不输出。usage 仍按原始生成结果统计。更新补丁后，应使用真实 tokenizer 和输出处理器，在两种模式下验证停止文本缓冲、截断和解析失败后的恢复。

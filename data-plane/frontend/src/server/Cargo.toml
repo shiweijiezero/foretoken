@@ -12,6 +12,7 @@ foretoken-admission = { path = "../admission" }
 arc-swap.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+async-openai.workspace = true
 axum = { workspace = true, features = ["multipart"] }
 bytes.workspace = true
 foretoken-chat = { path = "../chat" }
@@ -24,6 +25,8 @@ foretoken-request-ledger = { path = "../../../request-ledger" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
 futures.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use foretoken_model_protocol::ModelServerRole;
 use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::text::encode_registry;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::{Family, MetricConstructor};
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
@@ -94,11 +94,9 @@ pub(crate) struct RouterMetricsScope {
 
 pub(crate) static METRICS: LazyLock<RouterMetrics> = LazyLock::new(RouterMetrics::new);
 
-/// Renders Router observations for the Frontend scrape handler, including the OpenMetrics EOF marker.
-pub fn render_metrics() -> Result<String, fmt::Error> {
-    let mut output = String::new();
-    encode(&mut output, &METRICS.registry)?;
-    Ok(output)
+/// Appends routing metrics without EOF so the frontend can combine independently owned registries.
+pub fn encode_metrics(output: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+    encode_registry(output, &METRICS.registry)
 }
 
 fn latency_histogram() -> Histogram {

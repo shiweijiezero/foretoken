@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -22,9 +21,11 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -98,7 +99,7 @@ func (reconciler *ServiceReconciler) Reconcile(ctx context.Context, request ctrl
 			ready:          condition,
 		}))
 	}
-	binding, err := reconciler.reconcileInfrastructure(ctx, service)
+	binding, master, err := reconciler.reconcileInfrastructure(ctx, service)
 	if err != nil {
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
 			phase:          inferencev1alpha1.KVServicePhaseDegraded,
@@ -107,13 +108,14 @@ func (reconciler *ServiceReconciler) Reconcile(ctx context.Context, request ctrl
 			ready:          kvServiceCondition{reason: "InfrastructureNotReady", message: "Master infrastructure is not ready"},
 		}))
 	}
-	infrastructureReady, err := reconciler.infrastructureReady(ctx, service)
+	infrastructureReady, err := reconciler.infrastructureReady(ctx, service, master)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	pools, err := reconciler.ownedPools(ctx, service)
 	poolsConverged, capacityAvailable := false, false
 	if err == nil {
+		selectKVPoolRevisions(pools, desiredPools)
 		poolsConverged, capacityAvailable, err = kvPoolState(pools, desiredPools)
 	}
 	if err != nil {
@@ -157,19 +159,20 @@ func (reconciler *ServiceReconciler) Reconcile(ctx context.Context, request ctrl
 	return result, errors.Join(applyErr, reconciler.updateStatus(ctx, service, status))
 }
 
-// reconcileInfrastructure applies the master resources and maintains their requester configuration lifecycle.
-func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) (*inferencev1alpha1.KVServiceBinding, error) {
+// reconcileInfrastructure applies Master resources and returns the persisted single-Master workload with its binding.
+// Requester configurations remain selected until their model consumers retire.
+func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) (*inferencev1alpha1.KVServiceBinding, *appsv1.Deployment, error) {
 	resources, err := desiredKVMasterResources(service)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pending, err := reconciler.reconcileMasterWorkloadMode(ctx, service, resources)
 	if err != nil || pending {
-		return nil, err
+		return nil, nil, err
 	}
-	requesterName, err := reconciler.reconcileRequesterConfig(ctx, service, resources.requesterConfig)
+	requester, err := reconciler.reconcileRequesterConfig(ctx, service, resources.requesterConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	objects := []client.Object{resources.config}
 	for _, kubeService := range resources.services {
@@ -183,27 +186,27 @@ func (reconciler *ServiceReconciler) reconcileInfrastructure(ctx context.Context
 	}
 	for _, object := range objects {
 		if err := applyOwnedResource(ctx, reconciler.Client, service, object, kvServiceFieldOwner); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if resources.statefulSet != nil {
 		if err := reconciler.reconcileHAMasterUpdate(ctx, service, resources.statefulSet); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	if err := reconciler.removeStaleRequesterConfigs(ctx, service, requesterName); err != nil {
-		return nil, err
+	if err := reconciler.removeStaleRequesterConfigs(ctx, service, requester.Name); err != nil {
+		return nil, nil, err
 	}
 	if resources.pvc != nil {
 		if err := applyOwnedResource(ctx, reconciler.Client, service, resources.pvc, kvServiceFieldOwner); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else if service.Spec.Master.HighAvailability == nil {
 		if err := reconciler.reconcileSnapshotRemoval(ctx, service); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return desiredKVServiceBinding(requesterName, resources.connection), nil
+	return desiredKVServiceBinding(requester, resources.connection), resources.deployment, nil
 }
 
 // reconcileMasterWorkloadMode removes the superseded workload before changing its shared config.
@@ -255,10 +258,10 @@ func (reconciler *ServiceReconciler) reconcileHAMasterUpdate(ctx context.Context
 // settings. Referenced configurations are created once and never updated in place.
 // Querying resources instead of relying only on status avoids duplicate versions
 // after a restart or a temporary loss of readiness.
-func (reconciler *ServiceReconciler) reconcileRequesterConfig(ctx context.Context, service *inferencev1alpha1.KVService, desired *corev1.ConfigMap) (string, error) {
+func (reconciler *ServiceReconciler) reconcileRequesterConfig(ctx context.Context, service *inferencev1alpha1.KVService, desired *corev1.ConfigMap) (*corev1.ConfigMap, error) {
 	configs := new(corev1.ConfigMapList)
 	if err := reconciler.List(ctx, configs, client.InNamespace(service.Namespace), client.MatchingLabels(desired.Labels)); err != nil {
-		return "", err
+		return nil, err
 	}
 	var selected *corev1.ConfigMap
 	for index := range configs.Items {
@@ -267,22 +270,22 @@ func (reconciler *ServiceReconciler) reconcileRequesterConfig(ctx context.Contex
 			continue
 		}
 		if service.Status.Binding != nil && config.Name == service.Status.Binding.ConfigMapName {
-			return config.Name, nil
+			return config, nil
 		}
 		if selected == nil || config.CreationTimestamp.Before(&selected.CreationTimestamp) || (config.CreationTimestamp.Equal(&selected.CreationTimestamp) && config.Name < selected.Name) {
 			selected = config
 		}
 	}
 	if selected != nil {
-		return selected.Name, nil
+		return selected, nil
 	}
 	if err := controllerutil.SetControllerReference(service, desired, reconciler.Scheme()); err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := reconciler.Create(ctx, desired); err != nil {
-		return "", fmt.Errorf("create requester configuration: %w", err)
+		return nil, fmt.Errorf("create requester configuration: %w", err)
 	}
-	return desired.Name, nil
+	return desired, nil
 }
 
 // removeStaleRequesterConfigs deletes unreferenced requester ConfigMaps still owned by the KVService.
@@ -375,26 +378,23 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 			}
 			continue
 		}
-		if reflect.DeepEqual(pool.Spec, desiredSpec) {
-			continue
-		}
-		if pool.Spec.KVServiceRef == desiredSpec.KVServiceRef && pool.Spec.PoolName == desiredSpec.PoolName && pool.Spec.Revision == desiredSpec.Revision && reflect.DeepEqual(pool.Spec.Template, desiredSpec.Template) {
-			// Keep the Pool, Groups 0..N-1, and their PVCs intact while updating
-			// mutable capacity or the resolved Master admin port.
-			base := pool.DeepCopy()
-			pool.Spec.DesiredGroups = desiredSpec.DesiredGroups
-			pool.Spec.MasterAdminPort = desiredSpec.MasterAdminPort
-			if err := reconciler.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
-				return fmt.Errorf("update KVPool %q: %w", pool.Name, err)
-			}
-			continue
-		}
 		// A template or revision change requires a replacement Pool because those
 		// fields define immutable KVGroup specs.
-		if err := reconciler.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("replace KVPool %q: %w", pool.Name, err)
+		if pool.Spec.KVServiceRef != desiredSpec.KVServiceRef || pool.Spec.PoolName != desiredSpec.PoolName || pool.Spec.Revision != desiredSpec.Revision || !apiequality.Semantic.DeepEqual(pool.Spec.Template, desiredSpec.Template) {
+			if err := reconciler.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("replace KVPool %q: %w", pool.Name, err)
+			}
+			return nil
 		}
-		return nil
+		if pool.Spec.DesiredGroups == desiredSpec.DesiredGroups {
+			continue
+		}
+		// Capacity changes retain the Pool, Groups 0..N-1, and their PVCs.
+		base := pool.DeepCopy()
+		pool.Spec.DesiredGroups = desiredSpec.DesiredGroups
+		if err := reconciler.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("update KVPool %q: %w", pool.Name, err)
+		}
 	}
 	for index := range owned {
 		pool := &owned[index]
@@ -420,8 +420,8 @@ func normalizedKVPoolSpecs(service *inferencev1alpha1.KVService) ([]inferencev1a
 	return pools, nil
 }
 
-// normalizedKVPoolSpec freezes client configuration and the resolved admin port for a KVPool.
-// Capacity spellings resolve to byte counts before revision calculation.
+// normalizedKVPoolSpec resolves all client, Master, and lifecycle inputs before a KVPool is selected.
+// Capacity spellings resolve to byte counts before templates are compared.
 func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) (inferencev1alpha1.KVPoolSpec, error) {
 	memoryBytes, err := resourcevalidation.ParsePositiveBytes("client.memoryCapacity", string(template.Client.MemoryCapacity))
 	if err != nil {
@@ -437,36 +437,50 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 		disk.Size = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(diskBytes, 10))
 		template.Client.Disk = &disk
 	}
-	if template.Client.Port == 0 {
-		template.Client.Port = 50052
-	}
 	if template.Client.Protocol == "rdma" && template.Client.RDMAResourceCount == 0 {
 		template.Client.RDMAResourceCount = 1
 	}
-	if template.Client.StorageRegistration != nil {
-		registration := *template.Client.StorageRegistration
-		if registration.Port == 0 {
-			registration.Port = inferencev1alpha1.DefaultStorageRegistrationPort
-		}
-		template.Client.StorageRegistration = &registration
-	}
-	normalized := inferencev1alpha1.NormalizedKVPoolTemplate{Client: template.Client, NodeSelector: template.NodeSelector}
 	connection, err := resolveKVMasterConnection(service)
 	if err != nil {
 		return inferencev1alpha1.KVPoolSpec{}, err
 	}
-	adminPort := int32(0)
+	adminEndpoint := ""
 	if template.Client.StorageRegistration != nil && template.Client.StorageRegistration.Enabled {
-		_, _, adminPort = masterPorts(service.Spec.Master)
+		_, _, _, masterService := kvMasterNames(service)
+		adminEndpoint = fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, service.Spec.Master.MetricsPort)
 	}
+	timeouts := service.Spec.Timeouts
 	return inferencev1alpha1.KVPoolSpec{
-		KVServiceRef:    inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
-		PoolName:        template.Name,
-		Revision:        kvPoolRevision(normalized, connection.ServerAddress, adminPort),
-		MasterAdminPort: adminPort,
-		DesiredGroups:   template.Replicas,
-		Template:        normalized,
+		KVServiceRef:  inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
+		PoolName:      template.Name,
+		DesiredGroups: template.Replicas,
+		Template: inferencev1alpha1.NormalizedKVPoolTemplate{
+			Client: template.Client, NodeSelector: template.NodeSelector,
+			MasterServerAddress: connection.ServerAddress,
+			MasterAdminEndpoint: adminEndpoint,
+			MasterClusterID:     connection.ClusterID,
+			Timeouts:            &timeouts,
+		},
 	}, nil
+}
+
+// selectKVPoolRevisions reuses complete matching templates and allocates identities for new Pools.
+// Changed templates first retire the existing Pool through its normal Group and storage lifecycle.
+func selectKVPoolRevisions(owned []inferencev1alpha1.KVPool, desired []inferencev1alpha1.KVPoolSpec) {
+	byName := make(map[string]*inferencev1alpha1.KVPool, len(owned))
+	for index := range owned {
+		pool := &owned[index]
+		byName[pool.Spec.PoolName] = pool
+	}
+	for index := range desired {
+		spec := &desired[index]
+		pool := byName[spec.PoolName]
+		if pool == nil {
+			spec.Revision = string(uuid.NewUUID())
+		} else if pool.Spec.KVServiceRef == spec.KVServiceRef && apiequality.Semantic.DeepEqual(pool.Spec.Template, spec.Template) {
+			spec.Revision = pool.Spec.Revision
+		}
+	}
 }
 
 func poolObjectName(service *inferencev1alpha1.KVService, poolName string) string {
@@ -496,18 +510,10 @@ func (reconciler *ServiceReconciler) ownedPools(ctx context.Context, service *in
 	return owned, nil
 }
 
-// infrastructureReady reads the persisted master Deployment availability.
-func (reconciler *ServiceReconciler) infrastructureReady(ctx context.Context, service *inferencev1alpha1.KVService) (bool, error) {
-	master, _, _, _ := kvMasterNames(service)
+// infrastructureReady uses the applied single-Master response or observes native HA member health.
+func (reconciler *ServiceReconciler) infrastructureReady(ctx context.Context, service *inferencev1alpha1.KVService, master *appsv1.Deployment) (bool, error) {
 	if service.Spec.Master.HighAvailability == nil {
-		deployment := new(appsv1.Deployment)
-		if err := reconciler.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: master}, deployment); err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		return workload.DeploymentAvailable(deployment), nil
+		return workload.DeploymentAvailable(master), nil
 	}
 	members, err := reconciler.observeHAMasterMembers(ctx, service)
 	if err != nil {
@@ -530,14 +536,18 @@ func (reconciler *ServiceReconciler) observeHAMasterMembers(ctx context.Context,
 	if err := reconciler.List(ctx, pods, client.InNamespace(service.Namespace), client.MatchingLabels{kvServiceLabel: kvLabelValue(service.Name), "inference.foretoken.io/component": "mooncake-master", kvMasterModeLabel: "ha"}); err != nil {
 		return nil, err
 	}
-	_, _, metricsPort := masterPorts(service.Spec.Master)
 	members := make([]haMasterMember, 0, len(pods.Items))
 	for index := range pods.Items {
 		pod := &pods.Items[index]
 		if !metav1.IsControlledBy(pod, master) || !pod.DeletionTimestamp.IsZero() || pod.Status.PodIP == "" {
 			continue
 		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(metricsPort)))+"/health", nil)
+		// OnDelete members keep their declared listener until their Pod is replaced.
+		endpoint, err := workload.PodEndpoint(pod, "metrics")
+		if err != nil {
+			return nil, err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/health", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -600,7 +610,7 @@ func kvPoolState(pools []inferencev1alpha1.KVPool, desiredPools []inferencev1alp
 	converged, available := len(pools) == len(desiredPools), false
 	for _, desired := range desiredPools {
 		pool := byName[desired.PoolName]
-		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || pool.Spec.MasterAdminPort != desired.MasterAdminPort || !reflect.DeepEqual(pool.Spec.Template, desired.Template) {
+		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || !apiequality.Semantic.DeepEqual(pool.Spec.Template, desired.Template) {
 			converged = false
 			continue
 		}
@@ -727,10 +737,10 @@ func (reconciler *ServiceReconciler) updateStatus(ctx context.Context, service *
 
 // desiredKVServiceBinding projects the selected configuration version to model
 // consumers; changing the replica count does not change that version.
-func desiredKVServiceBinding(requesterName string, connection kvMasterConnection) *inferencev1alpha1.KVServiceBinding {
+func desiredKVServiceBinding(requester *corev1.ConfigMap, connection kvMasterConnection) *inferencev1alpha1.KVServiceBinding {
 	return &inferencev1alpha1.KVServiceBinding{
-		Revision:       kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, 0),
-		ConfigMapName:  requesterName,
+		Revision:       string(requester.UID),
+		ConfigMapName:  requester.Name,
 		ConfigMapKey:   requesterConfigKey,
 		MasterEndpoint: connection.ServerAddress,
 		ClusterID:      connection.ClusterID,

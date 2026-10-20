@@ -11,7 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::text::encode_registry;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
@@ -118,11 +118,9 @@ pub fn mark_request_deadline() {
     });
 }
 
-/// Encodes admission metrics for the frontend's combined OpenMetrics response.
-pub fn render_metrics() -> Result<String, fmt::Error> {
-    let mut output = String::new();
-    encode(&mut output, &METRICS.registry)?;
-    Ok(output)
+/// Appends admission metrics without EOF so the frontend can combine independently owned registries.
+pub fn encode_metrics(output: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+    encode_registry(output, &METRICS.registry)
 }
 
 fn wait_histogram() -> Histogram {

@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from math import ceil
 from typing import Any
+
+from prometheus_client.parser import text_string_to_metric_families
 
 from foretoken.accelerators._exporter import (
     monitor_service_endpoints,
@@ -31,11 +32,6 @@ from foretoken.observability import (
     prometheus_query,
     prometheus_selects_service_monitor,
 )
-
-_METRIC_SAMPLE = re.compile(
-    r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)(?:\{(?P<labels>[^}]*)\})?\s+"
-)
-_METRIC_LABEL = re.compile(r'(?:^|,)\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)="')
 
 
 @dataclass(frozen=True)
@@ -272,15 +268,15 @@ class ExporterDiscovery:
             ) from exc
 
         samples: dict[str, list[frozenset[str]]] = {}
-        for line in body.splitlines():
-            match = _METRIC_SAMPLE.match(line)
-            if match is None:
-                continue
-            labels = frozenset(
-                label.group("name")
-                for label in _METRIC_LABEL.finditer(match.group("labels") or "")
-            )
-            samples.setdefault(match.group("name"), []).append(labels)
+        try:
+            for family in text_string_to_metric_families(body):
+                for sample in family.samples:
+                    samples.setdefault(sample.name, []).append(frozenset(sample.labels))
+        except ValueError as error:
+            raise DeploymentError(
+                f"{exporter_name} Service {endpoint.service.namespace}/{endpoint.service.name} "
+                f"endpoint {endpoint.path} returned invalid Prometheus metrics; {repair_hint}"
+            ) from error
         missing = tuple(
             requirement.name
             for requirement in requirements

@@ -1,0 +1,3176 @@
+--- a/rust/src/chat/src/lib.rs
++++ b/rust/src/chat/src/lib.rs
+@@ -23,7 +23,7 @@
+ use futures::{StreamExt, TryStreamExt as _};
+ pub use llm_multimodal::MediaContentPart;
+ pub use output::{
+-    ChatOutputProcessor, DefaultChatOutputProcessor, DynChatOutputProcessor,
++    ChatOutputProcessor, ChatTokenMetadataMode, DefaultChatOutputProcessor, DynChatOutputProcessor,
+     HarmonyChatOutputProcessor,
+ };
+ pub use parser::ParserSelection;
+--- a/rust/src/chat/src/output/default/mod.rs
++++ b/rust/src/chat/src/output/default/mod.rs
+@@ -18,7 +18,9 @@
+ use self::unified::unified_event_stream;
+ use super::structured::structured_chat_event_stream;
+ use crate::error::Result;
+-use crate::output::{ChatOutputProcessor, DynChatEventStream, DynDecodedTextEventStream};
++use crate::output::{
++    ChatOutputProcessor, ChatTokenMetadataMode, DynChatEventStream, DynDecodedTextEventStream,
++};
+ use crate::parser::ParserSelection;
+ use crate::parser::reasoning::{ReasoningParser, ReasoningParserFactory, names};
+ use crate::parser::tool::{ToolParser, ToolParserFactory};
+@@ -201,8 +203,12 @@
+     ///
+     /// 1. [`unified_event_stream`] — reasoning and tool-call parsing
+     /// 2. [`structured_chat_event_stream`] — final block assembly
+-    fn process(self: Box<Self>, decoded: DynDecodedTextEventStream) -> Result<DynChatEventStream> {
+-        let parsed = unified_event_stream(decoded, self.parser);
++    fn process_with_metadata(
++        self: Box<Self>,
++        decoded: DynDecodedTextEventStream,
++        metadata_mode: ChatTokenMetadataMode,
++    ) -> Result<DynChatEventStream> {
++        let parsed = unified_event_stream(decoded, self.parser, metadata_mode);
+         let structured = structured_chat_event_stream(parsed, self.parallel_tool_calls);
+ 
+         Ok(structured.boxed())
+--- a/rust/src/chat/src/output/default/unified.rs
++++ b/rust/src/chat/src/output/default/unified.rs
+@@ -14,11 +14,15 @@
+ use tracing::warn;
+ use vllm_parser::unified::{UnifiedParser, UnifiedParserEvent, UnifiedParserOutput};
+ use vllm_text::output::DecodedTextEvent;
++use vllm_tokenizer::DecodedText;
+ 
+ use crate::Result;
+ use crate::error::Error;
+ use crate::event::AssistantBlockKind;
+-use crate::output::{AssistantEvent, DecodedTextEventStream, generate_tool_call_id};
++use crate::output::metadata::PendingMetadata;
++use crate::output::{
++    AssistantEvent, ChatTokenMetadataMode, DecodedTextEventStream, generate_tool_call_id,
++};
+ 
+ /// Per-stream unified parsing state.
+ struct UnifiedParserState {
+@@ -31,15 +35,17 @@
+     /// Supported parsers currently emit at most one active tool call at a time.
+     /// Change this to an indexed map if a model needs interleaved calls later.
+     open_call_index: Option<usize>,
++    metadata: PendingMetadata,
+ }
+ 
+ impl UnifiedParserState {
+     /// Create one fresh unified parsing state for a new streamed response.
+-    fn new(parser: Box<dyn UnifiedParser>) -> Self {
++    fn new(parser: Box<dyn UnifiedParser>, metadata_mode: ChatTokenMetadataMode) -> Self {
+         Self {
+             parser,
+             parser_failed: false,
+             open_call_index: None,
++            metadata: PendingMetadata::new(metadata_mode),
+         }
+     }
+ 
+@@ -63,14 +69,19 @@
+     }
+ 
+     /// Convert one decoded text delta into zero or more parsed assistant events.
+-    fn process_delta(&mut self, delta: String) -> Result<Vec<AssistantEvent>> {
++    fn process_delta(&mut self, delta: DecodedText) -> Result<Vec<AssistantEvent>> {
+         if self.parser_failed {
+             self.open_call_index = None;
+-            return Ok(text_event(AssistantBlockKind::Text, delta).into_iter().collect());
+-        }
+-
++            let mut output = UnifiedParserOutput::default();
++            output.push_content_piece(delta);
++            let mut events = Vec::new();
++            self.process_parser_output(output, &mut events)?;
++            return Ok(events);
++        }
++
++        let fallback_text = delta.text.clone();
+         let mut output = UnifiedParserOutput::default();
+-        match self.parser.parse_into(&delta, &mut output) {
++        match self.parser.parse_into(delta, &mut output) {
+             Ok(()) => {
+                 let mut events = Vec::new();
+                 self.process_parser_output(output, &mut events)?;
+@@ -88,11 +99,14 @@
+                 self.open_call_index = None;
+ 
+                 let recovered = self.parser.reset();
+-                if recovered.is_empty() && events.is_empty() {
+-                    push_text_delta(&mut events, AssistantBlockKind::Text, delta);
++                let mut fallback = UnifiedParserOutput::default();
++                fallback.discard_positions(recovered.discarded_positions);
++                if recovered.text.is_empty() && events.is_empty() {
++                    fallback.push_text(fallback_text);
+                 } else {
+-                    push_text_delta(&mut events, AssistantBlockKind::Text, recovered);
+-                }
++                    fallback.push_text(recovered.text);
++                }
++                self.process_parser_output(fallback, &mut events)?;
+                 Ok(events)
+             }
+         }
+@@ -116,7 +130,10 @@
+                 self.parser_failed = true;
+                 self.open_call_index = None;
+                 let recovered = self.parser.reset();
+-                push_text_delta(&mut events, AssistantBlockKind::Text, recovered);
++                let mut fallback = UnifiedParserOutput::default();
++                fallback.discard_positions(recovered.discarded_positions);
++                fallback.push_text(recovered.text);
++                self.process_parser_output(fallback, &mut events)?;
+             }
+         }
+ 
+@@ -129,6 +146,9 @@
+         output: UnifiedParserOutput,
+         events: &mut Vec<AssistantEvent>,
+     ) -> Result<()> {
++        for disposition in output.token_dispositions {
++            self.metadata.apply(disposition);
++        }
+         for event in output.events {
+             match event {
+                 UnifiedParserEvent::Text(delta) => {
+@@ -217,11 +237,12 @@
+ pub(crate) async fn unified_event_stream(
+     decoded_stream: impl DecodedTextEventStream,
+     parser: Box<dyn UnifiedParser>,
++    metadata_mode: ChatTokenMetadataMode,
+     mut y: TryYielder<AssistantEvent, Error>,
+ ) -> Result<()> {
+     pin_mut!(decoded_stream);
+ 
+-    let mut state = UnifiedParserState::new(parser);
++    let mut state = UnifiedParserState::new(parser, metadata_mode);
+ 
+     while let Some(event) = decoded_stream.next().await.transpose()? {
+         match event {
+@@ -242,18 +263,25 @@
+                 logprobs,
+                 finished,
+             } => {
+-                for next in state.process_delta(delta)? {
++                let sampled = state.metadata.push_samples(token_ids, logprobs);
++                let events = state.process_delta(delta)?;
++                let metadata = state.metadata.take_ready();
++                for next in events {
+                     y.yield_ok(next).await;
+                 }
+-                if logprobs.is_some() || !token_ids.is_empty() {
+-                    y.yield_ok(AssistantEvent::LogprobsDelta {
+-                        logprobs,
+-                        token_ids,
+-                    })
+-                    .await;
++                if let Some(sampled) = sampled {
++                    y.yield_ok(sampled).await;
++                }
++                for next in metadata {
++                    y.yield_ok(next).await;
+                 }
+                 if let Some(finished) = finished {
+-                    for next in state.finish()? {
++                    let events = state.finish()?;
++                    let metadata = state.metadata.finish();
++                    for next in events {
++                        y.yield_ok(next).await;
++                    }
++                    for next in metadata {
+                         y.yield_ok(next).await;
+                     }
+                     y.yield_ok(AssistantEvent::Done {
+@@ -329,7 +357,7 @@
+ 
+         fn parse_into(
+             &mut self,
+-            _delta: &str,
++            _delta: vllm_tokenizer::DecodedText,
+             output: &mut UnifiedParserOutput,
+         ) -> vllm_parser::unified::Result<()> {
+             match self.steps.pop_front().expect("unexpected parser call") {
+@@ -368,14 +396,14 @@
+             Ok(UnifiedParserOutput::default())
+         }
+ 
+-        fn reset(&mut self) -> String {
+-            std::mem::take(&mut self.reset_text)
++        fn reset(&mut self) -> vllm_parser::unified::UnifiedParserReset {
++            vllm_tokenizer::DecodedText::unattributed(std::mem::take(&mut self.reset_text)).into()
+         }
+     }
+ 
+     fn decoded_delta(delta: &str) -> vllm_text::output::DecodedTextEvent {
+         vllm_text::output::DecodedTextEvent::TextDelta {
+-            delta: delta.to_string(),
++            delta: delta.into(),
+             token_ids: Vec::new(),
+             logprobs: None,
+             finished: None,
+@@ -384,7 +412,7 @@
+ 
+     fn finished_delta(delta: &str) -> vllm_text::output::DecodedTextEvent {
+         vllm_text::output::DecodedTextEvent::TextDelta {
+-            delta: delta.to_string(),
++            delta: delta.into(),
+             token_ids: Vec::new(),
+             logprobs: None,
+             finished: Some(vllm_text::output::Finished {
+@@ -401,12 +429,16 @@
+         events: Vec<vllm_text::output::DecodedTextEvent>,
+     ) -> Vec<AssistantEvent> {
+         let stream = stream::iter(events.into_iter().map(Ok));
+-        unified_event_stream(stream, Box::new(parser))
+-            .collect::<Vec<_>>()
+-            .await
+-            .into_iter()
+-            .collect::<crate::Result<Vec<_>>>()
+-            .unwrap()
++        unified_event_stream(
++            stream,
++            Box::new(parser),
++            crate::ChatTokenMetadataMode::Sampled,
++        )
++        .collect::<Vec<_>>()
++        .await
++        .into_iter()
++        .collect::<crate::Result<Vec<_>>>()
++        .unwrap()
+     }
+ 
+     fn text(delta: &str) -> UnifiedParserOutput {
+@@ -430,6 +462,7 @@
+                     arguments: arguments.to_string(),
+                 },
+             )],
++            token_dispositions: Vec::new(),
+         }
+     }
+ 
+@@ -442,6 +475,7 @@
+                     arguments: arguments.to_string(),
+                 },
+             )],
++            token_dispositions: Vec::new(),
+         }
+     }
+ 
+@@ -468,12 +502,16 @@
+         );
+ 
+         let stream = stream::iter(vec![d1, d2].into_iter().map(Ok));
+-        let events = unified_event_stream(stream, Box::new(parser))
+-            .collect::<Vec<_>>()
+-            .await
+-            .into_iter()
+-            .collect::<crate::Result<Vec<_>>>()
+-            .unwrap();
++        let events = unified_event_stream(
++            stream,
++            Box::new(parser),
++            crate::ChatTokenMetadataMode::Sampled,
++        )
++        .collect::<Vec<_>>()
++        .await
++        .into_iter()
++        .collect::<crate::Result<Vec<_>>>()
++        .unwrap();
+ 
+         let names: Vec<&str> = events
+             .iter()
+@@ -709,12 +747,16 @@
+             finished_delta("world<|\"|>"),
+         ];
+         let stream = stream::iter(events.into_iter().map(Ok));
+-        let events = unified_event_stream(stream, Box::new(parser))
+-            .collect::<Vec<_>>()
+-            .await
+-            .into_iter()
+-            .collect::<crate::Result<Vec<_>>>()
+-            .unwrap();
++        let events = unified_event_stream(
++            stream,
++            Box::new(parser),
++            crate::ChatTokenMetadataMode::Sampled,
++        )
++        .collect::<Vec<_>>()
++        .await
++        .into_iter()
++        .collect::<crate::Result<Vec<_>>>()
++        .unwrap();
+ 
+         assert_eq!(
+             events,
+--- a/rust/src/chat/src/output/harmony/mod.rs
++++ b/rust/src/chat/src/output/harmony/mod.rs
+@@ -11,14 +11,17 @@
+ use futures::StreamExt as _;
+ use openai_harmony::chat::{Content as HarmonyContent, Message as HarmonyMessage, Role};
+ use openai_harmony::{HarmonyEncoding, StreamableParser};
++use vllm_parser::unified::TokenDisposition;
+ use vllm_text::output::DecodedTextEvent;
++
++use super::metadata::PendingMetadata;
+ 
+ use crate::Result as ChatResult;
+ use crate::error::{Error, Result};
+ use crate::event::AssistantBlockKind;
+ use crate::output::{
+-    AssistantEvent, ChatOutputProcessor, DynChatEventStream, DynDecodedTextEventStream,
+-    generate_tool_call_id,
++    AssistantEvent, ChatOutputProcessor, ChatTokenMetadataMode, DynChatEventStream,
++    DynDecodedTextEventStream, generate_tool_call_id,
+ };
+ use crate::parser::ParserSelection;
+ use crate::renderer::harmony::encoding::harmony_encoding;
+@@ -67,6 +70,7 @@
+     current_text_group: Option<HarmonyGroupKey>,
+     /// The currently open Harmony tool recipient, if any.
+     open_tool_call: Option<OpenHarmonyToolCall>,
++    metadata: PendingMetadata,
+ }
+ 
+ impl HarmonyChatOutputProcessor {
+@@ -107,9 +111,17 @@
+ }
+ 
+ impl ChatOutputProcessor for HarmonyChatOutputProcessor {
+-    fn process(self: Box<Self>, decoded: DynDecodedTextEventStream) -> Result<DynChatEventStream> {
+-        let assistant =
+-            harmony_assistant_event_stream(decoded, self.encoding, self.tool_calls_enabled);
++    fn process_with_metadata(
++        self: Box<Self>,
++        decoded: DynDecodedTextEventStream,
++        metadata_mode: ChatTokenMetadataMode,
++    ) -> Result<DynChatEventStream> {
++        let assistant = harmony_assistant_event_stream(
++            decoded,
++            self.encoding,
++            self.tool_calls_enabled,
++            metadata_mode,
++        );
+         Ok(crate::output::structured::structured_chat_event_stream(
+             assistant,
+             self.parallel_tool_calls,
+@@ -120,7 +132,11 @@
+ 
+ impl HarmonyState {
+     /// Create one fresh Harmony streaming state for a new assistant response.
+-    fn new(encoding: HarmonyEncoding, tool_calls_enabled: bool) -> Result<Self> {
++    fn new(
++        encoding: HarmonyEncoding,
++        tool_calls_enabled: bool,
++        metadata_mode: ChatTokenMetadataMode,
++    ) -> Result<Self> {
+         Ok(Self {
+             parser: StreamableParser::new(encoding, Some(Role::Assistant))
+                 .map_err(harmony_output_parsing_error)?,
+@@ -129,6 +145,7 @@
+             completed_reasoning_messages: 0,
+             current_text_group: None,
+             open_tool_call: None,
++            metadata: PendingMetadata::new(metadata_mode),
+         })
+     }
+ 
+@@ -137,9 +154,30 @@
+         let mut pending_group: Option<HarmonyGroup> = None;
+ 
+         for &token_id in token_ids {
++            let position = self.parser.tokens().len();
+             let completed_before = self.parser.messages().len();
++            let channel = self.parser.current_channel();
++            let recipient = self.parser.current_recipient();
++            let visible_body = text_block_kind(channel.as_deref(), recipient.as_deref())
++                == Some(AssistantBlockKind::Text)
++                || (self.tool_calls_enabled
++                    && tool_name(channel.as_deref(), recipient.as_deref()).is_some());
+             self.parser.process(token_id).map_err(harmony_output_parsing_error)?;
+             let completed_after = self.parser.messages().len();
++            // Header delimiters and message stops are not body samples. UTF-8
++            // bytes remain owned by the SDK's current body/channel until EOS.
++            if !visible_body
++                || completed_after != completed_before
++                || self.parser.current_channel() != channel
++                || self.parser.current_recipient() != recipient
++            {
++                self.metadata.apply(TokenDisposition {
++                    position,
++                    covered_bytes: 0,
++                    token_byte_count: 0,
++                    visible: false,
++                });
++            }
+ 
+             if let Some(delta) = self
+                 .parser
+@@ -327,9 +365,10 @@
+     decoded: DynDecodedTextEventStream,
+     encoding: &'static HarmonyEncoding,
+     tool_calls_enabled: bool,
++    metadata_mode: ChatTokenMetadataMode,
+     mut y: TryYielder<AssistantEvent, Error>,
+ ) -> Result<()> {
+-    let mut state = HarmonyState::new(encoding.clone(), tool_calls_enabled)?;
++    let mut state = HarmonyState::new(encoding.clone(), tool_calls_enabled, metadata_mode)?;
+     futures::pin_mut!(decoded);
+ 
+     while let Some(event) = decoded.next().await.transpose()? {
+@@ -345,27 +384,40 @@
+                 .await;
+             }
+             DecodedTextEvent::TextDelta {
+-                delta: _, // harmony takes raw token IDs as input, so we ignore text deltas here
++                delta,
+                 token_ids,
+                 logprobs,
+                 finished,
+             } => {
+-                for event in state.process_token_ids(&token_ids)? {
++                let (sampled, events) = match metadata_mode {
++                    ChatTokenMetadataMode::Sampled => {
++                        let events = state.process_token_ids(&token_ids)?;
++                        (state.metadata.push_samples(token_ids, logprobs), events)
++                    }
++                    ChatTokenMetadataMode::VisibleContent => {
++                        state.metadata.push_samples(token_ids.clone(), logprobs);
++                        (None, state.process_token_ids(&token_ids)?)
++                    }
++                };
++                for event in events {
+                     y.yield_ok(event).await;
+                 }
+-
+                 if finished.is_some() {
+                     for event in state.process_eos()? {
+                         y.yield_ok(event).await;
+                     }
+                 }
+-
+-                if logprobs.is_some() || !token_ids.is_empty() {
+-                    y.yield_ok(AssistantEvent::LogprobsDelta {
+-                        logprobs,
+-                        token_ids,
+-                    })
+-                    .await;
++                state.metadata.apply_decoded_groups(delta.attributions);
++                let metadata = if finished.is_some() {
++                    state.metadata.finish()
++                } else {
++                    state.metadata.take_ready()
++                };
++                if let Some(sampled) = sampled {
++                    y.yield_ok(sampled).await;
++                }
++                for event in metadata {
++                    y.yield_ok(event).await;
+                 }
+ 
+                 if let Some(finished) = finished {
+--- a/rust/src/chat/src/output/harmony/tests.rs
++++ b/rust/src/chat/src/output/harmony/tests.rs
+@@ -97,7 +97,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens[..tokens.len() - 1].to_vec(),
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -136,7 +136,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens,
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -158,7 +158,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens[..tokens.len() - 1].to_vec(),
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -197,7 +197,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens,
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -226,7 +226,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens,
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -257,13 +257,13 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens[..midpoint].to_vec(),
+                 logprobs: None,
+                 finished: None,
+             },
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens[midpoint..].to_vec(),
+                 logprobs: None,
+                 finished: Some(finished()),
+@@ -304,7 +304,7 @@
+         vec![
+             decoded_start(),
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: tokens,
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![DecodedPositionLogprobs { entries: vec![] }],
+--- /dev/null
++++ b/rust/src/chat/src/output/metadata.rs
+@@ -0,0 +1,168 @@
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++use std::collections::{BTreeSet, VecDeque};
++
++use vllm_parser::unified::TokenDisposition;
++use vllm_text::{DecodedLogprobs, DecodedPositionLogprobs};
++use vllm_tokenizer::TokenAttribution;
++
++use super::{AssistantEvent, ChatTokenMetadataMode};
++
++struct SampleMetadata {
++    token_id: u32,
++    logprobs: Option<DecodedPositionLogprobs>,
++}
++
++struct PendingSample {
++    payload: Option<SampleMetadata>,
++    covered_bytes: usize,
++    ready: bool,
++}
++
++/// Joins sampled metadata with complete parser-owned source coverage.
++/// Excluded payloads are released immediately; unresolved samples alone retain data.
++pub(super) struct PendingMetadata {
++    mode: ChatTokenMetadataMode,
++    next_position: usize,
++    pending: VecDeque<PendingSample>,
++}
++
++impl PendingMetadata {
++    pub(super) fn new(mode: ChatTokenMetadataMode) -> Self {
++        Self {
++            mode,
++            next_position: 0,
++            pending: VecDeque::new(),
++        }
++    }
++
++    /// Registers samples before the decoder/parser can refer to their positions.
++    /// Raw mode returns the existing event without allocating a pending queue.
++    pub(super) fn push_samples(
++        &mut self,
++        token_ids: Vec<u32>,
++        logprobs: Option<DecodedLogprobs>,
++    ) -> Option<AssistantEvent> {
++        self.next_position += token_ids.len();
++        if self.mode == ChatTokenMetadataMode::Sampled {
++            return (logprobs.is_some() || !token_ids.is_empty()).then_some(
++                AssistantEvent::LogprobsDelta {
++                    token_ids,
++                    logprobs,
++                },
++            );
++        }
++        let mut rows = logprobs.map(|logprobs| logprobs.positions.into_iter());
++        self.pending.extend(token_ids.into_iter().map(|token_id| PendingSample {
++            payload: Some(SampleMetadata {
++                token_id,
++                logprobs: rows.as_mut().and_then(Iterator::next),
++            }),
++            covered_bytes: 0,
++            ready: false,
++        }));
++        None
++    }
++
++    /// Applies one coverage fragment; any non-visible fragment excludes its whole sample.
++    pub(super) fn apply(&mut self, disposition: TokenDisposition) {
++        if self.mode == ChatTokenMetadataMode::Sampled {
++            return;
++        }
++        let first_position = self.next_position - self.pending.len();
++        let Some(index) = disposition.position.checked_sub(first_position) else {
++            // Later fragments of an already-excluded sample carry no payload.
++            return;
++        };
++        let sample = &mut self.pending[index];
++        if sample.payload.is_none() {
++            return;
++        }
++        if !disposition.visible || disposition.token_byte_count == 0 {
++            sample.payload = None;
++            sample.ready = true;
++            return;
++        }
++        sample.covered_bytes += disposition.covered_bytes;
++        sample.ready = sample.covered_bytes == disposition.token_byte_count;
++    }
++
++    /// Joins Harmony's token/channel decisions across each actual UTF-8 decode group.
++    /// Members share fragment ranges, including when one group spans several updates.
++    pub(super) fn apply_decoded_groups(&mut self, attributions: Vec<TokenAttribution>) {
++        if self.mode == ChatTokenMetadataMode::Sampled {
++            return;
++        }
++        let first_position = self.next_position - self.pending.len();
++        let mut excluded_groups = BTreeSet::new();
++        for attribution in &attributions {
++            let excluded = attribution.position < first_position
++                || self.pending[attribution.position - first_position].payload.is_none();
++            if excluded {
++                excluded_groups.insert((
++                    attribution.byte_range.start,
++                    attribution.byte_range.end,
++                    attribution.token_byte_count,
++                ));
++            }
++        }
++        for attribution in attributions {
++            let visible = !excluded_groups.contains(&(
++                attribution.byte_range.start,
++                attribution.byte_range.end,
++                attribution.token_byte_count,
++            ));
++            self.apply(TokenDisposition {
++                position: attribution.position,
++                covered_bytes: attribution.byte_range.len(),
++                token_byte_count: attribution.token_byte_count,
++                visible,
++            });
++        }
++    }
++
++    /// Drops unclassified parser state on fallback while preserving completed decisions.
++    pub(super) fn discard_unresolved(&mut self) {
++        for sample in &mut self.pending {
++            if !sample.ready {
++                sample.payload = None;
++                sample.ready = true;
++            }
++        }
++    }
++
++    /// Releases the resolved prefix in sampled order, never waiting for stream completion.
++    pub(super) fn take_ready(&mut self) -> Vec<AssistantEvent> {
++        let mut events = Vec::new();
++        while self.pending.front().is_some_and(|sample| sample.ready) {
++            let Some(payload) = self.pending.pop_front().unwrap().payload else {
++                continue;
++            };
++            match events.last_mut() {
++                Some(AssistantEvent::LogprobsDelta {
++                    token_ids,
++                    logprobs,
++                }) if logprobs.is_some() == payload.logprobs.is_some() => {
++                    token_ids.push(payload.token_id);
++                    if let (Some(logprobs), Some(row)) = (logprobs, payload.logprobs) {
++                        logprobs.positions.push(row);
++                    }
++                }
++                _ => events.push(AssistantEvent::LogprobsDelta {
++                    token_ids: vec![payload.token_id],
++                    logprobs: payload.logprobs.map(|row| DecodedLogprobs {
++                        positions: vec![row],
++                    }),
++                }),
++            }
++        }
++        events
++    }
++
++    /// Releases known visible samples and discards terminal undecoded or truncated samples.
++    pub(super) fn finish(&mut self) -> Vec<AssistantEvent> {
++        self.discard_unresolved();
++        self.take_ready()
++    }
++}
+--- a/rust/src/chat/src/output/mod.rs
++++ b/rust/src/chat/src/output/mod.rs
+@@ -16,6 +16,7 @@
+ 
+ mod default;
+ mod harmony;
++mod metadata;
+ mod structured;
+ 
+ pub use default::DefaultChatOutputProcessor;
+@@ -62,11 +63,30 @@
+ /// Boxed stream of structured chat events exposed by [`crate::ChatLlm`].
+ pub type DynChatEventStream = Pin<Box<dyn Stream<Item = Result<ChatEvent>> + Send>>;
+ 
++/// Which sampled metadata a chat-event consumer is allowed to expose.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub enum ChatTokenMetadataMode {
++    /// Preserve raw metadata on its original engine-update clock.
++    #[default]
++    Sampled,
++    /// Expose complete samples classified as non-reasoning parser content.
++    VisibleContent,
++}
++
+ /// Request-scoped output processor from decoded text events into structured
+ /// chat events.
+ pub trait ChatOutputProcessor: Send {
+-    /// Consume decoded text stream and return the structured chat-event stream.
+-    fn process(self: Box<Self>, decoded: DynDecodedTextEventStream) -> Result<DynChatEventStream>;
++    /// Consume decoded output with the existing raw sampled-metadata contract.
++    fn process(self: Box<Self>, decoded: DynDecodedTextEventStream) -> Result<DynChatEventStream> {
++        self.process_with_metadata(decoded, ChatTokenMetadataMode::Sampled)
++    }
++
++    /// Consume decoded output with the metadata visibility chosen by the response adapter.
++    fn process_with_metadata(
++        self: Box<Self>,
++        decoded: DynDecodedTextEventStream,
++        metadata_mode: ChatTokenMetadataMode,
++    ) -> Result<DynChatEventStream>;
+ }
+ 
+ /// Trait-object form of [`ChatOutputProcessor`].
+--- a/rust/src/chat/tests/roundtrip.rs
++++ b/rust/src/chat/tests/roundtrip.rs
+@@ -714,7 +714,7 @@
+     if chunks.is_empty() {
+         events.push({
+             DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: Vec::new(),
+                 logprobs: None,
+                 finished: Some(Finished {
+@@ -735,7 +735,7 @@
+                 ec_transfer_params: None,
+             });
+             events.push(DecodedTextEvent::TextDelta {
+-                delta: chunk.delta,
++                delta: chunk.delta.into(),
+                 token_ids: chunk.token_ids,
+                 logprobs: None,
+                 finished,
+@@ -809,7 +809,7 @@
+             delta.delta.push_str(&last_chunk);
+         } else {
+             chunks.push(DecodedCompletionChunk {
+-                delta: last_chunk,
++                delta: last_chunk.text,
+                 token_ids: Vec::new(),
+             });
+         }
+--- a/rust/src/parser/benches/utils/adapter.rs
++++ b/rust/src/parser/benches/utils/adapter.rs
+@@ -99,7 +99,10 @@
+ 
+     fn parse_into(&mut self, chunk: &str, output: &mut ToolParserOutput) -> Result<()> {
+         let mut unified_output = UnifiedParserOutput::default();
+-        let result = self.inner.parse_into(chunk, &mut unified_output).map_err(map_unified_error);
++        let result = self
++            .inner
++            .parse_into(chunk.into(), &mut unified_output)
++            .map_err(map_unified_error);
+         append_unified_output(unified_output, output)?;
+         result
+     }
+@@ -112,6 +115,6 @@
+     }
+ 
+     fn reset(&mut self) -> String {
+-        self.inner.reset()
++        self.inner.reset().text
+     }
+ }
+--- a/rust/src/parser/src/reasoning/cohere_cmd.rs
++++ b/rust/src/parser/src/reasoning/cohere_cmd.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -38,8 +38,12 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.inner.push(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        self.inner.discard_pending()
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+--- a/rust/src/parser/src/reasoning/deepseek_r1.rs
++++ b/rust/src/parser/src/reasoning/deepseek_r1.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -37,8 +37,12 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.inner.push(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        self.inner.discard_pending()
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+--- a/rust/src/parser/src/reasoning/delimited.rs
++++ b/rust/src/parser/src/reasoning/delimited.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::{DynTokenizer, Tokenizer};
++use vllm_tokenizer::{DecodedText, DynTokenizer, Tokenizer};
+ 
+ use super::{ReasoningDelta, ReasoningError, Result};
+ 
+@@ -19,7 +19,7 @@
+ pub(crate) struct DelimitedReasoningParser {
+     tokenizer: DynTokenizer,
+     current_in_reasoning: bool,
+-    buffer: String,
++    buffer: DecodedText,
+     start_token: String,
+     end_token: String,
+     start_token_id: u32,
+@@ -51,7 +51,7 @@
+         Ok(Self {
+             tokenizer,
+             current_in_reasoning: default_in_reasoning,
+-            buffer: String::new(),
++            buffer: DecodedText::default(),
+             start_token: start_token.to_string(),
+             end_token: end_token.to_string(),
+             start_token_id,
+@@ -77,47 +77,52 @@
+     }
+ 
+     /// Parse one decoded text delta and return its reasoning/content split.
+-    pub(crate) fn push(&mut self, delta: &str) -> ReasoningDelta {
+-        self.buffer.push_str(delta);
++    pub(crate) fn push(&mut self, delta: DecodedText) -> ReasoningDelta {
++        self.buffer.append(delta);
++        let partial_suffix_len = self.partial_suffix_len(&self.buffer.text);
++        let stable_len = self.buffer.text.len() - partial_suffix_len;
++        let stable = self.buffer.drain_prefix(stable_len);
++        self.parse_stable_text(stable)
++    }
+ 
+-        let partial_suffix_len = self.partial_suffix_len(&self.buffer);
+-        let stable_len = self.buffer.len() - partial_suffix_len;
+-        let pending_suffix = self.buffer.split_off(stable_len);
+-        let stable_text = std::mem::replace(&mut self.buffer, pending_suffix);
+-
+-        self.parse_stable_text(&stable_text)
++    /// Returns only coverage still owned by the abandoned partial delimiter buffer.
++    pub(crate) fn discard_pending(&mut self) -> Vec<usize> {
++        self.buffer
++            .take()
++            .attributions
++            .into_iter()
++            .map(|token| token.position)
++            .collect()
+     }
+ 
+     /// Flush any buffered partial delimiter suffix at end of stream.
+     pub(crate) fn finish(&mut self) -> ReasoningDelta {
+-        let stable_text = std::mem::take(&mut self.buffer);
+-        self.parse_stable_text(&stable_text)
++        let stable = self.buffer.take();
++        self.parse_stable_text(stable)
+     }
+ 
+-    /// Parse text that is known not to end with a partial delimiter suffix.
+-    fn parse_stable_text(&mut self, mut stable: &str) -> ReasoningDelta {
++    /// Splits committed text and source coverage at the same reasoning boundaries.
++    fn parse_stable_text(&mut self, mut stable: DecodedText) -> ReasoningDelta {
+         let mut delta = ReasoningDelta::default();
+-
+         while !stable.is_empty() {
+             if self.current_in_reasoning {
+-                if let Some(end_idx) = stable.find(&self.end_token) {
+-                    delta.push_reasoning(&stable[..end_idx]);
+-                    stable = &stable[end_idx + self.end_token.len()..];
++                if let Some(end_idx) = stable.text.find(&self.end_token) {
++                    delta.push_reasoning(stable.drain_prefix(end_idx));
++                    delta.discard(stable.drain_prefix(self.end_token.len()));
+                     self.current_in_reasoning = false;
+                 } else {
+                     delta.push_reasoning(stable);
+                     break;
+                 }
+-            } else if let Some(start_idx) = stable.find(&self.start_token) {
+-                delta.push_content(&stable[..start_idx]);
+-                stable = &stable[start_idx + self.start_token.len()..];
++            } else if let Some(start_idx) = stable.text.find(&self.start_token) {
++                delta.push_content(stable.drain_prefix(start_idx));
++                delta.discard(stable.drain_prefix(self.start_token.len()));
+                 self.current_in_reasoning = true;
+             } else {
+                 delta.push_content(stable);
+                 break;
+             }
+         }
+-
+         delta
+     }
+ 
+--- a/rust/src/parser/src/reasoning/kimi.rs
++++ b/rust/src/parser/src/reasoning/kimi.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -32,8 +32,12 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.inner.push(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        self.inner.discard_pending()
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+--- a/rust/src/parser/src/reasoning/minimax_m3.rs
++++ b/rust/src/parser/src/reasoning/minimax_m3.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -15,12 +15,9 @@
+ /// shared delimited parser derives the starting state from the rendered prompt.
+ pub struct MiniMaxM3ReasoningParser {
+     inner: DelimitedReasoningParser,
+-    /// True until the first response text is classified. Only this position may
+-    /// drop a stray `</mm:think>` emitted at the start of a response.
++    /// Only response-leading unmatched closers are framing rather than content.
+     at_response_start: bool,
+-    /// Holds an initial suffix like `</mm` while it may still complete into the
+-    /// leading closer on a later chunk.
+-    leading_end_buffer: String,
++    leading_end_buffer: DecodedText,
+ }
+ 
+ impl MiniMaxM3ReasoningParser {
+@@ -29,44 +26,44 @@
+         Ok(Self {
+             inner: DelimitedReasoningParser::new(tokenizer, M3_THINK_START, M3_THINK_END, false)?,
+             at_response_start: true,
+-            leading_end_buffer: String::new(),
++            leading_end_buffer: DecodedText::default(),
+         })
+     }
+ 
+-    /// Drop a response-leading `</mm:think>` while preserving later unmatched
+-    /// closers as ordinary content.
+-    fn push_inner(&mut self, delta: &str) -> ReasoningDelta {
++    /// Resolves a possible leading closer with its source coverage intact.
++    fn push_inner(&mut self, delta: DecodedText) -> ReasoningDelta {
+         if self.at_response_start && !self.inner.in_reasoning() {
+-            self.leading_end_buffer.push_str(delta);
+-            let buffered = std::mem::take(&mut self.leading_end_buffer);
+-
++            self.leading_end_buffer.append(delta);
++            let mut buffered = self.leading_end_buffer.take();
+             if buffered.is_empty() {
+                 return ReasoningDelta::default();
+             }
+-            if let Some(rest) = buffered.strip_prefix(M3_THINK_END) {
++            if buffered.text.starts_with(M3_THINK_END) {
+                 self.at_response_start = false;
+-                return self.inner.push(rest);
++                let framing = buffered.drain_prefix(M3_THINK_END.len());
++                let mut output = self.inner.push(buffered);
++                output.discard(framing);
++                return output;
+             }
+-            if M3_THINK_END.starts_with(buffered.as_str()) {
++            if M3_THINK_END.starts_with(buffered.text.as_str()) {
+                 self.leading_end_buffer = buffered;
+                 return ReasoningDelta::default();
+             }
+-
+             self.at_response_start = false;
+-            return self.inner.push(&buffered);
++            return self.inner.push(buffered);
+         }
+-
+         self.inner.push(delta)
+     }
+ }
+ 
+ fn append_delta(target: &mut ReasoningDelta, delta: ReasoningDelta) {
+     if let Some(reasoning) = delta.reasoning {
+-        target.push_reasoning(&reasoning);
++        target.push_reasoning(reasoning);
+     }
+     if let Some(content) = delta.content {
+-        target.push_content(&content);
++        target.push_content(content);
+     }
++    target.discarded.extend(delta.discarded);
+ }
+ 
+ impl ReasoningParser for MiniMaxM3ReasoningParser {
+@@ -84,16 +81,28 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.push_inner(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        let mut positions = self.inner.discard_pending();
++        positions.extend(
++            self.leading_end_buffer
++                .take()
++                .attributions
++                .into_iter()
++                .map(|token| token.position),
++        );
++        positions
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+         let mut delta = ReasoningDelta::default();
+         if !self.leading_end_buffer.is_empty() {
+-            let pending = std::mem::take(&mut self.leading_end_buffer);
++            let pending = self.leading_end_buffer.take();
+             self.at_response_start = false;
+-            append_delta(&mut delta, self.inner.push(&pending));
++            append_delta(&mut delta, self.inner.push(pending));
+         }
+         append_delta(&mut delta, self.inner.finish());
+         Ok(delta)
+--- a/rust/src/parser/src/reasoning/mod.rs
++++ b/rust/src/parser/src/reasoning/mod.rs
+@@ -27,7 +27,7 @@
+ mod step3p5;
+ 
+ use thiserror::Error;
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer, TokenAttribution};
+ 
+ pub use self::cohere_cmd::CohereCmdReasoningParser;
+ pub use self::deepseek_r1::DeepSeekR1ReasoningParser;
+@@ -61,8 +61,10 @@
+ /// One parsed streaming delta split into reasoning and visible content.
+ #[derive(Debug, Default, Clone, PartialEq, Eq)]
+ pub struct ReasoningDelta {
+-    pub reasoning: Option<String>,
+-    pub content: Option<String>,
++    pub reasoning: Option<DecodedText>,
++    pub content: Option<DecodedText>,
++    /// Source coverage consumed as framing rather than exposed content.
++    pub discarded: Vec<TokenAttribution>,
+ }
+ 
+ impl ReasoningDelta {
+@@ -71,26 +73,25 @@
+         self.reasoning.is_none() && self.content.is_none()
+     }
+ 
+-    /// Append text to the reasoning portion, creating it on first use.
+-    pub(crate) fn push_reasoning(&mut self, text: &str) {
++    /// Append reasoning while retaining the source coverage for metadata decisions.
++    pub(crate) fn push_reasoning(&mut self, text: DecodedText) {
+         if text.is_empty() {
+             return;
+         }
+-        match &mut self.reasoning {
+-            Some(existing) => existing.push_str(text),
+-            None => self.reasoning = Some(text.to_string()),
+-        }
++        self.reasoning.get_or_insert_with(DecodedText::default).append(text);
+     }
+ 
+-    /// Append text to the visible content portion, creating it on first use.
+-    pub(crate) fn push_content(&mut self, text: &str) {
++    /// Append visible content before tool parsing transforms its text.
++    pub(crate) fn push_content(&mut self, text: DecodedText) {
+         if text.is_empty() {
+             return;
+         }
+-        match &mut self.content {
+-            Some(existing) => existing.push_str(text),
+-            None => self.content = Some(text.to_string()),
+-        }
++        self.content.get_or_insert_with(DecodedText::default).append(text);
++    }
++
++    /// Resolves consumed framing so it cannot retain or expose sampled metadata.
++    pub(crate) fn discard(&mut self, text: DecodedText) {
++        self.discarded.extend(text.attributions);
+     }
+ }
+ 
+@@ -117,7 +118,12 @@
+     }
+ 
+     /// Feed one decoded text delta into the parser.
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta>;
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta>;
++
++    /// Abandons pending parser text and returns its sample positions for metadata disposal.
++    fn discard_pending(&mut self) -> Vec<usize> {
++        Vec::new()
++    }
+ 
+     /// Flush any buffered partial delimiter state at end of stream.
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+--- a/rust/src/parser/src/reasoning/qwen3.rs
++++ b/rust/src/parser/src/reasoning/qwen3.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -36,8 +36,12 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.inner.push(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        self.inner.discard_pending()
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+--- a/rust/src/parser/src/reasoning/seed_oss.rs
++++ b/rust/src/parser/src/reasoning/seed_oss.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -38,8 +38,12 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         Ok(self.inner.push(delta))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        self.inner.discard_pending()
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+@@ -60,7 +64,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = SeedOssReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("implicit reasoning</seed:think>answer").unwrap();
++        let delta = parser.push(("implicit reasoning</seed:think>answer").into()).unwrap();
+         assert_eq!(delta.reasoning, None);
+         assert_eq!(
+             delta.content.as_deref(),
+@@ -75,7 +79,7 @@
+         // Prompt prefills `<seed:think>`, opening reasoning before the stream.
+         parser.initialize(&[SEED_THINK_START_ID]).unwrap();
+ 
+-        let delta = parser.push("reason</seed:think>answer").unwrap();
++        let delta = parser.push(("reason</seed:think>answer").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+@@ -87,7 +91,7 @@
+         // Prompt already closed reasoning with `</seed:think>`.
+         parser.initialize(&[SEED_THINK_END_ID]).unwrap();
+ 
+-        let delta = parser.push("answer").unwrap();
++        let delta = parser.push(("answer").into()).unwrap();
+         assert_eq!(delta.reasoning, None);
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+@@ -98,7 +102,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = SeedOssReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<seed:think>reason</seed:think>answer").unwrap();
++        let delta = parser.push(("<seed:think>reason</seed:think>answer").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+@@ -121,7 +125,7 @@
+             "Final ",
+             "answer",
+         ] {
+-            let delta = parser.push(delta_str).unwrap();
++            let delta = parser.push((delta_str).into()).unwrap();
+             if let Some(r) = delta.reasoning {
+                 reasoning.push_str(&r);
+             }
+@@ -140,11 +144,11 @@
+         parser.initialize(&[SEED_THINK_START_ID]).unwrap();
+ 
+         // Closing delimiter `</seed:think>` arrives in two halves.
+-        let first = parser.push("reason</seed:").unwrap();
++        let first = parser.push(("reason</seed:").into()).unwrap();
+         assert_eq!(first.reasoning.as_deref(), Some("reason"));
+         assert_eq!(first.content, None);
+ 
+-        let second = parser.push("think>answer").unwrap();
++        let second = parser.push(("think>answer").into()).unwrap();
+         assert_eq!(second.reasoning, None);
+         assert_eq!(second.content.as_deref(), Some("answer"));
+     }
+--- a/rust/src/parser/src/reasoning/step3p5.rs
++++ b/rust/src/parser/src/reasoning/step3p5.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ 
+ use super::{DelimitedReasoningParser, ReasoningDelta, ReasoningParser, Result};
+ 
+@@ -16,7 +16,7 @@
+ pub struct Step3p5ReasoningParser {
+     inner: DelimitedReasoningParser,
+     /// `\n` at end of last reasoning delta, held in case `</think>` follows.
+-    pending_reasoning_newline: bool,
++    pending_reasoning_newline: Option<DecodedText>,
+     /// Last push ended on `</think>` without emitting content; the next
+     /// content delta's leading `\n` should be dropped.
+     just_ended_reasoning: bool,
+@@ -27,7 +27,7 @@
+     pub fn new(tokenizer: DynTokenizer) -> Result<Self> {
+         Ok(Self {
+             inner: DelimitedReasoningParser::new(tokenizer, "<think>", "</think>", false)?,
+-            pending_reasoning_newline: false,
++            pending_reasoning_newline: None,
+             just_ended_reasoning: false,
+         })
+     }
+@@ -44,41 +44,42 @@
+         let transitioned =
+             !now_in_reasoning && (was_in_reasoning || inner_delta.reasoning.is_some());
+ 
+-        // Replay or drop a previously-held trailing reasoning newline.
+-        if self.pending_reasoning_newline {
++        if let Some(mut newline) = self.pending_reasoning_newline.take() {
+             if let Some(reasoning) = inner_delta.reasoning.as_mut() {
+-                reasoning.insert(0, '\n');
+-                self.pending_reasoning_newline = false;
++                newline.append(reasoning.take());
++                *reasoning = newline;
+             } else if transitioned {
+-                // The held `\n` was the one right before `</think>`: drop it.
+-                self.pending_reasoning_newline = false;
++                inner_delta.discard(newline);
++            } else {
++                self.pending_reasoning_newline = Some(newline);
+             }
+         }
+ 
+-        // Hold back a trailing reasoning `\n` until we know if `</think>` follows.
+         if let Some(reasoning) = inner_delta.reasoning.as_mut()
+-            && reasoning.ends_with('\n')
++            && reasoning.text.ends_with('\n')
+         {
+-            reasoning.pop();
+-            if !transitioned {
+-                self.pending_reasoning_newline = true;
++            let prefix = reasoning.drain_prefix(reasoning.text.len() - 1);
++            let newline = std::mem::replace(reasoning, prefix);
++            if transitioned {
++                inner_delta.discard(newline);
++            } else {
++                self.pending_reasoning_newline = Some(newline);
+             }
+         }
+ 
+-        // Drop a leading `\n` of content emitted right after `</think>`.
+         if let Some(content) = inner_delta.content.as_mut()
+             && (transitioned || self.just_ended_reasoning)
+-            && content.starts_with('\n')
++            && content.text.starts_with('\n')
+         {
+-            content.remove(0);
++            let newline = content.drain_prefix(1);
++            inner_delta.discard(newline);
+         }
+ 
+         self.just_ended_reasoning = transitioned && inner_delta.content.is_none();
+-
+-        if inner_delta.reasoning.as_deref() == Some("") {
++        if inner_delta.reasoning.as_ref().is_some_and(DecodedText::is_empty) {
+             inner_delta.reasoning = None;
+         }
+-        if inner_delta.content.as_deref() == Some("") {
++        if inner_delta.content.as_ref().is_some_and(DecodedText::is_empty) {
+             inner_delta.content = None;
+         }
+ 
+@@ -99,11 +100,19 @@
+         Ok(())
+     }
+ 
+-    fn push(&mut self, delta: &str) -> Result<ReasoningDelta> {
++    fn push(&mut self, delta: DecodedText) -> Result<ReasoningDelta> {
+         let was = self.inner.in_reasoning();
+         let inner_delta = self.inner.push(delta);
+         let now = self.inner.in_reasoning();
+         Ok(self.process(inner_delta, was, now))
++    }
++
++    fn discard_pending(&mut self) -> Vec<usize> {
++        let mut positions = self.inner.discard_pending();
++        if let Some(newline) = self.pending_reasoning_newline.take() {
++            positions.extend(newline.attributions.into_iter().map(|token| token.position));
++        }
++        positions
+     }
+ 
+     fn finish(&mut self) -> Result<ReasoningDelta> {
+@@ -112,13 +121,8 @@
+         let now = self.inner.in_reasoning();
+         let mut delta = self.process(inner_delta, was, now);
+ 
+-        // Emit a still-held newline rather than silently dropping it.
+-        if self.pending_reasoning_newline {
+-            match delta.reasoning.as_mut() {
+-                Some(existing) => existing.push('\n'),
+-                None => delta.reasoning = Some("\n".to_string()),
+-            }
+-            self.pending_reasoning_newline = false;
++        if let Some(newline) = self.pending_reasoning_newline.take() {
++            delta.push_reasoning(newline);
+         }
+ 
+         Ok(delta)
+@@ -140,7 +144,9 @@
+         // Prompt prefills `<think>`, opening reasoning before the stream.
+         parser.initialize(&[THINK_START_ID]).unwrap();
+ 
+-        let delta = parser.push("This is a reasoning section</think>This is the rest").unwrap();
++        let delta = parser
++            .push(("This is a reasoning section</think>This is the rest").into())
++            .unwrap();
+         assert_eq!(
+             delta.reasoning.as_deref(),
+             Some("This is a reasoning section")
+@@ -153,7 +159,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let pushed = parser.push("<think>reason without end").unwrap();
++        let pushed = parser.push(("<think>reason without end").into()).unwrap();
+         assert_eq!(pushed.reasoning.as_deref(), Some("reason without end"));
+         assert_eq!(pushed.content, None);
+ 
+@@ -166,7 +172,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let pushed = parser.push("").unwrap();
++        let pushed = parser.push(("").into()).unwrap();
+         assert!(pushed.is_empty());
+         let flushed = parser.finish().unwrap();
+         assert!(flushed.is_empty());
+@@ -181,7 +187,7 @@
+         parser.initialize(&[THINK_START_ID]).unwrap();
+ 
+         let delta = parser
+-            .push("\n This is a \n reasoning section\n\n\n</think>\n\nThis is the rest")
++            .push(("\n This is a \n reasoning section\n\n\n</think>\n\nThis is the rest").into())
+             .unwrap();
+         assert_eq!(
+             delta.reasoning.as_deref(),
+@@ -195,7 +201,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<think>reason\n</think>\nanswer").unwrap();
++        let delta = parser.push(("<think>reason\n</think>\nanswer").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+@@ -207,16 +213,16 @@
+ 
+         // The trailing `\n` from the first push is held until we know whether
+         // `</think>` follows.
+-        let first = parser.push("<think>reason\n").unwrap();
++        let first = parser.push(("<think>reason\n").into()).unwrap();
+         assert_eq!(first.reasoning.as_deref(), Some("reason"));
+         assert_eq!(first.content, None);
+ 
+         // `</think>` arrives standalone; the held newline should be dropped.
+-        let second = parser.push("</think>").unwrap();
++        let second = parser.push(("</think>").into()).unwrap();
+         assert!(second.is_empty());
+ 
+         // The leading newline of the first content delta is dropped.
+-        let third = parser.push("\nanswer").unwrap();
++        let third = parser.push(("\nanswer").into()).unwrap();
+         assert_eq!(third.reasoning, None);
+         assert_eq!(third.content.as_deref(), Some("answer"));
+     }
+@@ -226,10 +232,10 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let first = parser.push("<think>reason\n").unwrap();
++        let first = parser.push(("<think>reason\n").into()).unwrap();
+         assert_eq!(first.reasoning.as_deref(), Some("reason"));
+ 
+-        let second = parser.push("more reason").unwrap();
++        let second = parser.push(("more reason").into()).unwrap();
+         assert_eq!(second.reasoning.as_deref(), Some("\nmore reason"));
+         assert_eq!(second.content, None);
+     }
+@@ -239,7 +245,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let first = parser.push("<think>reason\n").unwrap();
++        let first = parser.push(("<think>reason\n").into()).unwrap();
+         assert_eq!(first.reasoning.as_deref(), Some("reason"));
+ 
+         let flushed = parser.finish().unwrap();
+@@ -252,7 +258,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<think>line1\nline2</think>tail").unwrap();
++        let delta = parser.push(("<think>line1\nline2</think>tail").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("line1\nline2"));
+         assert_eq!(delta.content.as_deref(), Some("tail"));
+     }
+@@ -264,7 +270,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<think>reason\n\n</think>answer").unwrap();
++        let delta = parser.push(("<think>reason\n\n</think>answer").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("reason\n"));
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+@@ -276,16 +282,16 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let first = parser.push("<think>reason</think>").unwrap();
++        let first = parser.push(("<think>reason</think>").into()).unwrap();
+         assert_eq!(first.reasoning.as_deref(), Some("reason"));
+         assert_eq!(first.content, None);
+ 
+-        let second = parser.push("\nfirst").unwrap();
++        let second = parser.push(("\nfirst").into()).unwrap();
+         assert_eq!(second.reasoning, None);
+         assert_eq!(second.content.as_deref(), Some("first"));
+ 
+         // A `\n` arriving in a later content delta must NOT be dropped.
+-        let third = parser.push("\nsecond").unwrap();
++        let third = parser.push(("\nsecond").into()).unwrap();
+         assert_eq!(third.reasoning, None);
+         assert_eq!(third.content.as_deref(), Some("\nsecond"));
+     }
+@@ -295,7 +301,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<think>reason</think>tail").unwrap();
++        let delta = parser.push(("<think>reason</think>tail").into()).unwrap();
+         assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+         assert_eq!(delta.content.as_deref(), Some("tail"));
+     }
+@@ -305,7 +311,7 @@
+         let tokenizer = Arc::new(fake_tokenizer());
+         let mut parser = Step3p5ReasoningParser::new(tokenizer).unwrap();
+ 
+-        let delta = parser.push("<think></think>answer").unwrap();
++        let delta = parser.push(("<think></think>answer").into()).unwrap();
+         assert_eq!(delta.reasoning, None);
+         assert_eq!(delta.content.as_deref(), Some("answer"));
+     }
+--- a/rust/src/parser/src/reasoning/tests.rs
++++ b/rust/src/parser/src/reasoning/tests.rs
+@@ -44,7 +44,7 @@
+         DelimitedReasoningParser::new(tokenizer, "<think>", "</think>", false).unwrap();
+ 
+     assert_eq!(
+-        parser.push("plain content").content.as_deref(),
++        parser.push(("plain content").into()).content.as_deref(),
+         Some("plain content")
+     );
+ }
+@@ -55,7 +55,7 @@
+     let mut parser =
+         DelimitedReasoningParser::new(tokenizer, "<think>", "</think>", false).unwrap();
+ 
+-    let delta = parser.push("<think>reason</think>answer");
++    let delta = parser.push(("<think>reason</think>answer").into());
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -66,8 +66,8 @@
+     let mut parser =
+         DelimitedReasoningParser::new(tokenizer, "<think>", "</think>", false).unwrap();
+ 
+-    assert!(parser.push("<thi").is_empty());
+-    let delta = parser.push("nk>reason</think>answer");
++    assert!(parser.push(("<thi").into()).is_empty());
++    let delta = parser.push(("nk>reason</think>answer").into());
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -79,7 +79,7 @@
+         DelimitedReasoningParser::new(tokenizer, "<think>", "</think>", false).unwrap();
+     parser.initialize(&[THINK_START_ID]);
+ 
+-    let delta = parser.push("unfinished</thi");
++    let delta = parser.push(("unfinished</thi").into());
+     assert_eq!(delta.reasoning.as_deref(), Some("unfinished"));
+     let final_delta = parser.finish();
+     assert_eq!(final_delta.reasoning.as_deref(), Some("</thi"));
+@@ -90,7 +90,7 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = Qwen3ReasoningParser::new(tokenizer).unwrap();
+ 
+-    let delta = parser.push("reason</think>answer").unwrap();
++    let delta = parser.push(("reason</think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("reason</think>answer"));
+ }
+@@ -101,7 +101,7 @@
+     let mut parser = Qwen3ReasoningParser::new(tokenizer).unwrap();
+     parser.initialize(&[THINK_END_ID]).unwrap();
+ 
+-    let delta = parser.push("answer").unwrap();
++    let delta = parser.push(("answer").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -111,13 +111,13 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+ 
+     let mut old_parser = Qwen3ReasoningParser::new(tokenizer.clone()).unwrap();
+-    let old = old_parser.push("<think>reason</think>answer").unwrap();
++    let old = old_parser.push(("<think>reason</think>answer").into()).unwrap();
+     assert_eq!(old.reasoning.as_deref(), Some("reason"));
+     assert_eq!(old.content.as_deref(), Some("answer"));
+ 
+     let mut new_parser = Qwen3ReasoningParser::new(tokenizer).unwrap();
+     new_parser.initialize(&[THINK_START_ID]).unwrap();
+-    let new = new_parser.push("reason</think>answer").unwrap();
++    let new = new_parser.push(("reason</think>answer").into()).unwrap();
+     assert_eq!(new.reasoning.as_deref(), Some("reason"));
+     assert_eq!(new.content.as_deref(), Some("answer"));
+ }
+@@ -129,7 +129,7 @@
+ 
+     parser.initialize(&[THINK_START_ID, SPECIAL_BOUNDARY_ID]).unwrap();
+ 
+-    let delta = parser.push("answer").unwrap();
++    let delta = parser.push(("answer").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -139,7 +139,7 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = DeepSeekR1ReasoningParser::new(tokenizer).unwrap();
+ 
+-    let delta = parser.push("reason</think>answer").unwrap();
++    let delta = parser.push(("reason</think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -151,7 +151,7 @@
+ 
+     parser.initialize(&[THINK_END_ID, SPECIAL_BOUNDARY_ID]).unwrap();
+ 
+-    let delta = parser.push("reason</think>answer").unwrap();
++    let delta = parser.push(("reason</think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -161,7 +161,7 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+ 
+-    let delta = parser.push("<mm:think>reason</mm:think>answer").unwrap();
++    let delta = parser.push(("<mm:think>reason</mm:think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -171,7 +171,7 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+ 
+-    let delta = parser.push("</mm:think>answer").unwrap();
++    let delta = parser.push(("</mm:think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -181,7 +181,7 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+ 
+-    let delta = parser.push("XXX</mm:think>YYY").unwrap();
++    let delta = parser.push(("XXX</mm:think>YYY").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("XXX</mm:think>YYY"));
+ }
+@@ -191,8 +191,8 @@
+     let tokenizer = Arc::new(fake_tokenizer());
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+ 
+-    assert!(parser.push("</mm").unwrap().is_empty());
+-    let delta = parser.push(":think>answer").unwrap();
++    assert!(parser.push(("</mm").into()).unwrap().is_empty());
++    let delta = parser.push((":think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning, None);
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -203,7 +203,7 @@
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+     parser.initialize(&[MM_THINK_START_ID]).unwrap();
+ 
+-    let delta = parser.push("reason</mm:think>answer").unwrap();
++    let delta = parser.push(("reason</mm:think>answer").into()).unwrap();
+     assert_eq!(delta.reasoning.as_deref(), Some("reason"));
+     assert_eq!(delta.content.as_deref(), Some("answer"));
+ }
+@@ -214,7 +214,7 @@
+     let mut parser = MiniMaxM3ReasoningParser::new(tokenizer).unwrap();
+     parser.initialize(&[MM_THINK_END_ID]).unwrap();
+ 
+-    let delta = parser.push("answer").unwrap();
+-    assert_eq!(delta.reasoning, None);
+-    assert_eq!(delta.content.as_deref(), Some("answer"));
+-}
++    let delta = parser.push(("answer").into()).unwrap();
++    assert_eq!(delta.reasoning, None);
++    assert_eq!(delta.content.as_deref(), Some("answer"));
++}
+--- a/rust/src/parser/src/unified/combined.rs
++++ b/rust/src/parser/src/unified/combined.rs
+@@ -3,10 +3,10 @@
+ 
+ //! Adapter that combines reasoning and tool parsers.
+ 
+-use vllm_tokenizer::DynTokenizer;
+-
+-use super::{Result, UnifiedParser, UnifiedParserError, UnifiedParserOutput};
+-use crate::reasoning::ReasoningParser;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
++
++use super::{Result, UnifiedParser, UnifiedParserError, UnifiedParserOutput, UnifiedParserReset};
++use crate::reasoning::{ReasoningDelta, ReasoningParser};
+ use crate::tool::{StructuralTagBuilder, Tool, ToolParser, ToolParserOutput};
+ 
+ /// Unified parser that composes existing reasoning and tool parsers.
+@@ -47,6 +47,23 @@
+         Ok(())
+     }
+ 
++    /// Classifies source coverage before the tool parser transforms visible text.
++    fn process_reasoning_delta(
++        &mut self,
++        delta: ReasoningDelta,
++        output: &mut UnifiedParserOutput,
++    ) -> Result<()> {
++        output.record_tokens(delta.discarded, false);
++        if let Some(reasoning) = delta.reasoning {
++            output.push_reasoning_piece(reasoning);
++        }
++        if let Some(content) = delta.content {
++            output.record_tokens(content.attributions, true);
++            self.parse_tool(&content.text, output)?;
++        }
++        Ok(())
++    }
++
+     fn flush_tool(&mut self) -> Result<UnifiedParserOutput> {
+         let Some(tool) = self.tool.as_mut() else {
+             return Ok(UnifiedParserOutput::default());
+@@ -87,38 +104,33 @@
+         self.tool.as_ref().and_then(|parser| parser.tool_call_id(tool_index))
+     }
+ 
+-    fn parse_into(&mut self, delta: &str, output: &mut UnifiedParserOutput) -> Result<()> {
++    fn parse_into(&mut self, delta: DecodedText, output: &mut UnifiedParserOutput) -> Result<()> {
+         let Some(reasoning) = self.reasoning.as_mut() else {
+-            return self.parse_tool(delta, output);
++            output.record_tokens(delta.attributions, true);
++            return self.parse_tool(&delta.text, output);
+         };
+-
+-        let reasoning_delta = reasoning.push(delta)?;
+-        if let Some(reasoning) = reasoning_delta.reasoning {
+-            output.push_reasoning(reasoning);
+-        }
+-        if let Some(content) = reasoning_delta.content {
+-            self.parse_tool(&content, output)?;
+-        }
+-        Ok(())
++        let delta = reasoning.push(delta)?;
++        self.process_reasoning_delta(delta, output)
+     }
+ 
+     fn finish(&mut self) -> Result<UnifiedParserOutput> {
+         let mut output = UnifiedParserOutput::default();
+         if let Some(reasoning) = self.reasoning.as_mut() {
+-            let reasoning_delta = reasoning.finish()?;
+-            if let Some(reasoning) = reasoning_delta.reasoning {
+-                output.push_reasoning(reasoning);
+-            }
+-            if let Some(content) = reasoning_delta.content {
+-                self.parse_tool(&content, &mut output)?;
+-            }
++            let delta = reasoning.finish()?;
++            self.process_reasoning_delta(delta, &mut output)?;
+         }
+         output.append(self.flush_tool()?);
+         Ok(output)
+     }
+ 
+-    fn reset(&mut self) -> String {
+-        self.tool.as_mut().map_or_else(String::new, |parser| parser.reset())
++    fn reset(&mut self) -> UnifiedParserReset {
++        UnifiedParserReset {
++            text: self.tool.as_mut().map_or_else(String::new, |parser| parser.reset()),
++            discarded_positions: self
++                .reasoning
++                .as_mut()
++                .map_or_else(Vec::new, |parser| parser.discard_pending()),
++        }
+     }
+ }
+ 
+@@ -155,8 +167,8 @@
+ 
+     fn collect(parser: &mut dyn UnifiedParser, chunks: &[&str]) -> UnifiedParserOutput {
+         let mut output = UnifiedParserOutput::default();
+-        for chunk in chunks {
+-            parser.parse_into(chunk, &mut output).unwrap();
++        for &chunk in chunks {
++            parser.parse_into(chunk.into(), &mut output).unwrap();
+         }
+         output.append(parser.finish().unwrap());
+         output
+@@ -178,10 +190,14 @@
+             true
+         }
+ 
+-        fn push(&mut self, delta: &str) -> crate::reasoning::Result<ReasoningDelta> {
++        fn push(
++            &mut self,
++            delta: vllm_tokenizer::DecodedText,
++        ) -> crate::reasoning::Result<ReasoningDelta> {
+             Ok(ReasoningDelta {
+                 reasoning: None,
+-                content: Some(delta.to_string()),
++                content: Some(delta),
++                discarded: Vec::new(),
+             })
+         }
+     }
+@@ -300,7 +316,7 @@
+         let mut parser = CombinedParser::new(None, Some(Box::new(PartialThenErrorToolParser)));
+         let mut output = UnifiedParserOutput::default();
+ 
+-        let error = parser.parse_into("bad", &mut output).unwrap_err();
++        let error = parser.parse_into(("bad").into(), &mut output).unwrap_err();
+ 
+         assert!(matches!(error, crate::unified::UnifiedParserError::Tool(_)));
+         assert_eq!(
+--- a/rust/src/parser/src/unified/gemma4.rs
++++ b/rust/src/parser/src/unified/gemma4.rs
+@@ -2,7 +2,7 @@
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ use serde_json::{Map, Number, Value};
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ use winnow::ascii::multispace0 as ws0;
+ use winnow::combinator::{alt, delimited, eof, opt, separated, seq, terminated};
+ use winnow::error::{ContextError, ErrMode, ModalResult};
+@@ -10,7 +10,7 @@
+ use winnow::stream::{Partial, Stream};
+ use winnow::token::{literal, take_till, take_until};
+ 
+-use super::{Result, UnifiedParser, UnifiedParserOutput, token_id};
++use super::{Result, UnifiedParser, UnifiedParserOutput, UnifiedParserReset, token_id};
+ use crate::reasoning::last_reasoning_boundary;
+ use crate::tool::{Tool, ToolCallDelta};
+ use crate::unified::parsing_failed;
+@@ -68,7 +68,7 @@
+ ///
+ /// Arguments are emitted only after a full Gemma4 tool call is parsed.
+ pub struct Gemma4UnifiedParser {
+-    buffer: String,
++    buffer: DecodedText,
+     mode: Gemma4Mode,
+     emitted_tool_count: usize,
+     tokenizer: DynTokenizer,
+@@ -83,7 +83,7 @@
+         let channel_end_token_id = token_id(tokenizer.as_ref(), CHANNEL_END)?;
+ 
+         Ok(Self {
+-            buffer: String::new(),
++            buffer: DecodedText::default(),
+             mode: Gemma4Mode::default(),
+             emitted_tool_count: 0,
+             channel_start_token_id,
+@@ -92,13 +92,26 @@
+         })
+     }
+ 
+-    fn apply_event(&mut self, event: Gemma4Event, output: &mut UnifiedParserOutput) -> Result<()> {
++    fn apply_event(
++        &mut self,
++        event: Gemma4Event,
++        mut piece: DecodedText,
++        output: &mut UnifiedParserOutput,
++    ) -> Result<()> {
++        if !matches!(
++            &event,
++            Gemma4Event::Text { .. } | Gemma4Event::Reasoning { .. } | Gemma4Event::ToolCall { .. }
++        ) {
++            output.record_tokens(std::mem::take(&mut piece.attributions), false);
++        }
+         match event {
+             Gemma4Event::Text { len: consumed_len } => {
+-                output.push_text(self.buffer[..consumed_len].to_string());
++                output.push_content_piece(piece.drain_prefix(consumed_len));
++                output.discard_piece(piece);
+             }
+             Gemma4Event::Reasoning { len: consumed_len } => {
+-                output.push_reasoning(self.buffer[..consumed_len].to_string());
++                output.push_reasoning_piece(piece.drain_prefix(consumed_len));
++                output.discard_piece(piece);
+             }
+             Gemma4Event::ReasoningStart => self.mode = Gemma4Mode::Reasoning,
+             Gemma4Event::ReasoningEnd => self.mode = Gemma4Mode::Text,
+@@ -110,6 +123,9 @@
+                 };
+             }
+             Gemma4Event::ToolCall { args } => {
++                let body_len = piece.text.len() - TOOL_CALL_END.len();
++                output.record_tokens(piece.drain_prefix(body_len).attributions, true);
++                output.discard_piece(piece);
+                 let mode = std::mem::replace(&mut self.mode, Gemma4Mode::Text);
+                 let Gemma4Mode::ToolCall { name, .. } = mode else {
+                     return Err(parsing_failed!(
+@@ -142,28 +158,17 @@
+         };
+     }
+ 
+-    fn reset(&mut self) -> String {
+-        let raw = match std::mem::replace(&mut self.mode, Gemma4Mode::Text) {
+-            Gemma4Mode::Text => std::mem::take(&mut self.buffer),
+-            Gemma4Mode::Reasoning => {
+-                format!("{}{}", REASONING_START, std::mem::take(&mut self.buffer))
+-            }
+-            Gemma4Mode::Header => {
+-                format!("{}{}", TOOL_CALL_START, std::mem::take(&mut self.buffer))
+-            }
+-            Gemma4Mode::ToolCall { name, .. } => {
+-                format!(
+-                    "{}{}{}{{{}",
+-                    TOOL_CALL_START,
+-                    CALL_PREFIX,
+-                    name,
+-                    std::mem::take(&mut self.buffer)
+-                )
+-            }
++    fn reset(&mut self) -> UnifiedParserReset {
++        let prefix = match std::mem::replace(&mut self.mode, Gemma4Mode::Text) {
++            Gemma4Mode::Text => String::new(),
++            Gemma4Mode::Reasoning => REASONING_START.to_string(),
++            Gemma4Mode::Header => TOOL_CALL_START.to_string(),
++            Gemma4Mode::ToolCall { name, .. } => format!("{TOOL_CALL_START}{CALL_PREFIX}{name}{{"),
+         };
+-        self.mode = Gemma4Mode::Text;
++        let mut raw = DecodedText::unattributed(prefix);
++        raw.append(self.buffer.take());
+         self.emitted_tool_count = 0;
+-        raw
++        raw.into()
+     }
+ }
+ 
+@@ -186,16 +191,16 @@
+         true
+     }
+ 
+-    fn parse_into(&mut self, chunk: &str, output: &mut UnifiedParserOutput) -> Result<()> {
+-        self.buffer.push_str(chunk);
++    fn parse_into(&mut self, chunk: DecodedText, output: &mut UnifiedParserOutput) -> Result<()> {
++        self.buffer.append(chunk);
+ 
+         while let Some((event, consumed_len)) = {
+-            parse_buffered_event(&self.buffer, |input| {
++            parse_buffered_event(&self.buffer.text, |input| {
+                 parse_next_gemma4_event(input, &mut self.mode)
+             })?
+         } {
+-            self.apply_event(event, output)?;
+-            self.buffer.drain(..consumed_len);
++            let piece = self.buffer.drain_prefix(consumed_len);
++            self.apply_event(event, piece, output)?;
+         }
+ 
+         Ok(())
+@@ -205,8 +210,8 @@
+         let mut output = UnifiedParserOutput::default();
+ 
+         match &self.mode {
+-            Gemma4Mode::Text => output.push_text(std::mem::take(&mut self.buffer)),
+-            Gemma4Mode::Reasoning => output.push_reasoning(std::mem::take(&mut self.buffer)),
++            Gemma4Mode::Text => output.push_content_piece(self.buffer.take()),
++            Gemma4Mode::Reasoning => output.push_reasoning_piece(self.buffer.take()),
+             Gemma4Mode::Header | Gemma4Mode::ToolCall { .. } => {
+                 return Err(parsing_failed!("incomplete Gemma4 tool call"));
+             }
+@@ -216,7 +221,7 @@
+         Ok(output)
+     }
+ 
+-    fn reset(&mut self) -> String {
++    fn reset(&mut self) -> UnifiedParserReset {
+         Gemma4UnifiedParser::reset(self)
+     }
+ }
+@@ -539,7 +544,7 @@
+     impl UnifiedParserTestExt for Gemma4UnifiedParser {
+         fn parse_chunk(&mut self, chunk: &str) -> super::Result<UnifiedParserOutput> {
+             let mut output = UnifiedParserOutput::default();
+-            self.parse_into(chunk, &mut output)?;
++            self.parse_into((chunk).into(), &mut output)?;
+             Ok(output)
+         }
+ 
+@@ -1080,7 +1085,7 @@
+             parser.parse_chunk(chunk).unwrap();
+         }
+ 
+-        let raw = parser.reset();
++        let raw = parser.reset().text;
+ 
+         assert_eq!(
+             raw,
+@@ -1094,7 +1099,7 @@
+         let input = "<|tool_call>call:set{broken}<tool_call|>";
+ 
+         let _error = parser.parse_chunk(input).unwrap_err();
+-        let raw = parser.reset();
++        let raw = parser.reset().text;
+ 
+         assert_eq!(raw, input);
+     }
+--- a/rust/src/parser/src/unified/inkling.rs
++++ b/rust/src/parser/src/unified/inkling.rs
+@@ -8,9 +8,9 @@
+ use winnow::stream::Partial;
+ use winnow::token::literal;
+ 
+-use vllm_tokenizer::DynTokenizer;
+-
+-use super::{Result, UnifiedParser, UnifiedParserOutput, token_id};
++use vllm_tokenizer::{DecodedText, DynTokenizer};
++
++use super::{Result, UnifiedParser, UnifiedParserOutput, UnifiedParserReset, token_id};
+ use crate::tool::json::{
+     JsonToolCallConfig, JsonToolCallEvent, JsonToolCallWhitespace, JsonToolInput,
+     tool_call_header_event,
+@@ -73,7 +73,7 @@
+     #[default]
+     Idle,
+     MessageHeader {
+-        pending: String,
++        pending: DecodedText,
+     },
+     Text,
+     Reasoning,
+@@ -86,7 +86,7 @@
+ 
+ /// Unified parser for Inkling typed content blocks.
+ pub struct InklingUnifiedParser {
+-    buffer: String,
++    buffer: DecodedText,
+     mode: InklingMode,
+     emitted_tool_count: usize,
+     active_tool_index: Option<usize>,
+@@ -104,7 +104,7 @@
+         let content_thinking_token_id = token_id(tokenizer.as_ref(), CONTENT_THINKING)?;
+ 
+         Ok(Self {
+-            buffer: String::new(),
++            buffer: DecodedText::default(),
+             mode: InklingMode::Idle,
+             emitted_tool_count: 0,
+             active_tool_index: None,
+@@ -120,7 +120,7 @@
+         for token_id in prompt_token_ids.iter().rev().copied() {
+             if token_id == self.message_model_token_id {
+                 self.mode = InklingMode::MessageHeader {
+-                    pending: String::new(),
++                    pending: DecodedText::default(),
+                 };
+                 return;
+             }
+@@ -138,15 +138,41 @@
+         }
+     }
+ 
+-    fn apply_event(&mut self, event: InklingEvent, output: &mut UnifiedParserOutput) -> Result<()> {
++    fn apply_event(
++        &mut self,
++        event: InklingEvent,
++        mut piece: DecodedText,
++        output: &mut UnifiedParserOutput,
++    ) -> Result<()> {
++        if !matches!(
++            &event,
++            InklingEvent::Text { .. }
++                | InklingEvent::Reasoning { .. }
++                | InklingEvent::Header { .. }
++                | InklingEvent::ToolJsonArgs { .. }
++        ) {
++            output.record_tokens(std::mem::take(&mut piece.attributions), false);
++        }
++        // A content-kind marker makes the pending header framing; without one it can become text.
++        if matches!(
++            &event,
++            InklingEvent::TextStart | InklingEvent::ReasoningStart | InklingEvent::ToolJsonStart
++        ) && let InklingMode::MessageHeader { pending } = &mut self.mode
++        {
++            output.discard_piece(pending.take());
++        }
+         match event {
+-            InklingEvent::Text { len } => output.push_text(self.buffer[..len].to_string()),
++            InklingEvent::Text { len } => {
++                output.push_content_piece(piece.drain_prefix(len));
++                output.discard_piece(piece);
++            }
+             InklingEvent::Reasoning { len } => {
+-                output.push_reasoning(self.buffer[..len].to_string());
++                output.push_reasoning_piece(piece.drain_prefix(len));
++                output.discard_piece(piece);
+             }
+             InklingEvent::MessageStart => {
+                 self.mode = InklingMode::MessageHeader {
+-                    pending: String::new(),
++                    pending: DecodedText::default(),
+                 };
+             }
+             InklingEvent::Header { len } => {
+@@ -155,7 +181,8 @@
+                         "Inkling header text outside a message header"
+                     ));
+                 };
+-                pending.push_str(&self.buffer[..len]);
++                pending.append(piece.drain_prefix(len));
++                output.discard_piece(piece);
+             }
+             InklingEvent::TextStart => self.mode = InklingMode::Text,
+             InklingEvent::ReasoningStart => self.mode = InklingMode::Reasoning,
+@@ -174,6 +201,9 @@
+                 });
+             }
+             InklingEvent::ToolJsonArgs { len, complete } => {
++                let body = piece.drain_prefix(len);
++                output.record_tokens(body.attributions, true);
++                output.discard_piece(piece);
+                 let Some(tool_index) = self.active_tool_index else {
+                     return Err(parsing_failed!(
+                         "Inkling arguments without an active tool call"
+@@ -182,7 +212,7 @@
+                 output.push_call(ToolCallDelta {
+                     tool_index,
+                     name: None,
+-                    arguments: self.buffer[..len].to_string(),
++                    arguments: body.text,
+                 });
+                 if complete {
+                     self.mode = InklingMode::ToolJsonClose;
+@@ -191,7 +221,7 @@
+             InklingEvent::BlockEnd => {
+                 let mode = std::mem::take(&mut self.mode);
+                 if let InklingMode::MessageHeader { pending } = mode {
+-                    output.push_text(pending);
++                    output.push_content_piece(pending);
+                 }
+                 self.active_tool_index = None;
+             }
+@@ -199,15 +229,15 @@
+         Ok(())
+     }
+ 
+-    fn reset(&mut self) -> String {
++    fn reset(&mut self) -> UnifiedParserReset {
+         let mut uncommitted = match std::mem::take(&mut self.mode) {
+             InklingMode::MessageHeader { pending } => pending,
+-            _ => String::new(),
++            _ => DecodedText::default(),
+         };
+         self.active_tool_index = None;
+         self.emitted_tool_count = 0;
+-        uncommitted.push_str(&std::mem::take(&mut self.buffer));
+-        uncommitted
++        uncommitted.append(self.buffer.take());
++        uncommitted.into()
+     }
+ }
+ 
+@@ -231,14 +261,14 @@
+         true
+     }
+ 
+-    fn parse_into(&mut self, chunk: &str, output: &mut UnifiedParserOutput) -> Result<()> {
+-        self.buffer.push_str(chunk);
+-
+-        while let Some((event, consumed_len)) = parse_buffered_event(&self.buffer, |input| {
++    fn parse_into(&mut self, chunk: DecodedText, output: &mut UnifiedParserOutput) -> Result<()> {
++        self.buffer.append(chunk);
++
++        while let Some((event, consumed_len)) = parse_buffered_event(&self.buffer.text, |input| {
+             parse_next_inkling_event(input, &mut self.mode)
+         })? {
+-            self.apply_event(event, output)?;
+-            self.buffer.drain(..consumed_len);
++            let piece = self.buffer.drain_prefix(consumed_len);
++            self.apply_event(event, piece, output)?;
+         }
+ 
+         Ok(())
+@@ -248,15 +278,13 @@
+         let mut output = UnifiedParserOutput::default();
+ 
+         match &mut self.mode {
+-            InklingMode::Idle | InklingMode::Text => {
+-                output.push_text(std::mem::take(&mut self.buffer))
+-            }
++            InklingMode::Idle | InklingMode::Text => output.push_content_piece(self.buffer.take()),
+             InklingMode::MessageHeader { pending } => {
+-                pending.push_str(&self.buffer);
+-                self.buffer.clear();
+-                output.push_text(std::mem::take(pending));
+-            }
+-            InklingMode::Reasoning => output.push_reasoning(std::mem::take(&mut self.buffer)),
++                let mut content = pending.take();
++                content.append(self.buffer.take());
++                output.push_content_piece(content);
++            }
++            InklingMode::Reasoning => output.push_reasoning_piece(self.buffer.take()),
+             InklingMode::ToolJsonHeader
+             | InklingMode::ToolJsonArgs { .. }
+             | InklingMode::ToolJsonClose => {
+@@ -268,7 +296,7 @@
+         Ok(output)
+     }
+ 
+-    fn reset(&mut self) -> String {
++    fn reset(&mut self) -> UnifiedParserReset {
+         InklingUnifiedParser::reset(self)
+     }
+ }
+@@ -497,7 +525,7 @@
+     impl<T: UnifiedParser + ?Sized> UnifiedParserTestExt for T {
+         fn parse_chunk(&mut self, chunk: &str) -> super::Result<UnifiedParserOutput> {
+             let mut output = UnifiedParserOutput::default();
+-            self.parse_into(chunk, &mut output)?;
++            self.parse_into(chunk.into(), &mut output)?;
+             Ok(output)
+         }
+ 
+@@ -749,7 +777,7 @@
+         parser.parse_chunk("plain ").unwrap();
+         parser.parse_chunk("answer").unwrap();
+ 
+-        assert_eq!(parser.reset(), "plain answer");
++        assert_eq!(parser.reset().text, "plain answer");
+     }
+ 
+     #[test]
+--- a/rust/src/parser/src/unified/kimi_k3.rs
++++ b/rust/src/parser/src/unified/kimi_k3.rs
+@@ -41,7 +41,7 @@
+ pub use structural_tag::KimiK3StructuralTagBuilder;
+ 
+ use serde_json::{Map, Value};
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer};
+ use winnow::ascii::{multispace0 as ws0, multispace1 as ws1};
+ use winnow::combinator::{alt, delimited, eof, preceded, repeat, seq, terminated};
+ use winnow::error::{ContextError, ErrMode, ModalResult, StrContext};
+@@ -50,7 +50,7 @@
+ use winnow::token::{literal, rest, take_till, take_until, take_while};
+ 
+ use self::structural_tag::KIMI_K3_STRUCTURAL_TAG_BUILDER;
+-use super::{Result, UnifiedParser, UnifiedParserOutput, token_id};
++use super::{Result, UnifiedParser, UnifiedParserOutput, UnifiedParserReset, token_id};
+ use crate::tool::{StructuralTagBuilder, Tool, ToolCallDelta};
+ use crate::unified::parsing_failed;
+ use crate::utils::{MarkerScanState, parse_buffered_event, safe_text_len_mul, take_until_marker};
+@@ -146,7 +146,7 @@
+ 
+ /// Unified parser for Kimi K3 XTML think / response / tools channels.
+ pub struct KimiK3UnifiedParser {
+-    buffer: String,
++    buffer: DecodedText,
+     mode: KimiK3Mode,
+     /// Number of calls emitted in the current response.
+     emitted_call_count: usize,
+@@ -162,7 +162,7 @@
+         let sep_token_id = token_id(tokenizer.as_ref(), SEP)?;
+ 
+         Ok(Self {
+-            buffer: String::new(),
++            buffer: DecodedText::default(),
+             mode: KimiK3Mode::default(),
+             emitted_call_count: 0,
+             tokenizer,
+@@ -202,11 +202,28 @@
+         };
+     }
+ 
+-    fn apply_event(&mut self, event: KimiK3Event, output: &mut UnifiedParserOutput) -> Result<()> {
++    fn apply_event(
++        &mut self,
++        event: KimiK3Event,
++        mut piece: DecodedText,
++        output: &mut UnifiedParserOutput,
++    ) -> Result<()> {
++        if !matches!(
++            &event,
++            KimiK3Event::Text { .. }
++                | KimiK3Event::Reasoning { .. }
++                | KimiK3Event::CallComplete { .. }
++        ) {
++            output.record_tokens(std::mem::take(&mut piece.attributions), false);
++        }
+         match event {
+-            KimiK3Event::Text { len } => output.push_text(self.buffer[..len].to_string()),
++            KimiK3Event::Text { len } => {
++                output.push_content_piece(piece.drain_prefix(len));
++                output.discard_piece(piece);
++            }
+             KimiK3Event::Reasoning { len } => {
+-                output.push_reasoning(self.buffer[..len].to_string());
++                output.push_reasoning_piece(piece.drain_prefix(len));
++                output.discard_piece(piece);
+             }
+             KimiK3Event::Skip => {}
+             KimiK3Event::ThinkOpen => self.mode = KimiK3Mode::Reasoning,
+@@ -233,8 +250,12 @@
+                 // An empty/garbage call block without a tool name is dropped,
+                 // matching the Python parser.
+                 if name.is_empty() {
++                    output.discard_piece(piece);
+                     return Ok(());
+                 }
++                let body_len = piece.text.len() - CALL_CLOSE.len();
++                output.record_tokens(piece.drain_prefix(body_len).attributions, true);
++                output.discard_piece(piece);
+ 
+                 let tool_index = self.emitted_call_count;
+                 self.emitted_call_count += 1;
+@@ -248,10 +269,10 @@
+         Ok(())
+     }
+ 
+-    fn reset_state(&mut self) -> String {
++    fn reset_state(&mut self) -> UnifiedParserReset {
+         self.mode = KimiK3Mode::Idle;
+         self.emitted_call_count = 0;
+-        std::mem::take(&mut self.buffer)
++        self.buffer.take().into()
+     }
+ }
+ 
+@@ -278,14 +299,14 @@
+         Some(&KIMI_K3_STRUCTURAL_TAG_BUILDER)
+     }
+ 
+-    fn parse_into(&mut self, chunk: &str, output: &mut UnifiedParserOutput) -> Result<()> {
+-        self.buffer.push_str(chunk);
+-
+-        while let Some((event, consumed_len)) = parse_buffered_event(&self.buffer, |input| {
++    fn parse_into(&mut self, chunk: DecodedText, output: &mut UnifiedParserOutput) -> Result<()> {
++        self.buffer.append(chunk);
++
++        while let Some((event, consumed_len)) = parse_buffered_event(&self.buffer.text, |input| {
+             parse_next_kimi_k3_event(input, &mut self.mode)
+         })? {
+-            self.apply_event(event, output)?;
+-            self.buffer.drain(..consumed_len);
++            let piece = self.buffer.drain_prefix(consumed_len);
++            self.apply_event(event, piece, output)?;
+         }
+ 
+         Ok(())
+@@ -296,13 +317,15 @@
+ 
+         match &self.mode {
+             KimiK3Mode::Idle | KimiK3Mode::Response => {
+-                output.push_text(std::mem::take(&mut self.buffer));
++                output.push_content_piece(self.buffer.take());
+             }
+-            KimiK3Mode::Reasoning => output.push_reasoning(std::mem::take(&mut self.buffer)),
+-            KimiK3Mode::Epilogue | KimiK3Mode::Done => self.buffer.clear(),
++            KimiK3Mode::Reasoning => output.push_reasoning_piece(self.buffer.take()),
++            KimiK3Mode::Epilogue | KimiK3Mode::Done => output.discard_piece(self.buffer.take()),
+             // A tools channel truncated between complete calls loses only its
+             // closing markers; keep the calls already emitted.
+-            KimiK3Mode::Tools if self.buffer.is_empty() => {}
++            KimiK3Mode::Tools if self.buffer.text.is_empty() => {
++                output.discard_piece(self.buffer.take());
++            }
+             KimiK3Mode::Tools | KimiK3Mode::Call { .. } => {
+                 return Err(parsing_failed!("incomplete Kimi K3 tool call"));
+             }
+@@ -312,7 +335,7 @@
+         Ok(output)
+     }
+ 
+-    fn reset(&mut self) -> String {
++    fn reset(&mut self) -> UnifiedParserReset {
+         self.reset_state()
+     }
+ }
+@@ -603,7 +626,7 @@
+     impl UnifiedParserTestExt for KimiK3UnifiedParser {
+         fn parse_chunk(&mut self, chunk: &str) -> super::Result<UnifiedParserOutput> {
+             let mut output = UnifiedParserOutput::default();
+-            self.parse_into(chunk, &mut output)?;
++            self.parse_into((chunk).into(), &mut output)?;
+             Ok(output)
+         }
+ 
+@@ -1119,7 +1142,7 @@
+         parser.initialize(&prompt).unwrap();
+         parser.parse_chunk("answer<|close|>resp").unwrap();
+ 
+-        let raw = parser.reset();
++        let raw = parser.reset().text;
+ 
+         assert_eq!(raw, "<|close|>resp");
+     }
+--- a/rust/src/parser/src/unified/mod.rs
++++ b/rust/src/parser/src/unified/mod.rs
+@@ -14,7 +14,7 @@
+ pub use kimi_k3::{KimiK3StructuralTagBuilder, KimiK3UnifiedParser};
+ use thiserror::Error;
+ use thiserror_ext::Macro;
+-use vllm_tokenizer::DynTokenizer;
++use vllm_tokenizer::{DecodedText, DynTokenizer, TokenAttribution};
+ 
+ use crate::reasoning::ReasoningError;
+ use crate::tool::{
+@@ -23,6 +23,26 @@
+ 
+ /// Result alias for unified parser operations.
+ pub type Result<T> = std::result::Result<T, UnifiedParserError>;
++
++/// Parser-owned fallback text and samples whose classification is abandoned.
++#[derive(Debug, Clone, Default, PartialEq, Eq)]
++pub struct UnifiedParserReset {
++    pub text: String,
++    pub discarded_positions: Vec<usize>,
++}
++
++impl From<DecodedText> for UnifiedParserReset {
++    fn from(piece: DecodedText) -> Self {
++        Self {
++            text: piece.text,
++            discarded_positions: piece
++                .attributions
++                .into_iter()
++                .map(|token| token.position)
++                .collect(),
++        }
++    }
++}
+ 
+ /// One parsed event emitted by a unified parser.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+@@ -35,14 +55,65 @@
+     ToolCall(ToolCallDelta),
+ }
+ 
++/// The semantic decision for one source-sample coverage fragment.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct TokenDisposition {
++    pub position: usize,
++    pub covered_bytes: usize,
++    pub token_byte_count: usize,
++    pub visible: bool,
++}
++
+ /// Result of advancing unified parsing with one assistant-text input.
+ #[derive(Debug, Clone, Default, PartialEq, Eq)]
+ pub struct UnifiedParserOutput {
+     /// Ordered parser events committed by this input.
+     pub events: Vec<UnifiedParserEvent>,
++    /// Consumed source coverage, independent of semantic event ordering.
++    pub token_dispositions: Vec<TokenDisposition>,
+ }
+ 
+ impl UnifiedParserOutput {
++    /// Classifies consumed source fragments before text or tool transformations.
++    pub fn record_tokens(&mut self, attributions: Vec<TokenAttribution>, visible: bool) {
++        self.token_dispositions.extend(attributions.into_iter().map(|attribution| {
++            TokenDisposition {
++                position: attribution.position,
++                covered_bytes: attribution.byte_range.len(),
++                token_byte_count: attribution.token_byte_count,
++                visible: visible && attribution.token_byte_count != 0,
++            }
++        }));
++    }
++
++    /// Resolves samples explicitly abandoned by parser-owned pending state.
++    pub fn discard_positions(&mut self, positions: Vec<usize>) {
++        self.token_dispositions
++            .extend(positions.into_iter().map(|position| TokenDisposition {
++                position,
++                covered_bytes: 0,
++                token_byte_count: 0,
++                visible: false,
++            }));
++    }
++
++    /// Commits one attributed visible text fragment and its metadata decision.
++    pub fn push_content_piece(&mut self, piece: DecodedText) {
++        self.record_tokens(piece.attributions, true);
++        self.push_text(piece.text);
++    }
++
++    /// Commits one attributed reasoning fragment without exposing its metadata.
++    pub fn push_reasoning_piece(&mut self, piece: DecodedText) {
++        self.record_tokens(piece.attributions, false);
++        self.push_reasoning(piece.text);
++    }
++
++    /// Resolves framing that is consumed without any public content.
++    pub fn discard_piece(&mut self, piece: DecodedText) {
++        self.record_tokens(piece.attributions, false);
++    }
++
+     /// Append one visible text event if `delta` is non-empty.
+     pub fn push_text(&mut self, delta: impl AsRef<str> + Into<String>) {
+         if delta.as_ref().is_empty() {
+@@ -84,6 +155,7 @@
+ 
+     /// Append another parser output onto this one.
+     pub fn append(&mut self, other: Self) {
++        self.token_dispositions.extend(other.token_dispositions);
+         for event in other.events {
+             match event {
+                 UnifiedParserEvent::Text(text) => self.push_text(text),
+@@ -184,16 +256,17 @@
+     }
+ 
+     /// Feed one decoded text delta into the parser, appending committed output into `output`.
+-    fn parse_into(&mut self, delta: &str, output: &mut UnifiedParserOutput) -> Result<()>;
++    fn parse_into(&mut self, delta: DecodedText, output: &mut UnifiedParserOutput) -> Result<()>;
+ 
+     /// Flush any buffered parser state at end of stream.
+     fn finish(&mut self) -> Result<UnifiedParserOutput> {
+         Ok(UnifiedParserOutput::default())
+     }
+ 
+-    /// Clear parser state and return currently uncommitted buffered text.
+-    fn reset(&mut self) -> String {
+-        String::new()
++    /// Transfers fallback text and all abandoned parser-owned sample positions.
++    /// Previously committed source fragments must not appear in this result.
++    fn reset(&mut self) -> UnifiedParserReset {
++        UnifiedParserReset::default()
+     }
+ }
+ 
+--- a/rust/src/server/src/routes/openai/completions.rs
++++ b/rust/src/server/src/routes/openai/completions.rs
+@@ -380,7 +380,8 @@
+                 } else {
+                     None
+                 };
+-                let mut chunk = delta_chunk(&request_id, &response_model, created, delta, logprobs);
++                let mut chunk =
++                    delta_chunk(&request_id, &response_model, created, delta.text, logprobs);
+                 let delta_token_count = token_ids.len();
+                 continuous_usage.add_output_tokens(delta_token_count);
+                 if return_token_ids && let Some(choice) = chunk.choices.first_mut() {
+@@ -624,7 +625,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: "h".to_string(),
++                delta: "h".into(),
+                 token_ids: vec![b'h' as u32],
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![DecodedPositionLogprobs {
+@@ -647,7 +648,7 @@
+                 finished: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: String::new(),
++                delta: Default::default(),
+                 token_ids: vec![b'!' as u32],
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![DecodedPositionLogprobs {
+@@ -771,7 +772,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: " leaked".to_string(),
++                delta: " leaked".into(),
+                 token_ids: vec![3],
+                 logprobs: None,
+                 finished: Some(Finished {
+@@ -823,7 +824,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: " leaked".to_string(),
++                delta: " leaked".into(),
+                 token_ids: vec![3],
+                 logprobs: None,
+                 finished: Some(Finished {
+@@ -878,7 +879,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: " leaked".to_string(),
++                delta: " leaked".into(),
+                 token_ids: vec![3],
+                 logprobs: None,
+                 finished: Some(Finished {
+@@ -950,7 +951,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: " leaked".to_string(),
++                delta: " leaked".into(),
+                 token_ids: vec![3],
+                 logprobs: None,
+                 finished: Some(Finished {
+@@ -1024,7 +1025,7 @@
+                 }),
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: " leaked".to_string(),
++                delta: " leaked".into(),
+                 token_ids: vec![3],
+                 logprobs: None,
+                 finished: Some(Finished {
+--- a/rust/src/text/src/output/decoded.rs
++++ b/rust/src/text/src/output/decoded.rs
+@@ -10,7 +10,7 @@
+ use vllm_engine_core_client::AbortCause;
+ use vllm_engine_core_client::protocol::output::StopReason;
+ use vllm_llm::{FinishReason, GenerateOutput, TokenUsage};
+-use vllm_tokenizer::{DynTokenizer, IncrementalDecoder};
++use vllm_tokenizer::{DecodedText, DynTokenizer, IncrementalDecoder};
+ 
+ use super::logprobs::{
+     DecodedLogprobs, DecodedPromptLogprobs, decode_logprobs, decode_prompt_logprobs,
+@@ -71,19 +71,16 @@
+     /// A delta of text has been decoded, optionally alongside token-position
+     /// logprobs.
+     ///
+-    /// `delta` is the newly visible decoded text fragment for this update.
++    /// `delta` contains newly visible text and its source-sample coverage.
++    /// Its attributions can refer to positions sampled in earlier updates.
+     ///
+-    /// `logprobs` covers the newly generated token positions from the same
+-    /// update, but is not guaranteed to align with `delta` by character
+-    /// span. One update may carry token logprobs but no newly visible text
+-    /// yet, and one visible text fragment may reflect multiple token
+-    /// positions becoming decodable together.
+-    ///
+-    /// Upper-level may further parse `delta` as reasoning or tool calls.
++    /// `token_ids` and `logprobs` retain the raw engine-update clock. They
++    /// remain independent of stop buffering and the decoder's UTF-8 groups.
++    /// Upper layers use `delta.attributions` when exposing semantic metadata.
+     ///
+     /// When `finished` is `Some`, this is the terminal event for the request.
+     TextDelta {
+-        delta: String,
++        delta: DecodedText,
+         token_ids: Vec<u32>,
+         logprobs: Option<DecodedLogprobs>,
+         finished: Option<Finished>,
+@@ -168,7 +165,7 @@
+             &output.token_ids
+         };
+ 
+-        let mut delta: Option<String> = None;
++        let mut delta: Option<DecodedText> = None;
+         let mut truncate_output_to = None;
+         let mut truncate_tokens_to = None;
+         for (tok_idx, &token_id) in decodable_token_ids.iter().enumerate() {
+@@ -191,7 +188,7 @@
+ 
+             if intermediate && let Some(chunk) = decoder.next_chunk() {
+                 if let Some(delta_str) = delta.as_mut() {
+-                    delta_str.push_str(&chunk);
++                    delta_str.append(chunk);
+                 } else {
+                     delta = Some(chunk);
+                 }
+@@ -234,22 +231,20 @@
+ 
+         if let Some(reason) = finish_reason {
+             // Flush any remaining buffered text.
+-            let (last_chunk, mut text) = decoder.flush(truncate_output_to)?;
++            let (last_chunk, text) = decoder.flush(truncate_output_to)?;
+             let text_len = text.len();
+-            let full_text = tracing::enabled!(Level::TRACE).then(|| text.clone());
+-
+-            if intermediate {
++            let full_text = tracing::enabled!(Level::TRACE).then_some(text);
++
++            let delta = if intermediate {
+                 if let Some(chunk) = last_chunk {
+-                    if let Some(delta_str) = delta.as_mut() {
+-                        delta_str.push_str(&chunk);
+-                    } else {
+-                        delta = Some(chunk);
+-                    }
++                    delta.get_or_insert_with(DecodedText::default).append(chunk);
+                 }
+                 token_ids = new_token_ids;
+                 logprobs = decoded_logprobs;
+-                text = delta.unwrap_or_default();
+-            }
++                delta.unwrap_or_default()
++            } else {
++                last_chunk.unwrap_or_default()
++            };
+ 
+             debug!(
+                 finish_reason = ?reason,
+@@ -269,7 +264,7 @@
+             }
+ 
+             y.yield_ok(DecodedTextEvent::TextDelta {
+-                delta: text,
++                delta,
+                 token_ids,
+                 logprobs,
+                 finished: Some(Finished {
+--- a/rust/src/text/src/output/mod.rs
++++ b/rust/src/text/src/output/mod.rs
+@@ -75,7 +75,7 @@
+                             }
+                         } else {
+                             collected = Some(CollectedTextOutput {
+-                                text: delta,
++                                text: delta.text,
+                                 prompt_token_ids: Arc::clone(&prompt_token_ids),
+                                 prompt_logprobs: prompt_logprobs.take(),
+                                 logprobs: delta_logprobs,
+@@ -134,7 +134,7 @@
+                 }),
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: "bc".to_string(),
++                delta: "bc".into(),
+                 token_ids: vec![1, 2],
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![
+@@ -219,7 +219,7 @@
+                 prompt_logprobs: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: "he".to_string(),
++                delta: "he".into(),
+                 token_ids: vec![1, 2],
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![
+@@ -244,7 +244,7 @@
+                 finished: None,
+             }),
+             Ok(DecodedTextEvent::TextDelta {
+-                delta: "llo".to_string(),
++                delta: "llo".into(),
+                 token_ids: vec![3, 4, 5],
+                 logprobs: Some(DecodedLogprobs {
+                     positions: vec![
+--- /dev/null
++++ b/rust/src/tokenizer/src/incremental/attribution.rs
+@@ -0,0 +1,254 @@
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++use std::collections::VecDeque;
++use std::mem::take;
++use std::ops::{Deref, Range};
++
++/// A generated sample's contribution to one decoded fragment.
++///
++/// Several samples can share one decoder-resolved UTF-8 group; its members
++/// have identical ranges and widths within each decoder output. Splitting
++/// clips each range without overlap, retaining the position and complete width.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct TokenAttribution {
++    /// Zero-based generated sample position; prompt tokens are not counted.
++    pub position: usize,
++    /// Coverage local to the enclosing decoded fragment.
++    pub byte_range: Range<usize>,
++    /// Complete decoder-group width before slicing or stop-string truncation.
++    pub token_byte_count: usize,
++}
++
++/// Decoded text with source-sample coverage retained across parser slicing.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct DecodedText {
++    pub text: String,
++    pub attributions: Vec<TokenAttribution>,
++}
++
++impl DecodedText {
++    /// Creates text without generated-sample metadata for non-decoder callers.
++    pub fn unattributed(text: impl Into<String>) -> Self {
++        Self {
++            text: text.into(),
++            attributions: Vec::new(),
++        }
++    }
++
++    /// Reports whether this fragment has neither text nor sample coverage.
++    pub fn is_empty(&self) -> bool {
++        self.text.is_empty() && self.attributions.is_empty()
++    }
++
++    /// Transfers a fragment and its coverage to its consumer.
++    pub fn take(&mut self) -> Self {
++        take(self)
++    }
++
++    /// Releases buffered text and source coverage while retaining capacity.
++    pub fn clear(&mut self) {
++        self.text.clear();
++        self.attributions.clear();
++    }
++
++    /// Removes a prefix, splitting crossing sample coverage between both pieces.
++    pub fn drain_prefix(&mut self, len: usize) -> Self {
++        let text = self.text.drain(..len).collect();
++        let mut prefix = Self {
++            text,
++            attributions: Vec::new(),
++        };
++        for mut attribution in take(&mut self.attributions) {
++            let start = attribution.byte_range.start;
++            let end = attribution.byte_range.end;
++            if end <= len {
++                prefix.attributions.push(attribution);
++            } else if start >= len {
++                attribution.byte_range = start - len..end - len;
++                self.attributions.push(attribution);
++            } else {
++                prefix.attributions.push(TokenAttribution {
++                    position: attribution.position,
++                    byte_range: start..len,
++                    token_byte_count: attribution.token_byte_count,
++                });
++                attribution.byte_range = 0..end - len;
++                self.attributions.push(attribution);
++            }
++        }
++        prefix
++    }
++
++    /// Appends a fragment and rebases its local sample coverage.
++    pub fn append(&mut self, mut other: Self) {
++        let offset = self.text.len();
++        self.text.push_str(&other.text);
++        for attribution in &mut other.attributions {
++            attribution.byte_range.start += offset;
++            attribution.byte_range.end += offset;
++        }
++        self.attributions.extend(other.attributions);
++    }
++}
++
++impl Deref for DecodedText {
++    type Target = str;
++
++    fn deref(&self) -> &str {
++        &self.text
++    }
++}
++
++impl From<&str> for DecodedText {
++    fn from(text: &str) -> Self {
++        Self::unattributed(text)
++    }
++}
++
++impl From<String> for DecodedText {
++    fn from(text: String) -> Self {
++        Self::unattributed(text)
++    }
++}
++
++struct PendingAttribution {
++    position: usize,
++    byte_range: Option<Range<usize>>,
++    token_byte_count: usize,
++    emitted: bool,
++}
++
++/// Decoder-owned pending coverage; emitted records are released incrementally.
++#[derive(Default)]
++pub(super) struct AttributedTextBuffer {
++    text: String,
++    emitted_byte_offset: usize,
++    next_position: usize,
++    pending_start: Option<usize>,
++    attributions: VecDeque<PendingAttribution>,
++}
++
++impl AttributedTextBuffer {
++    pub(super) fn text(&self) -> &str {
++        &self.text
++    }
++
++    pub(super) fn len(&self) -> usize {
++        self.text.len()
++    }
++
++    /// Registers one generated sample before its decoded bytes are known.
++    pub(super) fn record_pending_token(&mut self) {
++        self.pending_start.get_or_insert(self.next_position);
++        self.attributions.push_back(PendingAttribution {
++            position: self.next_position,
++            byte_range: None,
++            token_byte_count: 0,
++            emitted: false,
++        });
++        self.next_position += 1;
++    }
++
++    /// Registers a skipped special token without attributing a later token's text.
++    pub(super) fn record_zero_width_token(&mut self) {
++        self.attributions.push_back(PendingAttribution {
++            position: self.next_position,
++            byte_range: Some(self.text.len()..self.text.len()),
++            token_byte_count: 0,
++            emitted: false,
++        });
++        self.next_position += 1;
++    }
++
++    /// Resolves pending samples as one actual decoder-produced text group.
++    pub(super) fn append_visible_text(&mut self, text: &str) {
++        if text.is_empty() {
++            return;
++        }
++        let start = self.text.len();
++        let end = start + text.len();
++        if let Some(position) = self.pending_start.take() {
++            let index = position - self.attributions.front().unwrap().position;
++            for attribution in self.attributions.range_mut(index..) {
++                if attribution.byte_range.is_none() {
++                    attribution.byte_range = Some(start..end);
++                    attribution.token_byte_count = text.len();
++                }
++            }
++        }
++        self.text.push_str(text);
++    }
++
++    /// Resolves samples that still produced no decoded bytes at termination.
++    pub(super) fn resolve_pending_zero_width(&mut self) {
++        let Some(position) = self.pending_start.take() else {
++            return;
++        };
++        let index = position - self.attributions.front().unwrap().position;
++        for attribution in self.attributions.range_mut(index..) {
++            if attribution.byte_range.is_none() {
++                attribution.byte_range = Some(self.text.len()..self.text.len());
++            }
++        }
++    }
++
++    /// Truncates text without making a partially retained token a complete token.
++    pub(super) fn truncate(&mut self, byte_offset: usize) {
++        self.text.truncate(byte_offset);
++        self.attributions.retain_mut(|attribution| {
++            if let Some(range) = &mut attribution.byte_range {
++                if range.start > byte_offset
++                    || (range.start == byte_offset && attribution.token_byte_count != 0)
++                {
++                    return false;
++                }
++                range.end = range.end.min(byte_offset);
++            }
++            true
++        });
++    }
++
++    /// Emits ready text and coverage fragments, retaining only unfinished records.
++    pub(super) fn take_ready(&mut self, cutoff: usize) -> Option<DecodedText> {
++        let chunk_start = self.emitted_byte_offset;
++        let mut attributions = Vec::new();
++        for attribution in &mut self.attributions {
++            if attribution.emitted {
++                continue;
++            }
++            let Some(range) = &mut attribution.byte_range else {
++                continue;
++            };
++            if range.start > cutoff || (range.start == cutoff && attribution.token_byte_count != 0)
++            {
++                continue;
++            }
++            let end = range.end.min(cutoff);
++            attributions.push(TokenAttribution {
++                position: attribution.position,
++                byte_range: range.start - chunk_start..end - chunk_start,
++                token_byte_count: attribution.token_byte_count,
++            });
++            range.start = end;
++            attribution.emitted = range.start == range.end;
++        }
++        while self.attributions.front().is_some_and(|record| record.emitted) {
++            self.attributions.pop_front();
++        }
++        if cutoff == chunk_start && attributions.is_empty() {
++            return None;
++        }
++        let text = self.text[chunk_start..cutoff].to_string();
++        self.emitted_byte_offset = cutoff;
++        Some(DecodedText { text, attributions })
++    }
++
++    /// Returns unconsumed coverage and the existing cumulative text result.
++    pub(super) fn finish(&mut self) -> (Option<DecodedText>, String) {
++        let last = self.take_ready(self.text.len());
++        self.attributions.clear();
++        self.emitted_byte_offset = 0;
++        (last, take(&mut self.text))
++    }
++}
+--- a/rust/src/tokenizer/src/incremental.rs
++++ b/rust/src/tokenizer/src/incremental.rs
+@@ -1,9 +1,12 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-use std::mem::take;
+-
+ use crate::{Result, Tokenizer};
++
++mod attribution;
++
++use attribution::AttributedTextBuffer;
++pub use attribution::{DecodedText, TokenAttribution};
+ 
+ /// Stateful incremental decoder that emits text chunks one token at a time.
+ pub trait IncrementalDecoder: Send {
+@@ -12,13 +15,14 @@
+     fn push_token(&mut self, token_id: u32) -> Result<usize>;
+ 
+     /// Consume any text which is currently ready.
+-    fn next_chunk(&mut self) -> Option<String>;
++    fn next_chunk(&mut self) -> Option<DecodedText>;
+ 
+     /// Flush any remaining buffered text that has not yet been emitted.
+     ///
+     /// Called after the final generated token to force out buffered/incomplete
+     /// fragments.
+-    fn flush(&mut self, truncate_output_to: Option<usize>) -> Result<(Option<String>, String)>;
++    fn flush(&mut self, truncate_output_to: Option<usize>)
++    -> Result<(Option<DecodedText>, String)>;
+ 
+     /// Return cumulative decoded text so far.
+     fn output(&self) -> &str;
+@@ -36,8 +40,7 @@
+     prefix: String,
+     prefix_index: usize,
+     prefix_seeded: bool,
+-    cumulative_output: String,
+-    output_index: usize,
++    decoded: AttributedTextBuffer,
+ }
+ 
+ impl<'a, T: Tokenizer + ?Sized> DecodeStream<'a, T> {
+@@ -55,8 +58,7 @@
+             prefix: String::new(),
+             prefix_index: 0,
+             prefix_seeded: prompt_token_ids.is_empty(),
+-            cumulative_output: String::new(),
+-            output_index: 0,
++            decoded: AttributedTextBuffer::default(),
+         }
+     }
+ }
+@@ -134,54 +136,55 @@
+         self.ids.push(token_id);
+         let string = self.tokenizer.decode(&self.ids, self.skip_special_tokens)?;
+         let prefix_len = self.prefix.len();
++        if self.skip_special_tokens && self.tokenizer.is_special_id(token_id) {
++            self.decoded.record_zero_width_token();
++        } else {
++            self.decoded.record_pending_token();
++        }
+         if string.len() <= prefix_len || string.ends_with('\u{FFFD}') {
+             return Ok(0);
+         }
+-        // Ensure we split at a utf-8 char boundary.
++        // Pending samples share the real decoder's next complete text group.
+         let new_chunk = &string[string.floor_char_boundary(prefix_len)..];
+-        self.cumulative_output.push_str(new_chunk);
++        self.decoded.append_visible_text(new_chunk);
+         self.ids.drain(..self.prefix_index);
+         self.prefix = self.tokenizer.decode(&self.ids, self.skip_special_tokens)?;
+         self.prefix_index = self.ids.len();
+         Ok(new_chunk.len())
+     }
+ 
+-    fn next_chunk(&mut self) -> Option<String> {
+-        let cutoff = self.cumulative_output.len().saturating_sub(self.min_bytes_to_buffer);
+-        // Ensure we split at a utf-8 char boundary.
+-        let cutoff = self.cumulative_output.floor_char_boundary(cutoff);
+-        (cutoff > self.output_index).then(|| {
+-            let chunk = self.cumulative_output[self.output_index..cutoff].to_string();
+-            self.output_index = cutoff;
+-            chunk
+-        })
+-    }
+-
+-    fn flush(&mut self, truncate_output_to: Option<usize>) -> Result<(Option<String>, String)> {
++    fn next_chunk(&mut self) -> Option<DecodedText> {
++        let cutoff = self.decoded.len().saturating_sub(self.min_bytes_to_buffer);
++        let cutoff = self.decoded.text().floor_char_boundary(cutoff);
++        self.decoded.take_ready(cutoff)
++    }
++
++    fn flush(
++        &mut self,
++        truncate_output_to: Option<usize>,
++    ) -> Result<(Option<DecodedText>, String)> {
+         // If the prefix was never seeded (no push_token was called), `ids`
+         // holds only prompt context — decoding it would re-emit prompt text.
+         if self.prefix_seeded && !self.ids.is_empty() {
+             let string = self.tokenizer.decode(&self.ids, self.skip_special_tokens)?;
+             let prefix_len = self.prefix.len();
+             // Ensure we split at a utf-8 char boundary.
+-            self.cumulative_output
+-                .push_str(&string[string.floor_char_boundary(prefix_len)..]);
++            self.decoded
++                .append_visible_text(&string[string.floor_char_boundary(prefix_len)..]);
+         }
+         self.ids.clear();
+         self.prefix.clear();
+         self.prefix_index = 0;
+         self.prefix_seeded = true;
++        self.decoded.resolve_pending_zero_width();
+         if let Some(truncate_output_to) = truncate_output_to {
+-            self.cumulative_output.truncate(truncate_output_to);
+-        }
+-        let last_chunk = (self.output_index < self.cumulative_output.len())
+-            .then(|| self.cumulative_output[self.output_index..].to_string());
+-        self.output_index = 0;
+-        Ok((last_chunk, take(&mut self.cumulative_output)))
++            self.decoded.truncate(truncate_output_to);
++        }
++        Ok(self.decoded.finish())
+     }
+ 
+     fn output(&self) -> &str {
+-        &self.cumulative_output
++        self.decoded.text()
+     }
+ }
+ 
+--- a/rust/src/tokenizer/src/lib.rs
++++ b/rust/src/tokenizer/src/lib.rs
+@@ -17,7 +17,7 @@
+ 
+ pub use error::{Result, TokenizerError};
+ pub use hf::HuggingFaceTokenizer;
+-pub use incremental::IncrementalDecoder;
++pub use incremental::{DecodedText, IncrementalDecoder, TokenAttribution};
+ pub use tekken::TekkenTokenizer;
+ pub use tiktoken::TiktokenTokenizer;
+ 

@@ -7,8 +7,6 @@ package kv
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -57,7 +55,7 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
-	groups, err := reconciler.reconcileGroups(ctx, pool, service)
+	groups, err := reconciler.reconcileGroups(ctx, pool)
 	if err != nil {
 		statusErr := reconciler.updateStatus(ctx, pool, inferencev1alpha1.KVPoolPhaseDegraded, false, groups.ready, "ApplyFailed", "KVGroups were not fully materialized")
 		return ctrl.Result{}, errors.Join(err, statusErr)
@@ -73,12 +71,12 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 }
 
 // reconcileGroups observes compatible instances before converging deletion and creation; write errors retain observed availability.
-func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (kvGroupState, error) {
+func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.KVPool) (kvGroupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
 		return kvGroupState{}, err
 	}
-	desired, err := desiredKVGroupSpec(pool, service)
+	desired, err := desiredKVGroupSpec(pool)
 	if err != nil {
 		return kvGroupState{}, err
 	}
@@ -144,32 +142,22 @@ func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inf
 	return state, nil
 }
 
-// desiredKVGroupSpec resolves shared client and Master configuration; callers set each ordinal.
-func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (inferencev1alpha1.KVGroupSpec, error) {
-	client := pool.Spec.Template.Client
+// desiredKVGroupSpec projects the Pool's frozen execution template; callers set each ordinal.
+func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool) (inferencev1alpha1.KVGroupSpec, error) {
+	template := pool.Spec.Template
+	client := template.Client
+	if template.MasterServerAddress == "" || template.Timeouts == nil || client.StorageRegistration != nil && client.StorageRegistration.Enabled && template.MasterAdminEndpoint == "" {
+		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q has an unresolved execution template", pool.Name)
+	}
 	if client.Protocol == "rdma" && client.RDMAResourceName == "" {
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires rdmaResourceName", pool.Name)
 	}
-	connection, err := resolveKVMasterConnection(service)
-	if err != nil {
-		return inferencev1alpha1.KVGroupSpec{}, err
-	}
-	_, _, _, masterService := kvMasterNames(service)
-	_, _, metricsPort := masterPorts(service.Spec.Master)
-	adminEndpoint := ""
-	if client.StorageRegistration != nil && client.StorageRegistration.Enabled {
-		adminEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", masterService, pool.Namespace, metricsPort)
-	}
 	var disk *inferencev1alpha1.KVGroupDisk
 	if configured := client.Disk; configured != nil {
-		retention := configured.RetentionPolicy
-		if retention == "" {
-			retention = inferencev1alpha1.RetentionPolicyDelete
-		}
 		disk = &inferencev1alpha1.KVGroupDisk{
 			StorageClassName: configured.StorageClassName,
 			Size:             inferencev1alpha1.ByteQuantity(configured.Size),
-			RetentionPolicy:  retention,
+			RetentionPolicy:  configured.RetentionPolicy,
 		}
 	}
 	groupClient := inferencev1alpha1.KVGroupClientConfig{
@@ -189,24 +177,12 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 		KVPoolRef:           inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 		Revision:            pool.Spec.Revision,
 		Ordinal:             0,
-		MasterServerAddress: connection.ServerAddress,
-		MasterClusterID:     connection.ClusterID,
-		MasterAdminEndpoint: adminEndpoint,
+		MasterServerAddress: template.MasterServerAddress,
+		MasterClusterID:     template.MasterClusterID,
+		MasterAdminEndpoint: template.MasterAdminEndpoint,
 		Client:              groupClient,
-		Timeouts:            service.Spec.Timeouts,
+		Timeouts:            *template.Timeouts,
 	}, nil
-}
-
-func kvPoolRevision(template inferencev1alpha1.NormalizedKVPoolTemplate, masterService string, rpcPort int32) string {
-	input, err := json.Marshal(struct {
-		Template inferencev1alpha1.NormalizedKVPoolTemplate
-		Master   string
-		Port     int32
-	}{template, masterService, rpcPort})
-	if err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("%x", sha256.Sum256(input))[:12]
 }
 
 func kvGroupObjectName(pool *inferencev1alpha1.KVPool, revision string, ordinal int32) string {

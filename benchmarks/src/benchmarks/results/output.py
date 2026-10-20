@@ -25,6 +25,7 @@ from typing import Any, Protocol, Self, cast
 import wandb
 from foretoken.arguments import ProfileCommand
 from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 from foretoken.profiling import ProfileRun
 
 from benchmarks.config.benchmark import (
@@ -328,7 +329,9 @@ class ResultOutputs:
                     self.service, deadline=deadline,
                 )
             if "after" in self._environment:
-                self._applications.capture(self._environment["after"], deadline=deadline)
+                self._applications.capture(
+                    self._environment["after"], kubectl=self.service.kubectl, deadline=deadline,
+                )
             self._applications.save_archives(deadline=deadline)
             if self._applications.records:
                 self._environment["applications"] = self._applications.records
@@ -448,13 +451,16 @@ class ResultOutputs:
 
         command = ProfileCommand(
             kustomize_path=self.benchmark.service.kustomize_path,
-            model=self.service.model if self.service is not None else self.benchmark.service.model,
+            model=self.service.model,
             profile_engine=profile_options.engine,
             profile_duration=profile_options.duration,
             timeout=self.benchmark.service.wait_timeout,
         )
         return BenchmarkProfile(
-            ProfileRun(command, deployment=self.service.deployment if self.service is not None else None),
+            ProfileRun(
+                command, deployment=self.service.deployment,
+                kubectl=self.service.kubectl,
+            ),
             self.execution_dir,
         )
 
@@ -470,13 +476,16 @@ class ResultOutputs:
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
 
-    def capture_source_evidence(self, snapshot: dict[str, Any], *, deadline: float | None = None) -> None:
-        """Retain provenance and local archives from an already-observed service at a run boundary."""
+    def capture_source_evidence(
+        self, snapshot: dict[str, Any], *, kubectl: Kubectl | None,
+        deadline: float | None = None,
+    ) -> None:
+        """Retain a live service's provenance and archives with its selected Kubernetes client."""
         if not self.benchmark.outputs.saves_local:
             return
         if deadline is None:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
-        self._applications.capture(snapshot, deadline=deadline)
+        self._applications.capture(snapshot, kubectl=kubectl, deadline=deadline)
         self._applications.save_archives(deadline=deadline)
 
     def start_observers(self, *, deadline: float | None = None) -> None:
@@ -486,7 +495,9 @@ class ResultOutputs:
             deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         if self._environment is not None and self.service is not None:
             self._environment["before"] = serving_environment(self.service, deadline=deadline)
-            self.capture_source_evidence(self._environment["before"], deadline=deadline)
+            self.capture_source_evidence(
+                self._environment["before"], kubectl=self.service.kubectl, deadline=deadline,
+            )
             write_json(self.execution_dir, "environment.json", self._environment)
         if (
             self.service is not None
@@ -498,6 +509,7 @@ class ResultOutputs:
                     self.service.model_service_refs,
                     self.service.model,
                     self._applications,
+                    kubectl=self.service.kubectl,
                 )
                 observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:

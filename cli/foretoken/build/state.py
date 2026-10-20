@@ -54,10 +54,7 @@ def _source_home() -> Path:
 
 def context_identity(kubectl: Kubectl) -> dict[str, str]:
     """Read connection identity locally without adding API permissions to release deploys."""
-    config = json.loads(
-        kubectl.run(["config", "view", "--minify", "-o", "json"]).stdout
-    )
-    return {"server": config["clusters"][0]["cluster"]["server"]}
+    return {"server": kubectl.server}
 
 
 def cluster_state_directory(kubectl: Kubectl) -> Path:
@@ -488,7 +485,7 @@ def record_install(
     from foretoken.platform.config import default_platform_config
     from foretoken.platform.helm import Helm
 
-    platform = Helm(default_platform_config(command.oci_registry)).platform_configuration(kubectl)
+    platform = Helm(default_platform_config(command.oci_registry), kubectl).platform_configuration()
     if platform["metadata"].get("annotations", {}).get(SOURCE_INSTALL_ANNOTATION) != "source":
         raise DeploymentError("expected a source-installed Foretoken platform")
     if build_state is not None:
@@ -646,7 +643,7 @@ def reconcile_source_resources(
     if checkout is None and not uninstall and retired:
         try:
             origin = ApplicationFiles(kubectl, config.namespace)
-            references = origin.references(Helm(config).application_history())
+            references = origin.references(Helm(config, kubectl).application_history())
             if references is None:
                 completed_bindings.clear()
             else:
@@ -717,7 +714,7 @@ def reconcile_source_resources(
         return
     nodes = kubectl.list_resources(("nodes",), "")
     if uninstall and not sockets:
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        context = kubectl.current_context()
         for node in nodes:
             socket = node_containerd_socket(context, node)
             if socket:
@@ -727,7 +724,7 @@ def reconcile_source_resources(
             access.setdefault((node["metadata"]["name"], socket), (tools, secrets))
     retained: set[str] = set()
     if not uninstall:
-        history = Helm(config).image_history()
+        history = Helm(config, kubectl).image_history()
         if history is None:
             return
         retained.update(history)

@@ -738,7 +738,7 @@ def local_build_nodes(
     if not nodes:
         raise DeploymentError("source builds need a schedulable Kubernetes node")
     if not socket:
-        context = kubectl.run(["config", "current-context"]).stdout.strip()
+        context = kubectl.current_context()
         sockets = {node_containerd_socket(context, node) for node in nodes}
         if "" in sockets or len(sockets) != 1:
             raise DeploymentError(

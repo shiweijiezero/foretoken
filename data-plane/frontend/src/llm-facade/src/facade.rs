@@ -6,7 +6,7 @@
 use futures::StreamExt;
 use vllm_llm::{FinishReason, GenerateRequest};
 
-use crate::http::{MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
+use crate::http::{MODEL_SERVER_CLIENT, MODEL_SERVER_REQUEST_START_TIMEOUT, bootstrap_engine_id};
 use crate::{LlmFacadeError, TokenStream};
 
 /// Consumes the encoder completion barrier and returns its opaque connector descriptor.
@@ -73,12 +73,16 @@ pub async fn pd_stage_requests(
     bootstrap_endpoint: &str,
     prefill_data_parallel_rank: u32,
 ) -> Result<(GenerateRequest, GenerateRequest), LlmFacadeError> {
-    let client = reqwest::Client::builder()
-        .timeout(MODEL_SERVER_REQUEST_START_TIMEOUT)
-        .build()
-        .map_err(|_| LlmFacadeError::Configuration)?;
-    let engine_id =
-        bootstrap_engine_id(&client, bootstrap_endpoint, prefill_data_parallel_rank).await?;
+    let engine_id = tokio::time::timeout(
+        MODEL_SERVER_REQUEST_START_TIMEOUT,
+        bootstrap_engine_id(
+            &MODEL_SERVER_CLIENT,
+            bootstrap_endpoint,
+            prefill_data_parallel_rank,
+        ),
+    )
+    .await
+    .map_err(|_| LlmFacadeError::Unavailable)??;
     pd_requests_with_engine(request, bootstrap_endpoint, engine_id)
 }
 

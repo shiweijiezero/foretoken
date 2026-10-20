@@ -14,6 +14,7 @@ from typing import Any, NoReturn
 
 from foretoken.command_execution import run_command
 from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 from foretoken.tools import resolve_tool
@@ -31,15 +32,20 @@ class HelmCommandError(DeploymentError):
 class HelmClient:
     """Execute Helm commands and read release-owned metadata."""
 
-    def __init__(self, config: PlatformConfig) -> None:
+    def __init__(self, config: PlatformConfig, kubectl: Kubectl | None = None) -> None:
         self._helm = resolve_tool("helm", "FORETOKEN_HELM")
         self._config = config
+        self._kubectl = kubectl or Kubectl()
+
+    def command(self, args: Iterable[str]) -> list[str]:
+        """Address the same kubeconfig context as the owning platform or source operation."""
+        return [self._helm, *args, "--kube-context", self._kubectl.current_context()]
 
     def run(
         self, args: Iterable[str], *, input_text: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Execute Helm with optional stdin and preserve its diagnostic output on failure."""
-        command = [self._helm, *args]
+        command = self.command(args)
         completed = self._execute(command, input_text=input_text)
         if completed.returncode:
             self._raise_command_error(command, completed)
@@ -66,8 +72,7 @@ class HelmClient:
 
     def release_exists(self, release: ReleaseRef) -> bool:
         """Return whether a release with the fixed identity exists."""
-        command = [
-            self._helm,
+        command = self.command([
             "get",
             "metadata",
             release.name,
@@ -75,7 +80,7 @@ class HelmClient:
             release.namespace,
             "--output",
             "json",
-        ]
+        ])
         completed = self._execute(command)
         if completed.returncode == 0:
             return True

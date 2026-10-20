@@ -4,23 +4,31 @@
 //! Deployment-scoped VideoTask access and streaming reads from dedicated result storage.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::StatusCode;
-use reqwest::{Client, Method, Response, Url};
+use kube::api::{DeleteParams, DynamicObject, Patch, PatchParams, PostParams};
+use kube::core::ApiResource;
+use kube::{Api, Client, Config};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
-const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
+static VIDEO_TASK_RESOURCE: LazyLock<ApiResource> = LazyLock::new(|| ApiResource {
+    group: "inference.foretoken.io".into(),
+    version: "v1alpha1".into(),
+    api_version: "inference.foretoken.io/v1alpha1".into(),
+    kind: "VideoTask".into(),
+    plural: "videotasks".into(),
+});
 
 pub(crate) struct VideoTaskClient {
-    client: Client,
-    collection: Url,
+    tasks: Api<DynamicObject>,
     output_mount: PathBuf,
     frontend_uid: String,
     deployment_uid: String,
@@ -62,26 +70,9 @@ pub(crate) struct VideoInputFile {
     pub content_type: String,
 }
 
-#[derive(Debug, Deserialize)]
 pub(crate) struct VideoTaskResource {
-    pub metadata: TaskMetadata,
-    spec: TaskScope,
-    #[serde(default)]
+    pub id: String,
     pub status: VideoTaskStatus,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskScope {
-    #[serde(rename = "frontendUID")]
-    frontend_uid: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct TaskMetadata {
-    pub name: String,
-    #[serde(default)]
-    labels: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -112,28 +103,14 @@ impl VideoTaskClient {
             Err(std::env::VarError::NotPresent) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let namespace = std::fs::read_to_string(format!("{SERVICE_ACCOUNT}/namespace"))?;
-        let ca = std::fs::read(format!("{SERVICE_ACCOUNT}/ca.crt"))?;
-        let client = Client::builder()
-            .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(30))
-            .build()?;
-        let mut collection = Url::parse("https://kubernetes.default.svc")?;
-        collection
-            .path_segments_mut()
-            .map_err(|_| "invalid Kubernetes API URL")?
-            .extend([
-                "apis",
-                "inference.foretoken.io",
-                "v1alpha1",
-                "namespaces",
-                namespace.trim(),
-                "videotasks",
-            ]);
+        let mut config = Config::incluster()?;
+        let namespace = config.default_namespace.clone();
+        // Keep retries with the task owner and credentials out of HTTP proxies.
+        config.default_retry = false;
+        config.proxy_url = None;
+        let client = Client::try_from(config)?;
         Ok(Some(Arc::new(Self {
-            client,
-            collection,
+            tasks: Api::namespaced_with(client, namespace.trim(), &*VIDEO_TASK_RESOURCE),
             output_mount: std::fs::canonicalize(output_mount)?,
             frontend_uid: std::env::var("FORETOKEN_VIDEO_TASK_FRONTEND_UID")?,
             deployment_uid: std::env::var("FORETOKEN_DEPLOYMENT_UID")?,
@@ -173,16 +150,7 @@ impl VideoTaskClient {
             sources.push((source, self.output_mount.join(&input.path)));
         }
         let inputs_ready = sources.is_empty();
-        let body = serde_json::json!({
-            "apiVersion": "inference.foretoken.io/v1alpha1",
-            "kind": "VideoTask",
-            "metadata": {
-                "name": id,
-                "labels": {
-                    "inference.foretoken.io/video-frontend-uid": self.frontend_uid,
-                    "inference.foretoken.io/deployment-uid": self.deployment_uid,
-                },
-            },
+        let mut body = DynamicObject::new(&id, &VIDEO_TASK_RESOURCE).data(serde_json::json!({
             "spec": {
                 "frontendUID": self.frontend_uid,
                 "inputsReady": inputs_ready,
@@ -195,9 +163,18 @@ impl VideoTaskClient {
                     "outputPath": format!("tasks/{id}/result.mp4"),
                 },
             },
-        });
-        self.send(Method::POST, self.collection.clone(), Some(body))
-            .await?;
+        }));
+        body.metadata.labels = Some(BTreeMap::from([
+            (
+                "inference.foretoken.io/video-frontend-uid".into(),
+                self.frontend_uid.clone(),
+            ),
+            (
+                "inference.foretoken.io/deployment-uid".into(),
+                self.deployment_uid.clone(),
+            ),
+        ]));
+        task_api(self.tasks.create(&PostParams::default(), &body)).await?;
         // The durable task exists before any private file is written. Incomplete staging is
         // observable and expires through the same controller cleanup as finished generation.
         if !inputs_ready {
@@ -230,11 +207,11 @@ impl VideoTaskClient {
                 .sync_all()
                 .await
                 .map_err(storage_error_status)?;
-            self.send(
-                Method::PATCH,
-                self.resource_url(&id)?,
-                Some(serde_json::json!({"spec":{"inputsReady":true}})),
-            )
+            task_api(self.tasks.patch(
+                &id,
+                &PatchParams::default(),
+                &Patch::Merge(serde_json::json!({"spec":{"inputsReady":true}})),
+            ))
             .await?;
         }
         Ok(id)
@@ -242,32 +219,45 @@ impl VideoTaskClient {
 
     /// Returns only tasks submitted through this FrontendService, across any of its replicas.
     pub(crate) async fn get(&self, id: &str) -> Result<VideoTaskResource, StatusCode> {
-        let task: VideoTaskResource = self
-            .send(Method::GET, self.resource_url(id)?, None)
-            .await?
-            .json()
-            .await
-            .map_err(|_| StatusCode::BAD_GATEWAY)?;
-        if task.spec.frontend_uid != self.frontend_uid
+        validate_task_id(id)?;
+        let task = task_api(self.tasks.get(id)).await?;
+        let frontend_uid = task
+            .data
+            .get("spec")
+            .and_then(|spec| spec.get("frontendUID"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or(StatusCode::BAD_GATEWAY)?;
+        if frontend_uid != self.frontend_uid
             || task
                 .metadata
                 .labels
-                .get("inference.foretoken.io/video-frontend-uid")
+                .as_ref()
+                .and_then(|labels| labels.get("inference.foretoken.io/video-frontend-uid"))
                 != Some(&self.frontend_uid)
         {
             return Err(StatusCode::NOT_FOUND);
         }
-        Ok(task)
+        Ok(VideoTaskResource {
+            id: task.metadata.name.ok_or(StatusCode::BAD_GATEWAY)?,
+            status: task
+                .data
+                .get("status")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| StatusCode::BAD_GATEWAY)?
+                .unwrap_or_default(),
+        })
     }
 
     /// Records cancellation intent; the controller confirms termination before publishing Cancelled.
     pub(crate) async fn cancel(&self, id: &str) -> Result<(), StatusCode> {
         self.get(id).await?;
-        self.send(
-            Method::PATCH,
-            self.resource_url(id)?,
-            Some(serde_json::json!({"spec":{"cancelRequested":true}})),
-        )
+        task_api(self.tasks.patch(
+            id,
+            &PatchParams::default(),
+            &Patch::Merge(serde_json::json!({"spec":{"cancelRequested":true}})),
+        ))
         .await?;
         Ok(())
     }
@@ -275,8 +265,7 @@ impl VideoTaskClient {
     /// Requests task deletion and controller-owned artifact cleanup.
     pub(crate) async fn delete(&self, id: &str) -> Result<(), StatusCode> {
         self.get(id).await?;
-        self.send(Method::DELETE, self.resource_url(id)?, None)
-            .await?;
+        task_api(self.tasks.delete(id, &DeleteParams::default())).await?;
         Ok(())
     }
 
@@ -293,19 +282,13 @@ impl VideoTaskClient {
             return Err(StatusCode::BAD_GATEWAY);
         }
         let path = self.storage_path(&artifact.path).await?;
-        let mut file = tokio::fs::File::open(path)
+        let file = tokio::fs::File::open(path)
             .await
             .map_err(storage_error_status)?;
-        Ok(Body::from_stream(async_stream::stream! {
-            let mut buffer = vec![0u8; 64 * 1024];
-            loop {
-                match file.read(&mut buffer).await {
-                    Ok(0) => break,
-                    Ok(count) => yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&buffer[..count])),
-                    Err(error) => { yield Err(error); break; }
-                }
-            }
-        }))
+        Ok(Body::from_stream(ReaderStream::with_capacity(
+            file,
+            64 * 1024,
+        )))
     }
 
     /// Resolves existing files within the configured task volume, including symlink targets.
@@ -326,49 +309,31 @@ impl VideoTaskClient {
         }
         Ok(resolved)
     }
+}
 
-    fn resource_url(&self, id: &str) -> Result<Url, StatusCode> {
-        let value = id.strip_prefix("video-").ok_or(StatusCode::NOT_FOUND)?;
-        if Uuid::parse_str(value).is_err() {
-            return Err(StatusCode::NOT_FOUND);
-        }
-        let mut url = self.collection.clone();
-        url.path_segments_mut()
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .push(id);
-        Ok(url)
-    }
-
-    /// Reloads projected credentials for each API call so token rotation survives long-lived frontends.
-    async fn send(
-        &self,
-        method: Method,
-        url: Url,
-        body: Option<serde_json::Value>,
-    ) -> Result<Response, StatusCode> {
-        let token = tokio::fs::read_to_string(format!("{SERVICE_ACCOUNT}/token"))
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        let patch = method == Method::PATCH;
-        let mut request = self.client.request(method, url).bearer_auth(token.trim());
-        if patch {
-            request = request.header("Content-Type", "application/merge-patch+json");
-        }
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-        let response = request.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-        if response.status().is_success() {
-            return Ok(response);
-        }
-        Err(match response.status().as_u16() {
-            404 => StatusCode::NOT_FOUND,
-            409 => StatusCode::CONFLICT,
-            400 | 422 => StatusCode::BAD_REQUEST,
-            429 => StatusCode::TOO_MANY_REQUESTS,
+/// Applies the total task API budget, including response decoding, without changing Kubernetes retry policy.
+async fn task_api<T>(
+    request: impl Future<Output = Result<T, kube::Error>>,
+) -> Result<T, StatusCode> {
+    tokio::time::timeout(Duration::from_secs(30), request)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
+        .map_err(|error| match error {
+            kube::Error::Api(error) => match error.code {
+                404 => StatusCode::NOT_FOUND,
+                409 => StatusCode::CONFLICT,
+                400 | 422 => StatusCode::BAD_REQUEST,
+                429 => StatusCode::TOO_MANY_REQUESTS,
+                _ => StatusCode::BAD_GATEWAY,
+            },
             _ => StatusCode::BAD_GATEWAY,
         })
-    }
+}
+
+fn validate_task_id(id: &str) -> Result<(), StatusCode> {
+    let value = id.strip_prefix("video-").ok_or(StatusCode::NOT_FOUND)?;
+    Uuid::parse_str(value).map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(())
 }
 
 // Keep denied external-file access distinct from missing files and storage failures.
