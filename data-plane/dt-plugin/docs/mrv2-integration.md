@@ -285,6 +285,17 @@ The DT adapter currently uses native KV recomputation after eviction. Its option
 KV connector is the explicit checkpoint/resume adapter; CPU KV offload and LMCache
 are not integrated. `cpu_offload_gb` offloads model weights, not request KV.
 
+Resident Draft turns resume in native `running`, where allocation failure can
+trigger native victim selection and KV reclamation. Refreshing a turn's prompt,
+sampler and feature binding does not require waiting-queue admission:
+`DraftScheduler._make_cached_request_data()` excludes refreshed turns from
+incremental slot updates, and `_update_after_schedule()` supplies native
+`NewRequestData` before advancing computed-token counters. MRV2 rebuilds those
+slots using the retained block table. A turn preempted before its next schedule
+instead follows ordinary waiting admission and native slot reconstruction.
+The refresh marker survives a token-budget deferral or preemption until the turn
+is actually scheduled; it neither owns KV nor changes the confirmed frontier.
+
 Native FCFS/priority scheduling still owns admission and victim selection;
 preserving candidates does not itself provide a starvation guarantee
 under an unbounded workload or a KV configuration unable to run one request.

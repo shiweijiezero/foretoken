@@ -63,7 +63,8 @@ curl http://127.0.0.1:19100/status
 每个角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
 对应请求，其他请求仍可执行。Target 的 KV 抢占保留确认前缀和在途 Draft 轮次；
 恢复 KV 后继续验证原候选，不会额外确认一个 token。
-Draft 会话跨轮保留原生私有 KV，按 Target 确认结果更新尾部。Draft 当前要求
+Draft 会话跨轮保留原生私有 KV，按 Target 确认结果更新尾部。驻留续轮继续参与原生 KV
+抢占；已被抢占的轮次使用确认输入和保留的特征重建 KV。Draft 当前要求
 无循环状态、无滑动窗口注意力的 full-attention 模型，因尾部需要修改而禁用 APC。
 命令接受 vLLM 原有的模型、显存及 batch 参数。
 Target 的 `--draft-tokens` 设置每轮默认候选数，默认 3；

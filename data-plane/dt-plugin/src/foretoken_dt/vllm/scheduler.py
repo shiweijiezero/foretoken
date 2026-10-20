@@ -8,7 +8,7 @@ from importlib.metadata import version
 from uuid import uuid4
 
 from vllm.v1.core.sched.interface import PauseState
-from vllm.v1.core.sched.output import SchedulerOutput
+from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.engine import EngineCoreOutputs
 from vllm.v1.outputs import ModelRunnerOutput
@@ -275,7 +275,6 @@ class DraftScheduler(ObservedScheduler):
                 raise ValueError(
                     "Draft input arrived before its previous turn completed"
                 )
-            self.running = [r for r in self.running if r is not previous]
             for queue in self.dt_waiting_queues:
                 queue.remove_requests((previous,))
             # Native streaming admission applies the update immediately only in
@@ -285,12 +284,43 @@ class DraftScheduler(ObservedScheduler):
                 self.num_waiting_for_streaming_input += 1
         else:
             request.dt_draft_waiting = False
+            request.dt_draft_rebinding = False
         super().add_request(request)
         if previous is not None:
-            # The previous slot must be rebuilt with the updated prompt, sampler
-            # and feature binding, while retaining the scheduler's physical pages.
             previous.dt_draft_waiting = False
-            self._enqueue_waiting_request(previous)
+            if previous in self.running:
+                # Slot refresh is independent of KV admission. Keep resident
+                # turns in the native running/preemption path when they grow.
+                previous.status = RequestStatus.RUNNING
+                previous.dt_draft_rebinding = True
+            else:
+                self._enqueue_waiting_request(previous)
+
+    def _make_cached_request_data(self, running_reqs, *args, **kwargs):
+        """Keep refreshed turns out of incremental slot updates; they need a full native binding."""
+        return super()._make_cached_request_data(
+            [r for r in running_reqs if not r.dt_draft_rebinding], *args, **kwargs
+        )
+
+    def _update_after_schedule(self, scheduler_output):
+        """Refresh resident turn slots only after native allocation, before advancing KV cursors."""
+        new_ids = {r.req_id for r in scheduler_output.scheduled_new_reqs}
+        for request_id in scheduler_output.num_scheduled_tokens:
+            request = self.requests[request_id]
+            if not request.dt_draft_rebinding:
+                continue
+            if request_id not in new_ids:
+                # MRV2's ordinary streaming-input path rebuilds prompt, sampler,
+                # and feature bindings from NewRequestData without freeing KV.
+                scheduler_output.scheduled_new_reqs.append(
+                    NewRequestData.from_request(
+                        request,
+                        self.kv_cache_manager.get_blocks(request_id).get_block_ids(),
+                        request._all_token_ids,
+                    )
+                )
+            request.dt_draft_rebinding = False
+        super()._update_after_schedule(scheduler_output)
 
     def _update_request_as_session(self, session, update):
         """Discard unconfirmed suffix state before native streaming input resumes KV."""

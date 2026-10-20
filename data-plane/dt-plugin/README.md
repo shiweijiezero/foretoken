@@ -71,7 +71,9 @@ scheduling. Requests waiting for remote proposals do not block other requests.
 Target KV preemption preserves the confirmed prefix and in-flight Draft round;
 recovery rebuilds KV before verifying those candidates without confirming an extra token.
 Draft sessions retain private native KV between rounds and reconcile the tail
-with Target confirmation. Draft currently requires full-attention models without
+with Target confirmation. Resident turns remain eligible for native KV preemption
+when they resume; evicted turns recompute from the confirmed input and retained
+features. Draft currently requires full-attention models without
 recurrent state or sliding-window attention; its mutable tail is excluded from APC.
 The role accepts native vLLM model, memory and batching options.
 Target `--draft-tokens` selects the default candidates per round (3). Target
