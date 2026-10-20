@@ -19,18 +19,18 @@ from typing import Any
 
 import yaml
 
-from foretoken.command_execution import CommandExecution, run_command
-from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef
-from foretoken.kubernetes.documents import decode_resources
-from foretoken.network_sources import (
+from foretoken.downloads.sources import (
     select_github_download,
     select_platform_image_sources,
     select_platform_oci_reference,
 )
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.kubernetes.documents import decode_resources
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
-from foretoken.tools import resolve_tool
+from foretoken.processes.execution import CommandExecution, run_command
+from foretoken.processes.tools import resolve_tool
 
 
 class HelmCommandError(DeploymentError):

@@ -108,14 +108,14 @@ foretoken perf examples/quickstart/qwen3-0.6b \
 
 ## 比较多种方法
 
-传入多个 Kustomize 示例，在各服务上测量同一负载：
+准备好 [BF16 和 4-bit 示例](../../../examples/feature/quantized-model/README_zh.md)后，传入两套 Kustomize 目录，在各服务上测量同一负载：
 
 ```bash
-foretoken perf examples/quickstart/qwen3-0.6b examples/quickstart3 \
+foretoken perf examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。使用 sweep 时，未写 `service` 的行会在命令选定的每个服务上运行；行内显式指定的 `service` 则替代命令中的服务选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)用于比较 [BF16 和 4-bit 部署](../../../examples/feature/quantized-model/README_zh.md)：
+多个端点使用一个 `--url` 后跟多个 URL；`--model` 可以提供一个共享模型名，也可以逐个提供模型名。使用 sweep 时，未写 `service` 的行会在命令选定的每个服务上运行；行内显式指定的 `service` 则替代命令中的服务选择。[量化模型 sweep 配置](../../scripts/common/quantized-models.jsonl)将这两套部署与不同并发设置组合比较：
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \

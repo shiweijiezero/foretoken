@@ -13,15 +13,22 @@ use futures::StreamExt;
 
 use crate::GenerationError;
 
+/// Private worker-to-frontend binding, consumed before forwarding native video requests.
+pub(crate) const MODEL_SERVICE_UID_HEADER: &str = "x-foretoken-model-service-uid";
+
 /// Multipart video request; the engine owns media parsing and generation parameters.
 pub struct VideoRequest {
     pub model: String,
     pub request_id: String,
+    /// Durable workers bind execution to the catalog service that admitted the task.
+    pub model_service_uid: Option<String>,
     pub headers: HeaderMap,
     /// Anonymous request file; dispatch owns its handle until upload completes or is cancelled.
     pub body: tokio::fs::File,
 }
 
+/// Forwards a Router-selected video request and transfers route ownership to the returned body.
+/// Transport failure or consumer drop releases the session without replaying ambiguous GPU work.
 pub(crate) async fn forward(
     client: &reqwest::Client,
     endpoint: &str,

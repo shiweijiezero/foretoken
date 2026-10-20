@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+# Builds the pinned vLLM-Omni runtime and media dependencies for the video model-server image.
+
 ARG BASE_IMAGE=vllm/vllm-openai:v0.30.0
 ARG VLLM_OMNI_REVISION=ad025defe68a46bdc3590c53161889aa6932ff4c
 

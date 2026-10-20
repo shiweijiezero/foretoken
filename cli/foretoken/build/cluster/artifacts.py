@@ -18,7 +18,7 @@ from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 
 if TYPE_CHECKING:
-    from foretoken.command_execution import CommandExecution
+    from foretoken.processes.execution import CommandExecution
 
 
 def prepare_artifact_volume(

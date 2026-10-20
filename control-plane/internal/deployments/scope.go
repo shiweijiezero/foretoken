@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Package deployments confines instance controllers to their own resources and publications.
+// Confines instance controllers to their own resources and publications.
 package deployments
 
 import (
@@ -33,6 +33,29 @@ type Scope struct {
 	UID       string
 }
 
+type scopedManager struct {
+	manager.Manager
+	client client.Client
+	reader client.Reader
+}
+
+type scopedReader struct {
+	client.Reader
+	metadata client.Client
+	scope    Scope
+}
+
+type scopedClient struct {
+	client.Client
+	reader *scopedReader
+	scope  Scope
+}
+
+type scopedSubresource struct {
+	client.SubResourceClient
+	owner *scopedClient
+}
+
 // ResourceName names platform-owned instance resources without exposing source paths or content hashes.
 func ResourceName(uid string) string { return "foretoken-" + uid }
 
@@ -49,37 +72,11 @@ func (scope Scope) Manager(base manager.Manager) manager.Manager {
 	return &scopedManager{Manager: base, client: writer, reader: reader}
 }
 
-type scopedManager struct {
-	manager.Manager
-	client client.Client
-	reader client.Reader
-}
-
 func (manager *scopedManager) GetClient() client.Client    { return manager.client }
 func (manager *scopedManager) GetAPIReader() client.Reader { return manager.reader }
 
-type scopedReader struct {
-	client.Reader
-	metadata client.Client
-	scope    Scope
-}
-
-// Shared credentials and explicitly selected storage are read by name, not discovered as instance members.
-func sharedRead(object client.Object) bool {
-	switch object.(type) {
-	case *corev1.Secret, *corev1.PersistentVolumeClaim, *corev1.ConfigMap, *monitoringv1.Prometheus:
-		return true
-	case *unstructured.Unstructured:
-		kind := object.GetObjectKind().GroupVersionKind().GroupKind()
-		return kind == corev1.SchemeGroupVersion.WithKind("Secret").GroupKind() ||
-			kind == corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim").GroupKind() ||
-			kind == corev1.SchemeGroupVersion.WithKind("ConfigMap").GroupKind() ||
-			kind == monitoringv1.SchemeGroupVersion.WithKind("Prometheus").GroupKind()
-	default:
-		return false
-	}
-}
-
+// Get returns instance members or explicitly shared resources to controller readers.
+// A namespaced resource outside the deployment appears absent unless sharedRead permits it.
 func (reader *scopedReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	if err := reader.Reader.Get(ctx, key, object, options...); err != nil {
 		return err
@@ -98,6 +95,7 @@ func (reader *scopedReader) Get(ctx context.Context, key client.ObjectKey, objec
 	return nil
 }
 
+// List confines namespaced discovery to this deployment; shared resources are read by name.
 func (reader *scopedReader) List(ctx context.Context, objects client.ObjectList, options ...client.ListOption) error {
 	namespaced, err := reader.metadata.IsObjectNamespaced(objects)
 	if err != nil {
@@ -109,12 +107,7 @@ func (reader *scopedReader) List(ctx context.Context, objects client.ObjectList,
 	return reader.Reader.List(ctx, objects, options...)
 }
 
-type scopedClient struct {
-	client.Client
-	reader *scopedReader
-	scope  Scope
-}
-
+// Get uses fresh reads for shared configuration and scoped cached reads for instance members.
 func (c *scopedClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	// ConfigMaps and claims can be supplied by the administrator without an instance label.
 	if sharedRead(object) {
@@ -123,8 +116,160 @@ func (c *scopedClient) Get(ctx context.Context, key client.ObjectKey, object cli
 	return (&scopedReader{Reader: c.Client, metadata: c.Client, scope: c.scope}).Get(ctx, key, object, options...)
 }
 
+// List applies the deployment discovery boundary to the manager's cached client.
 func (c *scopedClient) List(ctx context.Context, objects client.ObjectList, options ...client.ListOption) error {
 	return (&scopedReader{Reader: c.Client, metadata: c.Client, scope: c.scope}).List(ctx, objects, options...)
+}
+
+// Create labels instance resources and Pod templates before delegating to Kubernetes.
+func (c *scopedClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if err := c.prepare(object); err != nil {
+		return err
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+// Update preserves instance membership and verifies the current resource identity before writing.
+func (c *scopedClient) Update(ctx context.Context, object client.Object, options ...client.UpdateOption) error {
+	if err := c.prepare(object); err != nil {
+		return err
+	}
+	if err := c.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	return c.Client.Update(ctx, object, options...)
+}
+
+// Patch fences updates to the observed incarnation and preserves apply options when creating a missing target.
+func (c *scopedClient) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+	if err := c.prepare(object); err != nil {
+		return err
+	}
+	if err := c.checkWrite(ctx, object); err != nil {
+		if !apierrors.IsNotFound(err) || patch.Type() != types.ApplyPatchType || object.GetUID() != "" {
+			return err
+		}
+		settings := new(client.PatchOptions).ApplyOptions(options).AsPatchOptions()
+		return c.Client.Create(ctx, object, &client.CreateOptions{
+			FieldManager: settings.FieldManager, FieldValidation: settings.FieldValidation, DryRun: settings.DryRun,
+		})
+	}
+	patch, err := identityPatch(object, patch)
+	if err != nil {
+		return err
+	}
+	return c.Client.Patch(ctx, object, patch, options...)
+}
+
+// Delete preserves the caller's cascade policy while fencing deletion to the observed resource incarnation.
+func (c *scopedClient) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+	if sharedCredential(object) {
+		return fmt.Errorf("namespace KV credentials do not belong to an individual deployment")
+	}
+	if err := c.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	settings := new(client.DeleteOptions).ApplyOptions(options)
+	if settings.Preconditions == nil {
+		settings.Preconditions = &metav1.Preconditions{}
+	}
+	if settings.Preconditions.UID == nil {
+		uid := object.GetUID()
+		settings.Preconditions.UID = &uid
+	}
+	if settings.Preconditions.ResourceVersion == nil {
+		version := object.GetResourceVersion()
+		settings.Preconditions.ResourceVersion = &version
+	}
+	return c.Client.Delete(ctx, object, settings)
+}
+
+// DeleteAllOf restricts collection deletion to this deployment's namespace and membership label.
+func (c *scopedClient) DeleteAllOf(ctx context.Context, object client.Object, options ...client.DeleteAllOfOption) error {
+	options = append(options, client.InNamespace(c.scope.Namespace), client.MatchingLabels{api.DeploymentUIDLabel: c.scope.UID})
+	return c.Client.DeleteAllOf(ctx, object, options...)
+}
+
+// Apply routes typed apply configurations through the same membership and identity checks as Patch.
+func (c *scopedClient) Apply(ctx context.Context, configuration runtime.ApplyConfiguration, options ...client.ApplyOption) error {
+	object, err := applyObject(configuration)
+	if err != nil {
+		return err
+	}
+	settings := new(client.ApplyOptions).ApplyOptions(options)
+	return c.Patch(ctx, object, client.Apply, &client.PatchOptions{Raw: settings.AsPatchOptions()})
+}
+
+func (c *scopedClient) Status() client.SubResourceWriter { return c.SubResource("status") }
+
+// SubResource keeps status and other subresource operations behind the parent identity boundary.
+func (c *scopedClient) SubResource(name string) client.SubResourceClient {
+	return &scopedSubresource{SubResourceClient: c.Client.SubResource(name), owner: c}
+}
+
+// Get reads a subresource only after verifying the parent's current deployment identity.
+func (sub *scopedSubresource) Get(ctx context.Context, object, result client.Object, options ...client.SubResourceGetOption) error {
+	if err := sub.owner.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	return sub.SubResourceClient.Get(ctx, object, result, options...)
+}
+
+// Create delegates subresource creation after verifying the parent resource's current identity.
+func (sub *scopedSubresource) Create(ctx context.Context, object, body client.Object, options ...client.SubResourceCreateOption) error {
+	if err := sub.owner.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	return sub.SubResourceClient.Create(ctx, object, body, options...)
+}
+
+// Update delegates subresource replacement after verifying the parent resource's current identity.
+func (sub *scopedSubresource) Update(ctx context.Context, object client.Object, options ...client.SubResourceUpdateOption) error {
+	if err := sub.owner.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	return sub.SubResourceClient.Update(ctx, object, options...)
+}
+
+// Patch puts the verified parent UID and resource version on each subresource patch.
+func (sub *scopedSubresource) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.SubResourcePatchOption) error {
+	if err := sub.owner.checkWrite(ctx, object); err != nil {
+		return err
+	}
+	patch, err := identityPatch(object, patch)
+	if err != nil {
+		return err
+	}
+	return sub.SubResourceClient.Patch(ctx, object, patch, options...)
+}
+
+// Apply preserves typed subresource options while using the identity-fenced patch path.
+func (sub *scopedSubresource) Apply(ctx context.Context, configuration runtime.ApplyConfiguration, options ...client.SubResourceApplyOption) error {
+	object, err := applyObject(configuration)
+	if err != nil {
+		return err
+	}
+	settings := new(client.SubResourceApplyOptions)
+	for _, option := range options {
+		option.ApplyToSubResourceApply(settings)
+	}
+	return sub.Patch(ctx, object, client.Apply, &client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{Raw: settings.AsPatchOptions()}})
+}
+
+// Shared credentials and explicitly selected storage are read by name, not discovered as instance members.
+func sharedRead(object client.Object) bool {
+	switch object.(type) {
+	case *corev1.Secret, *corev1.PersistentVolumeClaim, *corev1.ConfigMap, *monitoringv1.Prometheus:
+		return true
+	case *unstructured.Unstructured:
+		kind := object.GetObjectKind().GroupVersionKind().GroupKind()
+		return kind == corev1.SchemeGroupVersion.WithKind("Secret").GroupKind() ||
+			kind == corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim").GroupKind() ||
+			kind == corev1.SchemeGroupVersion.WithKind("ConfigMap").GroupKind() ||
+			kind == monitoringv1.SchemeGroupVersion.WithKind("Prometheus").GroupKind()
+	default:
+		return false
+	}
 }
 
 // Namespace KV credentials remain shared and outlive individual deployments.
@@ -235,23 +380,6 @@ func (c *scopedClient) checkWrite(ctx context.Context, object client.Object) err
 	return nil
 }
 
-func (c *scopedClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
-	if err := c.prepare(object); err != nil {
-		return err
-	}
-	return c.Client.Create(ctx, object, options...)
-}
-
-func (c *scopedClient) Update(ctx context.Context, object client.Object, options ...client.UpdateOption) error {
-	if err := c.prepare(object); err != nil {
-		return err
-	}
-	if err := c.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	return c.Client.Update(ctx, object, options...)
-}
-
 // identityPatch puts the observed incarnation on the wire, including patches whose
 // diff omits unchanged metadata. Existing nonempty caller preconditions remain intact.
 func identityPatch(object client.Object, patch client.Patch) (client.Patch, error) {
@@ -317,55 +445,6 @@ func identityPatch(object client.Object, patch client.Patch) (client.Patch, erro
 	return client.RawPatch(patch.Type(), data), nil
 }
 
-// Patch fences updates to the observed incarnation and preserves apply options when creating a missing target.
-func (c *scopedClient) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
-	if err := c.prepare(object); err != nil {
-		return err
-	}
-	if err := c.checkWrite(ctx, object); err != nil {
-		if !apierrors.IsNotFound(err) || patch.Type() != types.ApplyPatchType || object.GetUID() != "" {
-			return err
-		}
-		settings := new(client.PatchOptions).ApplyOptions(options).AsPatchOptions()
-		return c.Client.Create(ctx, object, &client.CreateOptions{
-			FieldManager: settings.FieldManager, FieldValidation: settings.FieldValidation, DryRun: settings.DryRun,
-		})
-	}
-	patch, err := identityPatch(object, patch)
-	if err != nil {
-		return err
-	}
-	return c.Client.Patch(ctx, object, patch, options...)
-}
-
-// Delete preserves the caller's cascade policy while fencing deletion to the observed resource incarnation.
-func (c *scopedClient) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
-	if sharedCredential(object) {
-		return fmt.Errorf("namespace KV credentials do not belong to an individual deployment")
-	}
-	if err := c.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	settings := new(client.DeleteOptions).ApplyOptions(options)
-	if settings.Preconditions == nil {
-		settings.Preconditions = &metav1.Preconditions{}
-	}
-	if settings.Preconditions.UID == nil {
-		uid := object.GetUID()
-		settings.Preconditions.UID = &uid
-	}
-	if settings.Preconditions.ResourceVersion == nil {
-		version := object.GetResourceVersion()
-		settings.Preconditions.ResourceVersion = &version
-	}
-	return c.Client.Delete(ctx, object, settings)
-}
-
-func (c *scopedClient) DeleteAllOf(ctx context.Context, object client.Object, options ...client.DeleteAllOfOption) error {
-	options = append(options, client.InNamespace(c.scope.Namespace), client.MatchingLabels{api.DeploymentUIDLabel: c.scope.UID})
-	return c.Client.DeleteAllOf(ctx, object, options...)
-}
-
 func applyObject(configuration runtime.ApplyConfiguration) (*unstructured.Unstructured, error) {
 	data, err := json.Marshal(configuration)
 	if err != nil {
@@ -373,68 +452,4 @@ func applyObject(configuration runtime.ApplyConfiguration) (*unstructured.Unstru
 	}
 	object := new(unstructured.Unstructured)
 	return object, object.UnmarshalJSON(data)
-}
-
-func (c *scopedClient) Apply(ctx context.Context, configuration runtime.ApplyConfiguration, options ...client.ApplyOption) error {
-	object, err := applyObject(configuration)
-	if err != nil {
-		return err
-	}
-	settings := new(client.ApplyOptions).ApplyOptions(options)
-	return c.Patch(ctx, object, client.Apply, &client.PatchOptions{Raw: settings.AsPatchOptions()})
-}
-
-func (c *scopedClient) Status() client.SubResourceWriter { return c.SubResource("status") }
-
-func (c *scopedClient) SubResource(name string) client.SubResourceClient {
-	return &scopedSubresource{SubResourceClient: c.Client.SubResource(name), owner: c}
-}
-
-type scopedSubresource struct {
-	client.SubResourceClient
-	owner *scopedClient
-}
-
-func (sub *scopedSubresource) Get(ctx context.Context, object, result client.Object, options ...client.SubResourceGetOption) error {
-	if err := sub.owner.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	return sub.SubResourceClient.Get(ctx, object, result, options...)
-}
-
-func (sub *scopedSubresource) Create(ctx context.Context, object, body client.Object, options ...client.SubResourceCreateOption) error {
-	if err := sub.owner.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	return sub.SubResourceClient.Create(ctx, object, body, options...)
-}
-
-func (sub *scopedSubresource) Update(ctx context.Context, object client.Object, options ...client.SubResourceUpdateOption) error {
-	if err := sub.owner.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	return sub.SubResourceClient.Update(ctx, object, options...)
-}
-
-func (sub *scopedSubresource) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.SubResourcePatchOption) error {
-	if err := sub.owner.checkWrite(ctx, object); err != nil {
-		return err
-	}
-	patch, err := identityPatch(object, patch)
-	if err != nil {
-		return err
-	}
-	return sub.SubResourceClient.Patch(ctx, object, patch, options...)
-}
-
-func (sub *scopedSubresource) Apply(ctx context.Context, configuration runtime.ApplyConfiguration, options ...client.SubResourceApplyOption) error {
-	object, err := applyObject(configuration)
-	if err != nil {
-		return err
-	}
-	settings := new(client.SubResourceApplyOptions)
-	for _, option := range options {
-		option.ApplyToSubResourceApply(settings)
-	}
-	return sub.Patch(ctx, object, client.Apply, &client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{Raw: settings.AsPatchOptions()}})
 }

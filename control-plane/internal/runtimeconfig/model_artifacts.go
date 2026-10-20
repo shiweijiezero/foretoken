@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Projects model sources while retaining the selected application's preparation contract.
 package runtimeconfig
 
 import api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"

@@ -11,11 +11,10 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllmomni"
-	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
-// RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
+// RuntimeProfile supplies platform images, access, allocations, and native profiles for Pool resolution.
 type RuntimeProfile struct {
 	Image                  string
 	LeaderWorkerScheduling *inferencev1alpha1.LeaderWorkerScheduling
@@ -27,10 +26,10 @@ type RuntimeProfile struct {
 	RuntimeClassName       string
 	NodeSelectorKey        string
 	NodeSelectorValue      string
-	MooncakePD             *runtimeconfig.PDProfile
+	MooncakePD             *vllmconfig.PDProfile
 	RDMA                   *inferencev1alpha1.RDMAAllocation
-	EC                     *runtimeconfig.ECProfile
-	MooncakeStore          *runtimeconfig.MooncakeStoreProfile
+	EC                     *vllmconfig.ECProfile
+	MooncakeStore          *vllmconfig.MooncakeStoreProfile
 }
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
@@ -59,7 +58,7 @@ type resolvedModelRuntime struct {
 	Parallelism inferencev1alpha1.CompiledParallelism
 }
 
-// ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
+// ResolveModelPool binds normalized intent to its backend and platform resources in a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
 	if err := runtimeconfig.ValidateSourceRevision(template.SourceRevision); err != nil {
 		return ModelGroupTemplate{}, err
@@ -96,34 +95,24 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.ModelRevision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
 	}
-	pdRuntime, err := resolvePDRuntime(template, profile.MooncakePD)
+	pdRuntime, err := vllmconfig.ResolvePDRuntime(template, profile.MooncakePD)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
-	ecRuntime, err := resolveECRuntime(template, profile.EC)
+	ecRuntime, err := vllmconfig.ResolveECRuntime(template, profile.EC)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
-	kvRuntime, err := resolveKVRuntime(template, profile.MooncakeStore)
+	kvRuntime, err := vllmconfig.ResolveKVRuntime(template, profile.MooncakeStore)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
-	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
-		if template.Application == nil {
-			if profile.NsightImage == "" {
-				return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
-			}
-			image = profile.NsightImage
-		}
-		if profile.DeviceResourceName != "nvidia.com/gpu" {
-			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
-		}
-		if template.RuntimeCache == nil {
-			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
-		}
+	image, err = vllmconfig.ResolveProfilingImage(template, image, profile.NsightImage, profile.DeviceResourceName)
+	if err != nil {
+		return ModelGroupTemplate{}, err
 	}
 	rdmaRequired := effective.RequiresRDMA()
 	if rdmaRequired && profile.RDMA == nil {
@@ -140,14 +129,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
 	}
 	effective.ConfigureWeightSharing(template, profile.DeviceResourceName, rdma, profile.ModelServerPort, pdRuntime)
-	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
-		if profile.DeviceResourceName != "metax-tech.com/gpu" {
-			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires MetaX GPUs")
-		}
-		if template.RuntimeCache == nil {
-			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
-		}
-	}
 	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
 	if err != nil {
 		return ModelGroupTemplate{}, err
@@ -156,7 +137,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		Image: image, EngineArgs: effective.EngineArgs, Parallelism: effective.Parallelism,
 	})
 	resolved.Runtime.TritonCacheDirectory = vllmconfig.TritonCacheDirectory(template.RuntimeCache, resolved.Runtime.PreparationVersion)
-	resolved.Runtime.Profiling = template.Profiling.DeepCopy()
 	resolved.PDRuntime, resolved.RDMA, resolved.ECRuntime, resolved.KVRuntime = pdRuntime, rdma, ecRuntime, kvRuntime
 	return resolved, nil
 }
@@ -192,6 +172,7 @@ func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, prof
 	return resolved, nil
 }
 
+// mergeNodeSelectors combines user placement with the platform accelerator selector without mutating either.
 func mergeNodeSelectors(userSelector map[string]string, profile RuntimeProfile) (map[string]string, error) {
 	selector := make(map[string]string, len(userSelector)+1)
 	for key, value := range userSelector {
@@ -223,6 +204,8 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 	return nil
 }
 
+// projectModelGroupTemplate freezes resolved inputs while leaving Pool identity to Spec.
+// The selected application owns live admission; older applications retain startup-only settings.
 func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	applicationURL := ""
 	var selectedPreparationVersion *int32
@@ -276,106 +259,6 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 		},
 		Network: template.Network,
 	}
-}
-
-// resolveKVRuntime binds the selected cache mode to a validated ModelGroup runtime contract.
-func resolveKVRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *runtimeconfig.MooncakeStoreProfile) (*inferencev1alpha1.ModelGroupKVRuntimeConfig, error) {
-	if template.KVCache == nil {
-		return nil, nil
-	}
-	if offload := template.KVCache.Offload; offload != nil {
-		bytes, err := offload.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		return &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{
-			CPUBytes: bytes, Filesystem: offload.Filesystem,
-		}}, nil
-	}
-	if template.KVCache.MooncakeStore == nil {
-		return nil, fmt.Errorf("KV cache intent is incomplete")
-	}
-	store := template.KVCache.MooncakeStore
-	if store.ManagedBinding != nil {
-		binding := store.ManagedBinding
-		if binding.Name == "" || binding.UID == "" || binding.BindingRevision == "" || binding.ConfigMapName == "" || binding.ConfigMapKey == "" || binding.RequesterBufferBytes < 1 {
-			return nil, fmt.Errorf("managed Mooncake Store binding is incomplete")
-		}
-		if err := resourcevalidation.ValidateRequesterBufferBudget(template.Resources, binding.RequesterBufferBytes); err != nil {
-			return nil, fmt.Errorf("managed Mooncake Store requester buffer: %w", err)
-		}
-		return &inferencev1alpha1.ModelGroupKVRuntimeConfig{MooncakeStore: &inferencev1alpha1.ModelGroupMooncakeStoreRuntime{ProfileName: "kvservice:" + binding.Name, KVServiceUID: binding.UID, ProfileRevision: binding.BindingRevision, ConfigMapName: binding.ConfigMapName, ConfigMapKey: binding.ConfigMapKey, PythonHashSeed: "0", RequesterBufferBytes: binding.RequesterBufferBytes}}, nil
-	}
-	if profile == nil || profile.Name == "" {
-		return nil, fmt.Errorf("Mooncake Store runtime profile is incomplete")
-	}
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
-	if store.Profile != profile.Name {
-		return nil, fmt.Errorf("Mooncake Store profile %q is not configured", store.Profile)
-	}
-	return &inferencev1alpha1.ModelGroupKVRuntimeConfig{MooncakeStore: &inferencev1alpha1.ModelGroupMooncakeStoreRuntime{ProfileName: profile.Name, ProfileRevision: profile.Revision, ConfigMapName: profile.ConfigMapName, ConfigMapKey: profile.ConfigMapKey, PythonHashSeed: profile.PythonHashSeed}}, nil
-}
-
-// resolveECRuntime resolves the platform EC profile for encoder and prefill roles.
-func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *runtimeconfig.ECProfile) (*inferencev1alpha1.ModelGroupECRuntimeConfig, error) {
-	if template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill {
-		return nil, nil
-	}
-	if template.Role == inferencev1alpha1.ModelRolePrefill && template.ECProfile == "" {
-		// Legacy P/D remains an EC-free transport path.
-		return nil, nil
-	}
-	if template.ECProfile == "" {
-		return nil, fmt.Errorf("encoder ModelPool EC profile is required")
-	}
-	if profile == nil || profile.Name == "" {
-		return nil, fmt.Errorf("EC runtime profile is incomplete")
-	}
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
-	if template.ECProfile != profile.Name {
-		return nil, fmt.Errorf("EC profile %q is not configured", template.ECProfile)
-	}
-	role := inferencev1alpha1.ECTransferRoleConsumer
-	if template.Role == inferencev1alpha1.ModelRoleEncoder {
-		role = inferencev1alpha1.ECTransferRoleProducer
-	}
-	return &inferencev1alpha1.ModelGroupECRuntimeConfig{
-		Generation:  template.EncoderCacheGeneration,
-		ProfileName: profile.Name, ProfileRevision: profile.Revision,
-		Connector: profile.Connector, Role: role,
-		SharedStorageClaim: profile.SharedStorageClaim,
-		SharedStoragePath:  profile.SharedStoragePath,
-	}, nil
-}
-
-// resolvePDRuntime resolves the platform Mooncake P/D profile for split serving roles.
-func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *runtimeconfig.PDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
-	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
-		return nil, nil
-	}
-	if profile == nil || profile.Name == "" {
-		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
-	}
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
-	rdmaDeviceName := profile.RDMADeviceName
-	if profile.Protocol == "tcp" {
-		rdmaDeviceName = ""
-	}
-	return &inferencev1alpha1.ModelGroupPDRuntimeConfig{
-		ProfileName:                profile.Name,
-		ProfileRevision:            profile.Revision,
-		Connector:                  "MooncakeConnector",
-		Protocol:                   profile.Protocol,
-		BootstrapPort:              int32(profile.BootstrapPort),
-		AbortRequestTimeoutSeconds: int32(profile.AbortRequestTimeoutSeconds),
-		RDMADeviceName:             rdmaDeviceName,
-	}, nil
 }
 
 // Spec binds a resolved template to one Pool revision ordinal.

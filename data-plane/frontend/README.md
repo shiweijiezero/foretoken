@@ -109,18 +109,15 @@ REQUEST_HOST="$(foretoken endpoint "$INSTANCE" --host)"
 mkdir -p ./data
 ```
 
-`modelServiceRef.name` selects the deployed Kubernetes ModelService, not the model identifier. Read this recipe's single ModelService name from the instance before submitting the request. Input paths are relative to the video storage volume:
+Use the public `model` identifier listed by `GET /v1/models`. Background generation requires it to identify one video service in the deployment. Input paths are relative to the video storage volume:
 
 ```bash
-MODEL_SERVICE="$(kubectl get inferencedeployment "$INSTANCE" \
-  -o jsonpath='{.spec.resources[?(@.kind=="ModelService")].name}')"
-
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  --data-binary @- <<EOF
+  --data-binary @- <<'EOF'
 {
-  "modelServiceRef": {"name": "$MODEL_SERVICE"},
+  "model": "MiniMaxAI/MiniMax-H3",
   "request": {
     "task": "fl2va",
     "prompt": "A sailboat crossing a calm bay at sunrise",

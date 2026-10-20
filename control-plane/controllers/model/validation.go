@@ -14,6 +14,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
+// validateGroupProfile checks the resolved execution contract before Group resources are created.
 func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 	if err := validateGroupRuntime(group); err != nil {
 		return err
@@ -24,6 +25,7 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 	return validateGroupRole(group)
 }
 
+// validateGroupRuntime checks backend topology, transport allocations, and listener conflicts.
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	if _, err := runtimeconfig.ResolveLeaderWorkerScheduling(group.Spec.Runtime.LeaderWorkerScheduling); err != nil {
 		return err
@@ -66,6 +68,7 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	return nil
 }
 
+// validateGroupKVRuntime checks the selected cache mode and capacity before workload projection.
 func validateGroupKVRuntime(group *inferencev1alpha1.ModelGroup) error {
 	runtime := group.Spec.KVRuntime
 	if runtime == nil {
@@ -83,6 +86,7 @@ func validateGroupKVRuntime(group *inferencev1alpha1.ModelGroup) error {
 	return validateMooncakeStoreRuntime(group, runtime.MooncakeStore)
 }
 
+// validateMooncakeStoreRuntime checks the resolved binding and its requester buffer against Group memory.
 func validateMooncakeStoreRuntime(group *inferencev1alpha1.ModelGroup, store *inferencev1alpha1.ModelGroupMooncakeStoreRuntime) error {
 	if store.ProfileName == "" || store.ProfileRevision == "" || store.ConfigMapName == "" || store.ConfigMapKey == "" || store.PythonHashSeed == "" {
 		return fmt.Errorf("Mooncake Store runtime config is incomplete")

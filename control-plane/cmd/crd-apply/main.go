@@ -46,6 +46,7 @@ type crdApplyManifest struct {
 	Spec       apiextensionsv1.CustomResourceDefinitionSpec `json:"spec"`
 }
 
+// main applies packaged API definitions for the platform installation hook and waits for establishment.
 func main() {
 	var directory string
 	var fieldManager string

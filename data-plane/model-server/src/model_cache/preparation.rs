@@ -441,10 +441,9 @@ fn provider_command(
     let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
         .map(|directory| PathBuf::from(directory).join("python"))
         .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
-    let script = fs::read_to_string(directory.join("foretoken_prepare.py"))?;
     let mut command = Command::new(python);
     command
-        .args(["-c", &script])
+        .arg(directory.join("foretoken_prepare.py"))
         .env(
             performance_setting,
             std::env::var_os(performance_setting).unwrap_or_else(|| default.into()),
@@ -471,6 +470,8 @@ fn provider_command(
     Ok(command)
 }
 
+/// Runs the selected acquisition stage and returns its JSON result to publication or download.
+/// The configured command owns child cancellation; provider diagnostics remain on stderr.
 async fn run_provider<T: serde::de::DeserializeOwned>(command: &mut Command) -> io::Result<T> {
     let output = command
         .stdout(Stdio::piped())
@@ -486,6 +487,8 @@ async fn run_provider<T: serde::de::DeserializeOwned>(command: &mut Command) -> 
     serde_json::from_slice(&output.stdout).map_err(io::Error::other)
 }
 
+/// Resolves provider references into the fixed source record consumed by publication.
+/// Acquisition later downloads these exact revisions rather than resolving the moving input again.
 async fn resolve_revisions(
     artifacts: &ModelArtifacts,
     python: &str,

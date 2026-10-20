@@ -50,10 +50,8 @@ func ProjectServicePDComponents(service *inferencev1alpha1.ModelService, pools [
 	if len(prefills) == 0 || len(decodes) == 0 {
 		return nil, PDPipelineScope{}, &SplitRoutingProjectionError{Service: service.Name, Reason: "requires at least one Ready prefill ModelGroup and one Ready decode ModelGroup"}
 	}
-	for _, group := range append(prefills, decodes...) {
-		if !compatiblePDGroups(prefills[0], group) {
-			return nil, PDPipelineScope{}, &SplitRoutingProjectionError{Service: service.Name, Reason: fmt.Sprintf("Ready P/D ModelGroup %q conflicts with the Service P/D identity", group.Name)}
-		}
+	if err := validatePDGroupPairs(service.Name, prefills, decodes); err != nil {
+		return nil, PDPipelineScope{}, err
 	}
 	pipelineScopeID := "pd:" + string(service.UID)
 	components := make([]PDComponent, 0, len(prefills)+len(decodes))
@@ -172,8 +170,8 @@ func ProjectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 	var components []EPDComponent
 	var pipelineScopes []EPDPipelineScope
 	for index, scope := range scopes {
-		if len(scope.encoders) == 0 || len(scope.prefills) == 0 || len(scope.decodes) == 0 {
-			continue
+		if err := validatePDGroupPairs(service.Name, scope.prefills, scope.decodes); err != nil {
+			return nil, nil, err
 		}
 		pipelineScopeID := fmt.Sprintf("epd:%s:%d", service.UID, index)
 		pipelineScope := EPDPipelineScope{PipelineScopeID: pipelineScopeID}
@@ -453,6 +451,19 @@ func matchingECRuntime(left, right *inferencev1alpha1.ModelGroupECRuntimeConfig)
 	return left.ServiceUID == right.ServiceUID && left.Generation == right.Generation &&
 		left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision &&
 		left.Connector == right.Connector && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
+}
+
+// validatePDGroupPairs checks every pairing that a published P/D or E/P/D scope permits.
+// Native transfer compatibility, including asymmetric TP, need not be transitive.
+func validatePDGroupPairs(service string, prefills, decodes []*inferencev1alpha1.ModelGroup) error {
+	for _, prefill := range prefills {
+		for _, decode := range decodes {
+			if !compatiblePDGroups(prefill, decode) {
+				return &SplitRoutingProjectionError{Service: service, Reason: fmt.Sprintf("Ready prefill ModelGroup %q is incompatible with decode ModelGroup %q", prefill.Name, decode.Name)}
+			}
+		}
+	}
+	return nil
 }
 
 func compatiblePDGroups(prefill, decode *inferencev1alpha1.ModelGroup) bool {

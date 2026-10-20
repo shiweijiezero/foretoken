@@ -333,6 +333,8 @@ pub(crate) fn text_stream_many(
     sse_response(events)
 }
 
+/// Encodes sampled and top-candidate scores for completion responses with character-based offsets.
+/// Echoed prompts supply the initial offset; missing scores retain their public null representation.
 fn completion_logprobs(
     token_ids: &[u32],
     logprobs: Option<DecodedLogprobs>,

@@ -25,10 +25,12 @@ use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBacke
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
 
+use self::kv_events::KvEventAdapter;
+use self::prefix_lookup::SharedKvLookup;
 use self::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 use super::{
-    Backend, BackendError, BackendGeneration, BackendTelemetry, GenerateInput, TokenErrorCode,
-    TokenEvent, TokenStream,
+    Backend, BackendError, BackendGeneration, BackendTelemetry, GenerateInput, KvDeltaError,
+    TokenErrorCode, TokenEvent, TokenStream,
 };
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -38,11 +40,18 @@ pub struct VllmBackend {
     max_concurrent_requests: Option<u64>,
     engine_labels: Vec<EngineLabels>,
     boundary_latency: Arc<Mutex<BoundaryLatencyMetrics>>,
+    kv_events: Option<Arc<KvEventAdapter>>,
+    shared_kv: Option<SharedKvLookup>,
 }
 
 impl VllmBackend {
-    /// Creates the model-server adapter and retains the provided vLLM `Llm` facade until shutdown.
-    pub fn new(llm: Llm, max_concurrent_requests: Option<u64>) -> Self {
+    /// Retains the native facade and optional KV observations for the model-server lifetime.
+    pub fn new(
+        llm: Llm,
+        max_concurrent_requests: Option<u64>,
+        kv_events: Option<Arc<KvEventAdapter>>,
+        shared_kv: Option<SharedKvLookup>,
+    ) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
         let engine_labels = client
@@ -59,6 +68,8 @@ impl VllmBackend {
             max_concurrent_requests,
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
+            kv_events,
+            shared_kv,
         }
     }
 
@@ -126,7 +137,8 @@ impl Backend for VllmBackend {
     async fn local_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
-    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError> {
+    ) -> Result<foretoken_model_protocol::KvLocalPrefixResponse, BackendError> {
+        let adapter = self.kv_events.as_ref().ok_or(BackendError::Unavailable)?;
         let guard = self.llm.read().await;
         let client = guard
             .as_ref()
@@ -161,10 +173,36 @@ impl Backend for VllmBackend {
             .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_engine_client)?;
         // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
-        observations
+        let ranks = observations
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(adapter.prefix_response(ranks))
+    }
+
+    async fn shared_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<foretoken_model_protocol::KvSharedPrefixResponse, BackendError> {
+        self.shared_kv
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .lookup(request)
+            .await
+            .ok_or(BackendError::Unavailable)
+    }
+
+    fn kv_delta(
+        &self,
+        dp_rank: u32,
+        epoch: Option<&str>,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<foretoken_model_protocol::KvDeltaResponse, KvDeltaError> {
+        self.kv_events
+            .as_ref()
+            .ok_or(KvDeltaError::Unavailable)?
+            .delta(dp_rank, epoch, after, limit)
     }
 
     fn telemetry(&self) -> BackendTelemetry {

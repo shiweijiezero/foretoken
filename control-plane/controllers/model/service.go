@@ -621,6 +621,8 @@ func (reconciler *ServiceReconciler) servingCohortReadiness(ctx context.Context,
 	return true, "Ready", "All serving ModelPools are ready", nil
 }
 
+// poolRevisionReady checks complete, unique ordinal coverage before a target cohort can be committed.
+// Serving availability only requires a routable member and is evaluated separately.
 func poolRevisionReady(groups []inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, revision string, desired int32) bool {
 	if revision == "" || desired == 0 {
 		return false

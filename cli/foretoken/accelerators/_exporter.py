@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken.observability import matches_label_selector
+from foretoken.platform.prometheus import matches_label_selector
 
 
 @dataclass(frozen=True)

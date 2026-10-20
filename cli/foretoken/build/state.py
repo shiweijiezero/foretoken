@@ -44,9 +44,9 @@ from foretoken.build.records import (
     WORKSPACE_SELECTION_KEY,
     retain_workspace,
 )
-from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 SOURCE_INSTALL_ANNOTATION = "foretoken.io/install-source"
 

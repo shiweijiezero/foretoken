@@ -8,7 +8,7 @@ mod request;
 mod timing;
 pub(crate) mod workflow;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
@@ -154,12 +154,20 @@ struct PreparationTargets {
     _metrics: foretoken_metrics::QueueMetricsScope,
 }
 
+/// A controller-published service selected for a durable video request.
+#[derive(Clone, Debug, Serialize)]
+pub struct VideoServiceReference {
+    pub name: String,
+    pub uid: String,
+}
+
 /// Backend dependencies for models whose engine owns video request preprocessing.
 ///
 /// Keeping the model identities, route inventory, and HTTP client together makes video support an
 /// all-or-nothing runtime capability instead of three independently initialized fields.
 struct VideoBackendContext {
-    models: BTreeSet<String>,
+    // Missing references retain video membership for snapshots from older controllers.
+    models: BTreeMap<String, Vec<Option<VideoServiceReference>>>,
     inventory: Arc<dyn RouteInventory>,
     client: reqwest::Client,
 }
@@ -226,6 +234,9 @@ pub trait Generation: Send + Sync {
     async fn admit(&self, _request: &AdmissionRequest) -> Result<AdmissionPermit, GenerationError> {
         Ok(AdmissionPermit::default())
     }
+
+    /// Resolves one unambiguous catalog service before durable video submission acquires resources.
+    fn video_task_service(&self, model: &str) -> Result<VideoServiceReference, GenerationError>;
 
     /// Dispatches a video request without text preprocessing; response ownership retains the route.
     async fn generate_video(
@@ -353,6 +364,23 @@ impl ModelRuntime {
     }
 }
 
+impl VideoBackendContext {
+    /// Resolves complete catalog metadata without treating missing legacy entries as absent services.
+    fn service(&self, model: &str) -> Result<&VideoServiceReference, GenerationError> {
+        let services = self
+            .models
+            .get(model)
+            .ok_or(GenerationError::InvalidRequest)?;
+        if services.iter().any(Option::is_none) {
+            return Err(GenerationError::Unavailable);
+        }
+        match services.as_slice() {
+            [Some(service)] => Ok(service),
+            _ => Err(GenerationError::InvalidRequest),
+        }
+    }
+}
+
 impl RuntimeState {
     /// Creates the immutable request-processing state for one prepared serving generation.
     ///
@@ -379,7 +407,7 @@ impl RuntimeState {
     /// Registers video models whose engine owns preprocessing, using the same route inventory.
     pub fn with_video_backend(
         mut self,
-        models: BTreeSet<String>,
+        models: BTreeMap<String, Vec<Option<VideoServiceReference>>>,
         inventory: Arc<dyn RouteInventory>,
         client: reqwest::Client,
     ) -> Self {

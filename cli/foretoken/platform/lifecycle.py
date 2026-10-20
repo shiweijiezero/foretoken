@@ -27,7 +27,6 @@ from foretoken.build.state import (
     source_operation,
     source_uninstall,
 )
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
@@ -37,7 +36,6 @@ from foretoken.kubernetes.client import (
     timeout_seconds,
 )
 from foretoken.kubernetes.mutation import DeploymentMutation
-from foretoken.observability import PrometheusRef
 from foretoken.platform.config import (
     default_platform_config,
     grafana_anonymous_access_from_values,
@@ -66,6 +64,7 @@ from foretoken.platform.observability.monitoring import (
     MonitoringLifecycle,
     MonitoringPlan,
 )
+from foretoken.platform.prometheus import PrometheusRef
 from foretoken.platform.rdma import (
     RDMASelection,
     require_unused_managed_rdma,
@@ -79,6 +78,7 @@ from foretoken.platform.storage.model_distribution import (
     ModelDistributionLifecycle,
 )
 from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef, RuntimeOverrides
+from foretoken.processes.execution import CommandExecution
 
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -114,10 +115,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			return r.finishVideoTask(ctx, task)
 		}
 		service := new(inferencev1alpha1.ModelService)
-		if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); err != nil {
+		if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); apierrors.IsNotFound(err) {
+			task.Status.Phase, task.Status.Reason, task.Status.Message = "Failed", "TargetChanged", "ModelService was removed before worker creation"
+			return r.finishVideoTask(ctx, task)
+		} else if err != nil {
 			return ctrl.Result{}, err
 		}
-		if service.Status.ServingGeneration != plan.ServingGeneration || string(service.UID) != plan.ServiceUID || !reflect.DeepEqual(service.Status.ServingPoolRevisions, plan.Revisions) {
+		submittedTargetChanged := task.Spec.ModelServiceRef.UID != "" && task.Spec.ModelServiceRef.UID != plan.ServiceUID || task.Spec.Model != "" && task.Spec.Model != plan.Model
+		if submittedTargetChanged || service.Status.ServingGeneration != plan.ServingGeneration || string(service.UID) != plan.ServiceUID || !reflect.DeepEqual(service.Status.ServingPoolRevisions, plan.Revisions) {
 			task.Status.Phase, task.Status.Reason, task.Status.Message = "Failed", "TargetChanged", "ModelService serving identity changed before worker creation"
 			return r.finishVideoTask(ctx, task)
 		}
@@ -212,13 +217,33 @@ func (r *Reconciler) prepareVideoTask(ctx context.Context, task *inferencev1alph
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Spec.ModelServiceRef.Name}, service); err != nil {
 		return plan, err
 	}
-	if service.Spec.Backend != "vllm-omni" {
-		return plan, fmt.Errorf("video generation requires a vllm-omni ModelService")
+	if task.Spec.ModelServiceRef.UID != "" && task.Spec.ModelServiceRef.UID != string(service.UID) {
+		return plan, fmt.Errorf("ModelService was replaced after task submission")
 	}
 	if !servingconfig.HasServingCohort(service) || !meta.IsStatusConditionTrue(service.Status.Conditions, workload.ConditionReady) {
 		return plan, fmt.Errorf("ModelService must already be Ready")
 	}
-	plan.Model, plan.ServiceUID, plan.ServingGeneration = service.Spec.Model, string(service.UID), service.Status.ServingGeneration
+	// Ready can refer to a previous generation while new intent rolls out.
+	// Use the same selected artifacts as discovery, not the desired model or backend.
+	var pools inferencev1alpha1.ModelPoolList
+	if err := r.APIReader.List(ctx, &pools, client.InNamespace(task.Namespace)); err != nil {
+		return plan, err
+	}
+	var groups inferencev1alpha1.ModelGroupList
+	if err := r.APIReader.List(ctx, &groups, client.InNamespace(task.Namespace)); err != nil {
+		return plan, err
+	}
+	identity, _, err := servingconfig.SelectedCatalogIdentity(service, pools.Items, groups.Items, nil)
+	if err != nil {
+		return plan, err
+	}
+	if !slices.Contains(identity.Capabilities, "video") {
+		return plan, fmt.Errorf("ModelService serving cohort does not support video generation")
+	}
+	if task.Spec.Model != "" && task.Spec.Model != identity.Model {
+		return plan, fmt.Errorf("ModelService no longer serves the requested model %q", task.Spec.Model)
+	}
+	plan.Model, plan.ServiceUID, plan.ServingGeneration = identity.Model, string(service.UID), service.Status.ServingGeneration
 	plan.Revisions = append([]inferencev1alpha1.ServingPoolRevision(nil), service.Status.ServingPoolRevisions...)
 	return plan, nil
 }
@@ -258,8 +283,7 @@ func (r *Reconciler) newVideoWorkerJob(task *inferencev1alpha1.VideoTask, plan i
 		command = append(command, "--cleanup")
 	} else {
 		env = append(env,
-			corev1.EnvVar{Name: "FORETOKEN_VIDEO_TASK_UID", Value: string(task.UID)},
-			corev1.EnvVar{Name: "FORETOKEN_VIDEO_MODEL_SERVICE", Value: task.Spec.ModelServiceRef.Name},
+			corev1.EnvVar{Name: "FORETOKEN_VIDEO_MODEL_SERVICE_UID", Value: plan.ServiceUID},
 			corev1.EnvVar{Name: "FORETOKEN_VIDEO_ENDPOINT", Value: task.Spec.Worker.Endpoint},
 			corev1.EnvVar{Name: "FORETOKEN_VIDEO_MODEL", Value: plan.Model},
 			corev1.EnvVar{Name: "FORETOKEN_VIDEO_REQUEST_JSON", Value: string(requestJSON)},

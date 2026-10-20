@@ -573,6 +573,7 @@ impl Admission {
         Ok(permit)
     }
 
+    /// Marks a prepared batch eligible for caller selection without granting execution capacity.
     pub(crate) fn ready(&self, id: &str) -> Result<(), AdmissionError> {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if state.config.is_none() {
@@ -590,6 +591,8 @@ impl Admission {
         Ok(())
     }
 
+    /// Lets a batch observe its dispatch grant, rejecting retired queues or revoked role membership.
+    /// The permit retains capacity ownership; this read does not advance caller rotation.
     pub(crate) fn granted(&self, id: &str) -> Result<bool, AdmissionError> {
         let state = self.state.lock().expect("model admission lock poisoned");
         let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
@@ -712,6 +715,8 @@ impl Admission {
         Ok(())
     }
 
+    /// Captures current role priority and Pool constraints for a waiting or newly granted batch.
+    /// Readiness may inspect these rules before dispatch; the permit snapshots them when granted.
     pub(crate) fn dispatch_rules(&self, id: &str) -> Result<crate::DispatchRules, AdmissionError> {
         let state = self.state.lock().expect("model admission lock poisoned");
         let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
@@ -734,6 +739,8 @@ impl Admission {
         })
     }
 
+    /// Advances caller rotation after backend acceptance and retires only the local waiting entry.
+    /// The execution owner retains the ledger slot until native termination is confirmed.
     pub(crate) fn accepted(&self, id: &str) {
         let mut state = self.state.lock().expect("model admission lock poisoned");
         if let Some(index) = state
@@ -758,6 +765,8 @@ impl Admission {
         self.changed.notify_waiters();
     }
 
+    /// Returns an explicitly unaccepted batch to its existing caller position for a later dispatch turn.
+    /// The permit has already returned shared concurrency before this local retry delay begins.
     pub(crate) fn defer(&self, id: &str) {
         if let Some(entry) = self
             .state

@@ -64,6 +64,8 @@ local function retire_frontends(keep)
     end
 end
 
+-- Membership retirement or a newer process epoch proves these accepted executions have ended.
+-- Release only the slots selected by that evidence, retaining work still owned by live backends.
 local function finish_backend_slots(terminated)
     for _, field in ipairs(redis.call('HKEYS', key)) do
         if field:sub(1, 2) == 'r:' then

@@ -117,21 +117,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Namespace, group.Labels[inferencev1alpha1.DeploymentUIDLabel], group.Spec.Runtime.TritonCacheDirectory, group.Spec.Runtime.PreparationVersion)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
-	if group.Spec.PDRuntime != nil {
-		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
-		// uses Mooncake's CUDA-aware host staging instead of silently falling back.
-		forceTransport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
-		if group.Spec.PDRuntime.Protocol == "tcp" {
-			forceTransport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
-		}
-		env = append(env,
-			forceTransport,
-			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},
-			corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(group.Spec.PDRuntime.AbortRequestTimeoutSeconds))},
-		)
-		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-			ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
-		}
+	env = append(env, vllmconfig.PDEnvironment(group.Spec.PDRuntime)...)
+	if group.Spec.PDRuntime != nil && group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+		ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
 	}
 
 	requests := corev1.ResourceList{
@@ -192,16 +180,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: ec.SharedStorageClaim}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: "ec-shared-storage", MountPath: path.Join(ec.SharedStoragePath, directory), SubPath: directory})
 	}
-	if group.Spec.KVRuntime != nil && group.Spec.KVRuntime.Offload != nil && group.Spec.KVRuntime.Offload.Filesystem {
-		volumes = append(volumes, corev1.Volume{Name: "kv-offload", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "kv-offload", MountPath: vllmconfig.FilesystemOffloadMountPath})
-	}
-	if group.Spec.KVRuntime != nil && group.Spec.KVRuntime.MooncakeStore != nil {
-		store := group.Spec.KVRuntime.MooncakeStore
-		volumes = append(volumes, corev1.Volume{Name: "mooncake-store-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: store.ConfigMapName}, Items: []corev1.KeyToPath{{Key: store.ConfigMapKey, Path: "mooncake.json"}}}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "mooncake-store-config", MountPath: "/etc/foretoken/mooncake/mooncake.json", SubPath: "mooncake.json", ReadOnly: true})
-		env = append(env, corev1.EnvVar{Name: "MOONCAKE_CONFIG_PATH", Value: "/etc/foretoken/mooncake/mooncake.json"}, corev1.EnvVar{Name: "PYTHONHASHSEED", Value: store.PythonHashSeed})
-	}
+	kvVolumes, kvMounts, kvEnv := vllmconfig.KVStorage(group.Spec.KVRuntime)
+	volumes = append(volumes, kvVolumes...)
+	mounts = append(mounts, kvMounts...)
+	env = append(env, kvEnv...)
 	var runtimeClassName *string
 	if group.Spec.Accelerator.RuntimeClassName != "" {
 		runtimeClassName = &group.Spec.Accelerator.RuntimeClassName
@@ -323,8 +305,6 @@ func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container 
 	for _, variable := range container.Env {
 		managed[variable.Name] = true
 	}
-	managed["VLLM_USE_MODELSCOPE"] = true
-	managed["USE_PRECOMPILED_KERNEL"] = true
 	// The device plugin supplies allocation variables after Pod template generation.
 	if strings.HasPrefix(spec.Accelerator.DeviceResourceName, "nvidia.com/") {
 		managed["NVIDIA_VISIBLE_DEVICES"] = true
@@ -332,20 +312,9 @@ func configureModelEnvironment(spec inferencev1alpha1.ModelGroupSpec, container 
 	if spec.NodeCount > 1 {
 		managed["LWS_WORKER_INDEX"] = true
 		managed["LWS_LEADER_ADDRESS"] = true
-		managed["VLLM_HOST_IP"] = true
-	}
-	if spec.PDRuntime != nil {
-		managed["MC_FORCE_HCA"] = true
-		managed["MC_FORCE_TCP"] = true
-	}
-	if spec.Runtime.Profiling != nil && spec.Runtime.Profiling.Engine == "nsight" {
-		managed["VLLM_WORKER_MULTIPROC_METHOD"] = true
-	}
-	if spec.Artifacts.Source == inferencev1alpha1.ModelSourceModelScope {
-		managed["MODELSCOPE_CACHE"] = true
 	}
 	for _, variable := range spec.Runtime.Env {
-		if managed[variable.Name] || strings.HasPrefix(variable.Name, "FORETOKEN_") {
+		if managed[variable.Name] || strings.HasPrefix(variable.Name, "FORETOKEN_") || vllmconfig.ManagesEnvironment(spec, variable.Name) {
 			return fmt.Errorf("env name %q is managed by Foretoken", variable.Name)
 		}
 		container.Env = append(container.Env, *variable.DeepCopy())

@@ -13,6 +13,9 @@ import (
 type VideoTaskServiceReference struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+	// UID binds model-based submissions to the service selected by the frontend catalog.
+	// +optional
+	UID string `json:"uid,omitempty"`
 }
 
 // VideoInputFile identifies an input file already available to the worker.
@@ -62,7 +65,7 @@ type VideoWorkerSpec struct {
 	// Image is the worker image implementing the Foretoken video task contract.
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
-	// Endpoint is the internal video model-server endpoint used by the worker.
+	// Endpoint is the admitting frontend's internal URL used by the worker.
 	// +kubebuilder:validation:MinLength=1
 	Endpoint string `json:"endpoint"`
 	// OutputClaimName is a namespace-local PVC mounted at OutputPath.
@@ -74,6 +77,7 @@ type VideoWorkerSpec struct {
 
 // VideoTaskSpec requests one durable asynchronous video generation.
 // +kubebuilder:validation:XValidation:rule="self.frontendUID == oldSelf.frontendUID && self.modelServiceRef == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker == oldSelf.worker",message="video task frontend, target, request and worker are immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.model) == has(oldSelf.model) && (!has(self.model) || self.model == oldSelf.model)",message="video task model is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.inputsReady) || !oldSelf.inputsReady || (has(self.inputsReady) && self.inputsReady)",message="ready task inputs cannot become unready"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested || (has(self.cancelRequested) && self.cancelRequested)",message="cancellation cannot be withdrawn"
 type VideoTaskSpec struct {
@@ -81,8 +85,12 @@ type VideoTaskSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	FrontendUID     string                    `json:"frontendUID"`
 	ModelServiceRef VideoTaskServiceReference `json:"modelServiceRef"`
-	Request         VideoRequest              `json:"request"`
-	Worker          VideoWorkerSpec           `json:"worker"`
+	// Model retains public-model intent; name-only submissions leave it unset.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Model   string          `json:"model,omitempty"`
+	Request VideoRequest    `json:"request"`
+	Worker  VideoWorkerSpec `json:"worker"`
 	// +optional
 	CancelRequested bool `json:"cancelRequested,omitempty"`
 	// InputsReady is set after task-local input files are durable on the shared PVC.

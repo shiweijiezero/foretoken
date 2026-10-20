@@ -124,7 +124,21 @@ impl Leader {
         }
         health.set_client_healthy(true);
         health.set_accepting(true);
-        let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+        let shared_kv = if config.launch.shared_prefix_lookup() {
+            Some(prefix_lookup::SharedKvLookup::new(
+                super::required_env(MODEL_GROUP_UID_ENV)?,
+                super::required_env(KV_SCOPE_ENV)?,
+                &config,
+            ))
+        } else {
+            None
+        };
+        let backend = Arc::new(VllmBackend::new(
+            Llm::new(client),
+            max_concurrent_requests,
+            kv_events,
+            shared_kv,
+        ));
         let profiling = if cache_mode == runtime_cache::Mode::Persistent {
             profiling_config
         } else {
@@ -142,16 +156,6 @@ impl Leader {
         }
         if let Some(profiler) = &profiler {
             app_state = app_state.with_profiling(profiler.handle());
-        }
-        if let Some(kv_events) = kv_events {
-            app_state = app_state.with_kv_events(kv_events);
-        }
-        if config.launch.shared_prefix_lookup() {
-            app_state = app_state.with_shared_kv(prefix_lookup::SharedKvLookup::new(
-                super::required_env(MODEL_GROUP_UID_ENV)?,
-                super::required_env(KV_SCOPE_ENV)?,
-                &config,
-            ));
         }
         if let Some(cache_config) = cache_config {
             app_state = app_state.with_runtime_cache(cache_config);

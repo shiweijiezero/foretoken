@@ -14,11 +14,11 @@ from typing import Any
 
 import yaml
 
-from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
 from foretoken.platform.helm_client import HelmClient, HelmCommandError
 from foretoken.platform.types import ReleaseRef
+from foretoken.processes.execution import CommandExecution
 
 _PROXY_SERVICE = "foretoken-model-downloads"
 _PROXY_LABEL = "foretoken.io/model-download-proxy"

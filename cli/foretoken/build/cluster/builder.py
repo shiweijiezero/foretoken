@@ -30,9 +30,9 @@ from foretoken.build.cluster.images import (
 )
 from foretoken.build.cluster.storage import SOURCE_BUILD_UID
 from foretoken.build.cluster.transfer import synchronize_inputs
-from foretoken.command_execution import CommandExecution, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
+from foretoken.processes.execution import CommandExecution, run_command
 
 _BUILD_POD_LABEL = SOURCE_BUILD_POD_LABEL
 _BUILD_BINDING_LABEL = SOURCE_BUILD_BINDING_LABEL
@@ -64,6 +64,7 @@ class ClusterBuilder(AbstractContextManager):
         registry_mirrors: dict[str, list[str]] | None = None,
         cancellation: CommandExecution | None = None,
     ) -> None:
+        """Bind build paths and cancellation for the caller; __enter__ allocates the Pod."""
         self.cancellation = cancellation or CommandExecution.current() or CommandExecution(timeout_seconds(timeout))
         self.kubectl = kubectl
         self.namespace = namespace
@@ -92,6 +93,10 @@ class ClusterBuilder(AbstractContextManager):
         self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
         self._image_users: dict[str, str] = {}
+
+    def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
+        """Capture environment inputs using the same complete-inventory transfer as native builds."""
+        synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
 
     def build(
         self,
@@ -211,6 +216,102 @@ class ClusterBuilder(AbstractContextManager):
             }
         return result
 
+    def resolve_image(self, image: str) -> str:
+        """Resolve a build dependency through the same node store or registry used by BuildKit."""
+        if image in self._resolved_images:
+            return self._resolved_images[image]
+        name = _image_reference(image)
+        if name in self._generated_layouts:
+            layout = self._generated_layouts[name]
+            digest = layout["digest"]
+            manifest = self.read_json(layout["path"] + "/blobs/" + self._context_digest(layout).replace(":", "/", 1))
+            configuration = self.read_json(layout["path"] + "/blobs/" + manifest["config"]["digest"].replace(":", "/", 1))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
+        elif self.containerd_socket:
+            store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
+            digest = store.image_digest(name)
+        else:
+            digest = None
+        if digest is None:
+            # A FROM-only solve uses BuildKit's registry credentials, mirrors and
+            # platform selection without running a container or adding image layers.
+            dockerfile = ".foretoken-resolve/Dockerfile"
+            self.run([
+                "sh", "-ec",
+                'mkdir -p "$1/.foretoken-resolve"; printf \'ARG BASE_IMAGE\\nFROM ${BASE_IMAGE}\\n\' > "$1/.foretoken-resolve/Dockerfile"',
+                "resolve", self.workspace,
+            ])
+            try:
+                metadata = self.build(
+                    dockerfile, image="foretoken-resolve:" + uuid.uuid4().hex,
+                    arguments={"BASE_IMAGE": image}, capture=True, metadata_only=True,
+                )
+            except DeploymentError as error:
+                message = str(error)
+                if "failed to resolve source metadata" in message and (
+                    f"{image}: not found" in message or "404 Not Found" in message
+                ):
+                    raise ImageNotFoundError(message) from error
+                raise
+            digest = metadata["containerimage.digest"]
+            configuration = json.loads(self.run(
+                ["buildctl", "debug", "get", metadata["containerimage.config.digest"]],
+                capture=True,
+            ))
+            self._image_users[image] = configuration["config"].get("User", "") or "0"
+        self._resolved_images[image] = digest
+        return digest
+
+    def image_user(self, image: str) -> str:
+        """Preserve the resolved runtime's USER when a dependency stage temporarily runs as root."""
+        digest = self.resolve_image(image)
+        if image not in self._image_users:
+            machine = self.run(["uname", "-m"], capture=True).strip()
+            architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
+            self._image_users[image] = NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding,
+            ).image_user(digest, architecture)
+        return self._image_users[image]
+
+    def image_matches(self, image: str, digest: str) -> bool:
+        """Verify a retained environment against its producer's OCI descriptor on this node."""
+        if self.containerd_socket:
+            return self._node_image_matches(image, digest)
+        return self.resolve_image(image) == digest
+
+    def import_image(self, image: str, reference: str) -> None:
+        """Deliver a selected OCI output after source builds, reusing an identical node image."""
+        image = _image_reference(image)
+        layout = self._generated_layouts[image]
+        digest = layout["digest"]
+        if self._node_image_matches(reference, digest):
+            print(f"Reusing unchanged node image {reference}", flush=True)
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).pin_owned(reference)
+        else:
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).import_layout(layout["path"], reference)
+            # Retire only references created by this operation after delivery.
+            self._built_images.update((image, reference))
+        if image in self._used_images:
+            # A generated environment consumed by this build is also the next
+            # iteration's input. Retain its immutable OCI files without copying
+            # layer bytes or invalidating in-flight commands' original paths.
+            cached = self.root + "/images/" + uuid.uuid4().hex
+            self.run(["mkdir", "-p", self.root + "/images"], container=self.artifact_container)
+            self.run(["cp", "-al", layout["path"], cached], container=self.artifact_container)
+            self._save_layout(reference, cached, digest)
+            self._used_images.add(reference)
+
+    def discard_unselected_images(self, retained: set[str]) -> None:
+        """Remove only this build's unselected local references after every node has been compared."""
+        if self.containerd_socket:
+            NodeImageStore(
+                self.kubectl, self.namespace, self.name, self.binding
+            ).remove_owned(self._built_images - retained)
+
     def __enter__(self) -> Self:
         """Start this operation's image builder on its persistent cache node."""
         self.cancellation.check()
@@ -297,6 +398,92 @@ class ClusterBuilder(AbstractContextManager):
                 "--ignore-not-found", "--wait=true", "--timeout=" + self.timeout,
             ]
         )
+
+    def command(self, args: list[str], *, container: str = "builder") -> list[str]:
+        """Address the build Pod for both streamed input and ordinary commands."""
+        return self.kubectl.command(
+            [
+                "exec",
+                "-i",
+                "-n",
+                self.namespace,
+                self.name,
+                "-c",
+                container,
+                "--",
+                *args,
+            ]
+        )
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        capture: bool = False,
+        container: str = "builder",
+        input_text: str | None = None,
+    ) -> str:
+        """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
+        started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        result = self.cancellation.run(
+            self.command(args, container=container),
+            text=True,
+            capture_output=capture,
+            input=input_text,
+        )
+        if result.returncode:
+            self.cancellation.check()
+            detail = (result.stderr or result.stdout or "").strip()
+            if container == "builder" and args[0] == "buildctl":
+                # Daemon diagnostics can explain an otherwise bare exit code, but
+                # must not postpone a known build failure or replace its cause.
+                diagnostic_timeout = min(5.0, timeout_seconds(self.timeout))
+                try:
+                    logs = run_command(
+                        self.kubectl.command([
+                            "logs", "-n", self.namespace, self.name, "-c", "builder",
+                            "--since-time=" + started, "--timestamps",
+                            f"--request-timeout={diagnostic_timeout:g}s",
+                        ]),
+                        text=True, capture_output=True, timeout=diagnostic_timeout,
+                    )
+                except (DeploymentError, OSError) as error:
+                    print(f"Builder logs unavailable: {error}", flush=True)
+                else:
+                    if logs.returncode == 0 and logs.stdout.strip():
+                        print(logs.stdout, flush=True)
+                        if any(
+                            "session key" in line and "disk quota exceeded" in line
+                            for line in logs.stdout.splitlines()
+                        ):
+                            detail += ("\n" if detail else "") + (
+                                "BuildKit reported an exhausted host keyring quota for the builder's UID; "
+                                "inspect /proc/key-users and kernel.keys.maxkeys/maxbytes on the host, "
+                                "then identify retained keyring references or adjust host key capacity"
+                            )
+                    elif logs.returncode:
+                        print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
+            raise DeploymentError(
+                f"cluster build failed in {self.namespace}/{self.name}"
+                + (f" on node {self.node}" if self.node else "")
+                + f": {detail or result.returncode}"
+            )
+        return result.stdout if capture else ""
+
+    def read_json(self, path: str, *, container: str = "builder") -> dict[str, Any]:
+        """Read optional operation metadata without hiding malformed or unreadable state."""
+        text = self.run(
+            [
+                "sh",
+                "-ec",
+                'if test -f "$1"; then cat "$1"; else printf "{}"; fi',
+                "read",
+                path,
+            ],
+            capture=True,
+            container=container,
+        )
+        return json.loads(text)
 
     def _pod(self, *, artifact_nfs_isolated: bool) -> dict[str, Any]:
         """Render the daemon's local execution, artifact and image-import resources for startup."""
@@ -646,96 +833,6 @@ done
             if stale:
                 self.run(["rm", "-rf", "--", *stale], container=self.artifact_container)
 
-    def command(self, args: list[str], *, container: str = "builder") -> list[str]:
-        """Address the build Pod for both streamed input and ordinary commands."""
-        return self.kubectl.command(
-            [
-                "exec",
-                "-i",
-                "-n",
-                self.namespace,
-                self.name,
-                "-c",
-                container,
-                "--",
-                *args,
-            ]
-        )
-
-    def run(
-        self,
-        args: list[str],
-        *,
-        capture: bool = False,
-        container: str = "builder",
-        input_text: str | None = None,
-    ) -> str:
-        """Execute a build stage, preserving live compiler and daemon diagnostics on failure."""
-        started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        result = self.cancellation.run(
-            self.command(args, container=container),
-            text=True,
-            capture_output=capture,
-            input=input_text,
-        )
-        if result.returncode:
-            self.cancellation.check()
-            detail = (result.stderr or result.stdout or "").strip()
-            if container == "builder" and args[0] == "buildctl":
-                # Daemon diagnostics can explain an otherwise bare exit code, but
-                # must not postpone a known build failure or replace its cause.
-                diagnostic_timeout = min(5.0, timeout_seconds(self.timeout))
-                try:
-                    logs = run_command(
-                        self.kubectl.command([
-                            "logs", "-n", self.namespace, self.name, "-c", "builder",
-                            "--since-time=" + started, "--timestamps",
-                            f"--request-timeout={diagnostic_timeout:g}s",
-                        ]),
-                        text=True, capture_output=True, timeout=diagnostic_timeout,
-                    )
-                except (DeploymentError, OSError) as error:
-                    print(f"Builder logs unavailable: {error}", flush=True)
-                else:
-                    if logs.returncode == 0 and logs.stdout.strip():
-                        print(logs.stdout, flush=True)
-                        if any(
-                            "session key" in line and "disk quota exceeded" in line
-                            for line in logs.stdout.splitlines()
-                        ):
-                            detail += ("\n" if detail else "") + (
-                                "BuildKit reported an exhausted host keyring quota for the builder's UID; "
-                                "inspect /proc/key-users and kernel.keys.maxkeys/maxbytes on the host, "
-                                "then identify retained keyring references or adjust host key capacity"
-                            )
-                    elif logs.returncode:
-                        print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
-            raise DeploymentError(
-                f"cluster build failed in {self.namespace}/{self.name}"
-                + (f" on node {self.node}" if self.node else "")
-                + f": {detail or result.returncode}"
-            )
-        return result.stdout if capture else ""
-
-    def read_json(self, path: str, *, container: str = "builder") -> dict[str, Any]:
-        """Read optional operation metadata without hiding malformed or unreadable state."""
-        text = self.run(
-            [
-                "sh",
-                "-ec",
-                'if test -f "$1"; then cat "$1"; else printf "{}"; fi',
-                "read",
-                path,
-            ],
-            capture=True,
-            container=container,
-        )
-        return json.loads(text)
-
-    def sync(self, files: dict[str, Path], versions: dict[str, str]) -> None:
-        """Capture environment inputs using the same complete-inventory transfer as native builds."""
-        synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
-
     def _deliver_output(self, source: str, destination: str) -> None:
         """Hand complete local exports to the persistent volume's ordinary writer."""
         self._share_output(source)
@@ -754,69 +851,6 @@ done
             "sh", "-ec", 'chgrp -Rh 1000 "$1"; chmod -R g+rX "$1"',
             "share", path,
         ])
-
-    def resolve_image(self, image: str) -> str:
-        """Resolve a build dependency through the same node store or registry used by BuildKit."""
-        if image in self._resolved_images:
-            return self._resolved_images[image]
-        name = _image_reference(image)
-        if name in self._generated_layouts:
-            layout = self._generated_layouts[name]
-            digest = layout["digest"]
-            manifest = self.read_json(layout["path"] + "/blobs/" + self._context_digest(layout).replace(":", "/", 1))
-            configuration = self.read_json(layout["path"] + "/blobs/" + manifest["config"]["digest"].replace(":", "/", 1))
-            self._image_users[image] = configuration["config"].get("User", "") or "0"
-        elif self.containerd_socket:
-            store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
-            digest = store.image_digest(name)
-        else:
-            digest = None
-        if digest is None:
-            # A FROM-only solve uses BuildKit's registry credentials, mirrors and
-            # platform selection without running a container or adding image layers.
-            dockerfile = ".foretoken-resolve/Dockerfile"
-            self.run([
-                "sh", "-ec",
-                'mkdir -p "$1/.foretoken-resolve"; printf \'ARG BASE_IMAGE\\nFROM ${BASE_IMAGE}\\n\' > "$1/.foretoken-resolve/Dockerfile"',
-                "resolve", self.workspace,
-            ])
-            try:
-                metadata = self.build(
-                    dockerfile, image="foretoken-resolve:" + uuid.uuid4().hex,
-                    arguments={"BASE_IMAGE": image}, capture=True, metadata_only=True,
-                )
-            except DeploymentError as error:
-                message = str(error)
-                if "failed to resolve source metadata" in message and (
-                    f"{image}: not found" in message or "404 Not Found" in message
-                ):
-                    raise ImageNotFoundError(message) from error
-                raise
-            digest = metadata["containerimage.digest"]
-            configuration = json.loads(self.run(
-                ["buildctl", "debug", "get", metadata["containerimage.config.digest"]],
-                capture=True,
-            ))
-            self._image_users[image] = configuration["config"].get("User", "") or "0"
-        self._resolved_images[image] = digest
-        return digest
-
-    def image_user(self, image: str) -> str:
-        """Preserve the resolved runtime's USER when a dependency stage temporarily runs as root."""
-        digest = self.resolve_image(image)
-        if image not in self._image_users:
-            machine = self.run(["uname", "-m"], capture=True).strip()
-            architecture = {"x86_64": "amd64", "aarch64": "arm64"}[machine]
-            self._image_users[image] = NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding,
-            ).image_user(digest, architecture)
-        return self._image_users[image]
-
-    def image_matches(self, image: str, digest: str) -> bool:
-        """Verify a retained environment against its producer's OCI descriptor on this node."""
-        if self.containerd_socket:
-            return self._node_image_matches(image, digest)
-        return self.resolve_image(image) == digest
 
     def _node_images(self) -> dict[str, str]:
         """Read node references for existing local build-context reuse."""
@@ -905,38 +939,6 @@ done
             lambda digest: self.read_json(layout["path"] + "/blobs/" + digest.replace(":", "/", 1)),
         )
 
-    def import_image(self, image: str, reference: str) -> None:
-        """Deliver a selected OCI output after source builds, reusing an identical node image."""
-        image = _image_reference(image)
-        layout = self._generated_layouts[image]
-        digest = layout["digest"]
-        if self._node_image_matches(reference, digest):
-            print(f"Reusing unchanged node image {reference}", flush=True)
-            NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).pin_owned(reference)
-        else:
-            NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).import_layout(layout["path"], reference)
-            # Retire only references created by this operation after delivery.
-            self._built_images.update((image, reference))
-        if image in self._used_images:
-            # A generated environment consumed by this build is also the next
-            # iteration's input. Retain its immutable OCI files without copying
-            # layer bytes or invalidating in-flight commands' original paths.
-            cached = self.root + "/images/" + uuid.uuid4().hex
-            self.run(["mkdir", "-p", self.root + "/images"], container=self.artifact_container)
-            self.run(["cp", "-al", layout["path"], cached], container=self.artifact_container)
-            self._save_layout(reference, cached, digest)
-            self._used_images.add(reference)
-
-    def discard_unselected_images(self, retained: set[str]) -> None:
-        """Remove only this build's unselected local references after every node has been compared."""
-        if self.containerd_socket:
-            NodeImageStore(
-                self.kubectl, self.namespace, self.name, self.binding
-            ).remove_owned(self._built_images - retained)
 
 
 def remove_build_pods(kubectl: Kubectl, timeout: str, *, binding: str) -> None:

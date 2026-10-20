@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Defines replica adjustment and retains controller-local recommendation history.
 package core
 
 import (

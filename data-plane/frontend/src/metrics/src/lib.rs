@@ -72,7 +72,7 @@ struct QueueCounts {
 
 #[derive(Debug)]
 struct FrontendCollector {
-    kv_index: Option<(String, Option<String>, usize, usize)>,
+    kv_index: (String, Option<String>, usize, usize),
 }
 
 static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, QueueCounts>>> = OnceLock::new();
@@ -212,11 +212,6 @@ pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     }
 }
 
-/// Renders the frontend's OpenMetrics response without KV-index status for callers that do not expose index diagnostics.
-pub async fn scrape() -> Response {
-    render(None)
-}
-
 /// Renders the OpenMetrics response with a caller-provided KV-index status snapshot.
 ///
 /// The KV-aware metrics route supplies the status values; their ownership remains with the indexer.
@@ -226,7 +221,7 @@ pub async fn scrape_with_kv_index(
     sources_healthy: usize,
     sources_total: usize,
 ) -> Response {
-    render(Some((state, reason, sources_healthy, sources_total)))
+    render((state, reason, sources_healthy, sources_total))
 }
 
 /// Records one non-metrics HTTP response start after its handler returns a response.
@@ -276,7 +271,7 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
 }
 
 // All owners encode into one OpenMetrics document; only the endpoint writes its EOF marker.
-fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
+fn render((state, reason, healthy, total): (&str, Option<&str>, usize, usize)) -> Response {
     let encoded = (|| {
         let mut body = String::new();
         encode_registry(&mut body, METRICS.registry())?;
@@ -284,9 +279,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
         foretoken_admission::encode_metrics(&mut body)?;
         let mut registry = Registry::default();
         registry.register_collector(Box::new(FrontendCollector {
-            kv_index: kv_index.map(|(state, reason, healthy, total)| {
-                (state.to_owned(), reason.map(str::to_owned), healthy, total)
-            }),
+            kv_index: (state.to_owned(), reason.map(str::to_owned), healthy, total),
         }));
         encode_registry(&mut body, &registry)?;
         encode_eof(&mut body)?;
@@ -320,38 +313,37 @@ impl Collector for FrontendCollector {
                 .saturating_add(counts.backend_dispatch);
             queues.encode_family(target)?.encode_gauge(&count)?;
         }
-        if let Some((state, reason, healthy, total)) = &self.kv_index {
-            for (name, help, value) in [
-                (
-                    "foretoken_kv_index_enabled",
-                    "Whether KV locality indexing is enabled",
-                    u64::from(!matches!(state.as_str(), "disabled" | "unavailable")),
-                ),
-                (
-                    "foretoken_kv_index_sources_healthy",
-                    "Healthy KV event sources",
-                    *healthy as u64,
-                ),
-                (
-                    "foretoken_kv_index_sources_total",
-                    "Configured KV event sources",
-                    *total as u64,
-                ),
-            ] {
-                encoder
-                    .encode_descriptor(name, help, None, MetricType::Gauge)?
-                    .encode_gauge(&value)?;
-            }
+        let (state, reason, healthy, total) = &self.kv_index;
+        for (name, help, value) in [
+            (
+                "foretoken_kv_index_enabled",
+                "Whether KV locality indexing is enabled",
+                u64::from(!matches!(state.as_str(), "disabled" | "unavailable")),
+            ),
+            (
+                "foretoken_kv_index_sources_healthy",
+                "Healthy KV event sources",
+                *healthy as u64,
+            ),
+            (
+                "foretoken_kv_index_sources_total",
+                "Configured KV event sources",
+                *total as u64,
+            ),
+        ] {
             encoder
-                .encode_descriptor(
-                    "foretoken_kv_index_degraded",
-                    "Whether KV locality observations are degraded",
-                    None,
-                    MetricType::Gauge,
-                )?
-                .encode_family(&[("reason", reason.as_deref().unwrap_or("none"))])?
-                .encode_gauge(&u64::from(state == "degraded"))?;
+                .encode_descriptor(name, help, None, MetricType::Gauge)?
+                .encode_gauge(&value)?;
         }
+        encoder
+            .encode_descriptor(
+                "foretoken_kv_index_degraded",
+                "Whether KV locality observations are degraded",
+                None,
+                MetricType::Gauge,
+            )?
+            .encode_family(&[("reason", reason.as_deref().unwrap_or("none"))])?
+            .encode_gauge(&u64::from(state == "degraded"))?;
         Ok(())
     }
 }

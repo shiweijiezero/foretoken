@@ -108,14 +108,14 @@ The rate controls conversation starts, while the request budget counts HTTP turn
 
 ## Compare methods
 
-Pass multiple Kustomize examples to measure the same workload on each service:
+After preparing the [BF16 and 4-bit examples](../../../examples/feature/quantized-model/README.md), pass both Kustomize directories to measure the same workload on each service:
 
 ```bash
-foretoken perf examples/quickstart/qwen3-0.6b examples/quickstart3 \
+foretoken perf examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. With a sweep, rows without `service` run on every service selected by the command. A row's explicit `service` replaces those selections. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/feature/quantized-model/README.md):
+Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. With a sweep, rows without `service` run on every service selected by the command. A row's explicit `service` replaces those selections. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares those deployments across concurrency settings:
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \

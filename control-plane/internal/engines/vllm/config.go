@@ -218,7 +218,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 		return nil, nil
 	}
 	ec := group.ECRuntime
-	if ec.ProfileName == "" || ec.ProfileRevision == "" || ec.Connector != "ECExampleConnector" || ec.SharedStorageClaim == "" || ec.SharedStoragePath == "" {
+	if ec.ProfileName == "" || ec.ProfileRevision == "" || ec.Connector != ecConnector || ec.SharedStorageClaim == "" || ec.SharedStoragePath == "" {
 		return nil, fmt.Errorf("vLLM EC runtime config is incomplete")
 	}
 	if group.Role == inferencev1alpha1.ModelRoleEncoder && ec.Role != inferencev1alpha1.ECTransferRoleProducer {

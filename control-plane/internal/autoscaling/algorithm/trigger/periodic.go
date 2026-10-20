@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Evaluates fresh observations and supplies the controller's polling cadence.
 package trigger
 
 import (

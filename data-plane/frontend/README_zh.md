@@ -109,18 +109,15 @@ REQUEST_HOST="$(foretoken endpoint "$INSTANCE" --host)"
 mkdir -p ./data
 ```
 
-`modelServiceRef.name` 需要填写实际部署的 Kubernetes ModelService 名称，不是模型标识。该配方只有一个模型服务，可从实例中读取它的名称后提交请求。输入路径相对于视频存储卷根目录：
+`model` 使用 `GET /v1/models` 列出的公开模型标识。后台生成要求它在部署中唯一对应一个视频服务。输入路径相对于视频存储卷根目录：
 
 ```bash
-MODEL_SERVICE="$(kubectl get inferencedeployment "$INSTANCE" \
-  -o jsonpath='{.spec.resources[?(@.kind=="ModelService")].name}')"
-
 curl --fail-with-body "$FRONTEND_URL/v1/videos" \
   -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
-  --data-binary @- <<EOF
+  --data-binary @- <<'EOF'
 {
-  "modelServiceRef": {"name": "$MODEL_SERVICE"},
+  "model": "MiniMaxAI/MiniMax-H3",
   "request": {
     "task": "fl2va",
     "prompt": "A sailboat crossing a calm bay at sunrise",
