@@ -21,6 +21,8 @@ dependencies = [
     "huggingface_hub>=1.30",
     "ijson>=3.2",
     "kubernetes>=36.0",
+    # Keep EvalScope on the release recommended after the LiteLLM publishing compromise.
+    "litellm==1.106.2",
     "lm-eval[api]==0.4.13",
     "loguru>=0.7.3",
     "matplotlib>=3.7",
