@@ -115,6 +115,8 @@ YAML 应便于阅读和修改：
 
 遵循相邻代码的既有惯例，以及各子目录配置的可执行检查。
 
+CLI 和 benchmark 模块使用 `from loguru import logger` 输出诊断，由应用入口配置输出目的地并接入第三方 `logging` 记录。推理引擎 adapter 沿用引擎原生日志，独立镜像脚本使用其运行环境提供的日志能力。进度和诊断写入 stderr；端点 URL、JSON、状态表等显式命令结果保留在 stdout。为记录日志保留原始异常，关闭局部变量值转储，并在能够处理错误的边界报告，避免逐层重复。
+
 - Rust 数据面：运行 `make verify-data-plane`，检查格式，并对工作区的全部构建目标执行编译和 Clippy 检查。
 - Go 控制面：运行 `make -C control-plane verify`。生成代码和 CRD 通过 Makefile 目标重新生成，不单独手工修改。
 - Python CLI：公共参数定义和解析应与命令执行分离，跨越该边界时返回明确的命令类型，不传递 `argparse.Namespace`；应在 Kubernetes 环境中实际执行受影响的已安装命令。

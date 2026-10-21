@@ -216,9 +216,14 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
-            reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
+            reserved = ["frontend.mode"] if "mode" in frontend else []
+            if "gateway" in frontend:
+                gateway = frontend["gateway"]
+                if not isinstance(gateway, dict):
+                    raise DeploymentError(f"Helm values file {path} requires frontend.gateway to be a mapping")
+                reserved.extend(f"frontend.gateway.{key}" for key in gateway if key != "port")
             if reserved:
-                names = ", ".join(f"frontend.{key}" for key in reserved)
+                names = ", ".join(reserved)
                 raise DeploymentError(
                     f"Helm values file {path} sets {names}; use --frontend-mode "
                     "and --gateway-* options for frontend topology"

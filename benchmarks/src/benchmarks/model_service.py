@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import shlex
 import sys
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -30,11 +29,10 @@ from foretoken.processes.execution import (
     cleanup_commands,
     run_command,
 )
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
 from benchmarks.profiling import CaptureCleanupError
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -71,7 +69,7 @@ class ModelService:
 
     @property
     def tokenizer_identity(self) -> tuple[str, str]:
-        """Return the selected source and client-side tokenizer, reusing deployment directories."""
+        """Return the selected source and client-side tokenizer from the serving cohorts' storage."""
         if not self.model:
             raise ValueError("Automatic tokenizer resolution requires one selected model; pass --model or a tokenizer override")
         if self.deployment is None:
@@ -85,18 +83,17 @@ class ModelService:
         if len(identities) != 1:
             raise ValueError("The deployment must select one model/tokenizer identity")
         source, tokenizer = identities.pop()
-        if source == "local" and not Path(tokenizer).expanduser().exists():
+        if source == "local":
             from benchmarks.datasets.huggingface import find_local_tokenizer_path
 
-            for cache in self.deployment.runtime_caches:
-                if not cache.directory:
-                    continue
-                data_root = Path(cache.directory).expanduser()
-                if not data_root.is_absolute():
-                    if self.deployment.path is None:
-                        continue
-                    data_root = self.deployment.path / data_root
-                local = find_local_tokenizer_path(tokenizer, data_root=data_root)
+            assert self.kubectl is not None
+            directories = {
+                cache["directory"]
+                for group in _serving_model_groups(self.deployment, self.model, self.kubectl)
+                if (cache := group["spec"]["artifacts"].get("cache")) and cache.get("directory")
+            }
+            for directory in sorted(directories):
+                local = find_local_tokenizer_path(tokenizer, data_root=directory)
                 if local is not None:
                     return source, local
         return source, tokenizer
@@ -205,7 +202,7 @@ class ModelServiceResolver:
         try:
             with execution:
                 if temporary:
-                    logger.info("Deploying Foretoken instance %s from %s", deployment.name, source.kustomize_path)
+                    logger.info("Deploying Foretoken instance {} from {}", deployment.name, source.kustomize_path)
                     deployment = lifecycle.apply(deployment, source.wait_timeout)
                 service = _discover_model_service(
                     deployment, kubectl, source, allow_multiple_models=allow_multiple_models
@@ -215,14 +212,14 @@ class ModelServiceResolver:
         except CaptureCleanupError:
             # Keep participants alive until the controller confirms stop and export.
             logger.error(
-                "Capture cleanup is unconfirmed; retaining deployment instance %s for inspection",
+                "Capture cleanup is unconfirmed; retaining deployment instance {} for inspection",
                 deployment.name,
             )
             temporary = False
             raise
         finally:
             if temporary:
-                logger.info("Cleaning up Foretoken deployment instance %s", deployment.name)
+                logger.info("Cleaning up Foretoken deployment instance {}", deployment.name)
                 with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
                     lifecycle.cleanup_temporary(
                         deployment, source.wait_timeout,
@@ -291,23 +288,32 @@ def _model_gpu_count(
     deployment: ForetokenDeployment, model: str, kubectl: Kubectl,
 ) -> int:
     """Count allocated GPUs in the service-selected, ready execution groups."""
+    total = sum(
+        int(group["spec"]["nodeCount"]) * int(group["spec"]["resources"]["requests"]["gpu"]["count"])
+        for group in _serving_model_groups(deployment, model, kubectl)
+    )
+    if total < 1:
+        raise DeploymentError(f"no resolved GPU capacity for model {model!r}")
+    return total
+
+
+def _serving_model_groups(
+    deployment: ForetokenDeployment, model: str, kubectl: Kubectl,
+) -> Iterator[dict[str, Any]]:
+    """Yield ready serving cohorts for capacity and artifact discovery, excluding retired revisions."""
     services = kubectl.get_resources(_model_service_refs(deployment, model))
     selected = {
         (pool["poolUID"], pool["revision"])
         for service in services
         for pool in service["status"]["servingPoolRevisions"]
     }
-    total = 0
     for group in kubectl.list_resources(("modelgroups",), deployment.namespace):
         spec = group["spec"]
         if (spec["modelPoolRef"]["uid"], spec["revision"]) not in selected:
             continue
         if group["metadata"].get("deletionTimestamp") or group["status"].get("phase") != "Ready":
             continue
-        total += int(spec["nodeCount"]) * int(spec["resources"]["requests"]["gpu"]["count"])
-    if total < 1:
-        raise DeploymentError(f"no resolved GPU capacity for model {model!r}")
-    return total
+        yield group
 
 
 def _wait_for_models(

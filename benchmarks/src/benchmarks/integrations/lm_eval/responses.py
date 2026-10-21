@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import shutil
 import sqlite3
 import tempfile
@@ -14,7 +13,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, NamedTuple, Self
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class ResponseSlot(NamedTuple):

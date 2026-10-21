@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
-import logging
 from contextlib import closing
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.results.recording.database import (
     DATABASE_FILENAME,
@@ -27,8 +28,6 @@ from benchmarks.results.recording.requests import (
 )
 from benchmarks.results.types import BenchmarkRun
 
-logger = logging.getLogger(__name__)
-
 
 def restore_run(directory: Path, publication: dict[str, Any]) -> BenchmarkRun:
     """Rebuild a saved run for recovery or publication while the caller owns its result lock."""
@@ -44,7 +43,7 @@ def restore_run(directory: Path, publication: dict[str, Any]) -> BenchmarkRun:
                 if figure_source(directory / plots) == directory:
                     artifacts["plots"] = (directory / plots).resolve()
         except (OSError, ValueError) as error:
-            logger.warning("Cannot read saved figure ownership: %s", error)
+            logger.warning("Cannot read saved figure ownership: {}", error)
     measurements = None
     if publication["has_measurements"]:
         raw = read_request_records(directory)

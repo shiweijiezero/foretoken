@@ -8,6 +8,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from loguru import logger
+
 from foretoken.build.cluster.builder import ClusterBuilder, ImageNotFoundError
 from foretoken.build.records import BUILD_TRANSPORT_ARGUMENTS
 
@@ -106,7 +108,7 @@ class BuildEnvironments:
         reusable = not self.refresh and previous.get("identity") == identity
         if reusable and self._available(previous, builders):
             self.records[name] = previous
-            print(f"Reusing {name} environment: {previous['image']}", flush=True)
+            logger.info("Reusing {} environment: {}", name, previous["image"])
             return previous
 
         image = self.images[name]
@@ -154,6 +156,6 @@ class BuildEnvironments:
                 if digest is None or not builder.image_matches(record["image"], digest):
                     return False
             except ImageNotFoundError as error:
-                print(f"Environment image was removed; rebuilding: {error}", flush=True)
+                logger.warning("Environment image was removed; rebuilding: {}", error)
                 return False
         return True

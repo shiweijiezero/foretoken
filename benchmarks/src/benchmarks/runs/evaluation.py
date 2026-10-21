@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import signal
 import subprocess
 import sys
@@ -19,6 +18,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+from loguru import logger
+
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
 from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.output import ResultOutputs
@@ -28,8 +29,6 @@ from benchmarks.results.reporting.evaluation import (
 )
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.results.wandb.recording import wandb_run_timestamp
-
-logger = logging.getLogger(__name__)
 
 
 def run_evaluation(
@@ -61,7 +60,7 @@ def run_evaluation(
         active_outputs.open(record)
         directory = Path(active_outputs.execution_dir).resolve()
         logger.info(
-            "Evaluation: %s | model=%s | artifacts=%s",
+            "Evaluation: {} | model={} | artifacts={}",
             config.evaluator,
             service.model,
             directory,
@@ -93,7 +92,7 @@ def run_evaluation(
         active_outputs.publish(run)
         if code:
             logger.error(
-                "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"
+                "{} failed (exit {}); see {}", config.evaluator, code, directory / "evaluator.log"
             )
         return run
 
@@ -239,7 +238,7 @@ def _execute(
                     line = line.replace(service.api_key, "[redacted]")
                 log.write(line)
                 log.flush()
-                print(line, end="", flush=True)
+                print(line, end="", file=sys.stderr, flush=True)
             code = process.wait()
             on_complete(code)
             return code

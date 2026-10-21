@@ -6,17 +6,16 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 from benchmarks.results.recording.database import DATABASE_FILENAME, read_records
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.tasks import task_source
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,7 +64,7 @@ def result_sources(directory: Path, *others: Path) -> list[Path]:
         context = read_records(source, ("context.json",)).get("context.json")
         owned = context is not None
         if owned and context.get("status") == "running":
-            logger.info("Waiting for the result recorder to close: %s", source)
+            logger.info("Waiting for the result recorder to close: {}", source)
         # A running aggregate can create more children. Discover them only after
         # its recorder seals, then release its lock before waiting on any child.
         with publication_lock(source) if owned else nullcontext():

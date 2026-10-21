@@ -14,6 +14,7 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use super::super::convert::{self, ResponseMeta, build_response, build_usage};
 use super::super::error::ApiError;
@@ -71,40 +72,44 @@ impl ResponseTasks {
             .expect("response task lock poisoned")
             .insert(id.clone(), cancel.clone());
         let tasks = self.clone();
-        self.tracker.spawn(async move {
-            let _active = ActiveResponse {
-                tasks: tasks.clone(),
-                id: id.clone(),
-            };
-            let items = OutputItemStreamer::new(request.include_reasoning);
-            let mut run = ResponseExecution {
-                items,
-                id,
-                snapshot,
-                request,
-                timing,
-                identity: identity.clone(),
-                cancel,
-                store: tasks.store.clone(),
-                reservation: None,
-                recorded: false,
-                registration_attempted: false,
-                generation_started: false,
-                ready: Some(ready),
-                delivery: events,
-                sequence: 0,
-                created_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            };
-            with_caller(identity, async {
-                if let Err(error) = run.execute().await {
-                    run.fail(error).await;
-                }
-            })
-            .await;
-        });
+        self.tracker.spawn(
+            async move {
+                let _active = ActiveResponse {
+                    tasks: tasks.clone(),
+                    id: id.clone(),
+                };
+                let items = OutputItemStreamer::new(request.include_reasoning);
+                let mut run = ResponseExecution {
+                    items,
+                    id,
+                    snapshot,
+                    request,
+                    timing,
+                    identity: identity.clone(),
+                    cancel,
+                    store: tasks.store.clone(),
+                    reservation: None,
+                    recorded: false,
+                    registration_attempted: false,
+                    generation_started: false,
+                    ready: Some(ready),
+                    delivery: events,
+                    sequence: 0,
+                    created_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                tracing::debug!(response_id = %run.id, "response execution started");
+                with_caller(identity, async {
+                    if let Err(error) = run.execute().await {
+                        run.fail(error).await;
+                    }
+                })
+                .await;
+            }
+            .in_current_span(),
+        );
         ResponseDelivery {
             ready: receiver,
             events: event_receiver,

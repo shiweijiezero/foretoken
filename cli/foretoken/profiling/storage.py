@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import secrets
 import subprocess
@@ -17,6 +16,8 @@ from importlib import resources
 from typing import Any, BinaryIO, Self
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
+
+from loguru import logger
 
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
@@ -30,8 +31,6 @@ from foretoken.profiling.reader import (
     capture_path,
     capture_token,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -153,7 +152,7 @@ class ViewerResources:
                     )
             except DeploymentError as exc:
                 logger.warning(
-                    "Could not remove temporary profile viewer %s/%s: %s",
+                    "Could not remove temporary profile viewer {}/{}: {}",
                     namespace,
                     name,
                     exc,

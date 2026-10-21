@@ -20,6 +20,8 @@ from threading import Lock
 from typing import Any, Self
 from urllib.parse import urlsplit
 
+from loguru import logger
+
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
 from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -205,10 +207,9 @@ class ClusterBuilder(AbstractContextManager):
         result = self.read_json(metadata)
         target_name = target or "default"
         output_name = destination or image or "files"
-        print(
-            f"Build completed: {dockerfile} target={target_name} output={output_name} "
-            f"in {time.monotonic() - started:.1f}s",
-            flush=True,
+        logger.info(
+            "Build completed: {} target={} output={} in {:.1f}s",
+            dockerfile, target_name, output_name, time.monotonic() - started,
         )
         if layout:
             self._generated_layouts[_image_reference(image)] = {
@@ -285,7 +286,7 @@ class ClusterBuilder(AbstractContextManager):
         layout = self._generated_layouts[image]
         digest = layout["digest"]
         if self._node_image_matches(reference, digest):
-            print(f"Reusing unchanged node image {reference}", flush=True)
+            logger.info("Reusing unchanged node image {}", reference)
             NodeImageStore(
                 self.kubectl, self.namespace, self.name, self.binding
             ).pin_owned(reference)
@@ -328,7 +329,7 @@ class ClusterBuilder(AbstractContextManager):
                 self.cancellation.unregister(self.retire)
                 raise
         pod = self._pod(artifact_nfs_isolated=artifact_nfs_isolated)
-        print(f"Preparing cluster builder {self.namespace}/{self.name}", flush=True)
+        logger.info("Preparing cluster builder {}/{}", self.namespace, self.name)
         deadline = time.monotonic() + timeout_seconds(self.timeout)
 
         def ready(value: dict[str, Any]) -> bool:
@@ -430,6 +431,8 @@ class ClusterBuilder(AbstractContextManager):
             text=True,
             capture_output=capture,
             input=input_text,
+            stdout=None if capture else sys.stderr,
+            stderr=None if capture else sys.stderr,
         )
         if result.returncode:
             self.cancellation.check()
@@ -448,10 +451,10 @@ class ClusterBuilder(AbstractContextManager):
                         text=True, capture_output=True, timeout=diagnostic_timeout,
                     )
                 except (DeploymentError, OSError) as error:
-                    print(f"Builder logs unavailable: {error}", flush=True)
+                    logger.warning("Builder logs unavailable: {}", error)
                 else:
                     if logs.returncode == 0 and logs.stdout.strip():
-                        print(logs.stdout, flush=True)
+                        logger.info("{}", logs.stdout)
                         if any(
                             "session key" in line and "disk quota exceeded" in line
                             for line in logs.stdout.splitlines()
@@ -462,7 +465,7 @@ class ClusterBuilder(AbstractContextManager):
                                 "then identify retained keyring references or adjust host key capacity"
                             )
                     elif logs.returncode:
-                        print(f"Builder logs unavailable: {logs.stderr.strip()}", flush=True)
+                        logger.warning("Builder logs unavailable: {}", logs.stderr.strip())
             raise DeploymentError(
                 f"cluster build failed in {self.namespace}/{self.name}"
                 + (f" on node {self.node}" if self.node else "")

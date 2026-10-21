@@ -30,11 +30,11 @@ const (
 	RuntimeCacheRetentionPolicyRetain RuntimeCacheRetentionPolicy = "Retain"
 )
 
-// RuntimeCacheSpec selects persistent model and runtime storage for one deployment.
+// RuntimeCacheSpec selects platform-default storage, an authorized directory, or a deployment-owned PVC.
 // +kubebuilder:validation:XValidation:rule="!has(self.initialSize) || quantity(self.initialSize).compareTo(quantity('0')) > 0",message="initialSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity('0')) > 0",message="maxSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || !has(self.initialSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize)) > 0",message="maxSize must be greater than initialSize"
-// +kubebuilder:validation:XValidation:rule="has(self.directory) || has(self.initialSize)",message="initialSize is required when directory is not set"
+// +kubebuilder:validation:XValidation:rule="(!has(self.storageClassName) && !has(self.maxSize)) || has(self.initialSize)",message="initialSize is required for dynamic storage settings"
 // +kubebuilder:validation:XValidation:rule="has(self.storageClassName) == has(oldSelf.storageClassName) && (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName) && has(self.initialSize) == has(oldSelf.initialSize) && (!has(self.initialSize) || self.initialSize == oldSelf.initialSize) && self.accessMode == oldSelf.accessMode && self.retentionPolicy == oldSelf.retentionPolicy && has(self.directory) == has(oldSelf.directory) && (!has(self.directory) || self.directory == oldSelf.directory)",message="only maxSize may change"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.maxSize) || (has(self.maxSize) && quantity(self.maxSize).compareTo(quantity(oldSelf.maxSize)) >= 0)",message="maxSize cannot be removed or decreased"
 // +kubebuilder:validation:XValidation:rule="!has(self.directory) || (!has(self.maxSize) && !has(self.initialSize) && !has(self.storageClassName))",message="directory cannot be combined with PVC size or storageClassName"
@@ -49,7 +49,8 @@ type RuntimeCacheSpec struct {
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	// InitialSize is the first PVC request for dynamic storage; omit it when selecting a directory.
+	// InitialSize requests a deployment-owned dynamic PVC.
+	// Omit both directory and initialSize to use the platform's prepared default storage.
 	// +optional
 	InitialSize ResourceQuantity `json:"initialSize,omitempty"`
 

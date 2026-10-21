@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.workload import HttpWorkload, RequestEpisode
@@ -31,8 +32,6 @@ from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.requests import request_measurement_record
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.scheduling import run_schedule
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -136,7 +135,7 @@ class HttpBenchmark:
                 None, "warmup", itl, groups, record_completed,
             )
 
-        logger.info("Warmup: %d HTTP requests", benchmark.load.warmup_requests)
+        logger.info("Warmup: {} HTTP requests", benchmark.load.warmup_requests)
         warmup_load = replace(benchmark.load, arrival_rate=-1.0, duration_seconds=None)
         episodes, duration, origin = await run_schedule(
             list(workload.episodes(warmup=True)), execute, warmup_load,
@@ -172,6 +171,7 @@ class HttpBenchmark:
         outputs.start_observers()
         progress = outputs.http_progress(
             stream=benchmark.generation.stream,
+            total=workload.request_count,
             criteria=benchmark.slo.params[0] if benchmark.slo.params else None,
         )
         profile = create_benchmark_profile(benchmark, self.service, outputs.execution_dir)
@@ -192,6 +192,7 @@ class HttpBenchmark:
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
+            outputs.http_request_completed()
 
         async def execute(index, episode, scheduled_at, deadline):
             return await self._execute_episode(
@@ -200,7 +201,7 @@ class HttpBenchmark:
             )
 
         with profile if profile is not None else nullcontext():
-            logger.info("Measurement: %s HTTP requests", workload.request_count or "duration-bounded")
+            logger.info("Measurement: {} HTTP requests", workload.request_count or "duration-bounded")
             async with asyncio.TaskGroup() as tasks:
                 sampler = tasks.create_task(progress.sample()) if progress is not None else None
                 try:

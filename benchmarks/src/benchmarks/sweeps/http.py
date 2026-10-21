@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
+from loguru import logger
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from benchmarks.config.benchmark import (
@@ -47,7 +47,6 @@ from benchmarks.sweeps.core import (
     load_sweep_points as load_core_sweep_points,
 )
 
-logger = logging.getLogger(__name__)
 _DATASET_SELECTORS = TypeAdapter(str | list[str], config=ConfigDict(strict=True, hide_input_in_errors=True))
 _DATASET_WEIGHTS = TypeAdapter(str | list[float], config=ConfigDict(strict=True, hide_input_in_errors=True))
 _WEIGHT_VALUES = TypeAdapter(list[float], config=ConfigDict(hide_input_in_errors=True))
@@ -273,7 +272,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 self.resources.close()
                 self.service = self.resources.enter_context(self.resolver.benchmark(point_config))
                 self.selection = selection
-            logger.info("%s", format_benchmark_config(point_config, self.service))
+            logger.info("{}", format_benchmark_config(point_config, self.service))
             return self.service
 
         if point_config.slo.search:

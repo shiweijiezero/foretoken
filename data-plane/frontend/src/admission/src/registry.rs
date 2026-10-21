@@ -7,9 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use foretoken_request_ledger::{Outcome, RequestLedger, ReservationRef};
+use foretoken_request_ledger::{LedgerError, Outcome, RequestLedger, ReservationRef};
 use tokio::sync::Notify;
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::permit::BatchReservation;
 use crate::{
@@ -47,6 +48,7 @@ struct ModelState {
     applied_version: Option<u64>,
     waiting: Vec<WaitingRequest>,
     last_caller: BTreeMap<i32, String>,
+    ledger_failure_reported: bool,
 }
 
 /// A model's local request ordering, retained across routing and configuration generations.
@@ -296,11 +298,14 @@ impl Admission {
         let request = request.clone();
         // A canceled caller cannot abandon a store command whose result is still unknown. The
         // detached task finishes enqueue and drops any unclaimed permit, without dispatching work.
-        let entry = tokio::spawn(async move {
-            model
-                .enter_waiting(&request, expires, deadline, resolved)
-                .await
-        });
+        let entry = tokio::spawn(
+            async move {
+                model
+                    .enter_waiting(&request, expires, deadline, resolved)
+                    .await
+            }
+            .in_current_span(),
+        );
         let result = match tokio::time::timeout_at(expires, entry).await {
             Ok(result) => result.expect("admission entry task must not panic"),
             Err(_) if expires == deadline => Err(AdmissionError::DeadlineExceeded),
@@ -390,7 +395,7 @@ impl Admission {
                 }) {
                     return;
                 }
-                if ledger
+                let result = ledger
                     .publish(
                         &scope,
                         &model,
@@ -399,9 +404,12 @@ impl Admission {
                         &members.frontends,
                         &members.backends,
                     )
-                    .await
-                    .is_ok()
-                {
+                    .await;
+                let published = match owner.upgrade() {
+                    Some(owner) => owner.ledger_result("publish_configuration", result).is_ok(),
+                    None => result.is_ok(),
+                };
+                if published {
                     if let Some(owner) = owner.upgrade() {
                         if tracked && owner.initialize_owner().await.is_err() {
                             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -430,6 +438,34 @@ impl Admission {
         ))
     }
 
+    /// Reports store failure transitions across this model's operations without changing admission state.
+    pub(crate) fn ledger_result<T>(
+        &self,
+        operation: &'static str,
+        result: Result<T, LedgerError>,
+    ) -> Result<T, AdmissionError> {
+        let mut state = self.state.lock().expect("model admission lock poisoned");
+        match &result {
+            Err(error @ LedgerError::Storage(source)) if source.is_io_error() => {
+                if !state.ledger_failure_reported {
+                    tracing::warn!(model = %self.model, operation, %error, "request capacity store is unavailable");
+                    state.ledger_failure_reported = true;
+                } else {
+                    tracing::debug!(model = %self.model, operation, %error, "request capacity operation is still unavailable");
+                }
+            }
+            Ok(_) if state.ledger_failure_reported => {
+                state.ledger_failure_reported = false;
+                tracing::info!(model = %self.model, operation, "request capacity store recovered");
+            }
+            Err(LedgerError::OwnerClosed) | Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(model = %self.model, operation, %error, "request capacity operation failed");
+            }
+        }
+        result.map_err(AdmissionError::from)
+    }
+
     /// Registers this model's frontend process epoch once before it publishes waiting requests.
     async fn initialize_owner(&self) -> Result<u64, AdmissionError> {
         let ledger = self
@@ -438,10 +474,12 @@ impl Admission {
             .ok_or(AdmissionError::StoreUnavailable)?;
         self.owner_epoch
             .get_or_try_init(|| async {
-                ledger
-                    .register_frontend(&self.scope, &self.model, &self.frontend)
-                    .await
-                    .map_err(AdmissionError::from)
+                self.ledger_result(
+                    "register_frontend",
+                    ledger
+                        .register_frontend(&self.scope, &self.model, &self.frontend)
+                        .await,
+                )
             })
             .await
             .copied()
@@ -503,27 +541,33 @@ impl Admission {
             final_stage: true,
         };
         let caller = request.caller.caller.clone().unwrap_or_default();
-        ledger
-            .publish(
-                &self.scope,
-                &self.model,
-                version,
-                serde_json::to_value(&config).expect("admission settings serialize"),
-                &members.frontends,
-                &members.backends,
-            )
-            .await?;
+        self.ledger_result(
+            "publish_configuration",
+            ledger
+                .publish(
+                    &self.scope,
+                    &self.model,
+                    version,
+                    serde_json::to_value(&config).expect("admission settings serialize"),
+                    &members.frontends,
+                    &members.backends,
+                )
+                .await,
+        )?;
         let epoch = self.initialize_owner().await?;
-        let outcome = ledger
-            .enqueue(
-                &reservation,
-                &self.frontend,
-                epoch,
-                &caller,
-                request.caller.role.as_deref().unwrap_or_default(),
-                request.units,
-            )
-            .await;
+        let outcome = self.ledger_result(
+            "enqueue",
+            ledger
+                .enqueue(
+                    &reservation,
+                    &self.frontend,
+                    epoch,
+                    &caller,
+                    request.caller.role.as_deref().unwrap_or_default(),
+                    request.units,
+                )
+                .await,
+        );
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -537,7 +581,7 @@ impl Admission {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 });
-                return Err(error.into());
+                return Err(error);
             }
         };
         match outcome {
@@ -626,16 +670,19 @@ impl Admission {
             .ledger
             .as_ref()
             .ok_or(AdmissionError::StoreUnavailable)?;
-        ledger
-            .publish(
-                &self.scope,
-                &self.model,
-                version,
-                serde_json::to_value(config).expect("admission settings serialize"),
-                &members.frontends,
-                &members.backends,
-            )
-            .await?;
+        self.ledger_result(
+            "publish_configuration",
+            ledger
+                .publish(
+                    &self.scope,
+                    &self.model,
+                    version,
+                    serde_json::to_value(config).expect("admission settings serialize"),
+                    &members.frontends,
+                    &members.backends,
+                )
+                .await,
+        )?;
         let candidates = {
             let state = self.state.lock().expect("model admission lock poisoned");
             let config = state.config.as_ref().ok_or(AdmissionError::Closed)?;
@@ -676,7 +723,7 @@ impl Admission {
             candidates
         };
         for candidate in candidates {
-            match ledger.dispatch(&candidate.reservation).await? {
+            match self.ledger_result("dispatch", ledger.dispatch(&candidate.reservation).await)? {
                 Outcome::Applied => {
                     if let Some(entry) = self
                         .state

@@ -355,6 +355,7 @@
           "type": "object",
           "required": [
             "create",
+            "port",
             "controllerName",
             "name",
             "namespace",
@@ -363,6 +364,11 @@
           "properties": {
             "create": {
               "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
             },
             "controllerName": {
               "type": "string"

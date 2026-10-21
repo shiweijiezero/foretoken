@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from foretoken.applications.files import ApplicationFiles, ApplicationPublication
 from foretoken.arguments import InstallCommand
 from foretoken.build.cluster.builder import ClusterBuilder, registry_credentials
@@ -366,7 +368,7 @@ def _select_build_arguments(
         registry_mirrors = selected.registry_mirrors
         environment.update(selected.environment)
         for selection in selected.messages:
-            print(f"Source mirror selected: {selection}", flush=True)
+            logger.info("Source mirror selected: {}", selection)
         arguments = build_arguments(environment)
     else:
         arguments = dict(saved_arguments)

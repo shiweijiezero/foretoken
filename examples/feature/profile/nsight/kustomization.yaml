@@ -7,4 +7,3 @@ resources:
   - ../../../quickstart/qwen3-0.6b
 patches:
   - path: model.yaml
-  - path: cache.yaml

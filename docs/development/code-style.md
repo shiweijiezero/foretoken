@@ -115,6 +115,8 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
+CLI and benchmark modules use `from loguru import logger` for diagnostics. Application entry points configure sinks and bridge third-party `logging` records; inference-engine adapters retain their native logging, and standalone image scripts use the logging facilities available in their runtime. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Preserve exception causes for recorded logs, disable diagnostic local-variable dumps, and report each failure at the boundary that can act on it.
+
 - Rust data plane: run `make verify-data-plane`. It checks formatting and compiles all workspace targets with Clippy.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
 - Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.

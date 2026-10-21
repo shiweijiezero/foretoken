@@ -32,16 +32,26 @@ pub(crate) async fn watch_serving_snapshot(
     builder: Arc<RuntimeBuilder>,
 ) {
     let mut read_failure_reported = false;
+    let mut last_preparation_error = None;
 
     // Remember completed or rejected input; retry only preparation that can recover unchanged.
     loop {
         match std::fs::read(&path) {
-            Ok(bytes) if last_processed_snapshot.as_ref() == Some(&bytes) => {
-                read_failure_reported = false;
-            }
             Ok(bytes) => {
-                read_failure_reported = false;
-                if process_serving_snapshot(&generation, &path, &bytes, &builder).await {
+                if read_failure_reported {
+                    tracing::info!("serving snapshot is readable again");
+                    read_failure_reported = false;
+                }
+                if last_processed_snapshot.as_ref() != Some(&bytes)
+                    && process_serving_snapshot(
+                        &generation,
+                        &path,
+                        &bytes,
+                        &builder,
+                        &mut last_preparation_error,
+                    )
+                    .await
+                {
                     last_processed_snapshot = Some(bytes);
                 }
             }
@@ -62,6 +72,7 @@ async fn process_serving_snapshot(
     path: &Path,
     bytes: &[u8],
     builder: &RuntimeBuilder,
+    last_preparation_error: &mut Option<(u64, String)>,
 ) -> bool {
     let snapshot = match builder.parse(bytes) {
         Ok(snapshot) => snapshot,
@@ -95,9 +106,21 @@ async fn process_serving_snapshot(
     generation.record_configuration(Some(candidate_version), None);
     match builder.build(snapshot).await {
         Ok(prepared) => match std::fs::read(path) {
-            Ok(current) if current == bytes => prepared.publish(generation),
+            Ok(current) if current == bytes => {
+                let published = prepared.publish(generation);
+                if published {
+                    let recovered = last_preparation_error.take().is_some();
+                    tracing::info!(
+                        candidate_version,
+                        models = generation.configured_models().len(),
+                        recovered,
+                        "serving configuration applied"
+                    );
+                }
+                published
+            }
             Ok(_) => {
-                tracing::info!(
+                tracing::debug!(
                     candidate_version,
                     "serving snapshot candidate was superseded during preparation"
                 );
@@ -115,7 +138,11 @@ async fn process_serving_snapshot(
             );
             generation
                 .record_configuration(Some(candidate_version), rejected.then(|| error.to_string()));
-            tracing::warn!(%error, "could not prepare serving snapshot candidate");
+            let failure = (candidate_version, error.to_string());
+            if last_preparation_error.as_ref() != Some(&failure) {
+                tracing::warn!(candidate_version, %error, "could not prepare serving snapshot candidate; keeping the active generation");
+                *last_preparation_error = Some(failure);
+            }
             rejected
         }
     }

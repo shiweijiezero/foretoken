@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sqlite3
 import subprocess
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from loguru import logger
 
 from benchmarks.results.recording.database import (
     DATABASE_FILENAME,
@@ -35,8 +35,6 @@ from benchmarks.results.recording.recovery import (
 )
 from benchmarks.results.types import BenchmarkRun
 
-logger = logging.getLogger(__name__)
-
 
 def sync_results(sources: list[Path], *, figures: Path, figure_owner: Path | None) -> None:
     """Publish resolved runs independently, attaching a plot export only to its recorded owner."""
@@ -49,7 +47,7 @@ def sync_results(sources: list[Path], *, figures: Path, figure_owner: Path | Non
             recordings += 1
             sync_publication(source, plots=figures if source == figure_owner else None, exclude_plots=figures)
         except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
-            logger.error("W&B publication failed for %s: %s", source, error)
+            logger.error("W&B publication failed for {}: {}", source, error)
             failures.append(error)
     if failures:
         raise RuntimeError(f"W&B publication failed for {len(failures)} run(s)") from failures[0]
@@ -279,7 +277,7 @@ def _upload_wandb(
         identity["entity"] = entity
         write_records(directory, {"wandb.json": identity})
         if not native_synced and not published:
-            logger.info("Synchronizing W&B recording: %s", directory)
+            logger.info("Synchronizing W&B recording: {}", directory)
             environment = os.environ.copy()
             environment.pop("WANDB_SERVICE", None)
             environment["WANDB_BASE_URL"] = identity["base_url"]
@@ -287,12 +285,12 @@ def _upload_wandb(
             result = subprocess.run(
                 [sys.executable, "-m", "wandb", "sync", "--include-synced", "--entity", entity,
                  "--project", identity["project"], "--id", identity["id"], str(native)],
-                env=environment, check=False,
+                env=environment, check=False, stdout=sys.stderr, stderr=sys.stderr,
             )
             if result.returncode:
                 raise RuntimeError(f"W&B synchronization failed for {directory}; saved results remain available for retry")
         scope = "results" if run is not None else "diagnostics"
-        logger.info("Publishing W&B %s: %s/%s/%s", scope, entity, identity["project"], identity["id"])
+        logger.info("Publishing W&B {}: {}/{}/{}", scope, entity, identity["project"], identity["id"])
         context = read_record(directory, "context.json")
         exit_code = run.exit_code if run is not None else context.get("exit_code")
         if exit_code is None:

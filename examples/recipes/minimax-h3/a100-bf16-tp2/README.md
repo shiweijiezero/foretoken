@@ -19,15 +19,12 @@ Run the recipe commands below from the Foretoken repository root.
 ## Deploy
 
 The default model source is the public Hugging Face repository
-`MiniMaxAI/MiniMax-H3`. Weights download automatically on first startup and share
-the repository-root `data/` directory with the Quick Start examples. Local k3d
-uses the data mount from its setup guide; for a remote cluster, set `directory`
-in `cache.yaml` to a directory available on the target node, as described in
+`MiniMaxAI/MiniMax-H3`. Weights download automatically on first startup and use
+the platform's default storage. Local k3d uses the data mount from its setup
+guide; other storage choices are described in
 [model storage](../../../../docs/features/model-storage.md).
 
-For Gateway access, set `spec.hostname` in this recipe's `frontend.yaml` and
-install the platform in [Gateway mode](../../../../README.md#gateway-mode)
-before deploying.
+For a custom domain or HTTPS, see [Gateway configuration](../../../../README.md#gateway-mode).
 
 ```bash
 RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2

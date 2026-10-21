@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from tabulate import tabulate
 
 from benchmarks.config.evaluation import EvaluationConfig
@@ -22,8 +22,6 @@ from benchmarks.results.wandb.comparisons import (
     publish_distribution_comparison_wandb,
     publish_greedy_comparison_wandb,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:
@@ -102,7 +100,7 @@ class DistributionComparisonConsoleSink:
             table[1:], headers=headers, tablefmt="plain", disable_numparse=True,
             colalign=("left", "left", "right", "right", "right", "right", "right"),
         ))
-        logger.info("\n%s", "\n".join(lines))
+        logger.info("\n{}", "\n".join(lines))
 
     def close(self, *, exit_code: int = 0) -> None:
         return None
@@ -152,11 +150,11 @@ class GreedyComparisonConsoleSink:
     def publish(self, run: BenchmarkRun) -> None:
         """Report exact sequence matches separately from invalid or failed samples."""
         comparison = run.metrics["greedy_comparison"]
-        logger.info("Greedy generation comparison · reference %s", comparison["reference_model"])
+        logger.info("Greedy generation comparison · reference {}", comparison["reference_model"])
         for point in comparison["candidates"]:
             rate = point["exact_match_rate"]
             logger.info(
-                "%s: exact %s, valid %d, failed %d",
+                "{}: exact {}, valid {}, failed {}",
                 point["label"], f"{rate:.1%}" if rate is not None else "—",
                 point["valid_samples"], point["failed_samples"],
             )

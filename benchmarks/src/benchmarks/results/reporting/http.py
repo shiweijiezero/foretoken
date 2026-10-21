@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from tabulate import tabulate
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -17,8 +17,6 @@ from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.http import publish_http_wandb
 from benchmarks.results.wandb.recording import WandbSink, wandb_run_timestamp
-
-logger = logging.getLogger(__name__)
 
 
 def http_result_sinks(
@@ -70,12 +68,12 @@ class ConsoleSink:
         return None
 
 
-def print_model_service(service: ModelService) -> None:
-    """Print the public model service selected from the Foretoken deployment."""
-    print(f"Model service: {service.chat_completions_url}")
+def log_model_service(service: ModelService) -> None:
+    """Report the selected deployment service through the benchmark's diagnostic outputs."""
+    logger.info("Model service: {}", service.chat_completions_url)
     if service.hostname:
-        print(f"Hostname: {service.hostname}")
-    print(f"Models: {', '.join(service.models)}")
+        logger.info("Hostname: {}", service.hostname)
+    logger.info("Models: {}", ", ".join(service.models))
 
 
 def format_benchmark_config(
@@ -427,7 +425,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             "============================================",
         ]
     )
-    logger.info("\n%s", "\n".join(lines))
+    logger.info("\n{}", "\n".join(lines))
 
 
 def log_slo_results(slo: dict[str, Any]) -> None:
@@ -460,7 +458,7 @@ def log_slo_results(slo: dict[str, Any]) -> None:
             ),
         ])
     lines.append("===================================================")
-    logger.info("\n%s", "\n".join(lines))
+    logger.info("\n{}", "\n".join(lines))
 
 
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
@@ -499,7 +497,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
             _format_metric(generation_tokens_per_second_per_gpu_value, 2),
             _format_metric(item["latency"]["p99"], 3),
         ])
-    logger.info("\n%s\n%s\n%s", "========== Parameter Sweep Results =========", tabulate(
+    logger.info("\n{}\n{}\n{}", "========== Parameter Sweep Results =========", tabulate(
         rows, headers=headers, tablefmt="plain", disable_numparse=True,
         colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right"),
     ), "============================================")

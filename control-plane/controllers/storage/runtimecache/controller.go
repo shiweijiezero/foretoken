@@ -164,7 +164,10 @@ func (reconciler *Reconciler) reconcilePVC(ctx context.Context, cache *inference
 		claim, err := reconciler.Profile.DirectoryBindings.DirectoryPVC(ctx, reconciler.Client, cache)
 		return claim, false, err
 	}
-	if reconciler.Profile.ClaimName != "" {
+	if cache.Spec.InitialSize == "" {
+		if reconciler.Profile.ClaimName == "" {
+			return nil, false, fmt.Errorf("default runtime storage is not configured; select a directory or set initialSize")
+		}
 		claim, err := runtimeconfig.ReadPreparedCachePVC(ctx, reconciler.Client, cache.Namespace, reconciler.Profile.ClaimName)
 		return claim, false, err
 	}

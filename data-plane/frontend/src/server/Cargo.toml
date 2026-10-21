@@ -37,6 +37,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tokio-util = { workspace = true, features = ["rt"] }
+tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 vllm-llm.workspace = true

@@ -15,13 +15,15 @@ Deploy a service with the repository [Quick Start](../../README.md#quick-start),
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
+REQUEST_HOST="$(foretoken endpoint examples/quickstart/qwen3-0.6b --host)"
 
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","input":"Hello","max_output_tokens":512}'
 ```
 
-The response contains an `id` and generated `output`. Add `"stream": true` and `curl --no-buffer` to receive output as it is generated. For an authenticated service, add `-H "Authorization: Bearer $API_KEY"` with your issued key. Host-based access follows the [Gateway example](../../README.md#gateway-mode).
+The response contains an `id` and generated `output`. Add `"stream": true` and `curl --no-buffer` to receive output as it is generated. For an authenticated service, add `-H "Authorization: Bearer $API_KEY"` with your issued key. Custom domains and HTTPS require [Gateway configuration](../../README.md#gateway-mode).
 
 | API | Path | Request input |
 | --- | --- | --- |
@@ -43,6 +45,7 @@ Responses saves results by default. To continue the first request, replace `resp
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/Qwen3-0.6B","previous_response_id":"resp_...","input":"What did I just say?","max_output_tokens":512}'
 ```
@@ -57,7 +60,8 @@ Add `background: true` to a Responses request to receive an ID and let generatio
 
 ```bash
 RESPONSE_ID=resp_...
-curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID"
+curl --fail-with-body "$FRONTEND_URL/v1/responses/$RESPONSE_ID" \
+  -H "Host: $REQUEST_HOST"
 ```
 
 Poll while `status` is `queued` or `in_progress`; the final status is `completed`, `incomplete`, `failed`, or `cancelled`. To cancel, send `POST /v1/responses/{id}/cancel` and wait for a final status. Deleting a response does not cancel generation.
@@ -227,7 +231,11 @@ With `spec.modelPools`, add it to each applicable Pool's `features.structuredOut
 
 ## Operations
 
+Use the response's `x-request-id` header to correlate frontend request diagnostics. Saved Responses and Chat Completions retain their separate API object IDs.
+
 Pass the deployment instance name to `foretoken status` to inspect it, or to `foretoken delete` to remove it. Both commands also accept its configuration directory, with the original `--name` when one was selected. Metrics, logs, and alerts are covered by [Observability](../../observability/README.md).
+
+The frontend Service exposes these operational endpoints inside the cluster:
 
 | Endpoint | Purpose |
 | --- | --- |

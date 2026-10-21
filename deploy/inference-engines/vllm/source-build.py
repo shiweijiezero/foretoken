@@ -10,6 +10,7 @@ import filecmp
 import importlib.metadata
 import importlib.util
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -25,12 +26,15 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 from vllm_patches import apply_patches, engine_patches
 
+logger = logging.getLogger(__name__)
+
 PATCH_ROOT = Path("/opt/foretoken-engine-build/patches")
 METAX_ROOT = Path("/opt/foretoken-engine-build/metax")
 
 
 def main() -> None:
     """Prepare dependency inputs or complete source overlays for the selected build stage."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
@@ -236,7 +240,7 @@ def prepare_patches(
         if completed:
             shutil.rmtree(staging)
         else:
-            print(f"engine patch preparation retained at {staging}", file=sys.stderr)
+            logger.warning("engine patch preparation retained at %s", staging)
 
 
 def package_directory(name: str) -> Path:

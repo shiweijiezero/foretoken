@@ -39,7 +39,7 @@ To store build artifacts on another StorageClass, set `development.build.storage
 
 ## Deploy a model service
 
-From the Foretoken repository root, deploy the Quick Start using the code in this directory:
+From the Foretoken repository root, deploy the Quick Start using the code in this directory. If the platform has no default model storage, [select storage](kubernetes.md#3-deploy-and-update-code) first:
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b -e . --timeout 20m
@@ -72,7 +72,7 @@ foretoken delete qwen3-0-6b
 
 ### Run candidates in parallel
 
-Use a separate source checkout and instance name for each candidate. Candidates share one installed platform and can run in the same Kubernetes namespace, with independently updated controllers and serving code.
+Use a separate source checkout and instance name for each candidate. Candidates share one installed platform and can run in the same Kubernetes namespace, with independently updated controllers and serving code. The default Gateway provides one HTTP entry point for all candidates.
 
 From the repository root:
 
@@ -90,7 +90,7 @@ foretoken perf ../candidate-a/examples/quickstart/qwen3-0.6b \
   --output experiment --output-dir results/candidates --iteration candidate-a
 ```
 
-The candidates keep the Quick Start's single-GPU configuration. In this worktree example, their default `data/` selections resolve to the primary checkout's data directory, sharing model downloads while keeping runtime state private to each instance. The directory must be available to the target nodes; see [shared model storage](../features/model-storage.md#share-model-files-across-namespaces), or choose [dynamic storage](../features/model-storage.md#use-dynamic-storage) when no shared directory is available.
+The candidates keep the Quick Start's single-GPU configuration. When default model storage is configured, ordinary folders, clones and worktrees reuse it; runtime state remains private to each instance. See [model storage](../features/model-storage.md) to select a custom directory or separate dynamic storage.
 
 Each candidate needs its own GPU allocation, CPU and memory. Add `spec.nodeSelector` when a candidate needs particular nodes; it does not select GPU indices.
 

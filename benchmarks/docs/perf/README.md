@@ -8,15 +8,14 @@ Use `foretoken perf` to compare response latency, token generation speed, and th
 
 Complete the [shared setup](../../README.md#get-started), then run commands from the repository root. The examples use `examples/quickstart/qwen3-0.6b`.
 
-For an existing endpoint, replace that directory with `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`. For the deployed Quick Start, obtain those values with:
+For Foretoken deployments, use the Kustomize directory so the CLI resolves the service URL, model and Gateway routing headers automatically.
+
+For another OpenAI-compatible API, replace the directory with `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`. Set the variables to your service's actual Chat Completions URL and public model ID, for example:
 
 ```bash
-MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart/qwen3-0.6b)"
-export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
+export MODEL_SERVICE_URL=http://localhost:8000/v1/chat/completions
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
-
-Use the actual Chat Completions URL and model ID for other services. Gateway access uses the Kustomize directory; Foretoken discovers the Gateway routing headers from it.
 
 ## Commands
 

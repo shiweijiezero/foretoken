@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
@@ -17,7 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from foretoken.diagnostics import configure_logging
 from foretoken.errors import DeploymentError
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
@@ -26,10 +27,9 @@ from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.database import read_record
-from benchmarks.results.recording.logs import configure_logging
 from benchmarks.results.reporting.http import (
     format_benchmark_config,
-    print_model_service,
+    log_model_service,
 )
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.http import HttpBenchmark
@@ -37,8 +37,6 @@ from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.runs.video import run_video_benchmark
 from benchmarks.sweeps.http import ParameterSweepBenchmark
 from benchmarks.sweeps.video import run_video_sweep
-
-logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -68,9 +66,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     def prepare_service() -> ModelService:
                         """Keep serving resources in the command scope, including deferred SLO probes."""
                         service = services.enter_context(resolver.benchmark(benchmark))
-                        if benchmark.service.kustomize_path and not quiet:
-                            print_model_service(service)
-                        logger.info("%s", format_benchmark_config(benchmark, service))
+                        if benchmark.service.kustomize_path:
+                            log_model_service(service)
+                        logger.info("{}", format_benchmark_config(benchmark, service))
                         return service
 
                     run = run_benchmark(benchmark, prepare_service, outputs=outputs)

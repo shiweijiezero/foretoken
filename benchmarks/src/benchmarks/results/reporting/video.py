@@ -5,17 +5,16 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.recording import WandbSink
 from benchmarks.results.wandb.video import publish_video_wandb
-
-logger = logging.getLogger(__name__)
 
 
 def video_result_sinks(
@@ -95,7 +94,7 @@ def log_video_summary(
         source = metrics.get("reference_tokens_source")
         lines.append(f"  {'Reference tokens':<18}{tokens} ({source})")
     lines.append("=====================================================")
-    logger.info("\n%s", "\n".join(lines))
+    logger.info("\n{}", "\n".join(lines))
 
 
 class VideoConsoleSink:

@@ -13,6 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from foretoken.diagnostics import configure_logging
+from loguru import logger
+
 from benchmarks.results.recording.locks import publication_lock
 
 
@@ -23,22 +26,26 @@ def start_sync(directory: Path, native: Path) -> subprocess.Popen[bytes]:
     # before uploads finish. Do not change the recorder's process environment.
     environment.pop("WANDB_SERVICE", None)
     environment["WANDB_MODE"] = "online"
-    return subprocess.Popen(
-        [sys.executable, "-m", "benchmarks.results.wandb.sync", str(directory), str(native)],
-        stdin=subprocess.PIPE,
-        env=environment,
-        start_new_session=True,
-    )
+    # The synchronizer outlives its caller. Retaining the caller's pipes would
+    # keep command substitution and captured-output runners waiting for EOF.
+    with (directory / "wandb-sync.log").open("ab", buffering=0) as diagnostics:
+        return subprocess.Popen(
+            [sys.executable, "-m", "benchmarks.results.wandb.sync", str(directory), str(native)],
+            stdin=subprocess.PIPE,
+            stdout=diagnostics,
+            stderr=subprocess.STDOUT,
+            env=environment,
+            start_new_session=True,
+        )
 
 
 def synchronize(directory: Path, native: Path) -> int:
     """Drain native history before acquiring the result lock for deferred publication."""
     import wandb
 
-    from benchmarks.results.recording.logs import configure_logging
     from benchmarks.results.wandb.publication import sync_publication
 
-    configure_logging(True)
+    configure_logging(full_tracebacks=True)
     retry = f"foretoken plot {shlex.quote(str(directory))} --sync_wandb"
     with publication_lock(native):
         status = _synchronize(native, retry)
@@ -48,7 +55,7 @@ def synchronize(directory: Path, native: Path) -> int:
     try:
         sync_publication(directory, native_synced=True)
     except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
-        print(f"W&B publication failed: {error}. Resume with: {retry}", file=sys.stderr, flush=True)
+        logger.error("W&B publication failed: {}. Resume with: {}", error, retry)
         return 1
     return 0
 
@@ -61,7 +68,7 @@ def _synchronize(directory: Path, retry: str) -> int:
             stdin=subprocess.DEVNULL,
         )
     except OSError as error:
-        print(f"W&B sync could not start: {error}. Resume with: {retry}", file=sys.stderr, flush=True)
+        logger.error("W&B sync could not start: {}. Resume with: {}", error, retry)
         return 1
     with process:
         try:
@@ -74,11 +81,11 @@ def _synchronize(directory: Path, retry: str) -> int:
                     try:
                         process.wait(timeout=600)
                     except subprocess.TimeoutExpired:
-                        print(f"W&B sync is still pending. Resume with: {retry}", file=sys.stderr, flush=True)
+                        logger.warning("W&B sync is still pending. Resume with: {}", retry)
                         return 1
                     break
             if process.returncode:
-                print(f"W&B sync stopped. Resume with: {retry}", file=sys.stderr, flush=True)
+                logger.error("W&B sync stopped. Resume with: {}", retry)
             return process.returncode
         finally:
             if process.poll() is None:

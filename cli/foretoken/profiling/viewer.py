@@ -14,6 +14,8 @@ from importlib import resources
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from loguru import logger
+
 from foretoken.arguments import ProfileViewCommand
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
@@ -37,7 +39,7 @@ def view(command: ProfileViewCommand) -> None:
         ProfileViewer(history, storage, nsight) as server,
     ):
         print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
-        print("Press Ctrl+C to stop.", flush=True)
+        logger.info("Press Ctrl+C to stop.")
         server.serve_forever()
 
 

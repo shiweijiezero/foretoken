@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import shutil
 import sqlite3
+import sys
 import time
 from contextlib import ExitStack
 from datetime import UTC, datetime
@@ -18,8 +18,11 @@ from tempfile import mkdtemp
 from typing import Any, Self
 
 import wandb
+from foretoken.diagnostics import console_output_enabled
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
+from loguru import logger
+from tqdm import tqdm
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -43,7 +46,7 @@ from benchmarks.results.recording.files import (
     write_json,
 )
 from benchmarks.results.recording.locks import publication_lock
-from benchmarks.results.recording.logs import capture_run_logs
+from benchmarks.results.recording.logs import capture_run_logs, terminal_stream
 from benchmarks.results.recording.requests import (
     RequestRecordWriter,
     export_http_requests,
@@ -59,8 +62,6 @@ from benchmarks.results.types import (
     _ResultSinkFactory,
 )
 from benchmarks.results.wandb.recording import WandbSink
-
-logger = logging.getLogger(__name__)
 
 
 class ResultOutputs:
@@ -102,6 +103,7 @@ class ResultOutputs:
         self._context: dict[str, Any] = {}
         self._publication_lock = None
         self._records: RunRecords | None = None
+        self._http_progress: tqdm | None = None
 
     def __enter__(self) -> Self:
         """Acquire the execution directory and capture preparation through publication."""
@@ -192,7 +194,7 @@ class ResultOutputs:
                 run.artifacts[name] = path
         if self.benchmark.outputs.includes("quiet") and run.measurements is not None and run.metrics["failed_num"]:
             logger.error(
-                "%s/%s requests failed; see %s",
+                "{}/{} requests failed; see {}",
                 run.metrics["failed_num"], run.metrics["request_num"],
                 self.execution_dir if self.benchmark.outputs.saves_local else "W&B result artifacts",
             )
@@ -276,7 +278,7 @@ class ResultOutputs:
         elif error is not None:
             self._exit_code = 1
         if error is not None:
-            logger.error("Benchmark stopped: %s", error)
+            logger.opt(exception=(exc_type, exc_value, traceback)).debug("Benchmark stopped")
         try:
             try:
                 deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
@@ -348,6 +350,7 @@ class ResultOutputs:
 
     def save_measurement(self, run: BenchmarkRun) -> None:
         """Commit metrics, publication inputs and the measured outcome as one checkpoint."""
+        self._close_http_progress()
         self._exit_code = run.exit_code if run.exit_code is not None else int(run.metrics["success_num"] == 0)
         self._context.update(phase="finalization", measurement_exit_code=self._exit_code)
         directory = Path(self.execution_dir)
@@ -386,11 +389,31 @@ class ResultOutputs:
         self._resources.callback(writer.close)
         return writer
 
-    def http_progress(self, *, stream: bool, criteria: dict[str, str] | None = None) -> HttpProgress | None:
-        """Connect the HTTP runner to the selected live W&B destination."""
+    def http_progress(
+        self, *, stream: bool, total: int | None = None, criteria: dict[str, str] | None = None,
+    ) -> HttpProgress | None:
+        """Display actual HTTP completions and connect the optional live W&B destination."""
+        if console_output_enabled() and terminal_stream(sys.stderr).isatty():
+            self._http_progress = tqdm(
+                total=total, desc="Completed requests", unit="request",
+                file=terminal_stream(sys.stderr), disable=None, dynamic_ncols=True,
+                mininterval=1.0, leave=False,
+            )
+            self._resources.callback(self._close_http_progress)
         if self.benchmark.outputs.includes("wandb"):
             return HttpProgress(self.publish_progress, stream=stream, criteria=criteria)
         return None
+
+    def http_request_completed(self) -> None:
+        """Advance the terminal only after the request recorder commits a measured completion."""
+        if self._http_progress is not None:
+            self._http_progress.update(1)
+
+    def _close_http_progress(self) -> None:
+        """Release the terminal before final tables or a failure are reported."""
+        progress, self._http_progress = self._http_progress, None
+        if progress is not None:
+            progress.close()
 
     def capture_source_evidence(
         self, snapshot: dict[str, Any], *, kubectl: Kubectl | None,
@@ -423,7 +446,7 @@ class ResultOutputs:
                 )
                 observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning("Replica observation unavailable; continuing with benchmark: %s", exc)
+                logger.warning("Replica observation unavailable; continuing with benchmark: {}", exc)
             else:
                 self._replica_observer = observer
                 self._resources.callback(self._close_replica_observer)
@@ -433,7 +456,7 @@ class ResultOutputs:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
                 prometheus_observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning("Prometheus observation unavailable; continuing with benchmark: %s", exc)
+                logger.warning("Prometheus observation unavailable; continuing with benchmark: {}", exc)
             else:
                 self._prometheus_observer = prometheus_observer
                 self._resources.callback(self._close_prometheus_observer)
@@ -488,7 +511,7 @@ class ResultOutputs:
         if directory is None:
             return
         if preserve:
-            logger.error("Benchmark artifacts preserved: %s", directory)
+            logger.error("Benchmark artifacts preserved: {}", directory)
         elif self._temporary_execution_dir:
             shutil.rmtree(directory)
         self._temporary_execution_dir = False

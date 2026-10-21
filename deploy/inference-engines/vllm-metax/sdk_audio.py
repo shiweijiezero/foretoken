@@ -4,12 +4,15 @@
 """Package the SDK's ABI-matched audio distribution for an isolated MetaX runtime."""
 
 import json
+import logging
 import subprocess
 import sys
 from email.parser import Parser
 from pathlib import Path
 
 from wheel.wheelfile import WheelFile
+
+logger = logging.getLogger(__name__)
 
 
 def prepare_sdk_audio(prefix: Path, sdk_python: str) -> None:
@@ -58,8 +61,14 @@ def prepare_sdk_audio(prefix: Path, sdk_python: str) -> None:
     if content.count(original) != 1:
         raise ValueError("MetaX torchaudio requirement differs from the supported source")
     requirements.write_text(content.replace(original, f"torchaudio=={version}"))
-    print(f"Using SDK torchaudio {version} from {sdk_python}")
+    logger.info("Using SDK torchaudio %s from %s", version, sdk_python)
+
+
+def main() -> None:
+    """Prepare the SDK wheel selected by an image or engine-source build."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True)
+    prepare_sdk_audio(Path(sys.argv[1]), sys.argv[2])
 
 
 if __name__ == "__main__":
-    prepare_sdk_audio(Path(sys.argv[1]), sys.argv[2])
+    main()

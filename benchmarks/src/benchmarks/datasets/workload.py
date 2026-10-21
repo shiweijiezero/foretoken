@@ -149,6 +149,8 @@ class HttpWorkload:
         if not self.benchmark.is_multi_turn:
             return
         tokenizers: dict[tuple[str, str], Any] = {}
+        # Serving storage discovery is per model, not per recorded assistant answer.
+        tokenizer_identities: dict[str, tuple[str, str]] = {}
         for task in self.tasks:
             if task.prompt_token_ids is not None:
                 continue
@@ -171,13 +173,13 @@ class HttpWorkload:
                     text = "".join(part["text"] for part in text)
                 if not isinstance(text, str) or not text:
                     continue
-                identity = (
-                    ("hf", self.dataset.tokenizer)
-                    if self.dataset.tokenizer
-                    else replace(
-                        self.service, model=self.builder.model_for(task.metadata)
-                    ).tokenizer_identity
-                )
+                if self.dataset.tokenizer:
+                    identity = ("hf", self.dataset.tokenizer)
+                else:
+                    model = self.builder.model_for(task.metadata)
+                    if model not in tokenizer_identities:
+                        tokenizer_identities[model] = replace(self.service, model=model).tokenizer_identity
+                    identity = tokenizer_identities[model]
                 if identity not in tokenizers:
                     from transformers import AutoTokenizer
 

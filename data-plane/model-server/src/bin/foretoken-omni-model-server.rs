@@ -11,6 +11,7 @@ use foretoken_model_server::model_cache::preparation;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     foretoken_artifacts::source::activate("foretoken-model-server")?;
+    vllm_tracing::init_tracing("ForetokenOmniModelServer");
     let python = python_executable();
     match std::env::args().nth(1).as_deref() {
         Some("prepare") => {

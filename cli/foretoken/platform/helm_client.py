@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from loguru import logger
 
 from foretoken.downloads.sources import (
     select_github_download,
@@ -107,7 +108,7 @@ class HelmClient:
                             execution.check()
                         if index == len(candidates) - 1:
                             raise
-                        print("Chart mirror unavailable; using the original source", flush=True)
+                        logger.warning("Chart mirror unavailable; using the original source")
                         continue
                     (metadata,) = destination.glob("*/Chart.yaml")
                     chart = metadata.parent

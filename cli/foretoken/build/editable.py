@@ -19,6 +19,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from foretoken.applications.files import (
     SERVICE_COMPONENTS,
     SOURCE_REVISION,
@@ -177,7 +179,7 @@ class EditableDeployment:
                 })
                 write_source_state(path, self.state)
                 previous_images = dict(build["images"])
-            print(f"Source checkout: {self.root}", flush=True)
+            logger.info("Source checkout: {}", self.root)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
             self._retain_workspace()
@@ -421,10 +423,7 @@ class EditableDeployment:
     def _prepare(self, timeout: str) -> None:
         """Compare this checkout's inputs and prepare its runtime application or environment update."""
         if self.environment_changed or not self.state["build"].get("compilers"):
-            print(
-                "Source plan: prepare this checkout's runtime environments",
-                flush=True,
-            )
+            logger.info("Source plan: prepare this checkout's runtime environments")
             self._rebuild(timeout)
             return
         engines = self.state.get("engines", {})
@@ -432,10 +431,7 @@ class EditableDeployment:
         current = BuildInputs.select(self.root, engines, mooncake_version=self.mooncake_version)
         changed = current.changed(old)
         if not changed:
-            print(
-                "Source plan: reuse runtime artifacts (no source inputs changed)",
-                flush=True,
-            )
+            logger.info("Source plan: reuse runtime artifacts (no source inputs changed)")
             return
         components: dict[str, set[str]] = {}
         rebuild = False
@@ -482,21 +478,13 @@ class EditableDeployment:
             else:
                 rebuild = True
         if rebuild:
-            print(
-                "Source plan: prepare this checkout's runtime environments",
-                flush=True,
-            )
+            logger.info("Source plan: prepare this checkout's runtime environments")
             self._rebuild(timeout)
             return
         if components:
-            print(
-                "Source plan: publish "
-                + ", ".join(sorted(components))
-                + " applications",
-                flush=True,
-            )
+            logger.info("Source plan: publish {} applications", ", ".join(sorted(components)))
         else:
-            print("Source plan: update source snapshot only", flush=True)
+            logger.info("Source plan: update source snapshot only")
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
         current.capture(snapshot, previous=old, unchanged=set(current.files).difference(changed))
         self.state["build"]["versions"] = snapshot_versions(
@@ -624,10 +612,10 @@ class EditableDeployment:
                     for component, image in compilers.items()
                 )
             if not available:
-                print("Compiler image is unavailable on this node; restoring the development environment", flush=True)
+                logger.warning("Compiler image is unavailable on this node; restoring the development environment")
                 self._rebuild(timeout)
                 return
-        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
+        logger.info("Preparing application files: {}", ", ".join(sorted(missing)))
         with self._application_workspace(
             origin, snapshot, compilers, helm, timeout,
         ) as (builder, references):
@@ -699,12 +687,9 @@ class EditableDeployment:
                     if published_revision == previous_revisions[component]
                     else "published"
                 )
-                print(f"Application {publication}: {component}", flush=True)
+                logger.info("Application {}: {}", publication, component)
             write_source_state(self.directory / "install.json", self.state)
-            print(
-                f"Application publication completed in {time.monotonic() - published_at:.1f}s",
-                flush=True,
-            )
+            logger.info("Application publication completed in {:.1f}s", time.monotonic() - published_at)
             builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
 
     @contextmanager

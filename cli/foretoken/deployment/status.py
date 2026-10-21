@@ -10,6 +10,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 from foretoken.arguments import StatusCommand
 from foretoken.deployment.instances import (
     DEPLOYMENT_RESOURCE,
@@ -65,13 +67,13 @@ def show_status(command: StatusCommand) -> None:
     if not command.watch:
         progress = selected_progress()
         _print_status(progress)
-        with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        with StartupProgress(kubectl, logger.info) as startup:
             startup.poll((item.resource for item in progress), 0.0, follow_logs=False)
         return
 
     started = time.monotonic()
     previous: dict[ResourceRef, tuple[str, str, str]] = {}
-    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+    with StartupProgress(kubectl, logger.info) as startup:
         while True:
             progress = selected_progress()
             elapsed = time.monotonic() - started
@@ -313,12 +315,11 @@ def read_progress(
 
 
 def report_progress(elapsed: float, progress: ResourceProgress) -> None:
-    """Print a changed service state for deployment waits and status watches."""
+    """Report a changed service state for deployment waits and status watches."""
     suffix = f" — {progress.detail}" if progress.detail else ""
-    print(
-        f"[{elapsed:6.1f}s] {progress.resource.display_name:<48} "
-        f"{progress.state}{suffix}",
-        flush=True,
+    logger.info(
+        "[{:6.1f}s] {:<48} {}{}",
+        elapsed, progress.resource.display_name, progress.state, suffix,
     )
 
 
@@ -327,13 +328,10 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
     if not progress:
         print("No deployment instances found.")
         return
-    resource_width = max(
-        len("RESOURCE"), *(len(item.resource.display_name) for item in progress)
-    )
-    state_width = max(len("STATUS"), *(len(item.state) for item in progress))
-    print(f"{'RESOURCE':<{resource_width}}  {'STATUS':<{state_width}}  DETAILS")
-    for item in progress:
-        print(
-            f"{item.resource.display_name:<{resource_width}}  "
-            f"{item.state:<{state_width}}  {item.detail}"
-        )
+    from tabulate import tabulate
+
+    print(tabulate(
+        [(item.resource.display_name, item.state, item.detail) for item in progress],
+        headers=("RESOURCE", "STATUS", "DETAILS"), tablefmt="simple",
+        disable_numparse=True,
+    ))

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import shutil
 import stat
@@ -20,12 +19,13 @@ from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
+from loguru import logger
+
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.results.recording.logs import capture_run_logs
 
-logger = logging.getLogger(__name__)
 _Config = TypeVar("_Config", BenchmarkConfig, EvaluationConfig, VideoBenchmarkConfig)
 
 
@@ -72,7 +72,7 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
         (generated / "context.json").write_text(json.dumps(context, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
     write_context()
-    logger.info("Experiment run: %s", run)
+    logger.info("Experiment run: {}", run)
     # Remove only this output decorator. All nested sweeps, SLO probes and
     # comparisons keep their existing result paths below this invocation.
     run_outputs = replace(

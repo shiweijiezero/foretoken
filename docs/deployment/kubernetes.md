@@ -71,7 +71,7 @@ Install with `--values deploy/platform-values.yaml` when using the authenticated
 
 ### Assign external service addresses
 
-If the cluster already provides LoadBalancer addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
+The default shared Gateway needs a LoadBalancer address. If the cluster already provides these addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
 
 ```yaml
 loadBalancer:
@@ -87,17 +87,7 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. Deploy and update code
 
-The Quick Start selects the repository's `data/` directory. Keep that selection when the directory is available on the target nodes, using a shared filesystem for multi-node deployments. Member namespaces use [administrator-prepared directory access](../features/model-storage.md#share-model-files-across-namespaces).
-
-If the cluster should provide storage instead, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
-
-```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteOnce
-```
-
-This uses the default StorageClass for a single-node volume. Choose `ReadWriteMany` when the driver supports multi-node access, or add `storageClassName` to select another class. See [Model storage](../features/model-storage.md) for sharing and retention.
+Use the platform's default model storage when it is configured. If none is prepared, or you want a separate volume, [request dynamic storage](../features/model-storage.md#use-dynamic-storage). To use a different shared directory, [select an administrator-authorized path](../features/model-storage.md#choose-a-directory).
 
 Deploy and update code:
 

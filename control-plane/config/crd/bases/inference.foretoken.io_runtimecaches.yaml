@@ -53,8 +53,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: RuntimeCacheSpec selects persistent model and runtime storage
-              for one deployment.
+            description: RuntimeCacheSpec selects platform-default storage, an authorized
+              directory, or a deployment-owned PVC.
             properties:
               accessMode:
                 default: ReadWriteMany
@@ -72,8 +72,9 @@ spec:
                 minLength: 1
                 type: string
               initialSize:
-                description: InitialSize is the first PVC request for dynamic storage;
-                  omit it when selecting a directory.
+                description: |-
+                  InitialSize requests a deployment-owned dynamic PVC.
+                  Omit both directory and initialSize to use the platform's prepared default storage.
                 maxLength: 64
                 minLength: 1
                 type: string
@@ -112,8 +113,8 @@ spec:
             - message: maxSize must be greater than initialSize
               rule: '!has(self.maxSize) || !has(self.initialSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize))
                 > 0'
-            - message: initialSize is required when directory is not set
-              rule: has(self.directory) || has(self.initialSize)
+            - message: initialSize is required for dynamic storage settings
+              rule: (!has(self.storageClassName) && !has(self.maxSize)) || has(self.initialSize)
             - message: only maxSize may change
               rule: has(self.storageClassName) == has(oldSelf.storageClassName) &&
                 (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName)

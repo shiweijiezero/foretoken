@@ -368,6 +368,16 @@ class DeploymentSubmission:
                 ):
                     self.created[created_ref] = current
                 if not claim_only and not created:
+                    if (
+                        value["kind"] == "RuntimeCache"
+                        and value["apiVersion"].startswith("inference.foretoken.io/")
+                        and not {"directory", "initialSize", "storageClassName"}.intersection(payload["spec"])
+                    ):
+                        # An omitted storage selection reuses the committed cache.
+                        # Preserve immutable field presence across CLI and direct API updates.
+                        for field in ("directory", "initialSize", "storageClassName", "accessMode", "retentionPolicy", "maxSize"):
+                            if field in current["spec"]:
+                                payload["spec"].setdefault(field, current["spec"][field])
                     payload["metadata"].update(
                         uid=current["metadata"]["uid"],
                         resourceVersion=current["metadata"]["resourceVersion"],

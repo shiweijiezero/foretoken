@@ -9,13 +9,13 @@
 
 预量化权重和在线量化的用法见[部署量化模型](../../feature/quantized-model/README_zh.md)。
 
-本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存与多模型示例共用项目根目录的 `data/`，由 `cache.yaml` 配置。
+本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。模型使用平台默认的[数据存储](../../../docs/features/model-storage_zh.md)，与多模型示例复用下载，运行时缓存则按实例隔离。
 
-在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源、并行方式和[推理参数](../../../docs/features/inference-parameters_zh.md)，在 [`cache.yaml`](cache.yaml) 的 `RuntimeCache` 中配置运行时缓存，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
+在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源、并行方式和[推理参数](../../../docs/features/inference-parameters_zh.md)，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
 
 ## 部署
 
-从源码[安装平台](../../../docs/deployment/source_zh.md)并准备[模型存储](../../../docs/features/model-storage_zh.md)，再从仓库根目录部署：
+从源码[安装平台](../../../docs/deployment/source_zh.md)后，在仓库根目录部署：
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -25,21 +25,22 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 ## 发送请求
 
-解析前端服务 URL：
+获取前端服务 URL 和请求所需的 Host：
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 ```
 
 发送 OpenAI API 兼容格式的请求：
 
 ```bash
 curl "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
     "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
     "temperature": 0
   }'
 printf '\n'

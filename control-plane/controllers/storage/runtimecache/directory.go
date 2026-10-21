@@ -36,6 +36,8 @@ func (reconciler *Reconciler) preparedClaimRequests(ctx context.Context, claim c
 		name := reconciler.Profile.ClaimName
 		if cache.Spec.Directory != "" {
 			name = reconciler.Profile.DirectoryBindings[cache.Spec.Directory]
+		} else if cache.Spec.InitialSize != "" {
+			continue
 		}
 		if name == claim.GetName() {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&cache)})

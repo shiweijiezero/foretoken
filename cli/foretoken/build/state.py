@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import yaml
+from loguru import logger
 
 from foretoken.applications.files import (
     APPLICATION_PUBLISHER_BINDING_LABEL,
@@ -110,7 +111,7 @@ def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared
             if remaining <= 0:
                 raise DeploymentError(f"Timed out after {timeout} waiting for {description}") from None
             if not reported:
-                print(f"Waiting for {description} (up to {timeout})", flush=True)
+                logger.info("Waiting for {} (up to {})", description, timeout)
                 reported = True
             time.sleep(min(0.2, remaining))
 
@@ -513,7 +514,7 @@ def reconcile_source_resources(
         try:
             retained.update(ApplicationFiles(kubectl, config.namespace).source_images(consumers))
         except DeploymentError as exc:
-            print(f"Source image cleanup deferred: {exc}", flush=True)
+            logger.warning("Source image cleanup deferred: {}", exc)
             return
     retained.update(
         image for state in states.values()

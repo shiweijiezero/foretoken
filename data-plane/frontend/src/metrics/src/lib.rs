@@ -29,6 +29,7 @@ const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.
 pub const EXCLUDED_HANDLERS: &[&str] = &[
     "/metrics",
     "/healthz",
+    "/health",
     "/readyz",
     "/statusz",
     "/internal/autoscaling/telemetry",

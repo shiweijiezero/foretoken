@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import json
+import logging
 import os
 import py_compile
 import shutil
@@ -20,6 +21,8 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
+
+logger = logging.getLogger(__name__)
 
 
 def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
@@ -253,6 +256,7 @@ def check_installed_dependencies() -> None:
 
 def main() -> None:
     """Prepare the installed-engine stack privately, then publish only patched package files."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True)
     distribution = importlib.metadata.distribution("vllm")
     directory = Path(distribution.locate_file(""))
     patches = engine_patches(directory, distribution.version, Path(__file__).parent)
@@ -322,7 +326,7 @@ def main() -> None:
         if completed:
             shutil.rmtree(staging)
         else:
-            print(f"vLLM patch preparation retained at {staging}", file=sys.stderr)
+            logger.warning("vLLM patch preparation retained at %s", staging)
 
 
 if __name__ == "__main__":

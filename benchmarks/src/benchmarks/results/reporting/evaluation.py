@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import csv
-import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from tabulate import tabulate
 
 from benchmarks.config.evaluation import EvaluationConfig
@@ -21,8 +21,6 @@ from benchmarks.results.wandb.evaluation import (
     publish_quality_wandb,
 )
 from benchmarks.results.wandb.recording import WandbSink
-
-logger = logging.getLogger(__name__)
 
 
 def evaluation_sinks(
@@ -122,7 +120,7 @@ class EvaluationConsoleSink:
                 "Category and subset scores are included in metrics.json and W&B Scores."
             )
         lines.extend(_execution_lines(run.metrics["execution"]))
-        logger.info("\n%s", "\n".join(lines))
+        logger.info("\n{}", "\n".join(lines))
 
     def close(self, *, exit_code: int = 0) -> None:
         return None
@@ -165,12 +163,12 @@ class EvaluationComparisonConsoleSink:
             status = method["status"]
             if status == "completed" and any(task.get("incomplete") for task in native.values()):
                 status = "completed with incomplete results"
-            logger.info("Method %s (%s): %s", method["label"], method["model"], status)
+            logger.info("Method {} ({}): {}", method["label"], method["model"], status)
             for line in _execution_lines(native):
-                logger.info("  %s", line)
+                logger.info("  {}", line)
         for row in run.metrics["scores"]:
             if row["level"] == "task":
-                logger.info("%s · %s · %s/%s: %s", row["method"], row["task"],
+                logger.info("{} · {} · {}/{}: {}", row["method"], row["task"],
                             row["metric"], row["filter"], _display(row))
 
     def close(self, *, exit_code: int = 0) -> None:

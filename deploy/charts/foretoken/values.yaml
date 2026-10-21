@@ -77,7 +77,7 @@ workload:
   #   volcanoQueueName: inference
   #   kueueLocalQueueName: inference
   leaderWorkerScheduling: {}
-  # Use an existing namespace PVC by default; an explicit authorized directory takes precedence.
+  # Default namespace storage; an explicit RuntimeCache directory or dynamic size takes precedence.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
@@ -105,16 +105,18 @@ rdma:
   # Selected GPU nodes, populated by foretoken install.
   nodeNames: []
 
-# Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
+# Gateway mode shares one entry point across instances. Local mode uses separate LoadBalancer Services.
 frontend:
   enabled: false
-  mode: local
+  mode: gateway
   image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.4
   applicationURL: ""
   port: 8080
   gateway:
-    # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
-    create: false
+    # Create an isolated GatewayClass and HTTP Gateway when Gateway mode is selected.
+    create: true
+    # Separate from direct frontend ports so existing instances can migrate independently.
+    port: 8081
     controllerName: gateway.envoyproxy.io/gatewayclass-controller
     name: ""
     namespace: ""

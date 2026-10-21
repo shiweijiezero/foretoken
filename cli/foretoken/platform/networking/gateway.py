@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -15,7 +16,7 @@ from foretoken.arguments import InstallCommand
 from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
-from foretoken.platform.helm_client import HelmClient, value_at
+from foretoken.platform.helm_client import HelmClient, merge_values, value_at
 from foretoken.platform.networking.gateway_resources import (
     _discover_gateway_class,
     _gateway_classes_for_controller,
@@ -61,6 +62,9 @@ class GatewayControllerLifecycle:
         command: InstallCommand,
         platform: ReleaseRef,
         platform_exists: bool,
+        *,
+        values: tuple[dict[str, Any], ...],
+        stored_values: dict[str, Any] | None,
     ) -> tuple[PlatformGatewayConfig, GatewayControllerPlan]:
         """Resolve the Gateway mode and Controller lifecycle before installation."""
         helm = self._helm
@@ -70,7 +74,7 @@ class GatewayControllerLifecycle:
             if platform_exists
             else PlatformGatewayConfig("local", False, "", "", "", "")
         )
-        config = _effective_gateway_config(command, stored_config)
+        config = self._installation_config(command, platform, values, stored_values, stored_config)
         removes_platform_gateway = (
             stored_config.mode == "gateway"
             and stored_config.create
@@ -370,20 +374,40 @@ class GatewayControllerLifecycle:
             raise DeploymentError(f"multiple CLI-managed Envoy Gateway releases exist: {names}")
         return next(iter(releases.values()), None)
 
-    def _platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
-        """Read the native Gateway choice retained by an installed platform release."""
-        frontend = self._helm.release_values(release).get("frontend") or {}
-        if not isinstance(frontend, dict):
-            raise DeploymentError("platform Gateway values are invalid")
-        gateway = frontend.get("gateway") or {}
-        if not isinstance(gateway, dict):
-            raise DeploymentError("platform Gateway values are invalid")
-        return PlatformGatewayConfig(
-            mode=str(frontend.get("mode") or "local"), create=bool(gateway.get("create")),
-            controller_name=str(gateway.get("controllerName") or ""),
-            name=str(gateway.get("name") or ""), namespace=str(gateway.get("namespace") or ""),
-            section_name=str(gateway.get("sectionName") or ""),
+    def _installation_config(
+        self, command: InstallCommand, platform: ReleaseRef,
+        values: tuple[dict[str, Any], ...], stored_values: dict[str, Any] | None,
+        installed: PlatformGatewayConfig,
+    ) -> PlatformGatewayConfig:
+        """Resolve the selected chart's defaults and explicit intent while retaining an existing listener."""
+        source = (
+            str(Path(command.editable).expanduser().resolve() / "deploy/charts/foretoken")
+            if command.editable is not None else self._helm.config.platform.source
         )
+        version = None if command.editable is not None else self._helm.config.platform.version
+        with self._helm.prepared_chart(source, version) as chart:
+            defaults = json.loads(self._helm.run(["show", "values", str(chart), "--jsonpath", "{@}"]).stdout)
+        overrides = stored_values or {}
+        for value in values:
+            overrides = merge_values(overrides, value)
+        frontend = merge_values(defaults["frontend"], overrides.get("frontend", {}))
+        if (
+            installed.mode == "gateway" and installed.create
+            and "port" not in overrides.get("frontend", {}).get("gateway", {})
+        ):
+            # A new default must not move the entry point of running instances.
+            gateway = next(
+                document for document in self._helm.installed_chart_manifest(platform)
+                if document["kind"] == "Gateway"
+            )
+            frontend["gateway"]["port"] = next(
+                listener["port"] for listener in gateway["spec"]["listeners"] if listener["name"] == "http"
+            )
+        return _effective_gateway_config(command, _gateway_config(frontend))
+
+    def _platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
+        """Read installed topology for retirement independently of the next chart's defaults."""
+        return _gateway_config(self._helm.release_values(release).get("frontend") or {})
 
     @staticmethod
     def _envoy_gateway_images(documents: tuple[dict[str, Any], ...]) -> dict[str, str]:
@@ -403,6 +427,21 @@ class GatewayControllerLifecycle:
         return images
 
 
+def _gateway_config(frontend: dict[str, Any]) -> PlatformGatewayConfig:
+    """Decode Helm's effective frontend topology for installation and retirement consumers."""
+    if not isinstance(frontend, dict):
+        raise DeploymentError("platform Gateway values are invalid")
+    gateway = frontend.get("gateway") or {}
+    if not isinstance(gateway, dict):
+        raise DeploymentError("platform Gateway values are invalid")
+    return PlatformGatewayConfig(
+        mode=str(frontend.get("mode") or "local"), create=bool(gateway.get("create")),
+        controller_name=str(gateway.get("controllerName") or ""),
+        name=str(gateway.get("name") or ""), namespace=str(gateway.get("namespace") or ""),
+        section_name=str(gateway.get("sectionName") or ""), port=gateway.get("port"),
+    )
+
+
 def _effective_gateway_config(
     command: InstallCommand,
     stored: PlatformGatewayConfig,
@@ -419,4 +458,5 @@ def _effective_gateway_config(
         command.gateway_name,
         command.gateway_namespace,
         command.gateway_section_name,
+        stored.port,
     )
