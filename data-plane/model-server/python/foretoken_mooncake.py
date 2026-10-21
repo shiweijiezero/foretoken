@@ -52,6 +52,7 @@ class _PrefixServer:
     """Expose one DP rank's native connector through the shared socket lifecycle."""
 
     def __init__(self, worker, config):
+        """Start this DP rank's responder with native hashing; the connector closes it during shutdown."""
         self.worker = worker
         hash_fn = get_hash_fn_by_name(config.cache_config.prefix_caching_hash_algo)
         # Native scheduler hashing uses this same process-independent seed.

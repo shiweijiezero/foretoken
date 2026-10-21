@@ -47,6 +47,7 @@ class McclNetworkCalibration:
     """Coordinate member-local probes and publish one port selection before engine startup."""
 
     def __init__(self, options: dict):
+        """Join the startup rendezvous; run() owns subsequent calibration and store shutdown."""
         import torch
         import torch.distributed as dist
         from vllm import envs
@@ -75,6 +76,43 @@ class McclNetworkCalibration:
             json.loads(self.store.get(f"member/{index}")) for index in range(self.count)
         ]
         self.trials = 0
+
+    def run(self) -> None:
+        """Honor member opt-outs or install the measured ports, then close the rendezvous."""
+        try:
+            if any(member["skip"] for member in self.members):
+                return
+            if any(
+                not member["ports"] or not member["gpus"] for member in self.members
+            ):
+                return
+            if all(len(member["ports"]) == 1 for member in self.members):
+                return
+            if self.index == 0:
+                try:
+                    selection = self._select()
+                except Exception as error:
+                    self.store.set(
+                        f"command/{self.trials}", json.dumps({"error": str(error)})
+                    )
+                    raise
+            else:
+                while True:
+                    command = json.loads(self.store.get(f"command/{self.trials}"))
+                    if "error" in command:
+                        raise RuntimeError(command["error"])
+                    if "selected" in command:
+                        selection = command["selected"]
+                        break
+                    self._measure(command["ports"], command["timeout"])
+            os.environ["MCCL_IB_HCA"] = "=" + ",".join(selection[self.index])
+            logger.info("MCCL selected ports for member %s: %s", self.index, os.environ["MCCL_IB_HCA"])
+        finally:
+            # Members acknowledge the final result before the leader closes its store server.
+            self.store.set(f"finished/{self.index}", b"1")
+            if self.index == 0:
+                self.store.wait([f"finished/{index}" for index in range(self.count)])
+            self.store = None
 
     def _measure(self, selection: list[list[str]], timeout: float) -> list[dict] | None:
         """Run one member's workers; the leader uses results only after every member succeeds."""
@@ -179,40 +217,3 @@ class McclNetworkCalibration:
             raise RuntimeError("No MCCL network candidate completed on every member")
         self.store.set(f"command/{self.trials}", json.dumps({"selected": winner}))
         return winner
-
-    def run(self) -> None:
-        """Honor member opt-outs or install the measured ports, then close the rendezvous."""
-        try:
-            if any(member["skip"] for member in self.members):
-                return
-            if any(
-                not member["ports"] or not member["gpus"] for member in self.members
-            ):
-                return
-            if all(len(member["ports"]) == 1 for member in self.members):
-                return
-            if self.index == 0:
-                try:
-                    selection = self._select()
-                except Exception as error:
-                    self.store.set(
-                        f"command/{self.trials}", json.dumps({"error": str(error)})
-                    )
-                    raise
-            else:
-                while True:
-                    command = json.loads(self.store.get(f"command/{self.trials}"))
-                    if "error" in command:
-                        raise RuntimeError(command["error"])
-                    if "selected" in command:
-                        selection = command["selected"]
-                        break
-                    self._measure(command["ports"], command["timeout"])
-            os.environ["MCCL_IB_HCA"] = "=" + ",".join(selection[self.index])
-            logger.info("MCCL selected ports for member %s: %s", self.index, os.environ["MCCL_IB_HCA"])
-        finally:
-            # Members acknowledge the final result before the leader closes its store server.
-            self.store.set(f"finished/{self.index}", b"1")
-            if self.index == 0:
-                self.store.wait([f"finished/{index}" for index in range(self.count)])
-            self.store = None

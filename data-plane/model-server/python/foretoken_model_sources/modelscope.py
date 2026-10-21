@@ -6,9 +6,9 @@
 import logging
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import acquire_in_parallel
 from .cache import cache_path, remove
 from .peer import cached_peer_snapshot, distributed_directory, download_peer_file
 
@@ -137,8 +137,7 @@ def snapshot(repository, revision):
             )
 
         try:
-            with ThreadPoolExecutor(max_workers=DEFAULT_MAX_WORKERS) as executor:
-                list(executor.map(download, pending))
+            acquire_in_parallel(download, pending, max_workers=DEFAULT_MAX_WORKERS)
         finally:
             if staging.exists():
                 shutil.rmtree(staging)

@@ -216,10 +216,14 @@ def run_sweep(
                                  exit_code=130 if isinstance(error, KeyboardInterrupt) else 1,
                                  error_type=type(error).__name__)
                     raise
-                finally:
-                    checkpoint()
-        finally:
-            totals = checkpoint(finished=True)
+                checkpoint()
+        except BaseException:
+            try:
+                checkpoint(finished=True)
+            except BaseException:
+                logger.exception("Could not retain the sweep outcome")
+            raise
+        totals = checkpoint(finished=True)
         run = BenchmarkRun(plan, totals, None, artifacts,
                            exit_code=0 if totals["sweep"]["status"] == "completed" else 1)
         outputs.publish(run)

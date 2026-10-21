@@ -13,7 +13,11 @@ from pathlib import Path
 from threading import RLock
 from typing import TextIO
 
-from foretoken.diagnostics import console_output_enabled, quiet_console
+from foretoken.diagnostics import (
+    console_output_enabled,
+    quiet_console,
+    silence_failed_console,
+)
 from loguru import logger
 
 
@@ -84,8 +88,6 @@ def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
     finally:
         try:
             stream.flush()
-        except OSError as flush_error:
-            log.failure = log.failure or flush_error
         finally:
             try:
                 logger.remove(sink)
@@ -113,7 +115,10 @@ def print_result_location(message: str) -> None:
     stream = sys.stderr
     if isinstance(stream, _RunLogStream):
         stream.retain(message + "\n")
-    print(message, file=terminal_stream(stream), flush=True)
+    try:
+        print(message, file=terminal_stream(stream), flush=True)
+    except OSError:
+        silence_failed_console(terminal_stream(stream))
 
 
 class _RunLogStream(TextIOBase):
@@ -135,14 +140,20 @@ class _RunLogStream(TextIOBase):
         """Retain raw output, forwarding it only while the application console is enabled."""
         self.retain(text)
         if console_output_enabled():
-            self.console.write(text)
+            try:
+                self.console.write(text)
+            except OSError:
+                silence_failed_console(self.console)
         return len(text)
 
     def flush(self) -> None:
         """Flush active transcripts and their borrowed console before capture finalization."""
         for log in self.owner.logs:
             log.flush()
-        self.console.flush()
+        try:
+            self.console.flush()
+        except OSError:
+            silence_failed_console(self.console)
 
     def fileno(self) -> int:
         """Direct native diagnostics to the current run instead of the caller's output pipe."""

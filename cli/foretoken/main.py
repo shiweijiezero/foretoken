@@ -27,7 +27,7 @@ from foretoken.deployment.commands import delete, deploy, stop
 from foretoken.deployment.endpoint import print_endpoint
 from foretoken.deployment.status import show_status
 from foretoken.diagnostics import configure_logging
-from foretoken.errors import DeploymentError
+from foretoken.errors import report_command_errors
 from foretoken.platform.commands import install, uninstall
 from foretoken.platform.local_cluster import run as run_cluster
 from foretoken.profiling.viewer import view
@@ -37,7 +37,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch parsed CLI commands and translate expected failures into process exit codes."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     configure_logging()
-    try:
+    with report_command_errors():
         if isinstance(command, ClusterCommand):
             run_cluster(command)
         elif isinstance(command, InstallCommand):
@@ -69,10 +69,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             plot_main(command.arguments)
         elif isinstance(command, ProfileViewCommand):
             view(command)
-    except DeploymentError as exc:
-        raise SystemExit(str(exc)) from exc
-    except KeyboardInterrupt:
-        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

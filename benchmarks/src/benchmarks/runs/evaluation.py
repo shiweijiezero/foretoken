@@ -18,6 +18,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+from foretoken.processes.execution import CommandExecution
 from loguru import logger
 
 from benchmarks.config.evaluation import EvaluationConfig, deployment_labels
@@ -153,12 +154,17 @@ def run_evaluation_comparison(config: EvaluationConfig) -> None:
                 },
                 "evaluation_comparison": {"methods": methods, "scores": scores},
             }
-            outputs.publish(BenchmarkRun(
-                record, metrics, None,
-                {f"method-{index + 1}": path for index, method in enumerate(methods)
-                 if (path := directory / method["directory"] / "native").is_dir()},
-                exit_code=int(failure),
-            ))
+            try:
+                outputs.publish(BenchmarkRun(
+                    record, metrics, None,
+                    {f"method-{index + 1}": path for index, method in enumerate(methods)
+                     if (path := directory / method["directory"] / "native").is_dir()},
+                    exit_code=int(failure),
+                ))
+            except BaseException:
+                if complete:
+                    raise
+                logger.exception("Could not publish the evaluation comparison")
         if failure:
             raise SystemExit(1)
 
@@ -214,8 +220,11 @@ def _execute(
     with (
         (directory / "evaluator.log").open("w", encoding="utf-8") as log,
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-progress") as executor,
-        subprocess.Popen(
+        (CommandExecution.current() or CommandExecution()) as execution,
+        execution.process(
             [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
+            interrupt_signal=signal.SIGINT,
+            shutdown_grace=10,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -226,37 +235,50 @@ def _execute(
         ) as process,
     ):
         stop = Event()
-        progress = executor.submit(_poll_progress, config.evaluator, native, stop, publish_progress)
+        progress = None
+        active_error: BaseException | None = None
+        execution.register(stop.set)
         try:
+            # Progress failure interrupts the owned process even while stdout is silent.
+            progress = executor.submit(
+                execution.run_stage, _poll_progress,
+                config.evaluator, native, stop, publish_progress,
+            )
             outputs.start_measurement()
-            process.stdin.write(json.dumps(payload))
-            process.stdin.close()
+            input_error = None
+            try:
+                process.stdin.write(json.dumps(payload))
+                process.stdin.close()
+            except BrokenPipeError as error:
+                execution.check()
+                # An early native exit can close stdin before its diagnostic output is read.
+                input_error = error
             for line in process.stdout:
-                if progress.done():
-                    progress.result()
+                execution.check()
                 if service.api_key and service.api_key != "EMPTY":
                     line = line.replace(service.api_key, "[redacted]")
                 log.write(line)
                 log.flush()
                 print(line, end="", file=sys.stderr, flush=True)
             code = process.wait()
+            execution.check()
+            if input_error is not None and code == 0:
+                raise input_error
             on_complete(code)
             return code
-        except BaseException:
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+        except BaseException as error:
+            active_error = error
+            execution.cancel(error)
             raise
         finally:
-            error = sys.exception()
             stop.set()
             try:
-                progress.result()
-            except BaseException:
-                if error is None:
+                if progress is not None:
+                    progress.result()
+            except BaseException as progress_error:
+                if active_error is None:
                     raise
-                logger.exception("Evaluation progress cleanup also failed")
+                if progress_error is not active_error:
+                    logger.exception("Evaluation progress cleanup also failed")
+            finally:
+                execution.unregister(stop.set)

@@ -98,7 +98,12 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     finally:
         context["finished_at"] = datetime.now(UTC).isoformat()
         context["duration_seconds"] = time.monotonic() - started
-        write_context()
+        try:
+            write_context()
+        except BaseException:
+            if context["status"] == "completed":
+                raise
+            logger.exception("Could not retain the experiment outcome")
 
 
 def _numbered_directory(parent: Path, prefix: str = "") -> Path:

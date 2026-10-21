@@ -392,36 +392,36 @@ async fn start_engine_attempt(
             |member| member.address.to_string(),
         );
     let ready_timeout = startup_deadline.saturating_duration_since(Instant::now());
-    if ready_timeout.is_zero() {
-        let _ = engine.shutdown(config.launch.drain_timeout()).await;
-        return Err(EngineStartupFailure::Other(io::Error::other(
+    let client = if ready_timeout.is_zero() {
+        Err(EngineStartupFailure::Other(io::Error::other(
             "EngineCore startup deadline elapsed before client connection",
-        )));
-    }
-    let client_config = EngineCoreClientConfig {
-        transport_mode: TransportMode::HandshakeOwner {
-            handshake_address: format!("tcp://{advertised_host}:{handshake_port}"),
-            advertised_host,
-            engine_count: config.launch.parallelism.dp,
-            ready_timeout,
-            local_input_address: None,
-            local_output_address: None,
-        },
-        coordinator_mode: (config.launch.parallelism.dp > 1)
-            .then_some(vllm_engine_core_client::CoordinatorMode::InProc),
-        model_name: config.launch.artifacts.model.clone(),
-        client_index: 0,
-    };
-    // Upstream handshake waits are per phase; this owner bounds the complete connection.
-    let client = tokio::select! {
-        result = EngineCoreClient::connect_with_protocol(client_config, protocol) => match result {
-            Ok(client) => Ok(client),
-            Err(error) => Err(classify_engine_startup_failure(cache, mode, format!("could not connect to EngineCore: {error}"))),
-        },
-        status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
-        _ = tokio::time::sleep_until(startup_deadline.into()) => Err(EngineStartupFailure::Other(io::Error::other("EngineCore connection exceeded the startup deadline"))),
-        reason = runtime_cache::wait_for_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
-        error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
+        )))
+    } else {
+        let client_config = EngineCoreClientConfig {
+            transport_mode: TransportMode::HandshakeOwner {
+                handshake_address: format!("tcp://{advertised_host}:{handshake_port}"),
+                advertised_host,
+                engine_count: config.launch.parallelism.dp,
+                ready_timeout,
+                local_input_address: None,
+                local_output_address: None,
+            },
+            coordinator_mode: (config.launch.parallelism.dp > 1)
+                .then_some(vllm_engine_core_client::CoordinatorMode::InProc),
+            model_name: config.launch.artifacts.model.clone(),
+            client_index: 0,
+        };
+        // Upstream handshake waits are per phase; this owner bounds the complete connection.
+        tokio::select! {
+            result = EngineCoreClient::connect_with_protocol(client_config, protocol) => match result {
+                Ok(client) => Ok(client),
+                Err(error) => Err(classify_engine_startup_failure(cache, mode, format!("could not connect to EngineCore: {error}"))),
+            },
+            status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
+            _ = tokio::time::sleep_until(startup_deadline.into()) => Err(EngineStartupFailure::Other(io::Error::other("EngineCore connection exceeded the startup deadline"))),
+            reason = runtime_cache::wait_for_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
+            error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
+        }
     };
     match client {
         Ok(client) => Ok(ConnectedEngine {
@@ -431,11 +431,21 @@ async fn start_engine_attempt(
             prepared_tokenizer,
         }),
         Err(error) => {
+            match &error {
+                EngineStartupFailure::PersistentCache { context, source } => {
+                    warn!(%context, error = %source, "EngineCore startup failed; stopping the attempt");
+                }
+                EngineStartupFailure::Other(source) => {
+                    warn!(error = %source, "EngineCore startup failed; stopping the attempt");
+                }
+            }
             // A failed teardown must not start a temporary retry beside the old engine.
-            engine
-                .shutdown(config.launch.drain_timeout())
-                .await
-                .map_err(|reason| EngineStartupFailure::Other(io::Error::other(reason)))?;
+            if let Err(reason) = engine.shutdown(config.launch.drain_timeout()).await {
+                return Err(EngineStartupFailure::Other(io::Error::other(format!(
+                    "{}; engine cleanup also failed: {reason}",
+                    error.into_error()
+                ))));
+            }
             Err(error)
         }
     }

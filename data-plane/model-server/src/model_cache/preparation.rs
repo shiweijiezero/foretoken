@@ -232,12 +232,8 @@ pub async fn prepare(
         .read(true)
         .write(true)
         .open(directory.join("prepare.lock"))?;
-    let _lock = tokio::task::spawn_blocking(move || {
-        lock.lock()?;
-        Ok::<_, io::Error>(lock)
-    })
-    .await
-    .map_err(io::Error::other)??;
+    acquire_cache_lock(&lock, true).await?;
+    let _lock = lock;
     let source = match source {
         Some(source) => source,
         None => match read_source(&directory.join(SOURCE_KEY), artifacts)? {

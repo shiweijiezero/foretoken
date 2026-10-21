@@ -18,6 +18,7 @@ class DistributionComparisonCheckpoint:
     """Own atomic window checkpoints in one result directory; resume from a read-only snapshot."""
 
     def __init__(self, directory: Path, resume: str, settings: dict[str, Any]) -> None:
+        """Open this run's database, optionally copying read-only resume data; context exit closes it."""
         self.connection = sqlite3.connect(directory / "comparison.sqlite")
         try:
             if resume:

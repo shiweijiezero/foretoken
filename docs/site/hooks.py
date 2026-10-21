@@ -16,7 +16,6 @@ from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import yaml
-
 from markdown import Markdown
 from markdown.extensions.toc import slugify_unicode
 from mkdocs.config.defaults import MkDocsConfig
@@ -124,6 +123,7 @@ class DocumentationTree:
     """Own generated source files for MkDocs builds and development-server reloads."""
 
     def __init__(self) -> None:
+        """Create the staging tree retained across builds and released by MkDocs shutdown."""
         temporary_root = ROOT / "tmp" / "docs-site"
         temporary_root.mkdir(parents=True, exist_ok=True)
         self.temporary = TemporaryDirectory(prefix="source-", dir=temporary_root)

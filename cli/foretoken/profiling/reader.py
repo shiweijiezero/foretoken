@@ -116,6 +116,7 @@ class CaptureReader(ThreadingHTTPServer):
         self, address: tuple[str, int], root: str, secret: str, namespace: str,
         deployment_uid: str = "",
     ) -> None:
+        """Open the no-follow capture root and bind HTTP; server_close() releases both resources."""
         self.root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self.secret = secret
         self.namespace = namespace

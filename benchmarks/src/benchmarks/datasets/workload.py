@@ -48,6 +48,7 @@ class HttpWorkload:
     """Own input preparation and restartable streams; each phase gets its own sampling state."""
 
     def __init__(self, benchmark: BenchmarkConfig, service: ModelService) -> None:
+        """Prepare restartable inputs and reference lengths before this point's phase clocks start."""
         self.benchmark = benchmark
         self.service = service
         self.builder = RequestBuilder(benchmark, service)

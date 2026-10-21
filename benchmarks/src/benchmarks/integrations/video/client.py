@@ -26,6 +26,7 @@ class VideoGenerationClient:
     """Send dataset-owned requests to one synchronous video endpoint."""
 
     def __init__(self, config: VideoBenchmarkConfig):
+        """Create the request phase's HTTP pool, retained until the owning runner closes it."""
         self.config = config
         self._ffprobe_executable: str | None = None
         self._ffprobe_warning: str | None = None

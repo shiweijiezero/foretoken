@@ -117,8 +117,16 @@ impl Leader {
                 || "EngineCore client became unhealthy during startup".to_string(),
                 |error| format!("EngineCore client became unhealthy during startup: {error}"),
             );
-            let _ = client.shutdown().await;
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            warn!(%reason, "EngineCore startup failed; stopping the attempt");
+            if let Err(error) = client.shutdown().await {
+                warn!(%error, "could not shut down EngineCore client cleanly");
+            }
+            if let Err(error) = engine.shutdown(config.launch.drain_timeout()).await {
+                return Err(io::Error::other(format!(
+                    "{reason}; engine cleanup also failed: {error}"
+                ))
+                .into());
+            }
             health.set_process_alive(false);
             return Err(io::Error::other(reason).into());
         }
@@ -196,7 +204,18 @@ impl Leader {
             | Stop::CacheServer(reason)
             | Stop::Profiling(reason) => warn!(%reason),
         }
-        self.drain(&mut stop).await?;
+        if let Err(cleanup) = self.drain(&mut stop).await {
+            return Err(match stop {
+                Stop::Signal => cleanup,
+                Stop::Engine(reason)
+                | Stop::Server(reason)
+                | Stop::CacheServer(reason)
+                | Stop::Profiling(reason) => {
+                    io::Error::other(format!("{reason}; runtime cleanup also failed: {cleanup}"))
+                }
+            }
+            .into());
+        }
         match stop {
             Stop::Signal => Ok(()),
             Stop::Engine(reason)
@@ -273,7 +292,9 @@ impl Leader {
                 biased;
                 reason = engine_failure(&self.engine, &self.health, &mut self.client_health), if !engine_stopped => {
                     warn!(%reason, "engine failed while draining");
-                    *stop = Stop::Engine(reason);
+                    if matches!(stop, Stop::Signal) {
+                        *stop = Stop::Engine(reason);
+                    }
                     stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
                     engine_stopped = true;
                 }

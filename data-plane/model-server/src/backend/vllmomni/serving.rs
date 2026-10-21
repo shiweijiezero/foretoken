@@ -3,11 +3,13 @@
 
 //! Owns Omni startup, HTTP supervision, and the accepted-request drain before native shutdown.
 
+use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use super::api::{self, AppState};
 use super::launch::LaunchPlan;
@@ -43,7 +45,13 @@ impl Server {
         let model = plan.prepare_model(&python_executable(), deadline).await?;
         let child = ManagedEngine::spawn(plan.engine_command(&model)?, None).await?;
         if let Err(error) = wait_until_ready(&client, &upstream, &child, deadline).await {
-            child.shutdown(Duration::from_secs(10)).await?;
+            warn!(%error, "vLLM-Omni startup failed; stopping the attempt");
+            if let Err(cleanup) = child.shutdown(Duration::from_secs(10)).await {
+                return Err(io::Error::other(format!(
+                    "{error}; engine cleanup also failed: {cleanup}"
+                ))
+                .into());
+            }
             return Err(error);
         }
 
@@ -66,7 +74,7 @@ impl Server {
                 .with_graceful_shutdown(server_shutdown.cancelled_owned())
                 .await
         });
-        eprintln!("Foretoken vLLM-Omni adapter ready on {listen}");
+        info!(%listen, "Foretoken vLLM-Omni adapter ready");
         Ok(Self {
             server,
             child,
@@ -85,11 +93,21 @@ impl Server {
             Stop::Server => "HTTP server stopped".to_string(),
             Stop::Error(error) => format!("adapter error: {error}"),
         };
-        eprintln!("Stopping Foretoken vLLM-Omni adapter: {reason}");
-        self.drain(matches!(&stop, Stop::Signal)).await?;
+        let graceful = matches!(&stop, Stop::Signal);
+        if graceful {
+            info!(%reason, "stopping Foretoken vLLM-Omni adapter");
+        } else {
+            warn!(%reason, "Foretoken vLLM-Omni adapter failed; stopping its resources");
+        }
+        if let Err(cleanup) = self.drain(graceful).await {
+            return Err(
+                io::Error::other(format!("{reason}; cleanup also failed: {cleanup}")).into(),
+            );
+        }
         match stop {
+            Stop::Signal => Ok(()),
             Stop::Error(error) => Err(error),
-            _ => Ok(()),
+            Stop::Child(_) | Stop::Server => Err(io::Error::other(reason).into()),
         }
     }
 
@@ -117,7 +135,7 @@ impl Server {
                 .await
                 .is_err()
         {
-            eprintln!("Accepted requests did not finish before the drain deadline");
+            warn!("accepted requests did not finish before the drain deadline");
         }
         self.health.set_process_alive(false);
         self.shutdown.cancel();

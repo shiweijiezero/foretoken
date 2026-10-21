@@ -19,6 +19,7 @@ class CompletionComparisonClient:
     """Own one Completions connection for fixed-prefix probability and generation comparisons."""
 
     def __init__(self, service: ModelService, *, timeout: float) -> None:
+        """Create the comparison's SDK connection pool, retained until context exit."""
         self._model = service.model
         self._client = OpenAI(
             base_url=service.api_root,

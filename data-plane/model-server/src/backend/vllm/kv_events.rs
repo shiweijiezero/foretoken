@@ -172,6 +172,70 @@ impl KvEventAdapter {
         Ok(())
     }
 
+    /// Runs the owned ZMQ subscriber task started by model-server bootstrap.
+    ///
+    /// `ready` publishes listener readiness once. Bound sockets accept publisher reconnects;
+    /// interrupted ranks remain unavailable until a valid batch starts their new epoch.
+    pub async fn serve(
+        self: Arc<Self>,
+        host: String,
+        ports: RuntimePorts,
+        ready: tokio::sync::oneshot::Sender<bool>,
+    ) {
+        use futures::StreamExt;
+        let mut streams = futures::stream::FuturesUnordered::new();
+        for dp_rank in 0..self.data_parallel_size {
+            let mut socket = SubSocket::new();
+            let mut monitor = socket.monitor();
+            if socket
+                .bind(&ports.kv_event_endpoint(&host, dp_rank))
+                .await
+                .is_err()
+                || socket.subscribe(KV_EVENT_TOPIC).await.is_err()
+            {
+                self.fail_stream(dp_rank, "event_stream_interrupted");
+                continue;
+            }
+            let adapter = self.clone();
+            streams.push(async move {
+                loop {
+                    let message = tokio::select! {
+                        message = socket.recv() => message,
+                        event = monitor.next() => {
+                            match event {
+                                Some(zeromq::SocketEvent::Disconnected(_)) => {
+                                    adapter.fail_stream(dp_rank, "event_stream_interrupted");
+                                }
+                                None | Some(zeromq::SocketEvent::Closed) => {
+                                    adapter.fail_stream(dp_rank, "event_stream_interrupted");
+                                    return;
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                    };
+                    match message {
+                        Ok(message) => {
+                            let frames = message
+                                .into_vec()
+                                .into_iter()
+                                .map(|frame| frame.to_vec())
+                                .collect();
+                            adapter.ingest_frames(dp_rank, frames);
+                        }
+                        Err(_) => {
+                            adapter.fail_stream(dp_rank, "event_stream_interrupted");
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+        let _ = ready.send(!streams.is_empty());
+        while streams.next().await.is_some() {}
+    }
+
     /// Binds live scheduler observations to the same model/layout identity as event deltas.
     pub fn prefix_response(
         &self,
@@ -597,70 +661,6 @@ impl KvEventAdapter {
                 }
             }
         }
-    }
-
-    /// Runs the owned ZMQ subscriber task started by model-server bootstrap.
-    ///
-    /// `ready` publishes listener readiness once. Bound sockets accept publisher reconnects;
-    /// interrupted ranks remain unavailable until a valid batch starts their new epoch.
-    pub async fn serve(
-        self: Arc<Self>,
-        host: String,
-        ports: RuntimePorts,
-        ready: tokio::sync::oneshot::Sender<bool>,
-    ) {
-        use futures::StreamExt;
-        let mut streams = futures::stream::FuturesUnordered::new();
-        for dp_rank in 0..self.data_parallel_size {
-            let mut socket = SubSocket::new();
-            let mut monitor = socket.monitor();
-            if socket
-                .bind(&ports.kv_event_endpoint(&host, dp_rank))
-                .await
-                .is_err()
-                || socket.subscribe(KV_EVENT_TOPIC).await.is_err()
-            {
-                self.fail_stream(dp_rank, "event_stream_interrupted");
-                continue;
-            }
-            let adapter = self.clone();
-            streams.push(async move {
-                loop {
-                    let message = tokio::select! {
-                        message = socket.recv() => message,
-                        event = monitor.next() => {
-                            match event {
-                                Some(zeromq::SocketEvent::Disconnected(_)) => {
-                                    adapter.fail_stream(dp_rank, "event_stream_interrupted");
-                                }
-                                None | Some(zeromq::SocketEvent::Closed) => {
-                                    adapter.fail_stream(dp_rank, "event_stream_interrupted");
-                                    return;
-                                }
-                                _ => {}
-                            }
-                            continue;
-                        }
-                    };
-                    match message {
-                        Ok(message) => {
-                            let frames = message
-                                .into_vec()
-                                .into_iter()
-                                .map(|frame| frame.to_vec())
-                                .collect();
-                            adapter.ingest_frames(dp_rank, frames);
-                        }
-                        Err(_) => {
-                            adapter.fail_stream(dp_rank, "event_stream_interrupted");
-                            return;
-                        }
-                    }
-                }
-            });
-        }
-        let _ = ready.send(!streams.is_empty());
-        while streams.next().await.is_some() {}
     }
 }
 

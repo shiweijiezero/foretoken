@@ -204,6 +204,7 @@ class HttpBenchmark:
             logger.info("Measurement: {} HTTP requests", workload.request_count or "duration-bounded")
             async with asyncio.TaskGroup() as tasks:
                 sampler = tasks.create_task(progress.sample()) if progress is not None else None
+                capture_watch = tasks.create_task(profile.watch()) if profile is not None else None
                 try:
                     completed, duration, origin = await run_schedule(
                         episodes, execute, benchmark.load,
@@ -217,8 +218,10 @@ class HttpBenchmark:
                         itl, groups, profile,
                     )
                 finally:
-                    if sampler is not None:
-                        sampler.cancel()
+                    # A cancelled observer may still be joining accepted I/O.
+                    for task in (sampler, capture_watch):
+                        if task is not None and not task.done() and not task.cancelling():
+                            task.cancel()
             # The durable result above survives progress, profile, or transport cleanup failures.
             if progress is not None:
                 progress.emit(duration, final=True)

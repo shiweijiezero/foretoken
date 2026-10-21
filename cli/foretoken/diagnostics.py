@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
+from typing import TextIO
 
 from loguru import logger
 from tqdm import tqdm
@@ -53,7 +55,7 @@ def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = F
     logger.remove()
     # Bind the original terminal before run scopes redirect raw framework output.
     logger.add(
-        partial(tqdm.write, file=sys.stderr, end=""),
+        partial(_write_console, stream=sys.stderr),
         level="DEBUG", filter=_console_filter,
         format="{message}" if full_tracebacks else _console_format,
         colorize=False, backtrace=False, diagnose=False, enqueue=False, catch=False,
@@ -80,6 +82,24 @@ def configure_logging(console_enabled: bool = True, *, full_tracebacks: bool = F
             target.addHandler(bridge)
     for name in ("httpx", "httpcore", "fontTools"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def _write_console(message: str, *, stream: TextIO) -> None:
+    """Keep terminal I/O failures from blocking healthy file sinks and resource cleanup."""
+    try:
+        tqdm.write(message, file=stream, end="")
+        stream.flush()
+    except OSError:
+        silence_failed_console(stream)
+
+
+def silence_failed_console(stream: TextIO) -> None:
+    """Discard a failed diagnostic stream's pending writes so final flushing preserves the exit status."""
+    try:
+        with open(os.devnull, "w") as discard:
+            os.dup2(discard.fileno(), stream.fileno())
+    except OSError:
+        pass
 
 
 def console_output_enabled() -> bool:

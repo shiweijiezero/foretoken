@@ -211,11 +211,11 @@ class ModelServiceResolver:
             yield service
         except CaptureCleanupError:
             # Keep participants alive until the controller confirms stop and export.
+            temporary = False
             logger.error(
                 "Capture cleanup is unconfirmed; retaining deployment instance {} for inspection",
                 deployment.name,
             )
-            temporary = False
             raise
         finally:
             if temporary:

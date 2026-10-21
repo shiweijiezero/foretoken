@@ -26,6 +26,7 @@ class RandomRequestSource(RandomDatasetPlugin):
     """Reuse EvalScope token filtering and generation with restartable, local sampling."""
 
     def __init__(self, benchmark: BenchmarkConfig, service: ModelService) -> None:
+        """Prepare the tokenizer and native sampler shared by this workload's restartable streams."""
         service = replace(service, model=benchmark.generation.extra_body.get("model", service.model))
         self.workload = benchmark.resolved_workload
         self._prefix_rng = random.Random(self.workload.random_seed)
