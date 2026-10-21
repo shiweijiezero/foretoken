@@ -33,21 +33,6 @@ Deployment succeeds when the selected application and its serving routes are rea
 
 Each model's `spec.timeouts.startup` supplies separate preparation and serving-startup limits. Keep a preparation failure visible through retries until preparation succeeds. Report rejected configuration as a failed target, while allowing serving-container restarts to recover within the startup limit.
 
-## Validate the controller lifecycle
-
-Controller validation uses Go, Helm 4, kubectl, kind and Docker. From the repository root, prepare a disposable single-node cluster and the current controller image:
-
-```bash
-docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
-kind create cluster --name foretoken
-kind load docker-image foretoken-control-plane:test --name foretoken
-docker exec foretoken-control-plane mkdir -p /var/lib/foretoken-runtime-cache
-make -C control-plane verify-deployment TEST_CONTEXT=kind-foretoken
-kind delete cluster --name foretoken
-```
-
-The command checks Helm output, instance-controller creation, an update and removal without requiring a GPU or waiting for inference readiness. It requires the explicit test context, creates its own namespaces, and removes its releases, namespaces and directory volumes on success, failure or cancellation. CRDs remain until the disposable cluster is deleted. To check only the three Helm configurations without a cluster, run `make -C control-plane verify-chart`.
-
 ## Cleanup
 
 On failure or cancellation, stop builders and publishers before reusing compiler output, and retain compiler caches for retry. Cleanup has its own timeout so it can release locks and resources after a readiness wait expires; cleanup errors must not replace the original failure.

@@ -33,21 +33,6 @@ BuildKit 准备可复用的运行环境和编译器镜像。各工作区在独�
 
 模型配置中的 `spec.timeouts.startup` 分别约束准备和服务启动。准备失败后，即使正在重试，也保留失败状态直到准备成功。配置被拒绝时应报告目标失败；服务容器重启则可在启动时限内继续恢复。
 
-## 验证控制器生命周期
-
-控制器验证需要 Go、Helm 4、kubectl、kind 和 Docker。从仓库根目录准备一次性单节点集群和当前控制器镜像：
-
-```bash
-docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
-kind create cluster --name foretoken
-kind load docker-image foretoken-control-plane:test --name foretoken
-docker exec foretoken-control-plane mkdir -p /var/lib/foretoken-runtime-cache
-make -C control-plane verify-deployment TEST_CONTEXT=kind-foretoken
-kind delete cluster --name foretoken
-```
-
-命令检查 Helm 渲染、实例控制器创建、更新与移除，不需要 GPU，也不等待推理服务就绪。验证必须显式指定测试 context，创建独立命名空间，并在成功、失败或取消后清理自身的 release、命名空间与目录卷。CRD 保留到一次性集群删除时一并移除。只需离线检查三组 Helm 配置时，运行 `make -C control-plane verify-chart`。
-
 ## 清理
 
 构建失败或取消时，先停止构建器和发布任务，再复用编译输出；编译缓存保留供重试。清理使用独立时限，在就绪等待超时后仍可释放锁和资源。报告清理错误时应保留原始失败原因。
