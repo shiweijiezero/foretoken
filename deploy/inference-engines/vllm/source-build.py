@@ -24,7 +24,7 @@ from engine_sources import generated_engine_file
 from packaging.metadata import Metadata
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-from vllm_patches import apply_patches, engine_patches
+from vllm_patches import apply_patches, engine_patches, runtime_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -383,34 +383,6 @@ def export_overlay(
         path = destination / name
         if path.is_file() or path.is_symlink():
             path.unlink()
-
-
-def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
-    """Retain the installed accelerator ABI packages while allowing ordinary dependency updates."""
-    protected = {
-        "torch",
-        "torchvision",
-        "torchaudio",
-        "torchcodec",
-        "triton",
-        "mcoplib",
-        "maca-python",
-        "vllm-metax",
-    }
-    constraints = {}
-    for distribution in importlib.metadata.distributions():
-        name = canonicalize_name(distribution.metadata["Name"])
-        if name in source_packages:
-            continue
-        local = distribution.version.partition("+")[2].lower()
-        if (
-            name in protected
-            or name.startswith("nvidia-")
-            or "metax" in local
-            or "maca" in local
-        ):
-            constraints[name] = distribution.version
-    return constraints
 
 
 def prepare_sdk_audio(plugin: Path, staging: Path) -> None:

@@ -91,6 +91,35 @@ def apply_patches(directory: Path, patches: list[Path]) -> set[Path]:
     return patch_files(patches)
 
 
+def runtime_constraints(source_packages: set[str]) -> dict[str, str]:
+    """Retain the selected engine, accelerator ABI, and coupled telemetry stack during installation."""
+    protected = {
+        "vllm",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "torchcodec",
+        "triton",
+        "mcoplib",
+        "maca-python",
+        "vllm-metax",
+    }
+    constraints = {}
+    for distribution in importlib.metadata.distributions():
+        name = canonicalize_name(distribution.metadata["Name"])
+        if name in source_packages:
+            continue
+        local = distribution.version.partition("+")[2].lower()
+        if (
+            name in protected
+            or name.startswith(("nvidia-", "opentelemetry-"))
+            or "metax" in local
+            or "maca" in local
+        ):
+            constraints[name] = distribution.version
+    return constraints
+
+
 def repair_installed_dependencies() -> None:
     """Repair unused OTel remnants before vLLM 0.31 image dependency installation."""
     if Version(importlib.metadata.version("vllm")).release[:2] != (0, 31):
