@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import os
 import sys
 import time
@@ -15,6 +14,8 @@ import uuid
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Self
+
+from loguru import logger
 
 from foretoken.build.cluster.artifacts import prepare_artifact_volume
 from foretoken.build.cluster.images import (
@@ -26,8 +27,6 @@ from foretoken.build.cluster.transfer import synchronize_inputs
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 from foretoken.processes.execution import CommandExecution
-
-logger = logging.getLogger(__name__)
 
 
 class CompilerWorkspace(AbstractContextManager):
@@ -142,9 +141,9 @@ class CompilerWorkspace(AbstractContextManager):
         if not selected:
             self.run(["mkdir", "-p", output])
         else:
-            logger.info("Compiling %s (%s) on %s", component, ", ".join(selected), self.node)
+            logger.info("Compiling {} ({}) on {}", component, ", ".join(selected), self.node)
             self.run([*command, "--parts", *selected], container=component)
-            logger.info("Compilation completed: %s", component)
+            logger.info("Compilation completed: {}", component)
         self._deliver_output(output, destination)
 
     def export_engine(self, destination: str, arguments: dict[str, str], *, cache_id: str, build_native: bool) -> None:

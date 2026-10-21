@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import copy
 import json
-import logging
 import os
 import shutil
 import sys
@@ -19,6 +18,8 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from foretoken.applications.files import (
     SERVICE_COMPONENTS,
@@ -66,8 +67,6 @@ from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 from foretoken.processes.execution import cleanup_commands
-
-logger = logging.getLogger(__name__)
 
 _APPLICATION_PARTS = {
     "control-plane": ("go",),
@@ -185,7 +184,7 @@ class EditableDeployment:
                 })
                 write_source_state(path, self.state)
                 previous_images = dict(build["images"])
-            logger.info("Source checkout: %s", self.root)
+            logger.info("Source checkout: {}", self.root)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
             self._retain_workspace()
@@ -488,7 +487,7 @@ class EditableDeployment:
             self._rebuild(timeout)
             return
         if components:
-            logger.info("Source plan: publish %s applications", ", ".join(sorted(components)))
+            logger.info("Source plan: publish {} applications", ", ".join(sorted(components)))
         else:
             logger.info("Source plan: update source snapshot only")
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
@@ -621,7 +620,7 @@ class EditableDeployment:
                 logger.warning("Compiler image is unavailable on this node; restoring the development environment")
                 self._rebuild(timeout)
                 return
-        logger.info("Preparing application files: %s", ", ".join(sorted(missing)))
+        logger.info("Preparing application files: {}", ", ".join(sorted(missing)))
         with self._application_workspace(
             origin, snapshot, compilers, helm, timeout,
         ) as (builder, references):
@@ -692,9 +691,9 @@ class EditableDeployment:
                     if published_revision == previous_revisions[component]
                     else "published"
                 )
-                logger.info("Application %s: %s", publication, component)
+                logger.info("Application {}: {}", publication, component)
             write_source_state(self.directory / "install.json", self.state)
-            logger.info("Application publication completed in %.1fs", time.monotonic() - published_at)
+            logger.info("Application publication completed in {:.1f}s", time.monotonic() - published_at)
             builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
 
     @contextmanager

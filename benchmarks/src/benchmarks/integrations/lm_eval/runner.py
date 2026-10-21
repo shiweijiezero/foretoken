@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from contextlib import nullcontext
 from functools import partial
@@ -21,13 +20,12 @@ from lm_eval.utils import (
     setup_logging,
     simple_parse_args_string,
 )
+from loguru import logger
 
 from benchmarks.integrations.lm_eval.cli import parse_arguments
 from benchmarks.integrations.lm_eval.model import ServiceEvaluation
 from benchmarks.integrations.lm_eval.responses import LmEvalResponses
 from benchmarks.integrations.quality import validate_model_transport
-
-logger = logging.getLogger(__name__)
 
 
 def run_lm_eval(
@@ -118,7 +116,7 @@ def _execute(config, model, manager) -> None:
                 if config.log_samples:
                     trackio.log_eval_samples(samples)
             except Exception:
-                logger.warning("Logging to Trackio failed", exc_info=True)
+                logger.opt(exception=True).warning("Logging to Trackio failed")
     finally:
         if trackio is not None:
             trackio.finish()

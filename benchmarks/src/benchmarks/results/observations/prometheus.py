@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import math
 import re
 import threading
@@ -33,8 +32,6 @@ from benchmarks.results.observations.environment import OBSERVATION_TIMEOUT_SECO
 if TYPE_CHECKING:
     from benchmarks.model_service import ModelService
     from benchmarks.results.observations.replicas import KubernetesReplicaObserver
-
-logger = logging.getLogger(__name__)
 
 _SAMPLE_INTERVAL_SECONDS = 5.0
 _REQUEST_TIMEOUT = f"{OBSERVATION_TIMEOUT_SECONDS:g}s"

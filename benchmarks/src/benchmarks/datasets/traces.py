@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.datasets.conversations import (
     Task,
@@ -21,8 +22,6 @@ from benchmarks.datasets.rows import iter_dataset_rows
 
 # Each Mooncake hash ID identifies one fixed-size input-token block.
 MOONCAKE_BLOCK_TOKENS = 512
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -85,7 +84,7 @@ class ArrivalTraceReader:
     def _iter_rows(self) -> Iterator[tuple[Path, int, int, Any]]:
         """Yield trace rows through the shared local and Hub source reader."""
         if not Path(self.trace_selector).expanduser().is_file():
-            logger.info("Resolving trace source %s", self.trace_selector)
+            logger.info("Resolving trace source {}", self.trace_selector)
         yield from iter_dataset_rows(self.trace_selector)
 
     def _iter_events(self) -> Iterator[ArrivalTraceEvent]:

@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.accelerators.discovery import ExporterDiscovery
@@ -83,8 +84,6 @@ from foretoken.processes.execution import CommandExecution
 
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -590,7 +589,7 @@ class PlatformLifecycle:
 
 def _report_plan(responsibility: str, action: str, detail: str) -> None:
     """Report one stable platform lifecycle decision."""
-    logger.info("%-28s %-20s %s", responsibility, action, detail)
+    logger.info("{:<28} {:<20} {}", responsibility, action, detail)
 
 
 def _select_runtime(nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides) -> _RuntimeSelection | None:

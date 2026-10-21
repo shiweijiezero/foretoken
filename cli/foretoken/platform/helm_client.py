@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import shlex
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from loguru import logger
 
 from foretoken.downloads.sources import (
     select_github_download,
@@ -32,8 +32,6 @@ from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 from foretoken.processes.execution import CommandExecution, run_command
 from foretoken.processes.tools import resolve_tool
-
-logger = logging.getLogger(__name__)
 
 
 class HelmCommandError(DeploymentError):

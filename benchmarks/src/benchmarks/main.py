@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
@@ -19,6 +18,7 @@ from typing import Any
 import wandb
 from foretoken.diagnostics import configure_logging
 from foretoken.errors import DeploymentError
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.config.cli import parse_benchmark_arguments
@@ -37,8 +37,6 @@ from benchmarks.runs.slo import SloAutoTuneBenchmark
 from benchmarks.runs.video import run_video_benchmark
 from benchmarks.sweeps.http import ParameterSweepBenchmark
 from benchmarks.sweeps.video import run_video_sweep
-
-logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -70,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         service = services.enter_context(resolver.benchmark(benchmark))
                         if benchmark.service.kustomize_path:
                             log_model_service(service)
-                        logger.info("%s", format_benchmark_config(benchmark, service))
+                        logger.info("{}", format_benchmark_config(benchmark, service))
                         return service
 
                     run = run_benchmark(benchmark, prepare_service, outputs=outputs)

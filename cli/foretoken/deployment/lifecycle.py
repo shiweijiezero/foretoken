@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import copy
-import logging
 import time
 from contextlib import ExitStack
 from dataclasses import replace
 from typing import Any
+
+from loguru import logger
 
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
@@ -34,8 +35,6 @@ from foretoken.kubernetes.documents import encode_resources
 from foretoken.kubernetes.mutation import DeploymentMutation
 from foretoken.processes.execution import CommandExecution
 from foretoken.working_directory import resolve_runtime_directory
-
-logger = logging.getLogger(__name__)
 
 
 class DeploymentLifecycle:
@@ -113,10 +112,10 @@ class DeploymentLifecycle:
                     selected_source = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION, "")
                     obj["spec"]["deploymentRevision"] = f"{revision}:{selected_source}"
             deployment = deployment.with_objects(objects)
-            logger.info("Applying deployment instance %s", deployment.name)
+            logger.info("Applying deployment instance {}", deployment.name)
             submission.apply(deployment.rendered)
 
-        logger.info("Waiting up to %s for Foretoken services", timeout)
+        logger.info("Waiting up to {} for Foretoken services", timeout)
         rollout_started = time.monotonic()
         with self.kubectl.until(rollout_started + timeout_seconds(timeout)) as deadline, StartupProgress(
             self.kubectl, logger.info
@@ -148,7 +147,7 @@ class DeploymentLifecycle:
                 )
             deployment = replace(submission.instance.deployment(), path=deployment.path)
             submission.check()
-        logger.info("Foretoken deployment completed in %.1fs", time.monotonic() - started)
+        logger.info("Foretoken deployment completed in {:.1f}s", time.monotonic() - started)
         return deployment
 
     def prepare_controller(

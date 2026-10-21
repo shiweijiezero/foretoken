@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 import json
-import logging
 import os
 import tarfile
 import tempfile
@@ -15,10 +14,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from loguru import logger
+
 from foretoken.errors import DeploymentError
 from foretoken.processes.execution import CommandExecution
-
-logger = logging.getLogger(__name__)
 
 
 def synchronize_inputs(
@@ -79,7 +78,7 @@ mv "$incoming.inputs" "$receipt"
                 item.mode = 0o644
                 archive.addfile(item, io.BytesIO(data))
         logger.info(
-            "Source transfer: %s changed files, %s removed files, %s compressed bytes",
+            "Source transfer: {} changed files, {} removed files, {} compressed bytes",
             len(changed), len(removed), stream.tell(),
         )
         stream.seek(0)
@@ -89,4 +88,4 @@ mv "$incoming.inputs" "$receipt"
         )
     if result.returncode:
         raise DeploymentError("source delta upload failed")
-    logger.info("Source transfer completed in %.1fs", time.monotonic() - started)
+    logger.info("Source transfer completed in {:.1f}s", time.monotonic() - started)

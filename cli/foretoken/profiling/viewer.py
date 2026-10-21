@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 import socket
 import threading
@@ -15,6 +14,8 @@ from importlib import resources
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from loguru import logger
+
 from foretoken.arguments import ProfileViewCommand
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
@@ -22,8 +23,6 @@ from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.profiling.nsight import NsightViewerSessions
 from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
-
-logger = logging.getLogger(__name__)
 
 
 def view(command: ProfileViewCommand) -> None:

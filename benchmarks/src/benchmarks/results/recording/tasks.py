@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.results.recording.database import (
     DATABASE_FILENAME,
@@ -19,8 +20,6 @@ from benchmarks.results.recording.database import (
 )
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.types import BenchmarkRun
-
-logger = logging.getLogger(__name__)
 
 
 def run_task(
@@ -38,7 +37,7 @@ def run_task(
     with publication_lock(directory):
         previous = completed_measurement(directory)
         if previous is not None:
-            logger.info("Reusing completed measurement: %s", task_source(directory))
+            logger.info("Reusing completed measurement: {}", task_source(directory))
             return BenchmarkRun(previous["record"], previous["metrics"], None, {}, exit_code=previous["exit_code"])
         write_records(directory, {"task.json": task})
     try:

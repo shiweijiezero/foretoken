@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import shutil
 import sqlite3
@@ -19,8 +18,10 @@ from tempfile import mkdtemp
 from typing import Any, Self
 
 import wandb
+from foretoken.diagnostics import console_output_enabled
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
+from loguru import logger
 from tqdm import tqdm
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -61,8 +62,6 @@ from benchmarks.results.types import (
     _ResultSinkFactory,
 )
 from benchmarks.results.wandb.recording import WandbSink
-
-logger = logging.getLogger(__name__)
 
 
 class ResultOutputs:
@@ -195,7 +194,7 @@ class ResultOutputs:
                 run.artifacts[name] = path
         if self.benchmark.outputs.includes("quiet") and run.measurements is not None and run.metrics["failed_num"]:
             logger.error(
-                "%s/%s requests failed; see %s",
+                "{}/{} requests failed; see {}",
                 run.metrics["failed_num"], run.metrics["request_num"],
                 self.execution_dir if self.benchmark.outputs.saves_local else "W&B result artifacts",
             )
@@ -279,7 +278,7 @@ class ResultOutputs:
         elif error is not None:
             self._exit_code = 1
         if error is not None:
-            logger.debug("Benchmark stopped", exc_info=(exc_type, exc_value, traceback))
+            logger.opt(exception=(exc_type, exc_value, traceback)).debug("Benchmark stopped")
         try:
             try:
                 deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
@@ -394,7 +393,7 @@ class ResultOutputs:
         self, *, stream: bool, total: int | None = None, criteria: dict[str, str] | None = None,
     ) -> HttpProgress | None:
         """Display actual HTTP completions and connect the optional live W&B destination."""
-        if not self.benchmark.outputs.includes("quiet") and terminal_stream(sys.stderr).isatty():
+        if console_output_enabled() and terminal_stream(sys.stderr).isatty():
             self._http_progress = tqdm(
                 total=total, desc="Completed requests", unit="request",
                 file=terminal_stream(sys.stderr), disable=None, dynamic_ncols=True,
@@ -447,7 +446,7 @@ class ResultOutputs:
                 )
                 observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning("Replica observation unavailable; continuing with benchmark: %s", exc)
+                logger.warning("Replica observation unavailable; continuing with benchmark: {}", exc)
             else:
                 self._replica_observer = observer
                 self._resources.callback(self._close_replica_observer)
@@ -457,7 +456,7 @@ class ResultOutputs:
                 prometheus_observer = PrometheusObserver(self.service, self._replica_observer)
                 prometheus_observer.start(deadline=deadline)
             except (DeploymentError, RuntimeError) as exc:
-                logger.warning("Prometheus observation unavailable; continuing with benchmark: %s", exc)
+                logger.warning("Prometheus observation unavailable; continuing with benchmark: {}", exc)
             else:
                 self._prometheus_observer = prometheus_observer
                 self._resources.callback(self._close_prometheus_observer)
@@ -512,7 +511,7 @@ class ResultOutputs:
         if directory is None:
             return
         if preserve:
-            logger.error("Benchmark artifacts preserved: %s", directory)
+            logger.error("Benchmark artifacts preserved: {}", directory)
         elif self._temporary_execution_dir:
             shutil.rmtree(directory)
         self._temporary_execution_dir = False

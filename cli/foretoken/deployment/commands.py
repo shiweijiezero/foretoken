@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import copy
-import logging
 import time
+
+from loguru import logger
 
 from foretoken.arguments import DeleteCommand, DeployCommand, StopCommand
 from foretoken.deployment.instances import resolve_deployment_target
@@ -19,8 +20,6 @@ from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 from foretoken.kubernetes.documents import encode_resources
 from foretoken.processes.execution import CommandExecution
 from foretoken.profiling import ProfileRun
-
-logger = logging.getLogger(__name__)
 
 
 def deploy(command: DeployCommand) -> None:
@@ -53,7 +52,7 @@ def delete(command: DeleteCommand) -> None:
         deployment = resolve_deployment_target(
             command.target, kubectl, name=command.name, allow_missing=True, missing_instance_ok=True,
         )
-        logger.info("Deleting deployment instance %s", deployment.name)
+        logger.info("Deleting deployment instance {}", deployment.name)
         DeploymentLifecycle(kubectl).delete(deployment, command.timeout)
         logger.info("Foretoken deployment deleted")
 
@@ -76,7 +75,7 @@ def stop(command: StopCommand) -> None:
 
         def report(elapsed: float, progress: ResourceProgress) -> None:
             logger.info(
-                "[%6.1fs] %s: %s — %s", elapsed, progress.resource.display_name,
+                "[{:6.1f}s] {}: {} — {}", elapsed, progress.resource.display_name,
                 progress.state, progress.detail or progress.reason,
             )
 

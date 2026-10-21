@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
+
+from loguru import logger
 
 from foretoken.arguments import EndpointCommand
 from foretoken.deployment.instances import DeploymentInstance, resolve_deployment_target
@@ -17,8 +18,6 @@ from foretoken.deployment.manifest import DEPLOYMENT_UID_LABEL, ForetokenDeploym
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
 from foretoken.processes.execution import CommandExecution
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

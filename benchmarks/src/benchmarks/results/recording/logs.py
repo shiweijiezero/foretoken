@@ -1,85 +1,106 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Retain nested run diagnostics without making file capture own terminal rendering."""
+"""Retain nested run diagnostics while Loguru owns formatting and terminal delivery."""
 
 from __future__ import annotations
 
-import logging
 import sys
 from collections.abc import Iterator
-from contextlib import (
-    ExitStack,
-    closing,
-    contextmanager,
-    redirect_stderr,
-    redirect_stdout,
-)
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from io import TextIOBase
 from pathlib import Path
+from threading import RLock
 from typing import TextIO
 
-from tqdm.contrib.logging import logging_redirect_tqdm
+from foretoken.diagnostics import console_output_enabled, quiet_console
+from loguru import logger
+
+
+class _RunLogFile:
+    """Share one transcript between Loguru and raw output, deferring I/O errors until cleanup."""
+
+    def __init__(self, path: Path) -> None:
+        """Open the scope-owned transcript and share its write lock with raw output."""
+        self.path = path
+        self.stream = path.open("a", encoding="utf-8")
+        self.failure: OSError | None = None
+        self._lock = RLock()
+
+    def write(self, text: str) -> int:
+        """Keep other destinations writable after this file fails, retaining the first failure."""
+        with self._lock:
+            if self.failure is None:
+                try:
+                    self.stream.write(text)
+                except OSError as error:
+                    self.failure = error
+        return len(text)
+
+    def flush(self) -> None:
+        """Retain a flush failure for the scope owner while other destinations keep recording."""
+        with self._lock:
+            if self.failure is None:
+                try:
+                    self.stream.flush()
+                except OSError as error:
+                    self.failure = error
+
+    def close(self) -> None:
+        """Release the file after its sink is removed without replacing an active run failure."""
+        with self._lock:
+            try:
+                self.stream.close()
+            except OSError as error:
+                self.failure = self.failure or error
 
 
 @contextmanager
 def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
-    """Attach run files to standard logging and retain raw output in enclosing runs.
+    """Attach one result scope's sink and retain raw output in enclosing runs.
 
-    Logging handlers retain severity and tracebacks. Raw framework output is
-    captured separately; only the outer run replaces the Python streams.
+    Detach and close the file before reporting an I/O failure. An active
+    benchmark exception keeps precedence over a failure recording its logs.
     """
-    root = logging.getLogger()
-    root_level = root.level
-    diagnostics = logging.getLogger("benchmarks.results.output")
-    diagnostics_level = diagnostics.level
     enclosing = sys.stdout if isinstance(sys.stdout, _RunLogStream) else None
     stream = enclosing.owner if enclosing is not None else _RunLogStream(sys.stdout)
-    # Non-propagating framework loggers keep their own console configuration.
-    # Attach the file at their boundary rather than duplicating propagated records.
-    loggers = [root] + [
-        logger for logger in list(root.manager.loggerDict.values())
-        if isinstance(logger, logging.Logger) and not logger.propagate
-    ]
-    with closing(logging.FileHandler(Path(directory) / "run.log", encoding="utf-8")) as log:
-        log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
-        stream.logs.append(log)
-        stream.quiet_scopes.append(quiet)
-        for logger in loggers:
-            logger.addHandler(log)
+    log = _RunLogFile(Path(directory) / "run.log")
+    sink = logger.add(
+        log, level="DEBUG",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} {level} [{name}] {message}",
+        colorize=False, backtrace=False, diagnose=False, enqueue=False, catch=False,
+    )
+    stream.logs.append(log)
+    primary_error = None
+    try:
+        with quiet_console(quiet), ExitStack() as contexts:
+            if enclosing is None:
+                contexts.enter_context(redirect_stdout(stream))
+                contexts.enter_context(redirect_stderr(_RunLogStream(sys.stderr, owner=stream)))
+            yield
+    except BaseException as error:
+        primary_error = error
+        raise
+    finally:
         try:
-            root.setLevel(min(root_level, logging.INFO))
-            diagnostics.setLevel(logging.DEBUG)
-            with ExitStack() as contexts:
-                if enclosing is None:
-                    console_loggers = [logger for logger in loggers if any(
-                        isinstance(handler, logging.StreamHandler)
-                        and not isinstance(handler, logging.FileHandler)
-                        and handler.stream in (sys.stdout, sys.stderr)
-                        for handler in logger.handlers
-                    )]
-                    contexts.enter_context(logging_redirect_tqdm(loggers=console_loggers))
-                handlers = {
-                    handler: handler.level
-                    for logger in loggers for handler in logger.handlers
-                    if isinstance(handler, logging.StreamHandler)
-                    and not isinstance(handler, logging.FileHandler)
-                }
-                for handler, level in handlers.items():
-                    handler.setLevel(max(level, logging.ERROR if any(stream.quiet_scopes) else logging.INFO))
-                    contexts.callback(handler.setLevel, level)
-                if enclosing is None:
-                    contexts.enter_context(redirect_stdout(stream))
-                    contexts.enter_context(redirect_stderr(_RunLogStream(sys.stderr, owner=stream)))
-                yield
-        finally:
             stream.flush()
-            for logger in loggers:
-                logger.removeHandler(log)
-            stream.logs.remove(log)
-            stream.quiet_scopes.pop()
-            root.setLevel(root_level)
-            diagnostics.setLevel(diagnostics_level)
+        except OSError as flush_error:
+            log.failure = log.failure or flush_error
+        finally:
+            try:
+                logger.remove(sink)
+            finally:
+                stream.logs.remove(log)
+                log.close()
+        if log.failure is not None:
+            if primary_error is None:
+                log.failure.add_note(f"Run log: {log.path}")
+                raise log.failure
+            primary_error.add_note(f"Run log {log.path}: {log.failure}")
+            try:
+                logger.opt(exception=log.failure).warning("Could not retain run diagnostics in {}", log.path)
+            except OSError:
+                pass  # A failed terminal must not replace the active benchmark exception.
 
 
 def terminal_stream(stream: TextIO) -> TextIO:
@@ -96,44 +117,39 @@ def print_result_location(message: str) -> None:
 
 
 class _RunLogStream(TextIOBase):
-    """Retain raw framework text while standard handlers own structured log records."""
+    """Retain raw framework text separately from Loguru records and terminal progress."""
 
     def __init__(self, console: TextIO, *, owner: _RunLogStream | None = None) -> None:
         self.console = console
         self.owner = owner or self
         if owner is None:
-            self.logs: list[logging.FileHandler] = []
-            self.quiet_scopes: list[bool] = []
+            self.logs: list[_RunLogFile] = []
 
     def retain(self, text: str) -> None:
-        """Serialize raw writes with each file handler's ordinary logging writes."""
-        for handler in self.owner.logs:
-            handler.acquire()
-            try:
-                handler.stream.write(text)
-                handler.flush()
-            finally:
-                handler.release()
+        """Write to every active transcript, even when another destination has failed."""
+        for log in self.owner.logs:
+            log.write(text)
+            log.flush()
 
     def write(self, text: str) -> int:
-        """Retain raw output and forward it unless the active result scope is quiet."""
+        """Retain raw output, forwarding it only while the application console is enabled."""
         self.retain(text)
-        if not any(self.owner.quiet_scopes):
+        if console_output_enabled():
             self.console.write(text)
         return len(text)
 
     def flush(self) -> None:
-        """Flush retained files and terminal output before result publication or cleanup."""
-        for handler in self.owner.logs:
-            handler.flush()
+        """Flush active transcripts and their borrowed console before capture finalization."""
+        for log in self.owner.logs:
+            log.flush()
         self.console.flush()
 
     def fileno(self) -> int:
-        """Let native diagnostic writers target the current run rather than the caller's pipe."""
+        """Direct native diagnostics to the current run instead of the caller's output pipe."""
         if self.owner.logs:
             return self.owner.logs[-1].stream.fileno()
         return self.console.fileno()
 
     def isatty(self) -> bool:
-        """Keep raw framework progress escape sequences out of retained transcripts."""
+        """Keep framework cursor updates out of retained transcripts."""
         return False

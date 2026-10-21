@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -22,8 +21,7 @@ from datasets import (
 from foretoken.downloads.sources import select_huggingface_endpoint
 from huggingface_hub import hf_hub_download, parse_hf_uri, snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 # Remote tokenizers download only files needed for tokenization and decoding.
 _TOKENIZER_ALLOW_PATTERNS = (
@@ -119,7 +117,7 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
         raise ValueError(f"Unsupported model source: {source!r}")
     local_model = find_local_tokenizer_path(tokenizer_path)
     if local_model:
-        logger.info("Using local tokenizer for Hugging Face repo %r", tokenizer_path)
+        logger.info("Using local tokenizer for Hugging Face repo {!r}", tokenizer_path)
         return local_model
     cache_dir = _configured_hub_cache_dir()
     download_args: dict[str, Any] = {
@@ -133,7 +131,7 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
         download_args["cache_dir"] = cache_dir
     try:
         local = snapshot_download(**download_args)
-        logger.info("Using cached tokenizer for Hugging Face repo %r", tokenizer_path)
+        logger.info("Using cached tokenizer for Hugging Face repo {!r}", tokenizer_path)
         return local
     except LocalEntryNotFoundError:
         pass
@@ -146,7 +144,7 @@ def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
         download_args["endpoint"] = endpoint
     download_args["local_files_only"] = False
     logger.info(
-        "Resolving tokenizer from Hugging Face repo %r%s%s",
+        "Resolving tokenizer from Hugging Face repo {!r}{}{}",
         tokenizer_path,
         f" into {cache_dir!r}" if cache_dir else "",
         f" via {endpoint}" if endpoint else "",

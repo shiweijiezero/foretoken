@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
+
+from loguru import logger
 
 from foretoken.arguments import StatusCommand
 from foretoken.deployment.instances import (
@@ -26,8 +27,6 @@ from foretoken.kubernetes.client import (
     resource_ref,
     timeout_seconds,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -319,7 +318,7 @@ def report_progress(elapsed: float, progress: ResourceProgress) -> None:
     """Report a changed service state for deployment waits and status watches."""
     suffix = f" — {progress.detail}" if progress.detail else ""
     logger.info(
-        "[%6.1fs] %-48s %s%s",
+        "[{:6.1f}s] {:<48} {}{}",
         elapsed, progress.resource.display_name, progress.state, suffix,
     )
 

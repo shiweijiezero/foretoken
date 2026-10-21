@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import itertools
-import logging
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -15,6 +14,8 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar
+
+from loguru import logger
 
 from benchmarks.datasets.rows import iter_jsonl_rows
 from benchmarks.results.measurements.sweeps import summarize_sweep, write_sweep_csv
@@ -29,7 +30,6 @@ from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.recording import WandbSink
 
-logger = logging.getLogger(__name__)
 ConfigT = TypeVar("ConfigT")
 SweepPoint = dict[str, object]
 _BENCHMARK_NAME = "_benchmark_name"
@@ -187,7 +187,7 @@ def run_sweep(
             artifacts["sweep_summary_csv"] = write_sweep_csv(summary, experiment_dir)
             if finished:
                 log = logger.info if status == "completed" else logger.error
-                log("Sweep %s: completed=%s/%s, failed=%s, interrupted=%s, pending=%s",
+                log("Sweep {}: completed={}/{}, failed={}, interrupted={}, pending={}",
                     status, counts["completed"], len(all_points), counts["failed"], counts["interrupted"], counts["pending"])
             return totals
 
@@ -195,14 +195,14 @@ def run_sweep(
         try:
             for point in all_points:
                 if point.get("reused"):
-                    logger.info("Reusing completed sweep task: %s/run=%s", point["combination"], point["run_number"])
+                    logger.info("Reusing completed sweep task: {}/run={}", point["combination"], point["run_number"])
                     continue
                 point_config = prepared[point["combination"]][1]
                 point_config = replace(point_config, outputs=point_config.outputs.for_child_run())
                 run_dir = root / point["combination"] / f"run={point['run_number']}"
                 point.update(status="running", exit_code=None)
                 checkpoint()
-                logger.info("Sweep %s run=%s/%s", point["combination"], point["run_number"] + 1, definition.num_runs)
+                logger.info("Sweep {} run={}/{}", point["combination"], point["run_number"] + 1, definition.num_runs)
                 try:
                     result = run_task(run_dir, partial(
                         adapter.execute_point, point_config, output_dir=str(run_dir), label=point["label"],

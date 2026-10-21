@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from foretoken.diagnostics import configure_logging
+
 from benchmarks.results.recording.database import read_record
 
 PROGRESS_FILENAME = "evaluation_progress.json"
@@ -34,6 +36,7 @@ class EvaluationProgress:
 
 def main() -> None:
     """Receive an invocation through stdin and run only the selected framework."""
+    configure_logging(full_tracebacks=True)
     invocation = json.load(sys.stdin)
     if invocation["resume"]:
         _restore_evaluation_progress(

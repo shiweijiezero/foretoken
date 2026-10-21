@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -15,14 +14,13 @@ from typing import Any
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef
+from loguru import logger
 
 from benchmarks.results.measurements.timeseries import ELAPSED_TIME
 from benchmarks.results.observations.environment import (
     OBSERVATION_TIMEOUT_SECONDS,
     ApplicationSources,
 )
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS = 1.0
 
@@ -130,12 +128,12 @@ class KubernetesReplicaObserver:
         self._sample(deadline=deadline)
         if self._errors:
             logger.warning(
-                "Replica observation skipped %d Kubernetes reads; last error: %s",
+                "Replica observation skipped {} Kubernetes reads; last error: {}",
                 self._errors, self._last_error,
             )
         if not self._observations:
             logger.warning(
-                "No current replica status was available for %s",
+                "No current replica status was available for {}",
                 ", ".join(
                     f"ModelService/{resource.name}" for resource in self._resources
                 ),
@@ -433,7 +431,7 @@ class KubernetesReplicaObserver:
         complete = duration > 0 and abs(covered - duration) < 1e-6
         if self._gpu_failures:
             logger.warning(
-                "GPU allocation observation skipped %d Kubernetes reads; last error: %s",
+                "GPU allocation observation skipped {} Kubernetes reads; last error: {}",
                 len(self._gpu_failures), self._last_gpu_error,
             )
         return {

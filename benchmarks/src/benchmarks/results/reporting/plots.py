@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
-from benchmarks.results.types import BenchmarkRun
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from benchmarks.results.types import BenchmarkRun
 
 
 class PlotSink:
@@ -29,7 +28,7 @@ class PlotSink:
 
         render_results(self.directory)
         run.artifacts["plots"] = self.directory / "plots"
-        logger.info("Plots saved: %s", run.artifacts["plots"])
+        logger.info("Plots saved: {}", run.artifacts["plots"])
 
     def close(self, *, exit_code: int = 0) -> None:
         return None

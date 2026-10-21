@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import shlex
 import sys
 import time
@@ -30,11 +29,10 @@ from foretoken.processes.execution import (
     cleanup_commands,
     run_command,
 )
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
 from benchmarks.profiling import CaptureCleanupError
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -205,7 +203,7 @@ class ModelServiceResolver:
         try:
             with execution:
                 if temporary:
-                    logger.info("Deploying Foretoken instance %s from %s", deployment.name, source.kustomize_path)
+                    logger.info("Deploying Foretoken instance {} from {}", deployment.name, source.kustomize_path)
                     deployment = lifecycle.apply(deployment, source.wait_timeout)
                 service = _discover_model_service(
                     deployment, kubectl, source, allow_multiple_models=allow_multiple_models
@@ -215,14 +213,14 @@ class ModelServiceResolver:
         except CaptureCleanupError:
             # Keep participants alive until the controller confirms stop and export.
             logger.error(
-                "Capture cleanup is unconfirmed; retaining deployment instance %s for inspection",
+                "Capture cleanup is unconfirmed; retaining deployment instance {} for inspection",
                 deployment.name,
             )
             temporary = False
             raise
         finally:
             if temporary:
-                logger.info("Cleaning up Foretoken deployment instance %s", deployment.name)
+                logger.info("Cleaning up Foretoken deployment instance {}", deployment.name)
                 with cleanup_commands(timeout=timeout_seconds(source.wait_timeout)):
                     lifecycle.cleanup_temporary(
                         deployment, source.wait_timeout,

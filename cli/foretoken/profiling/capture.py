@@ -6,17 +6,16 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from typing import Any, Literal
+
+from loguru import logger
 
 from foretoken.arguments import ProfileCommand
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-
-logger = logging.getLogger(__name__)
 
 
 class ProfileRun:
@@ -79,7 +78,7 @@ class ProfileRun:
             input_text=json.dumps(resource),
         ).stdout)
         self.name, self.uid = created["metadata"]["name"], created["metadata"]["uid"]
-        logger.info("ProfileRun %s/%s", self.namespace, self.name)
+        logger.info("ProfileRun {}/{}", self.namespace, self.name)
         logger.info("View captures: foretoken profile view")
 
     def observe(self) -> dict[str, Any]:
@@ -93,7 +92,7 @@ class ProfileRun:
         self.status = run.get("status", {})
         progress = (self.status.get("phase", "Pending"), self.status.get("message", ""))
         if progress != self._previous:
-            logger.info("%s", f"{progress[0]}: {progress[1]}".rstrip(": "))
+            logger.info("{}", f"{progress[0]}: {progress[1]}".rstrip(": "))
             self._previous = progress
         return self.status
 
@@ -109,7 +108,7 @@ class ProfileRun:
             "patch", "profilerun", self.name, "-n", self.namespace,
             "--type=json", "-p", json.dumps(patch), "--request-timeout=20s",
         ])
-        logger.info("%s requested for ProfileRun %s/%s.", action, self.namespace, self.name)
+        logger.info("{} requested for ProfileRun {}/{}.", action, self.namespace, self.name)
 
     def cancel(self) -> None:
         """Request cancellation during caller cleanup without hiding the original failure."""
@@ -117,7 +116,7 @@ class ProfileRun:
             self.request("Cancel")
         except DeploymentError as error:
             logger.warning(
-                "Could not submit cancellation: %s. Runtime deadlines remain active.", error,
+                "Could not submit cancellation: {}. Runtime deadlines remain active.", error,
             )
 
     def wait(self, *, require_success: bool = True) -> None:

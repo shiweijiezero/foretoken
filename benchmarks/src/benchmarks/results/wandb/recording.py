@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from loguru import logger
 
 from benchmarks.results.recording.database import write_records
 from benchmarks.results.recording.logs import print_result_location
@@ -21,7 +21,6 @@ from benchmarks.results.types import BenchmarkRun, ResultConfiguration, _WandbPu
 from benchmarks.results.wandb.axes import define_axis_metrics
 from benchmarks.results.wandb.sync import start_sync
 
-logger = logging.getLogger(__name__)
 _SYSTEM_STATS_INTERVAL_S = 1.0
 
 
@@ -88,13 +87,13 @@ class WandbSink:
             }
             write_records(Path(self.execution_dir), {"wandb.json": identity})
             print_result_location(f"Results: {self.execution_dir}")
-            logger.info("W&B local recording: %s", directory)
+            logger.info("W&B local recording: {}", directory)
             if requested_mode not in {"offline", "dryrun"}:
                 try:
                     self._sync = start_sync(Path(self.execution_dir), directory)
                     print_result_location(f"W&B background upload log: {Path(self.execution_dir) / 'wandb-sync.log'}")
                 except OSError as error:
-                    logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
+                    logger.error("W&B live sync could not start: {}; local run retained at {}", error, directory)
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Bind live fields to their domain axis and queue them through the owned run."""

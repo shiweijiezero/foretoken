@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import select
 import shlex
@@ -15,10 +14,9 @@ import sys
 from pathlib import Path
 
 from foretoken.diagnostics import configure_logging
+from loguru import logger
 
 from benchmarks.results.recording.locks import publication_lock
-
-logger = logging.getLogger(__name__)
 
 
 def start_sync(directory: Path, native: Path) -> subprocess.Popen[bytes]:
@@ -57,7 +55,7 @@ def synchronize(directory: Path, native: Path) -> int:
     try:
         sync_publication(directory, native_synced=True)
     except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
-        logger.error("W&B publication failed: %s. Resume with: %s", error, retry)
+        logger.error("W&B publication failed: {}. Resume with: {}", error, retry)
         return 1
     return 0
 
@@ -70,7 +68,7 @@ def _synchronize(directory: Path, retry: str) -> int:
             stdin=subprocess.DEVNULL,
         )
     except OSError as error:
-        logger.error("W&B sync could not start: %s. Resume with: %s", error, retry)
+        logger.error("W&B sync could not start: {}. Resume with: {}", error, retry)
         return 1
     with process:
         try:
@@ -83,11 +81,11 @@ def _synchronize(directory: Path, retry: str) -> int:
                     try:
                         process.wait(timeout=600)
                     except subprocess.TimeoutExpired:
-                        logger.warning("W&B sync is still pending. Resume with: %s", retry)
+                        logger.warning("W&B sync is still pending. Resume with: {}", retry)
                         return 1
                     break
             if process.returncode:
-                logger.error("W&B sync stopped. Resume with: %s", retry)
+                logger.error("W&B sync stopped. Resume with: {}", retry)
             return process.returncode
         finally:
             if process.poll() is None:

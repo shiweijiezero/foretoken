@@ -5,12 +5,11 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from benchmarks.results.types import BenchmarkRun
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from benchmarks.results.types import BenchmarkRun
 
 
 class LocalDirectorySink:
@@ -23,7 +22,7 @@ class LocalDirectorySink:
         return None
 
     def publish(self, run: BenchmarkRun) -> None:
-        logger.info("Results saved: %s", self.output_dir)
+        logger.info("Results saved: {}", self.output_dir)
 
     def close(self, *, exit_code: int = 0) -> None:
         return None

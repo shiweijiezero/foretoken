@@ -6,15 +6,13 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sqlite3
 from collections.abc import Sequence
 from contextlib import ExitStack
 from pathlib import Path
 
 from foretoken.diagnostics import configure_logging
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -96,7 +94,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (OSError, sqlite3.Error, ValueError) as error:
         if not options.sync_wandb:
             raise SystemExit(str(error)) from error
-        logger.error("Figure export failed: %s; synchronizing saved results", error)
+        logger.error("Figure export failed: {}; synchronizing saved results", error)
         errors.append(error)
     if options.sync_wandb:
         try:

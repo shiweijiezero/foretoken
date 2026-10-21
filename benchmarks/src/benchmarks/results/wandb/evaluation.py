@@ -5,15 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from urllib.parse import quote
 
 import wandb
+from loguru import logger
 
 from benchmarks.results.types import BenchmarkRun
-
-logger = logging.getLogger(__name__)
 
 
 def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
@@ -57,7 +55,7 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     summary["Evaluation/Execution"] = run.metrics["execution"]
     session.summary.update(summary)
     if session.url:
-        logger.info("W&B results: %s", session.url)
+        logger.info("W&B results: {}", session.url)
 
 
 def publish_evaluation_comparison_wandb(session: Any, run: BenchmarkRun) -> None:

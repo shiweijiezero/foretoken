@@ -115,7 +115,7 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
-Python modules emit diagnostics through a named `logger = logging.getLogger(__name__)`; application entry points configure handlers and formatting. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Report an error at the boundary that can act on it, preserving its cause for recorded logs rather than printing it again at every layer.
+CLI and benchmark modules use `from loguru import logger` for diagnostics. Application entry points configure sinks and bridge third-party `logging` records; inference-engine adapters retain their native logging, and standalone image scripts use the logging facilities available in their runtime. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Preserve exception causes for recorded logs, disable diagnostic local-variable dumps, and report each failure at the boundary that can act on it.
 
 - Rust data plane: run `make verify-data-plane`. It checks formatting and compiles all workspace targets with Clippy.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.

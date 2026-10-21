@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import wandb
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig
 from benchmarks.results.plots.export import render_results
@@ -30,8 +30,6 @@ from benchmarks.results.recording.recovery import (
 from benchmarks.results.recording.tasks import completed_measurement, task_source
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.results.wandb.publication import publish_saved_wandb, sync_publication
-
-logger = logging.getLogger(__name__)
 
 
 def recover_results(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
@@ -74,7 +72,7 @@ def recover_publication(directory: Path, outputs: BenchmarkOutputConfig) -> Benc
                 publication_pending=mode in {"offline", "dryrun"}, recovered_at=datetime.now(UTC).isoformat(),
             )
             write_records(directory, {"publication.json": publication})
-        logger.info("Recovered saved results without measurement: %s", directory)
+        logger.info("Recovered saved results without measurement: {}", directory)
         return run
 
 
