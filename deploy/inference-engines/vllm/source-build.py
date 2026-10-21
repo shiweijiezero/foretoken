@@ -474,7 +474,7 @@ def prepare_metadata(
                     if origin is None or json.loads(origin)["url"] != requirement.url:
                         raise RuntimeError(
                             f"{requirement.name} is supplied by the runtime image; "
-                            "a different accelerator package source requires a matching base image"
+                            "a different runtime dependency source requires a matching base image"
                         )
                     # Keep the installed wheel; resolve any requested extras against its pinned version.
                     if not requirement.extras:
