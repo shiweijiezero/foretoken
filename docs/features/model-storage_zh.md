@@ -5,13 +5,7 @@
 
 [English](model-storage.md)
 
-快速开始使用平台已准备的默认存储；平台尚未配置默认存储时，可[申请动态卷](#使用动态存储)。已有默认存储时，`cache.yaml` 保持以下配置：
-
-```yaml
-spec: {}
-```
-
-然后正常部署：
+快速开始使用平台已准备的默认存储；平台尚未配置默认存储时，可[申请动态卷](#使用动态存储)。
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -31,24 +25,30 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 ## 选择目录
 
-需要其他目录时，在 `cache.yaml` 的 `directory` 中选择管理员已授权的路径：
+需要其他目录时，在部署目录创建 `cache.yaml`，将 `directory` 换成管理员已授权的路径：
 
 ```yaml
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
 spec:
   directory: /srv/shared/foretoken-data
 ```
+
+将 `cache.yaml` 加入同目录 `kustomization.yaml` 已有的 `resources` 列表。若实例已有 RuntimeCache，且要更换目录或卷，先用 `foretoken delete` 删除该实例。然后用新存储配置执行 `foretoken deploy`。
 
 相对路径以 Kustomize 目录为基准；在 Git worktree 中，指向该 checkout 的 `data/` 的相对路径会使用主 checkout 的 `data/`。显式绝对路径保持原来的目标。
 
 本机 k3d 在 CLI 创建集群时准备仓库数据目录的挂载，操作见 [k3d 指南](../deployment/k3d_zh.md)。远程集群中，运行服务的节点必须能访问所选目录；跨节点共享应使用共享文件系统。指定 `directory` 就表示使用该目录，不会被静默替换为另一张独立动态卷。
 
-已绑定的 RuntimeCache 更换目录时，需要使用新的 RuntimeCache 名称。自备模型需要迁移时，另行移动或复制其文件。
+自备模型需要迁移时，另行移动或复制其文件。
 
 ## 跨命名空间复用模型文件
 
 管理员在安装平台时授权共享目录。从仓库根目录安装时，命令可以发现 CLI 主机与集群节点都能访问的默认 NFS `data/`；本机 k3d 则复用已有的目录绑定挂载。
 
-成员保留默认 `cache.yaml` 即可部署，需要其他已授权目录时才设置 `directory`。某个实例首次需要存储时，平台会准备所在命名空间的绑定，成员无需填写 PVC 名称或取得集群级存储权限。[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)由管理员另外分配。
+成员可以直接使用平台默认存储，需要其他已授权目录时再[选择目录](#选择目录)。某个实例首次需要存储时，平台会准备所在命名空间的绑定，成员无需填写 PVC 名称或取得集群级存储权限。[命名空间服务权限](../../cli/README_zh.md#为成员准备命名空间)由管理员另外分配。
 
 CLI 主机无法直接读取共享挂载时，管理员也可以用已有的 NFS `ReadWriteMany` 卷提供目录。将下面的配置保存到 `deploy/member-storage.yaml`，目录和源 PVC 换成实际选择：
 
@@ -96,13 +96,19 @@ model-server 和 frontend 会在 `data/models` 下解析该标识。只有 token
 
 ## 使用动态存储
 
-需要独立存储时，在 `cache.yaml` 中设置 `initialSize`，替代平台默认存储；若已有 `directory`，先移除它：
+需要通过 StorageClass 申请独立卷时，在部署目录创建 `cache.yaml`：
 
 ```yaml
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
 spec:
   initialSize: 10Gi
   accessMode: ReadWriteOnce
 ```
+
+将 `cache.yaml` 加入同目录 `kustomization.yaml` 已有的 `resources` 列表。若实例已有 RuntimeCache，且要更换目录或卷，先用 `foretoken delete` 删除该实例。然后用新存储配置执行 `foretoken deploy`。
 
 这会通过默认 StorageClass 申请单节点可写卷。跨节点访问时，使用 `ReadWriteMany`，并选择支持该模式的存储类。需要指定其他存储类时添加 `storageClassName`；存储驱动支持在线扩容时，才设置 `maxSize`。分别申请的动态卷不会仅因为 StorageClass 相同就共用文件。
 

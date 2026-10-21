@@ -87,17 +87,7 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. Deploy and update code
 
-Keep `spec: {}` in the Quick Start's `cache.yaml` when the platform has prepared shared model storage. Custom `directory` paths must be accessible to the target nodes and [authorized by the administrator](../features/model-storage.md#share-model-files-across-namespaces). Use a shared filesystem for multi-node access.
-
-If no default model storage is prepared, or you want a separate volume allocated by a StorageClass, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
-
-```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteOnce
-```
-
-This uses the default StorageClass for a single-node volume. Choose `ReadWriteMany` when the driver supports multi-node access, or add `storageClassName` to select another class. See [Model storage](../features/model-storage.md) for sharing and retention.
+Use the platform's default model storage when it is configured. If none is prepared, or you want a separate volume, [request dynamic storage](../features/model-storage.md#use-dynamic-storage). To use a different shared directory, [select an administrator-authorized path](../features/model-storage.md#choose-a-directory).
 
 Deploy and update code:
 

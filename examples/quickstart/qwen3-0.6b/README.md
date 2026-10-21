@@ -11,7 +11,7 @@ For prequantized weights or online quantization, see [Deploy a quantized model](
 
 This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. Models use the platform's default [data storage](../../../docs/features/model-storage.md), sharing downloads with the multi-model example while keeping runtime caches private to each instance.
 
-Configure the model, replica count, resources, parallelism, and [inference parameters](../../../docs/features/inference-parameters.md) in [`model.yaml`](model.yaml) (`ModelService`), the runtime cache in [`cache.yaml`](cache.yaml) (`RuntimeCache`), and the frontend in [`frontend.yaml`](frontend.yaml) (`FrontendService`). Foretoken creates the required Kubernetes workloads automatically.
+Configure the model, replica count, resources, parallelism, and [inference parameters](../../../docs/features/inference-parameters.md) in [`model.yaml`](model.yaml) (`ModelService`) and the frontend in [`frontend.yaml`](frontend.yaml) (`FrontendService`). Foretoken creates the required Kubernetes workloads automatically.
 
 ## Deploy
 

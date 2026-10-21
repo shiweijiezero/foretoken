@@ -147,6 +147,13 @@ func (v *deploymentValidation) reconcileQuickStart(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// This lifecycle scenario selects an explicit directory-backed cache.
+	resources = append(resources, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": inferencev1alpha1.GroupVersion.String(),
+		"kind":       "RuntimeCache",
+		"metadata":   map[string]any{"name": "models"},
+		"spec":       map[string]any{"directory": cacheDirectory},
+	}})
 	deployment := inferencev1alpha1.InferenceDeployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "InferenceDeployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "lifecycle", Namespace: modelNamespace},
@@ -159,11 +166,6 @@ func (v *deploymentValidation) reconcileQuickStart(ctx context.Context) error {
 		})
 		if resource.GetKind() == "ModelService" {
 			modelName = resource.GetName()
-		}
-		if resource.GetKind() == "RuntimeCache" {
-			if err := unstructured.SetNestedField(resource.Object, cacheDirectory, "spec", "directory"); err != nil {
-				return err
-			}
 		}
 	}
 	if modelName == "" {

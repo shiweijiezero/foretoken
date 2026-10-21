@@ -5,13 +5,7 @@
 
 [中文](model-storage_zh.md)
 
-The Quick Start uses the platform's prepared default storage. If none is configured, [request a volume](#use-dynamic-storage) instead. With default storage available, keep `cache.yaml` as:
-
-```yaml
-spec: {}
-```
-
-Deploy normally:
+The Quick Start uses the platform's prepared default storage. If none is configured, [request a volume](#use-dynamic-storage) instead.
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
@@ -31,24 +25,30 @@ Source-build caches are managed separately from model storage. See [Model source
 
 ## Choose a directory
 
-To use a different directory, set `directory` in `cache.yaml` to a path authorized by the platform administrator:
+To use a different directory, save the following as `cache.yaml` in your deployment directory, using a path authorized by the platform administrator:
 
 ```yaml
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
 spec:
   directory: /srv/shared/foretoken-data
 ```
+
+Add `cache.yaml` to the existing `resources` list in that directory's `kustomization.yaml`. If the instance already has a RuntimeCache and you are changing its directory or volume, delete the instance with `foretoken delete`. Then run `foretoken deploy` with the new storage configuration.
 
 Relative paths resolve from the Kustomize directory. In a Git worktree, a relative path to the checkout's `data/` uses the primary checkout's `data/`. Explicit absolute paths keep their selected location.
 
 For local k3d, the CLI prepares the repository data mount when creating the cluster. See the [k3d guide](../deployment/k3d.md). On a remote cluster, the selected directory must be available on the nodes that run its consumers; use a shared filesystem for multi-node access. A directory remains a directory selection rather than being replaced with an unrelated dynamically provisioned volume.
 
-Changing the directory of an already bound RuntimeCache requires a new RuntimeCache name. Move or copy user-maintained model files separately when changing their location.
+Move or copy user-maintained model files separately when changing their location.
 
 ## Share model files across namespaces
 
 An administrator authorizes shared directories when installing the platform. From the repository root, installation can discover the default `data/` on an NFS mount visible to both the CLI host and cluster nodes. Local k3d uses its existing data bind mount.
 
-Members keep the default `cache.yaml` unless they need another authorized directory. The platform prepares the namespace's storage binding when an instance first needs it; members do not need PVC names or cluster-wide storage permissions. Assign [namespace service permissions](../../cli/README.md#prepare-a-namespace-for-members) separately.
+Members deploy with the platform's default storage, or [select another authorized directory](#choose-a-directory) when needed. The platform prepares the namespace's storage binding when an instance first needs it; members do not need PVC names or cluster-wide storage permissions. Assign [namespace service permissions](../../cli/README.md#prepare-a-namespace-for-members) separately.
 
 When the CLI host cannot inspect the shared mount, the administrator can bind a directory selection to an existing NFS-backed `ReadWriteMany` claim. Save the following in `deploy/member-storage.yaml`, replacing the directory and source claim with the intended storage:
 
@@ -96,13 +96,19 @@ The model server and frontend resolve this identifier below `data/models`. A tok
 
 ## Use dynamic storage
 
-Set `initialSize` in `cache.yaml` to request a separate volume instead of using the platform default. Remove `directory` if it is set:
+To request a separate dynamically provisioned volume, save the following as `cache.yaml` in your deployment directory:
 
 ```yaml
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
 spec:
   initialSize: 10Gi
   accessMode: ReadWriteOnce
 ```
+
+Add `cache.yaml` to the existing `resources` list in that directory's `kustomization.yaml`. If the instance already has a RuntimeCache and you are changing its directory or volume, delete the instance with `foretoken delete`. Then run `foretoken deploy` with the new storage configuration.
 
 This requests a single-node writable volume from the default StorageClass. For multi-node access, use `ReadWriteMany` with a StorageClass that supports it. Add `storageClassName` to select another class, and `maxSize` only when its driver supports online expansion. Separate dynamically provisioned claims do not share files merely because they use the same StorageClass.
 

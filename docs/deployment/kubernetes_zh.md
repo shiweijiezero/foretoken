@@ -87,17 +87,7 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ## 3. 部署与更新代码
 
-平台已准备共享模型存储时，快速开始的 `cache.yaml` 保持 `spec: {}`。若通过 `directory` 选择其他目录，目标节点必须能访问该路径，并由[管理员授权](../features/model-storage_zh.md#跨命名空间复用模型文件)；跨节点访问使用共享文件系统。
-
-平台尚未准备默认模型存储，或需要通过 StorageClass 申请独立卷时，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
-
-```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteOnce
-```
-
-这会使用默认 StorageClass 申请单节点卷。驱动支持跨节点访问时，可选择 `ReadWriteMany`；需要其他存储类时添加 `storageClassName`。共享和保留行为见[模型存储](../features/model-storage_zh.md)。
+平台已准备默认模型存储时，直接部署即可。平台尚未准备存储，或需要独立卷时，先[配置动态存储](../features/model-storage_zh.md#使用动态存储)；需要其他共享目录时，按[选择目录](../features/model-storage_zh.md#选择目录)使用管理员已授权的路径。
 
 部署并更新代码：
 
