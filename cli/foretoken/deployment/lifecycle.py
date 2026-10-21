@@ -95,12 +95,14 @@ class DeploymentLifecycle:
                 source = EditableDeployment.discover(self.kubectl, timeout, editable, engine_sources)
                 assert source is not None
                 locks.enter_context(source.operation(timeout))
-                source.prepare(timeout)
-                deployment = source.apply(deployment, timeout)
+                source.prepare(deployment, timeout)
             revision = self.prepare_controller(
                 submission, deployment, timeout,
                 controller_source_revision=source.controller_source_revision if source is not None else "",
             )
+            if source is not None:
+                controller = self.kubectl.get("deployment", submission.instance.controller_name, deployment.namespace)
+                deployment = source.apply(deployment, controller)
             deployment = self._select_storage(deployment, submission.instance.access())
             objects = copy.deepcopy(deployment.objects)
             for obj in objects:

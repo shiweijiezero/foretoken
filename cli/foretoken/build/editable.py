@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -73,6 +73,18 @@ _APPLICATION_IMAGE_KEYS = {
     "frontend": "image",
     "model-server": "model_image",
 }
+
+
+def _executing_services(objects: Iterable[dict[str, Any]]) -> Iterator[tuple[dict[str, Any], str]]:
+    """Select first-party services requesting execution for source preparation and activation."""
+    for obj in objects:
+        component = SERVICE_COMPONENTS.get(obj.get("kind"))
+        if (
+            component is not None
+            and str(obj.get("apiVersion") or "").startswith("inference.foretoken.io/")
+            and service_requires_execution(obj)
+        ):
+            yield obj, component
 
 
 class EditableDeployment:
@@ -191,61 +203,64 @@ class EditableDeployment:
             if self.state is not None and self.state["build"]["images"] != previous_images:
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
-    def prepare(self, timeout: str) -> None:
-        """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
+    def prepare(self, deployment: ForetokenDeployment, timeout: str) -> None:
+        """Publish required applications before the instance selects its controller and service defaults."""
         with local_candidates(self.directory):
             self._prepare(timeout)
+            components = {"control-plane"}
+            components.update(
+                component for obj, component in _executing_services(deployment.objects)
+                if component != "model-server" or obj["spec"].get("backend") == "vllm"
+            )
+            self._publish_applications(components, timeout)
 
     def apply(
-        self, deployment: ForetokenDeployment, timeout: str
+        self, deployment: ForetokenDeployment, controller: dict[str, Any],
     ) -> ForetokenDeployment:
-        """Publish selected applications before submitting service and model-storage intent."""
+        """Select published applications against the instance controller's resolved defaults."""
+        manager = next(
+            container for container in controller["spec"]["template"]["spec"]["containers"]
+            if container["name"] == "manager"
+        )
+        arguments = dict(
+            argument.removeprefix("--").split("=", 1)
+            for argument in manager["args"] if "=" in argument
+        )
+        # The selected controller keeps its defaults even when another workstation
+        # updates the platform during this source operation.
+        controller_applications = {
+            "frontend": {
+                "applicationURL": arguments.get("frontend-application-url", ""),
+                "image": arguments["frontend-image"],
+            },
+            "model-server": {
+                "applicationURL": arguments.get("model-server-application-url", ""),
+                "image": arguments["inference-engine-image"],
+            },
+        }
         objects = copy.deepcopy(deployment.objects)
-        pending: set[str] = {"control-plane"}
-        services = []
-        for obj in objects:
-            component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            if component is None or not str(obj.get("apiVersion") or "").startswith(
-                "inference.foretoken.io/"
-            ):
-                continue
-            # Retain pending bundles until the service requests execution.
-            if not service_requires_execution(obj):
-                continue
+        for obj, component in _executing_services(objects):
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})
             annotations.pop(SOURCE_REVISION, None)
-            bundle = self.state["bundles"].get(
-                component, self.state["build"].get("applications", {}).get(component)
-            )
-            namespace = metadata.get("namespace") or deployment.namespace or "default"
             if component == "model-server" and obj["spec"].get("backend") != "vllm":
-                # Alternate backends keep their own platform image/profile, rather
-                # than receiving the standard vLLM application's environment.
+                # Alternate backends keep their platform image and application.
                 continue
-            current = self.kubectl.get_if_exists(
-                obj["kind"], metadata["name"], namespace
-            )
-            active = (
-                (current or {})
-                .get("metadata", {})
-                .get("annotations", {})
-                .get(SOURCE_REVISION, "")
-            )
-            if bundle is not None and active != bundle["revision"]:
-                pending.add(component)
-            services.append((obj, component, namespace, current, active))
-        if pending:
-            self._publish_applications(pending, timeout)
-
-        # Publication can reuse an earlier version. Select workloads only after the
-        # publisher has committed the actual application references.
-        for obj, component, namespace, current, active in services:
-            metadata = obj["metadata"]
+            namespace = metadata.get("namespace") or deployment.namespace or "default"
+            current = self.kubectl.get_if_exists(obj["kind"], metadata["name"], namespace)
+            active = (current or {}).get("metadata", {}).get("annotations", {}).get(SOURCE_REVISION, "")
             bundle = self.state["bundles"].get(
                 component, self.state["build"].get("applications", {}).get(component)
             )
             revision = bundle["revision"] if bundle is not None else ""
+            # Entering source development must not replace an unchanged default
+            # cohort. Existing source selections keep their explicit identity.
+            if (
+                revision and not active
+                and self.origin.reference(component, revision) == controller_applications[component]["applicationURL"]
+                and self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]] == controller_applications[component]["image"]
+            ):
+                revision = ""
             writers = (
                 self._ready_containers(namespace, component, metadata["name"], revision)
                 if current is not None
@@ -258,7 +273,7 @@ class EditableDeployment:
             # must not make a deployment finish before the selected runtime is serving.
             if active != revision or not ready:
                 self.selected[(obj["kind"], namespace, metadata["name"])] = revision
-            if bundle is not None:
+            if revision:
                 metadata["annotations"][SOURCE_REVISION] = revision
         return deployment.with_objects(objects)
 
@@ -676,8 +691,7 @@ class EditableDeployment:
                 default_revision = (
                     build.get("applications", {}).get(component, {}).get("revision")
                 )
-                # Matching the installed default needs no source override; adding one
-                # would change Pod annotations even though the application is unchanged.
+                # Store only differences from this checkout's completed build.
                 if published_revision == default_revision:
                     self.state["bundles"].pop(component)
                 else:
