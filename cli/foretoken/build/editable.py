@@ -27,7 +27,7 @@ from foretoken.applications.files import (
 )
 from foretoken.arguments import InstallCommand
 from foretoken.build.cluster.builder import registry_credentials
-from foretoken.build.cluster.compiler import CompilerWorkspace
+from foretoken.build.cluster.compiler import APPLICATION_PARTS, CompilerWorkspace
 from foretoken.build.cluster.images import image_tools_image, node_image_store
 from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
 from foretoken.build.inputs import (
@@ -66,11 +66,6 @@ from foretoken.network_sources import select_build_sources
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
 
-_APPLICATION_PARTS = {
-    "control-plane": ("go",),
-    "frontend": ("rust",),
-    "model-server": ("rust", "python", "engine"),
-}
 _APPLICATION_IMAGE_KEYS = {
     "control-plane": "control_plane_image",
     "frontend": "image",
@@ -517,7 +512,7 @@ class EditableDeployment:
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
             }
-            required = set(_APPLICATION_PARTS[component])
+            required = set(APPLICATION_PARTS[component])
             if not engines:
                 required.discard("engine")
             if parts < required and bundle["previous"]:
@@ -612,7 +607,7 @@ class EditableDeployment:
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
-            and "engine" in self.state["bundles"]["model-server"].get("parts", _APPLICATION_PARTS["model-server"])
+            and "engine" in self.state["bundles"]["model-server"].get("parts", APPLICATION_PARTS["model-server"])
         )
         compilers = {component: build["compilers"][component] for component in missing}
         if build_engine:
@@ -643,17 +638,18 @@ class EditableDeployment:
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision
                 payload = staging + "/payload"
-                parts = bundle.get("parts", _APPLICATION_PARTS[component])
+                parts = bundle.get("parts", APPLICATION_PARTS[component])
                 arguments = dict(build["arguments"])
                 if component == "model-server":
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
-                builder.export_application(component, payload, arguments, list(parts))
+                builder.compile_application(component, arguments, list(parts))
                 if component == "model-server" and build_engine:
-                    builder.export_engine(
-                        payload, build["arguments"],
+                    builder.compile_engine(
+                        compilers["engine"], build["arguments"],
                         cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
                         build_native=build["engine_native"],
                     )
+                builder.export_application(component, payload, engine=component == "model-server" and build_engine)
 
             # Each component owns its export directory. Join builds before validating
             # their shared source snapshot or allowing any publisher to consume them.
@@ -773,7 +769,7 @@ class EditableDeployment:
         tools_image = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
         with CompilerWorkspace(
             self.kubectl, namespace, claim, build["binding"], origin.node,
-            compilers, build["configuration"], timeout,
+            {name: image for name, image in compilers.items() if name != "engine"}, build["configuration"], timeout,
             tools_image=tools_image,
             execution_claim=execution["name"] if execution is not None else "",
             owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},

@@ -10,7 +10,7 @@ import json
 import os
 import time
 import uuid
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import Any, Self
 
@@ -24,6 +24,12 @@ from foretoken.build.cluster.transfer import synchronize_inputs
 from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
+
+APPLICATION_PARTS = {
+    "control-plane": ("go",),
+    "frontend": ("rust",),
+    "model-server": ("rust", "python", "engine"),
+}
 
 
 class CompilerWorkspace(AbstractContextManager):
@@ -58,40 +64,24 @@ class CompilerWorkspace(AbstractContextManager):
         self.workspace = self.execution_root + "/inputs"
         self.shared_mount = "/var/lib/foretoken/dependencies"
         self.artifact_container = "artifacts" if self.execution_claim != claim else "builder"
-        self.metadata: dict[str, Any] | None = None
+        self.engine_name = self.name + "-engine"
+        self._pods: dict[str, dict[str, Any] | None] = {}
 
     def __enter__(self) -> Self:
-        """Start isolated compiler containers after resolving their persistent local storage."""
+        """Start first-party compilers and initialize inputs and exports once for this operation."""
         self.cancellation.check()
-        shared = ensure_shared_build_cache(
+        self.shared_claim = ensure_shared_build_cache(
             self.kubectl, self.namespace, self.node, self.configuration, self.owner,
         )
-        isolated = False
+        self.artifacts_isolated = False
         if self.execution_claim != self.claim:
-            isolated = prepare_artifact_volume(
+            self.artifacts_isolated = prepare_artifact_volume(
                 self.kubectl, self.namespace, self.claim, self.binding, self.node,
                 self.tools_image, self.pull_secrets, self.timeout, self.cancellation,
             )
-        pod = self._pod(shared, isolated)
         self.cancellation.register(self.retire)
         try:
-            created = self.kubectl.run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(pod))
-            self.metadata = json.loads(created.stdout)["metadata"]
-            self.cancellation.check()
-            if self.credentials:
-                self.kubectl.run(["create", "-f", "-"], input_text=json.dumps({
-                    "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-                    "metadata": {
-                        "name": self.name, "namespace": self.namespace,
-                        "ownerReferences": [{"apiVersion": "v1", "kind": "Pod", "name": self.name, "uid": self.metadata["uid"]}],
-                    },
-                    "data": {".dockerconfigjson": base64.b64encode(json.dumps(self.credentials).encode()).decode()},
-                }))
-            deadline = time.monotonic() + timeout_seconds(self.timeout)
-            wait_for_object(
-                lambda: self.kubectl.get("pod", self.name, self.namespace, timeout=max(1.0, deadline - time.monotonic())),
-                self._ready, deadline, f"compiler {self.namespace}/{self.name}",
-            )
+            self._start_pod(self.name, self.images)
             self.run(["sh", "-ec", 'mkdir -p "$1"; rm -rf "$1/exports"; mkdir "$1/exports"', "prepare", self.execution_root])
             self.run(["sh", "-ec", 'mkdir -p "$1"; rm -rf "$1/output"; mkdir "$1/output"', "prepare", self.root], container=self.artifact_container)
             return self
@@ -110,8 +100,8 @@ class CompilerWorkspace(AbstractContextManager):
         """Capture a complete input tree separately from all mutable compiler workspaces."""
         synchronize_inputs(self.command, self.cancellation, self.workspace, self.execution_root + "/inputs.json", files, versions)
 
-    def export_application(self, component: str, destination: str, arguments: dict[str, str], parts: list[str] | None = None) -> None:
-        """Compile selected first-party parts through the image build entrypoint and deliver their export."""
+    def compile_application(self, component: str, arguments: dict[str, str], parts: list[str] | None = None) -> None:
+        """Compile first-party parts into this operation's private export, retaining other completed parts."""
         output = self.execution_root + "/exports/" + component
         environment = {key: value for key, value in arguments.items() if key in {
             "GOPROXY", "GOSUMDB", "FORETOKEN_GITHUB_MIRROR", "FORETOKEN_CARGO_REGISTRY",
@@ -132,16 +122,26 @@ class CompilerWorkspace(AbstractContextManager):
             "--workspace", self.execution_root + "/work/" + component + "/source",
             "--versions", self.execution_root + "/inputs.json",
         ]
-        defaults = ("go",) if component == "control-plane" else ("rust",) if component == "frontend" else ("rust", "python")
-        selected = [part for part in (parts if parts is not None else defaults) if part != "engine"]
+        selected = [part for part in (parts if parts is not None else APPLICATION_PARTS[component]) if part != "engine"]
         if not selected:
             self.run(["mkdir", "-p", output])
         else:
             self.run([*command, "--parts", *selected], container=component)
-        self._deliver_output(output, destination)
 
-    def export_engine(self, destination: str, arguments: dict[str, str], *, cache_id: str, build_native: bool) -> None:
-        """Compile engine files in the exact runtime's compiler image without changing its installed packages."""
+    def export_application(self, component: str, destination: str, *, engine: bool = False) -> None:
+        """Deliver completed component files and its optional engine overlay for publication."""
+        self._deliver_output(self.execution_root + "/exports/" + component, destination)
+        if engine:
+            exported = destination + "-engine"
+            self._deliver_output(self.execution_root + "/exports/engine", exported)
+            self.run([
+                "sh", "-ec", 'cp -R "$1/engine" "$2/"; cp "$1/engine-environment.json" "$2/"',
+                "assemble", exported, destination,
+            ], container=self.artifact_container)
+
+    def compile_engine(self, image: str, arguments: dict[str, str], *, cache_id: str, build_native: bool) -> None:
+        """Start the exact runtime's native compiler on the synchronized inputs and export its engine files."""
+        self._start_pod(self.engine_name, {"engine": image})
         output = self.execution_root + "/exports/engine"
         environment = {
             "CCACHE_DIR": self.shared_mount + "/ccache",
@@ -162,13 +162,11 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
             "--cache", self.execution_root + "/engine/" + cache_id, "--output", output,
             *(["--build-native"] if build_native else []),
         ], container="engine")
-        exported = destination + "-engine"
-        self._deliver_output(output, exported)
-        self.run(["sh", "-ec", 'cp -R "$1/engine" "$2/"; cp "$1/engine-environment.json" "$2/"', "assemble", exported, destination], container=self.artifact_container)
 
     def command(self, args: list[str], *, container: str = "builder") -> list[str]:
-        """Address only this operation's Pod for streamed inputs and compiler commands."""
-        return self.kubectl.command(["exec", "-i", "-n", self.namespace, self.name, "-c", container, "--", *args])
+        """Address this operation's first-party or engine Pod without changing publication identity."""
+        name = self.engine_name if container == "engine" else self.name
+        return self.kubectl.command(["exec", "-i", "-n", self.namespace, name, "-c", container, "--", *args])
 
     def run(self, args: list[str], *, container: str = "builder", capture: bool = False, input_text: str | None = None) -> str:
         """Run a compiler stage under the caller's cancellation scope with live diagnostics."""
@@ -176,24 +174,55 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
         if result.returncode:
             self.cancellation.check()
             detail = (result.stderr or result.stdout or "").strip()
-            raise DeploymentError(f"compiler {self.namespace}/{self.name} ({container}) failed: {detail or result.returncode}")
+            name = self.engine_name if container == "engine" else self.name
+            raise DeploymentError(f"compiler {self.namespace}/{name} ({container}) failed: {detail or result.returncode}")
         return result.stdout if capture else ""
 
     def retire(self) -> None:
-        """Delete and await this Pod's UID, leaving shared caches and workspace volumes intact."""
-        current = self.kubectl.get_if_exists("pod", self.name, self.namespace)
+        """Stop all operation-owned writers before releasing their private workspace."""
+        with ExitStack() as cleanup:
+            for name, metadata in tuple(self._pods.items()):
+                cleanup.callback(self._retire_pod, name, metadata)
+
+    def _start_pod(self, name: str, images: dict[str, str]) -> None:
+        """Start one owned compiler Pod without resetting synchronized inputs or active exports."""
+        self.cancellation.check()
+        pod = self._pod(name, images)
+        self._pods[name] = None
+        created = self.kubectl.run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(pod))
+        metadata = json.loads(created.stdout)["metadata"]
+        self._pods[name] = metadata
+        self.cancellation.check()
+        if self.credentials:
+            self.kubectl.run(["create", "-f", "-"], input_text=json.dumps({
+                "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
+                "metadata": {
+                    "name": name, "namespace": self.namespace,
+                    "ownerReferences": [{"apiVersion": "v1", "kind": "Pod", "name": name, "uid": metadata["uid"]}],
+                },
+                "data": {".dockerconfigjson": base64.b64encode(json.dumps(self.credentials).encode()).decode()},
+            }))
+        deadline = time.monotonic() + timeout_seconds(self.timeout)
+        wait_for_object(
+            lambda: self.kubectl.get("pod", name, self.namespace, timeout=max(1.0, deadline - time.monotonic())),
+            self._ready, deadline, f"compiler {self.namespace}/{name}",
+        )
+
+    def _retire_pod(self, name: str, observed: dict[str, Any] | None) -> None:
+        """Delete and await a created compiler UID, leaving its shared caches and volumes intact."""
+        current = self.kubectl.get_if_exists("pod", name, self.namespace)
         if current is None:
             return
         metadata = current["metadata"]
-        if self.metadata is not None:
-            if metadata["uid"] != self.metadata["uid"]:
+        if observed is not None:
+            if metadata["uid"] != observed["uid"]:
                 return
         elif not any(owner.get("uid") == self.owner["uid"] for owner in metadata.get("ownerReferences", [])):
             return
         try:
             self.kubectl.delete_object(current, self.timeout, match_version=False)
         except DeploymentError:
-            current = self.kubectl.get_if_exists("pod", self.name, self.namespace)
+            current = self.kubectl.get_if_exists("pod", name, self.namespace)
             if current is not None and current["metadata"]["uid"] == metadata["uid"]:
                 raise
             return
@@ -201,14 +230,15 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
     def _ready(self, pod: dict[str, Any]) -> bool:
         """Surface startup failures while container diagnostics remain available."""
         self.cancellation.check()
+        name = pod["metadata"]["name"]
         status = pod.get("status", {})
         for field in ("initContainerStatuses", "containerStatuses"):
             for container in status.get(field, []):
                 terminated = container.get("state", {}).get("terminated")
                 if terminated is not None and (field == "containerStatuses" or terminated["exitCode"]):
-                    raise DeploymentError(f"compiler {self.name}: {container['name']}: {terminated.get('message') or terminated['reason']}")
+                    raise DeploymentError(f"compiler {name}: {container['name']}: {terminated.get('message') or terminated['reason']}")
         if status.get("phase") in {"Failed", "Succeeded"}:
-            raise DeploymentError(f"compiler {self.name} stopped before becoming ready: {status.get('message') or status['phase']}")
+            raise DeploymentError(f"compiler {name} stopped before becoming ready: {status.get('message') or status['phase']}")
         return any(condition["type"] == "Ready" and condition["status"] == "True" for condition in status.get("conditions", []))
 
     def _deliver_output(self, source: str, destination: str) -> None:
@@ -219,12 +249,13 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
             "deliver", source, destination,
         ], container=self.artifact_container)
 
-    def _pod(self, shared: str, isolated: bool) -> dict[str, Any]:
-        """Project private execution, shared native caches and the existing artifact-storage boundary."""
+    def _pod(self, pod_name: str, images: dict[str, str]) -> dict[str, Any]:
+        """Project selected compilers onto the operation's private execution and shared dependency volumes."""
+        isolated = self.artifacts_isolated
         execution_volume = "execution" if self.execution_claim != self.claim else "artifacts"
         volumes = [
             {"name": "artifacts", "persistentVolumeClaim": {"claimName": self.claim}},
-            {"name": "dependencies", "persistentVolumeClaim": {"claimName": shared}},
+            {"name": "dependencies", "persistentVolumeClaim": {"claimName": self.shared_claim}},
             {"name": "home", "emptyDir": {}},
         ]
         if execution_volume == "execution":
@@ -245,7 +276,7 @@ exec "${FORETOKEN_VLLM_PYTHON:-python3}" /opt/foretoken-engine-build/source-buil
             "env": [{"name": "HOME", "value": "/home/foretoken"}, {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
             "securityContext": security, "volumeMounts": mounts,
             "terminationMessagePolicy": "FallbackToLogsOnError",
-        } for name, image in {"builder": self.tools_image, **self.images}.items()]
+        } for name, image in {"builder": self.tools_image, **images}.items()]
         if execution_volume == "execution":
             containers.append({
                 "name": "artifacts", "image": self.tools_image, "imagePullPolicy": "IfNotPresent",
@@ -282,13 +313,13 @@ done
         return {
             "apiVersion": "v1", "kind": "Pod",
             "metadata": {
-                "name": self.name, "namespace": self.namespace, "ownerReferences": [self.owner],
+                "name": pod_name, "namespace": self.namespace, "ownerReferences": [self.owner],
                 "labels": {SOURCE_BUILD_POD_LABEL: "true", SOURCE_BUILD_BINDING_LABEL: self.binding},
             },
             "spec": {
                 "restartPolicy": "Never", "automountServiceAccountToken": False,
                 "securityContext": {"seccompProfile": {"type": "RuntimeDefault"}},
-                "imagePullSecrets": [{"name": name} for name in (*self.pull_secrets, *((self.name,) if self.credentials else ()))],
+                "imagePullSecrets": [{"name": name} for name in (*self.pull_secrets, *((pod_name,) if self.credentials else ()))],
                 "affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{
                     "matchFields": [{"key": "metadata.name", "operator": "In", "values": [self.node]}],
                 }]}}},

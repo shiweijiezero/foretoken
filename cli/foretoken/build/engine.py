@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from foretoken.build.cluster.builder import ClusterBuilder
     from foretoken.build.environments import BuildEnvironments
 
 
@@ -96,8 +97,9 @@ def build_engine_environment(
     runtime_image: str,
     base_image: str,
     cache_prefix: str,
+    compiler_builder: ClusterBuilder,
 ) -> tuple[dict[str, Any], str]:
-    """Prepare the source runtime and native toolchain, returning runtime metadata and its compiler image."""
+    """Prepare each node's source runtime and the application origin's matching native toolchain."""
     engine_arguments = {
         key: value for key, value in engine_build_arguments(arguments).items()
         if key != "TARGET_CUDA_ARCH_LIST"
@@ -126,7 +128,7 @@ def build_engine_environment(
     compiler = environments.build(
         "compiler-engine", "deploy/inference-engines/vllm/source-build.Dockerfile",
         target="toolchain", arguments={**engine_arguments, "RUNTIME_IMAGE": runtime["image"]},
-        input_prefixes=prefixes,
+        input_prefixes=prefixes, execution_builder=compiler_builder,
     )
     return runtime, compiler["image"]
 

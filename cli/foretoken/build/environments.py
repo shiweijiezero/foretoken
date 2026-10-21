@@ -33,6 +33,7 @@ class BuildEnvironments:
         self.refresh = refresh
         self.records: dict[str, Any] = {}
         self._built: set[str] = set()
+        self._delivered: dict[str, set[str]] = {builder.node: set() for builder in builders}
 
     def build(
         self,
@@ -43,13 +44,15 @@ class BuildEnvironments:
         arguments: dict[str, str],
         input_prefixes: tuple[str, ...],
         node_arguments: dict[str, dict[str, str]] | None = None,
+        execution_builder: ClusterBuilder | None = None,
     ) -> dict[str, Any]:
-        """Build a dependency stage after its upstream images have completed on every node.
+        """Build and retain a stage on its execution node, or all runtime nodes when omitted.
 
         Source revisions identify local inputs; OCI descriptors identify selected
         image contents. BuildKit remains responsible for the stage's layer cache.
         Compiler-cache addresses are execution details, not environment inputs.
         """
+        builders = [execution_builder] if execution_builder is not None else self.builders
         inputs = {
             path: version
             for path, version in self.versions.items()
@@ -66,7 +69,7 @@ class BuildEnvironments:
             },
             "nodes": {},
         }
-        for builder in self.builders:
+        for builder in builders:
             overrides = (node_arguments or {}).get(builder.node, {})
             identity["nodes"]["" if self.push else builder.node] = {
                 "platform": builder.run(["uname", "-m"], capture=True).strip(),
@@ -80,31 +83,47 @@ class BuildEnvironments:
                 },
             }
         previous = self.previous.get(name, {})
-        if self.push and previous:
-            # A registry-backed origin can relocate without changing its image.
-            digest = next(iter(previous["digests"].values()))
-            previous = {**previous, "digests": {builder.node: digest for builder in self.builders}}
+        if previous:
+            if self.push:
+                # A registry-backed origin can relocate without changing its image.
+                digest = next(iter(previous["digests"].values()))
+                previous = {**previous, "digests": {builder.node: digest for builder in builders}}
+            # Retain matching image references when fewer nodes need this stage.
+            previous = {
+                **previous,
+                "identity": {
+                    **previous["identity"],
+                    "nodes": {
+                        node: value for node, value in previous["identity"]["nodes"].items()
+                        if node in identity["nodes"]
+                    },
+                },
+                "digests": {
+                    builder.node: previous["digests"][builder.node]
+                    for builder in builders if builder.node in previous["digests"]
+                },
+            }
         reusable = not self.refresh and previous.get("identity") == identity
-        if reusable and self._available(previous):
+        if reusable and self._available(previous, builders):
             self.records[name] = previous
             print(f"Reusing {name} environment: {previous['image']}", flush=True)
             return previous
 
         image = self.images[name]
-        with ThreadPoolExecutor(max_workers=len(self.builders)) as builds, self.builders[0].cancellation:
+        with ThreadPoolExecutor(max_workers=len(builders)) as builds, builders[0].cancellation:
             pending = {
                 builder.node: builds.submit(
                     builder.cancellation.run_stage, builder.build,
                     dockerfile, target=target, image=image, push=self.push,
                     arguments={**arguments, **(node_arguments or {}).get(builder.node, {})},
                 )
-                for builder in self.builders
+                for builder in builders
             }
             digests = {
                 node: future.result()["containerimage.digest"]
                 for node, future in pending.items()
             }
-        if previous.get("digests") == digests and self._available(previous):
+        if previous.get("digests") == digests and self._available(previous, builders):
             image = previous["image"]
         else:
             self._built.add(name)
@@ -112,19 +131,27 @@ class BuildEnvironments:
         self.records[name] = record
         return record
 
-    def deliver(self, builder: ClusterBuilder) -> None:
-        """Import new environments without taking ownership of borrowed image references."""
+    def deliver(self, builder: ClusterBuilder, names: set[str] | None = None) -> None:
+        """Deliver completed stages once per node, leaving borrowed image references with their owner."""
         if builder.containerd_socket:
-            # The controller is delivered last, immediately before installation.
-            for name in sorted(self._built, key=lambda value: value == "control-plane"):
+            pending = {
+                name for name in self._built - self._delivered[builder.node]
+                if builder.node in self.records[name]["digests"]
+            }
+            if names is not None:
+                pending &= names
+            # The controller runtime is delivered last, immediately before installation.
+            for name in sorted(pending, key=lambda value: value == "control-plane"):
                 image = self.records[name]["image"]
                 builder.import_image(image, image)
+                self._delivered[builder.node].add(name)
 
-    def _available(self, record: dict[str, Any]) -> bool:
-        """Check every selected node before borrowing a producer's retained image reference."""
-        for builder in self.builders:
+    def _available(self, record: dict[str, Any], builders: list[ClusterBuilder]) -> bool:
+        """Check the stage's execution nodes before borrowing a producer's retained image reference."""
+        for builder in builders:
             try:
-                if not builder.image_matches(record["image"], record["digests"][builder.node]):
+                digest = record["digests"].get(builder.node)
+                if digest is None or not builder.image_matches(record["image"], digest):
                     return False
             except ImageNotFoundError as error:
                 print(f"Environment image was removed; rebuilding: {error}", flush=True)
