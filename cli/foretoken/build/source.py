@@ -30,6 +30,7 @@ from foretoken.build.engine import (
     build_engine_environment,
     build_metax_environment,
     engine_cache_scope,
+    engine_native_cache_matches,
     resolve_vllm_base_image,
 )
 from foretoken.build.environments import BuildEnvironments
@@ -254,6 +255,7 @@ def _prepare_source_build(
         else previous
     )
     old = directory / saved_inputs["inputs"] if saved_inputs.get("root") == str(root) and saved_inputs.get("inputs") else None
+    previous_versions = saved_inputs.get("build", {}).get("versions", {}) if old is not None else {}
     mooncake_version = arguments.get("MOONCAKE_VERSION", "") if build_metax_runtime else None
     configuration = build_configuration(
         root, values,
@@ -265,6 +267,9 @@ def _prepare_source_build(
         if pending.get("root") == str(root) and pending.get("build", {}).get("binding") == binding
         and pending["build"].get("registry") == registry and pending["build"].get("environments")
         else build
+    )
+    cached_environments = (
+        cached_build.get("environments", {}) if cached_build.get("registry") == registry else {}
     )
     prefix = registry if registry else _LOCAL_IMAGE_PREFIX
     revision = uuid.uuid4().hex
@@ -292,14 +297,14 @@ def _prepare_source_build(
         nodes = [(origin.node, "", "foretoken-application-compiler-" + node_uid)]
     nodes = [(node, socket, f"{claim}-{binding[:12]}") for node, socket, claim in nodes]
 
-    # Pending state retains recoverable inputs and storage without replacing the
-    # last completed installation. Null inputs precede the first source capture.
+    # Retain recovery inputs, images and native-cache identities before storage
+    # preparation can fail, without replacing the last completed installation.
     directory.mkdir(parents=True, exist_ok=True)
     pending_state = {
         "root": str(root),
         "engines": engines,
         "context": context_identity(kubectl),
-        **({"inputs": pending.get("inputs")} if not pending or "inputs" in pending else {}),
+        "inputs": old.name if old is not None else None,
         "base_image": inference_engine_image,
         "build": {
             "binding": binding,
@@ -312,7 +317,17 @@ def _prepare_source_build(
                 *build.get("caches", []),
                 *(cache for cache in pending.get("build", {}).get("caches", []) if cache not in build.get("caches", [])),
             ],
-            "images": environment_references,
+            "images": {
+                **environment_references,
+                **{"environment-" + name: record["image"] for name, record in cached_environments.items()},
+            },
+            "environments": cached_environments,
+            "compilers": cached_build.get("compilers", {}) if cached_environments else {},
+            "engine_caches": (
+                dict(cached_build.get("engine_caches", {}))
+                if cached_environments and cached_build.get("engine_cache_scope") == cache_scope else {}
+            ),
+            "versions": previous_versions,
             "containerd_socket": nodes[0][1],
             "arguments": arguments,
             "registry_mirrors": registry_mirrors,
@@ -325,7 +340,7 @@ def _prepare_source_build(
     )
     return _PreparedSourceBuild(
         engines=engines, previous_state=previous, previous_build=build, cached_build=cached_build,
-        previous_inputs=old, previous_versions=saved_inputs.get("build", {}).get("versions", {}),
+        previous_inputs=old, previous_versions=previous_versions,
         compiler_configuration=configuration, pending_path=pending_path, pending_state=pending_state,
         nodes=nodes, execution_claims=execution_claims, registry=registry,
         revision=revision, mooncake_version=mooncake_version,
@@ -589,7 +604,9 @@ def _build_environments(
                 previous_cache = cached.get("engine_caches", {}).get(key)
                 engine_caches[key] = (
                     previous_cache
-                    if previous_cache and cached.get("compilers", {}).get("engine") == compiler_image
+                    if previous_cache and engine_native_cache_matches(
+                        cached, environments.records, settings["engine_cache_scope"], key,
+                    )
                     else settings["binding"] + "-" + uuid.uuid4().hex
                 )
         return selected
@@ -660,18 +677,15 @@ def _build_applications(
     settings = prepared.pending_state["build"]
     builder = workspaces.origin_builder
     cancellation = builder.cancellation
-    cached = prepared.cached_build
     environments = BuildEnvironments(
-        workspaces.builders, workspaces.versions,
-        cached.get("environments", {}) if cached.get("registry") == prepared.registry else {},
+        workspaces.builders, workspaces.versions, settings["environments"],
         settings["images"], push=bool(prepared.registry), refresh=refresh,
     )
     compilers = _build_compilers(environments, settings["arguments"], components, builder)
     environments.deliver(builder, {"compiler-" + component for component in components})
     settings.update(
         environments={**environments.previous, **environments.records},
-        compilers={**cached.get("compilers", {}), **compilers},
-        engine_caches=dict(cached.get("engine_caches", {})),
+        compilers={**settings["compilers"], **compilers},
     )
     settings["images"].update({"environment-" + name: record["image"] for name, record in settings["environments"].items()})
     write_source_state(prepared.pending_path, prepared.pending_state)

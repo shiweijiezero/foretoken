@@ -153,6 +153,43 @@ def engine_cache_scope(
     }
 
 
+def engine_native_cache_matches(
+    previous: dict[str, Any],
+    environments: dict[str, Any],
+    scope: dict[str, Any],
+    node: str,
+) -> bool:
+    """Tell source builders whether a node's recorded native workspace can retain its directory."""
+    if previous.get("engine_cache_scope") != scope:
+        return False
+    old_environments = previous["environments"]
+    old_runtime = old_environments["model-server"]["identity"]
+    runtime = environments["model-server"]["identity"]
+    old_node = old_runtime["nodes"].get(node)
+    current_node = runtime["nodes"][node]
+    if (
+        old_node is None
+        or old_node["platform"] != current_node["platform"]
+        or old_node["images"]["INFERENCE_ENGINE_IMAGE"] != current_node["images"]["INFERENCE_ENGINE_IMAGE"]
+        or (old_runtime["arguments"].get("FORETOKEN_VLLM_PYTHON") or "python3")
+        != (runtime["arguments"].get("FORETOKEN_VLLM_PYTHON") or "python3")
+    ):
+        return False
+
+    # CMake retains compiler choices in its build tree. Keep explicit toolchain
+    # changes separate; source edits and download endpoints use upstream incrementality.
+    old_compiler = old_environments["compiler-engine"]["identity"]
+    compiler = environments["compiler-engine"]["identity"]
+    return (
+        old_compiler["dockerfile"] == compiler["dockerfile"]
+        and old_compiler["target"] == compiler["target"]
+        and all(
+            old_compiler["inputs"].get(path) == compiler["inputs"][path]
+            for path in (compiler["dockerfile"], "deploy/inference-engines/vllm/source-build.py")
+        )
+    )
+
+
 def engine_build_arguments(arguments: dict[str, str]) -> dict[str, str]:
     """Select the inputs consumed by engine source builds, excluding SDK and Rust-only images."""
     return {
