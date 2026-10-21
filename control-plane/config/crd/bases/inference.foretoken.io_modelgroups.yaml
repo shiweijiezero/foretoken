@@ -848,6 +848,23 @@ spec:
                     maximum: 268435456
                     minimum: 1048576
                     type: integer
+                  leaderWorkerScheduling:
+                    description: LeaderWorkerScheduling fixes native placement and
+                      quota admission across platform updates.
+                    properties:
+                      kueueLocalQueueName:
+                        description: KueueLocalQueueName selects quota admission in
+                          the workload's namespace.
+                        maxLength: 63
+                        pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      volcanoQueueName:
+                        description: VolcanoQueueName selects Volcano group placement;
+                          omission keeps the ordinary scheduler.
+                        maxLength: 253
+                        pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                    type: object
                   port:
                     description: Port is the internal Foretoken model-server transport
                       port.

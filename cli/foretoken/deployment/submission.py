@@ -71,6 +71,7 @@ class DeploymentSubmission:
         *,
         create_only: bool = False,
     ) -> None:
+        """Snapshot service intent for later submission preconditions; begin and apply own writes."""
         self.kubectl = kubectl
         self.namespace = deployment.namespace
         self.timeout = timeout_seconds(timeout)

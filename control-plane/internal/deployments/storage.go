@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Prepares platform-authorized filesystem bindings borrowed by namespace workloads.
 package deployments
 
 import (

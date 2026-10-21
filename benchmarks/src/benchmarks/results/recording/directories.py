@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarks.results.recording.database import DATABASE_FILENAME, read_records
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.tasks import task_source
 
@@ -61,15 +62,14 @@ def result_sources(directory: Path, *others: Path) -> list[Path]:
         if not source.is_dir():
             raise ValueError(f"Referenced result directory is missing: {source}; retain the original task results when moving a resumed run")
         visited.add(source)
-        owned = (source / "context.json").is_file()
-        if owned and json.loads((source / "context.json").read_text()).get("status") == "running":
+        context = read_records(source, ("context.json",)).get("context.json")
+        owned = context is not None
+        if owned and context.get("status") == "running":
             logger.info("Waiting for the result recorder to close: %s", source)
         # A running aggregate can create more children. Discover them only after
         # its recorder seals, then release its lock before waiting on any child.
         with publication_lock(source) if owned else nullcontext():
-            children = {task_source(path.parent) for path in source.rglob("task.json")}
-            children.update(path.parent for path in source.rglob("publication.json"))
-            children.update(path.parent for path in source.rglob("wandb.json"))
+            children = {task_source(path) for path in record_directories(source, "task.json", "publication.json", "wandb.json")}
         for child in sorted(children - {source}):
             visit(child)
         if owned:
@@ -78,6 +78,14 @@ def result_sources(directory: Path, *others: Path) -> list[Path]:
     for selected in discover_result_directories((directory, *others)):
         visit(selected.directory)
     return ordered
+
+
+def record_directories(directory: Path, *names: str) -> Iterator[Path]:
+    """Find retained run or task documents even when their JSON export was interrupted."""
+    candidates = {path.parent for pattern in (DATABASE_FILENAME, *names) for path in directory.rglob(pattern)}
+    for candidate in sorted(candidates):
+        if read_records(candidate, names):
+            yield candidate
 
 
 def figure_source(directory: Path) -> Path | None:
@@ -95,15 +103,14 @@ def _parent_plan(directory: Path) -> tuple[Path, str] | None:
     for parent in directory.parents:
         if (parent / "generated/context.json").is_file():
             break
-        configuration = parent / "config.json"
-        config = json.loads(configuration.read_text()) if configuration.is_file() else {}
+        documents = read_records(parent, ("config.json", "metrics.json", "slo_results.json"))
+        config = documents.get("config.json", {})
         if config.get("mode") in {"parameter_sweep", "video_parameter_sweep"}:
             return parent, "sweep"
-        metrics_path = parent / "metrics.json"
-        metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}
+        metrics = documents.get("metrics.json", {})
         if "evaluation_comparison" in metrics:
             return parent, "evaluation"
-        if config.get("mode") == "slo_search" or (parent / "slo_results.json").is_file():
+        if config.get("mode") == "slo_search" or "slo_results.json" in documents:
             return parent, "slo_search"
     return None
 
@@ -135,7 +142,7 @@ def _discover(
         if not found:
             yield SavedResultDirectory(directory, group or directory, command)
         return
-    if any((directory / name).is_file() for name in ("config.json", "slo_results.json", "task.json", "context.json")):
+    if any((directory / name).is_file() for name in (DATABASE_FILENAME, "config.json", "slo_results.json", "task.json", "context.json")):
         yield SavedResultDirectory(directory, group or directory, context or _enclosing_context(directory))
         return
     if (directory / "iterations").is_dir():

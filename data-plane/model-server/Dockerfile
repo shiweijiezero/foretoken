@@ -64,6 +64,7 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-omni-model-server
 COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/foretoken_prepare.py
+COPY data-plane/model-server/python/foretoken_model_sources/ /opt/foretoken/python/foretoken_model_sources/
 ENTRYPOINT ["foretoken-omni-model-server"]
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime

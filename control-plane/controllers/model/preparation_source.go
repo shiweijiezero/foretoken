@@ -441,7 +441,7 @@ func comparePreparationSourceInputs(record *corev1.ConfigMap, template inference
 		if cache == nil || cache.Directory != reference.Directory || cache.ClaimName != reference.ClaimName || cache.MountPath != reference.MountPath {
 			return preparationSourceInputsChanged, nil
 		}
-	} else if template.RuntimeCache != nil && runtimeconfig.ModelPreparationVersion(template.Application, template.Backend) >= runtimeconfig.SharedModelCachePreparationVersion {
+	} else if template.RuntimeCache != nil && template.Application != nil && runtimeconfig.ModelPreparationVersion(template.Application.PreparationVersion, template.Backend) >= runtimeconfig.SharedModelCachePreparationVersion {
 		return preparationSourceInputsChanged, nil
 	}
 	return match, nil

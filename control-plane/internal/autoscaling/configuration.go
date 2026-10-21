@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Defines algorithm selections and the controller history used to assemble an autoscaler.
 package autoscaling
 
 import (

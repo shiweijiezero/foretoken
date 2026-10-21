@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
-from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.helm_client import (
     HelmClient,
     image_repository_tag,

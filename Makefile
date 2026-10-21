@@ -41,6 +41,7 @@ docs:
 docs-serve:
 	uv run --no-project --isolated --with-requirements docs/requirements.txt mkdocs serve --config-file mkdocs.yml $(if $(DOCS_ADDR),--dev-addr "$(DOCS_ADDR)",)
 
+# Cargo resolves workspace path dependencies before xtask prepares the patch stack.
 vllm-source:
 	"$(or $(FORETOKEN_PYTHON),python3)" -I data-plane/prepare-vllm
 	cd data-plane && cargo xtask prepare-vllm

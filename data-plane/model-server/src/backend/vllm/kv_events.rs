@@ -16,6 +16,7 @@ use uuid::Uuid;
 use zeromq::SubSocket;
 use zeromq::prelude::{Socket, SocketRecv};
 
+use crate::backend::KvDeltaError;
 use crate::backend::vllm::transport::{KV_EVENT_TOPIC, RuntimePorts};
 
 const CAPACITY: usize = 4096;
@@ -114,12 +115,6 @@ struct VllmCacheGroup {
     kind: String,
     block_size: u32,
     sliding_window: Option<u32>,
-}
-
-#[derive(Debug)]
-pub enum KvDeltaError {
-    Unavailable,
-    CursorReset(Box<KvDeltaResponse>),
 }
 
 pub struct KvEventAdapter {

@@ -6,9 +6,7 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 from foretoken.errors import DeploymentError
@@ -42,6 +40,8 @@ def select_rdma(
     Kubernetes allocatable values confirm availability; the plugin ConfigMap
     supplies resource identity. Neither NIC names nor capacity units are inferred.
     """
+    from kubernetes.utils.quantity import parse_quantity
+
     resource: str | None = None
     managed: bool | None = None
     for document in values:
@@ -96,12 +96,7 @@ def select_rdma(
         for node in nodes:
             allocatable = node.get("status", {}).get("allocatable", {})
             for name in resources:
-                # Kubernetes serializes large allocations as quantities such as
-                # 1k. Their coefficient is sufficient to determine availability.
-                coefficient = re.split(
-                    r"[a-zA-Z]", str(allocatable.get(name, 0)), maxsplit=1
-                )[0]
-                if Decimal(coefficient) > 0:
+                if parse_quantity(allocatable.get(name, "0")) > 0:
                     available.add(name)
     if managed is None:
         managed = not external_plugins

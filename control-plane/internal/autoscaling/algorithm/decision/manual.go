@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Preserves the caller's baseline replica count as fixed capacity intent.
 package decision
 
 import (

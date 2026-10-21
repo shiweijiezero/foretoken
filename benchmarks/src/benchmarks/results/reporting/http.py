@@ -9,10 +9,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from tabulate import tabulate
+
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
-from benchmarks.results.recording.files import write_json
-from benchmarks.results.recording.requests import request_measurement_record
 from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.http import publish_http_wandb
@@ -31,10 +31,7 @@ def http_result_sinks(
 ) -> list[ResultSink]:
     """Compose HTTP report destinations; ResultOutputs owns their opening and cleanup."""
     outputs = benchmark.outputs
-    sinks: list[ResultSink] = []
-    if outputs.saves_local:
-        sinks.append(BenchmarkArtifactSink(benchmark, directory))
-    sinks.append(ConsoleSink())
+    sinks: list[ResultSink] = [ConsoleSink()]
     if outputs.saves_local:
         sinks.append(LocalDirectorySink(directory))
     if outputs.includes("wandb"):
@@ -68,50 +65,6 @@ class ConsoleSink:
 
     def publish(self, run: BenchmarkRun) -> None:
         log_benchmark_summary(run.record, run.metrics)
-
-    def close(self, *, exit_code: int = 0) -> None:
-        return None
-
-
-class BenchmarkArtifactSink:
-    """Materialize HTTP configuration and per-request records beside the run's shared metrics."""
-
-    def __init__(self, benchmark: BenchmarkConfig, output_dir: str) -> None:
-        self.benchmark = benchmark
-        self.output_dir = output_dir
-        self.config_path: Path | None = None
-
-    def open(self, record: dict[str, Any]) -> None:
-        """Retain resolved configuration before execution so unsuccessful runs keep their invocation evidence."""
-        self.config_path = write_json(
-            self.output_dir,
-            "config.json",
-            {**self.benchmark.to_dict(), **record},
-        )
-
-    def publish(self, run: BenchmarkRun) -> None:
-        """Retain the configuration and serialize requests after their measurement completes."""
-        if self.config_path is None:
-            raise RuntimeError("benchmark artifact sink is not open")
-        run.artifacts["config"] = self.config_path
-        if run.measurements is not None and "raw_output" not in run.artifacts:
-            slo = run.metrics.get("slo") or {}
-            slo_met = slo.get("request_slo_met")
-            run.artifacts["raw_output"] = write_json(
-                self.output_dir,
-                "raw_output.json",
-                [
-                    {
-                        **request_measurement_record(item, stream=bool(run.metrics["stream"])),
-                        **(
-                            {"slo_met": slo_met[index], "slo_target": slo["request_criteria"]}
-                            if isinstance(slo_met, list) else {}
-                        ),
-                    }
-                    for index, item in enumerate(run.measurements)
-                ],
-                compact=True,
-            )
 
     def close(self, *, exit_code: int = 0) -> None:
         return None
@@ -445,19 +398,24 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         if not groups:
             continue
         lines.append(f"  {title} breakdown (shared {metrics['benchmark_time']:.2f}s window):")
-        lines.append("    Name                         Success     Req/s   Out tok/s  P95 E2EL   SLO %  Good req/s")
+        rows = []
         for name, group in groups.items():
             group_slo = group.get("slo") or {}
             attainment = group_slo.get("slo_attainment")
             display_name = Path(name).name if Path(name).is_absolute() else name
-            lines.append(
-                f"    {display_name[:28]:<28} {group['success_num']:>3}/{group['request_num']:<4} "
-                f"{_format_metric(group['throughput']['requests_per_second'], 2):>9} "
-                f"{_format_metric(group['throughput']['generation_tokens_per_second'], 2):>11} "
-                f"{_format_metric(group['latency']['p95'], 3):>9} "
-                f"{_format_metric(attainment * 100 if attainment is not None else None, 1):>7} "
-                f"{_format_metric(group_slo.get('request_goodput'), 2):>11}"
-            )
+            rows.append([
+                display_name, f"{group['success_num']}/{group['request_num']}",
+                _format_metric(group['throughput']['requests_per_second'], 2),
+                _format_metric(group['throughput']['generation_tokens_per_second'], 2),
+                _format_metric(group['latency']['p95'], 3),
+                _format_metric(attainment * 100 if attainment is not None else None, 1),
+                _format_metric(group_slo.get('request_goodput'), 2),
+            ])
+        lines.append(tabulate(
+            rows, headers=("Name", "Success", "Req/s", "Out tok/s", "P95 E2EL", "SLO %", "Good req/s"),
+            tablefmt="plain", disable_numparse=True,
+            colalign=("left", "right", "right", "right", "right", "right", "right"),
+        ))
     if metrics.get("avg_cached_input_tokens") is not None:
         lines.append(
             "  Mean reported cached input tokens: "
@@ -507,22 +465,16 @@ def log_slo_results(slo: dict[str, Any]) -> None:
 
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
-    per_worker_name = "Output tokens/s/user"
-    header = (
-        f"{'Method / group / run':<32} {'Status':>12} "
-        f"{'Concurrency':>12} {'Arrival rate':>12} {'Requests':>10} "
-        f"{'Output tokens/s':>15} {per_worker_name:>32} "
-        f"{'Output tokens/s/GPU':>19} {'P99 E2EL (s)':>12}"
+    headers = (
+        "Method / group / run", "Status", "Concurrency", "Arrival rate", "Requests",
+        "Output tokens/s", "Output tokens/s/user", "Output tokens/s/GPU", "P99 E2EL (s)",
     )
-    lines = [
-        "========== Parameter Sweep Results =========",
-        header,
-    ]
+    rows = []
     for item in results:
         method = item["bench"].get("service", {}).get("name", "default")
         identity = f"{method} / {item['parameter_group']} / {item['run_number'] + 1}"
         if "slo_search" in item and "throughput" not in item:
-            lines.append(f"{identity:<32} {item['status']:>12}  No passing SLO probe")
+            rows.append([identity, item["status"], "—", "—", "—", "—", "—", "—", "No passing SLO probe"])
             continue
         parallel = item["max_concurrency"]
         parallel_label = (
@@ -540,12 +492,14 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         generation_tokens_per_second_per_gpu_value = throughput.get(
             "generation_tokens_per_second_per_gpu"
         )
-        lines.append(
-            f"{identity:<32} {item['status']:>12} {parallel_label:>12} {rate_label:>12} {int(item['request_num']):>10} "
-            f"{_format_metric(generation_tokens_per_second, 2):>15} "
-            f"{_format_metric(generation_tokens_per_second_per_concurrency, 2):>32} "
-            f"{_format_metric(generation_tokens_per_second_per_gpu_value, 2):>19} "
-            f"{_format_metric(item['latency']['p99'], 3):>12}"
-        )
-    lines.append("============================================")
-    logger.info("\n%s", "\n".join(lines))
+        rows.append([
+            identity, item["status"], parallel_label, rate_label, str(item["request_num"]),
+            _format_metric(generation_tokens_per_second, 2),
+            _format_metric(generation_tokens_per_second_per_concurrency, 2),
+            _format_metric(generation_tokens_per_second_per_gpu_value, 2),
+            _format_metric(item["latency"]["p99"], 3),
+        ])
+    logger.info("\n%s\n%s\n%s", "========== Parameter Sweep Results =========", tabulate(
+        rows, headers=headers, tablefmt="plain", disable_numparse=True,
+        colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right"),
+    ), "============================================")

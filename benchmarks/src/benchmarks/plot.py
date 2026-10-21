@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 from collections.abc import Sequence
 from contextlib import ExitStack
 from pathlib import Path
@@ -71,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         selected = [*options.sources, *([options.base] if options.base is not None else [])]
         try:
             sources = result_sources(*selected)
-        except (OSError, ValueError) as error:
+        except (OSError, sqlite3.Error, ValueError) as error:
             raise SystemExit(str(error)) from error
     try:
         # Seal measurements before drawing and exclude background publication while files change.
@@ -89,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             owner = artifacts.source
         print(f"Exported {len(artifacts.files)} files to {output}")
-    except (OSError, ValueError) as error:
+    except (OSError, sqlite3.Error, ValueError) as error:
         if not options.sync_wandb:
             raise SystemExit(str(error)) from error
         logging.getLogger(__name__).error("Figure export failed: %s; synchronizing saved results", error)
@@ -97,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if options.sync_wandb:
         try:
             sync_results(sources, figures=output, figure_owner=owner)
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, sqlite3.Error, ValueError, RuntimeError) as error:
             errors.append(error)
     if errors:
         raise SystemExit("; ".join(str(error) for error in errors))

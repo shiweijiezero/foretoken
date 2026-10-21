@@ -9,7 +9,7 @@ import copy
 import json
 import re
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -238,55 +238,55 @@ def parse_deployment(
     )
 
 
-def _rewrite_foretoken_references(objects: list[dict[str, Any]], prefix: str) -> None:
-    """Project Foretoken's declared local references; Kubernetes owns native reference rewriting."""
-    names = {
-        (
-            document["apiVersion"].split("/")[0] if "/" in document["apiVersion"] else "",
-            document["kind"],
-            document["metadata"]["name"],
-        ): prefix + document["metadata"]["name"]
-        for document in objects
-    }
+def _name_reference_configuration() -> dict[str, Any]:
+    """Declare CRD references for the native name transformer used by instance projection."""
+    group = DEPLOYMENT_API_VERSION.split("/", 1)[0]
+    model_scopes = ("spec", "spec/modelPools")
+    references = (
+        ("KVService", group, [
+            ("ModelService", f"{path}/kvCache/mooncakeStore/kvServiceRef/name")
+            for path in model_scopes
+        ]),
+        ("Secret", "", [
+            ("ModelService", f"{path}/env/reference/valueFrom/secretKeyRef/name")
+            for path in model_scopes
+        ]),
+        ("ConfigMap", "", [
+            ("ModelService", f"{path}/env/reference/valueFrom/configMapKeyRef/name")
+            for path in model_scopes
+        ]),
+        ("PersistentVolumeClaim", "", [
+            ("FrontendService", "spec/videoTasks/claimName"),
+            ("VideoTask", "spec/worker/outputClaimName"),
+        ]),
+        ("ModelService", group, [
+            ("ProfileRun", "spec/modelServiceRef/name"),
+            ("VideoTask", "spec/modelServiceRef/name"),
+        ]),
+    )
+    return {"nameReference": [
+        {"group": target_group, "kind": target_kind, "fieldSpecs": [
+            {"group": group, "kind": kind, "path": path}
+            for kind, path in fields
+        ]}
+        for target_kind, target_group, fields in references
+    ]}
 
-    def reference(container: Any, field: str, group: str, kind: str) -> None:
-        if isinstance(container, dict) and isinstance(container.get(field), str):
-            selected = names.get((group, kind, container[field]))
-            if selected is not None:
-                container[field] = selected
 
+def _model_environment_scopes(
+    objects: Iterable[dict[str, Any]],
+) -> Iterator[tuple[tuple[str, int], dict[str, Any]]]:
+    """Locate service and Pool environment fields for the reversible Kustomize projection."""
     for document in objects:
-        if not document["apiVersion"].startswith("inference.foretoken.io/"):
+        if document["kind"] != "ModelService" or not document["apiVersion"].startswith("inference.foretoken.io/"):
             continue
         spec = document.get("spec")
         if not isinstance(spec, dict):
             continue
-        kind = document["kind"]
-        if kind == "ModelService":
-            pools = spec.get("modelPools")
-            for pool in (spec, *(pools if isinstance(pools, list) else ())):
-                if not isinstance(pool, dict):
-                    continue
-                cache = pool.get("kvCache")
-                store = cache.get("mooncakeStore") if isinstance(cache, dict) else None
-                if isinstance(store, dict):
-                    reference(store.get("kvServiceRef"), "name", "inference.foretoken.io", "KVService")
-                environment = pool.get("env")
-                if not isinstance(environment, dict):
-                    continue
-                for value in environment.values():
-                    if not isinstance(value, dict):
-                        continue
-                    source = value.get("valueFrom")
-                    if isinstance(source, dict):
-                        reference(source.get("secretKeyRef"), "name", "", "Secret")
-                        reference(source.get("configMapKeyRef"), "name", "", "ConfigMap")
-        elif kind == "FrontendService":
-            reference(spec.get("videoTasks"), "claimName", "", "PersistentVolumeClaim")
-        elif kind in {"ProfileRun", "VideoTask"}:
-            reference(spec.get("modelServiceRef"), "name", "inference.foretoken.io", "ModelService")
-            if kind == "VideoTask":
-                reference(spec.get("worker"), "outputClaimName", "", "PersistentVolumeClaim")
+        pools = spec.get("modelPools")
+        for index, scope in enumerate((spec, *(pools if isinstance(pools, list) else ()))):
+            if isinstance(scope, dict) and "env" in scope:
+                yield (document["metadata"]["name"], index), scope
 
 
 def project_deployment(
@@ -294,14 +294,25 @@ def project_deployment(
 ) -> ForetokenDeployment:
     """Apply instance naming or UID membership through Kubernetes' native Kustomize transformers."""
     objects = copy.deepcopy(list(deployment.objects))
+    environment_maps: set[tuple[str, int]] = set()
     if prefix:
-        _rewrite_foretoken_references(objects, prefix)
+        # FieldSpecs traverse sequences, not arbitrary map keys. Stage named
+        # entries so even relaxed env names containing '/' or '[]' stay literal.
+        for (name, index), scope in _model_environment_scopes(objects):
+            environment = scope["env"]
+            if isinstance(environment, dict):
+                environment_maps.add((prefix + name, index))
+                scope["env"] = [
+                    {"name": key, "reference" if isinstance(value, dict) else "literal": value}
+                    for key, value in environment.items()
+                ]
     configuration: dict[str, Any] = {
         "apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
         "namespace": deployment.namespace, "resources": ["resources.yaml"],
     }
     if prefix:
         configuration["namePrefix"] = prefix
+        configuration["configurations"] = ["references.yaml"]
     if uid:
         configuration["labels"] = [{
             "pairs": {DEPLOYMENT_UID_LABEL: uid},
@@ -311,10 +322,18 @@ def project_deployment(
         root = Path(folder)
         (root / "resources.yaml").write_text(encode_resources(objects))
         (root / "kustomization.yaml").write_text(json.dumps(configuration))
+        if prefix:
+            (root / "references.yaml").write_text(json.dumps(_name_reference_configuration()))
         rendered = kubectl.kustomize(root)
     if prefix:
-        # The singleton frontend is the readable instance anchor; other roots retain their prefixed names.
         projected_objects = list(decode_resources(rendered))
+        for key, scope in _model_environment_scopes(projected_objects):
+            if key in environment_maps:
+                scope["env"] = {
+                    entry["name"]: entry["reference"] if "reference" in entry else entry["literal"]
+                    for entry in scope["env"]
+                }
+        # The singleton frontend is the readable instance anchor; other roots retain their prefixed names.
         for document in projected_objects:
             if document["kind"] == "FrontendService" and document["apiVersion"].startswith("inference.foretoken.io/"):
                 document["metadata"]["name"] = deployment.name

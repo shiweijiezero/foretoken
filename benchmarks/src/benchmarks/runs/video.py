@@ -59,7 +59,7 @@ async def run_video_benchmark(
         await require_health_endpoint(config.endpoint.health_url)
         logger.info("Video server health check passed")
         run_dir = Path(outputs.execution_dir)
-        outputs.open(record)
+        outputs.open(record, configuration=config.to_dict())
         if config.warmup_requests:
             warmup_dir = run_dir / "warmup"
             warmup_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +137,7 @@ async def _run_requests(
             result = await client.generate(request, index, output)
             # Retain completed requests before SDK publication so interruption
             # never discards their media paths, timings, or failure details.
-            writer.write(video_result_record(result, Path(outputs.execution_dir)))
+            await writer.awrite(video_result_record(result, Path(outputs.execution_dir)))
             return result
         finally:
             semaphore.release()

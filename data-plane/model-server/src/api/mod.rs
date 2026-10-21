@@ -20,8 +20,7 @@ use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
-use crate::backend::vllm::kv_events::{KvDeltaError, KvEventAdapter};
-use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
+use crate::backend::{Backend, BackendError, GenerateInput, KvDeltaError, TokenEvent};
 use crate::execution::{
     AdmissionRejection, ExecutionError, ExecutionStore, InstanceAdmissionStatus, RuntimeHealth,
     start_execution,
@@ -40,10 +39,8 @@ pub struct AppState {
     backend: Arc<dyn Backend>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
-    kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
-    shared_kv: Option<crate::backend::vllm::prefix_lookup::SharedKvLookup>,
     ledger: Option<ExecutionStore>,
 }
 
@@ -117,10 +114,8 @@ impl AppState {
             backend,
             health,
             metadata,
-            kv_events: None,
             runtime_cache: None,
             profiling: None,
-            shared_kv: None,
             ledger: None,
         }
     }
@@ -137,23 +132,6 @@ impl AppState {
             pod_uid,
             epoch,
         });
-        self
-    }
-
-    /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
-    ///
-    /// The router owns this state while its handlers retain cloned adapter references.
-    pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
-        self.kv_events = Some(adapter);
-        self
-    }
-
-    /// Enables read-only shared-prefix observations through the running connector.
-    pub fn with_shared_kv(
-        mut self,
-        lookup: crate::backend::vllm::prefix_lookup::SharedKvLookup,
-    ) -> Self {
-        self.shared_kv = Some(lookup);
         self
     }
 
@@ -252,16 +230,13 @@ async fn local_kv_prefix(
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(adapter) = state.kv_events else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     match tokio::time::timeout(
         foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
         state.backend.local_prefixes(&request),
     )
     .await
     {
-        Ok(Ok(ranks)) => Json(adapter.prefix_response(ranks)).into_response(),
+        Ok(Ok(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -274,16 +249,13 @@ async fn shared_kv_prefix(
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(lookup) = state.shared_kv else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     match tokio::time::timeout(
         foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
-        lookup.lookup(&request),
+        state.backend.shared_prefix(&request),
     )
     .await
     {
-        Ok(Some(response)) => Json(response).into_response(),
+        Ok(Ok(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -414,10 +386,7 @@ async fn kv_index_delta(
     State(state): State<AppState>,
     Query(query): Query<KvDeltaQuery>,
 ) -> Response {
-    let Some(adapter) = state.kv_events else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match adapter.delta(
+    match state.backend.kv_delta(
         query.dp_rank,
         query.epoch.as_deref(),
         query.after,

@@ -240,6 +240,20 @@
             "additionalProperties": false
           }
         },
+        "leaderWorkerScheduling": {
+          "type": ["object", "null"],
+          "properties": {
+            "volcanoQueueName": {
+              "type": ["string", "null"], "maxLength": 253,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "kueueLocalQueueName": {
+              "type": ["string", "null"], "maxLength": 63,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            }
+          },
+          "additionalProperties": false
+        },
         "cache": {
           "type": "object",
           "required": [

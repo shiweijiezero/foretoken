@@ -15,8 +15,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from foretoken.command_execution import cleanup_commands
 from foretoken.errors import DeploymentError
+from foretoken.processes.execution import cleanup_commands
 
 if TYPE_CHECKING:
     from foretoken.kubernetes.client import Kubectl
@@ -45,88 +45,6 @@ class DeploymentMutation:
             Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
             / "foretoken/deployment-operations"
         )
-
-    def _read(self, timeout: float) -> dict[str, Any]:
-        """Pin operation ownership to a live instance rather than a reusable name."""
-        current = self.kubectl.get(_DEPLOYMENT_RESOURCE, self.name, self.namespace, timeout=timeout)
-        metadata = current["metadata"]
-        if metadata.get("deletionTimestamp") or self.uid and metadata["uid"] != self.uid:
-            raise DeploymentError(f"DeploymentSuperseded: deployment instance {self.name!r} was replaced or deleted")
-        self.uid = metadata["uid"]
-        return current
-
-    def supersede(self) -> None:
-        """Invalidate earlier submissions under the held lock without selecting different controller code."""
-        from foretoken.kubernetes.client import KubernetesVersionConflictError
-
-        deadline = time.monotonic() + self.timeout
-        while (remaining := deadline - time.monotonic()) > 0:
-            current = self._read(remaining)
-            metadata = current["metadata"]
-            try:
-                self.kubectl.run([
-                    "patch", _DEPLOYMENT_RESOURCE, self.name, "--namespace", self.namespace,
-                    "--type=merge", "--patch", json.dumps({
-                        "metadata": {
-                            "uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"],
-                            "annotations": {_SERVICE_OPERATION_ANNOTATION: uuid.uuid4().hex},
-                        },
-                    }),
-                ], timeout=remaining)
-                return
-            except KubernetesVersionConflictError:
-                continue
-        raise DeploymentError(f"Timed out superseding deployment instance {self.name!r}")
-
-    def _set_holder(self, current: dict[str, Any], operation: str, timeout: float) -> dict[str, Any]:
-        """Change only the holder with the observed record's UID and resourceVersion."""
-        metadata = current["metadata"]
-        return json.loads(self.kubectl.run(
-            [
-                "patch", _DEPLOYMENT_RESOURCE, self.name, "--namespace", self.namespace,
-                "--type=merge", "--output=json", "--patch",
-                json.dumps({"metadata": {
-                    "uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"],
-                    "annotations": {_HOLDER_ANNOTATION: operation},
-                }}),
-            ], timeout=timeout,
-        ).stdout)
-
-    def _recover_local(self, current: dict[str, Any], timeout: float) -> None:
-        """Release a local holder only after its CLI and inherited subprocess locks have exited."""
-        import fcntl
-
-        owner = uuid.UUID(current["metadata"]["annotations"][_HOLDER_ANNOTATION]).hex
-        path = self.directory / owner
-        try:
-            stream = path.open("r+")
-        except FileNotFoundError:
-            return
-        with stream:
-            try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return
-            self._set_holder(current, "", timeout)
-            path.unlink(missing_ok=True)
-
-    def _release(self, receipt: dict[str, Any], operation: str) -> None:
-        """Release this holder while preserving submitted intent and any replacement instance."""
-        from foretoken.kubernetes.client import KubernetesVersionConflictError
-
-        deadline = time.monotonic() + self.timeout
-        while (remaining := deadline - time.monotonic()) > 0:
-            current = self.kubectl.get_if_exists(_DEPLOYMENT_RESOURCE, self.name, self.namespace, timeout=remaining)
-            if current is None or current["metadata"]["uid"] != receipt["metadata"]["uid"]:
-                return
-            if current["metadata"].get("annotations", {}).get(_HOLDER_ANNOTATION) != operation:
-                raise DeploymentError(f"Deployment operation ownership changed for {self.name!r}")
-            try:
-                self._set_holder(current, "", remaining)
-                return
-            except KubernetesVersionConflictError:
-                continue
-        raise DeploymentError(f"Timed out releasing deployment instance {self.name!r}")
 
     @contextmanager
     def hold(self) -> Iterator[None]:
@@ -181,3 +99,85 @@ class DeploymentMutation:
                 # A timed-out patch can still acquire ownership after the caller stops waiting.
                 if not acquired and not uncertain_write:
                     path.unlink(missing_ok=True)
+
+    def supersede(self) -> None:
+        """Invalidate earlier submissions under the held lock without selecting different controller code."""
+        from foretoken.kubernetes.client import KubernetesVersionConflictError
+
+        deadline = time.monotonic() + self.timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            current = self._read(remaining)
+            metadata = current["metadata"]
+            try:
+                self.kubectl.run([
+                    "patch", _DEPLOYMENT_RESOURCE, self.name, "--namespace", self.namespace,
+                    "--type=merge", "--patch", json.dumps({
+                        "metadata": {
+                            "uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"],
+                            "annotations": {_SERVICE_OPERATION_ANNOTATION: uuid.uuid4().hex},
+                        },
+                    }),
+                ], timeout=remaining)
+                return
+            except KubernetesVersionConflictError:
+                continue
+        raise DeploymentError(f"Timed out superseding deployment instance {self.name!r}")
+
+    def _read(self, timeout: float) -> dict[str, Any]:
+        """Pin operation ownership to a live instance rather than a reusable name."""
+        current = self.kubectl.get(_DEPLOYMENT_RESOURCE, self.name, self.namespace, timeout=timeout)
+        metadata = current["metadata"]
+        if metadata.get("deletionTimestamp") or self.uid and metadata["uid"] != self.uid:
+            raise DeploymentError(f"DeploymentSuperseded: deployment instance {self.name!r} was replaced or deleted")
+        self.uid = metadata["uid"]
+        return current
+
+    def _set_holder(self, current: dict[str, Any], operation: str, timeout: float) -> dict[str, Any]:
+        """Change only the holder with the observed record's UID and resourceVersion."""
+        metadata = current["metadata"]
+        return json.loads(self.kubectl.run(
+            [
+                "patch", _DEPLOYMENT_RESOURCE, self.name, "--namespace", self.namespace,
+                "--type=merge", "--output=json", "--patch",
+                json.dumps({"metadata": {
+                    "uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"],
+                    "annotations": {_HOLDER_ANNOTATION: operation},
+                }}),
+            ], timeout=timeout,
+        ).stdout)
+
+    def _recover_local(self, current: dict[str, Any], timeout: float) -> None:
+        """Release a local holder only after its CLI and inherited subprocess locks have exited."""
+        import fcntl
+
+        owner = uuid.UUID(current["metadata"]["annotations"][_HOLDER_ANNOTATION]).hex
+        path = self.directory / owner
+        try:
+            stream = path.open("r+")
+        except FileNotFoundError:
+            return
+        with stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            self._set_holder(current, "", timeout)
+            path.unlink(missing_ok=True)
+
+    def _release(self, receipt: dict[str, Any], operation: str) -> None:
+        """Release this holder while preserving submitted intent and any replacement instance."""
+        from foretoken.kubernetes.client import KubernetesVersionConflictError
+
+        deadline = time.monotonic() + self.timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            current = self.kubectl.get_if_exists(_DEPLOYMENT_RESOURCE, self.name, self.namespace, timeout=remaining)
+            if current is None or current["metadata"]["uid"] != receipt["metadata"]["uid"]:
+                return
+            if current["metadata"].get("annotations", {}).get(_HOLDER_ANNOTATION) != operation:
+                raise DeploymentError(f"Deployment operation ownership changed for {self.name!r}")
+            try:
+                self._set_holder(current, "", remaining)
+                return
+            except KubernetesVersionConflictError:
+                continue
+        raise DeploymentError(f"Timed out releasing deployment instance {self.name!r}")

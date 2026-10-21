@@ -21,15 +21,17 @@ foretoken-artifacts.workspace = true
 foretoken-model-protocol.workspace = true
 foretoken-request-ledger = { path = "../request-ledger" }
 futures.workspace = true
+hyproxy.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
-prometheus-client.workspace = true
+prometheus-client = { workspace = true, features = ["protobuf"] }
 reqwest.workspace = true
 rmp-serde.workspace = true
 rmpv.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }

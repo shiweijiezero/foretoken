@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import application_references
+from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
 from foretoken.kubernetes.documents import decode_resources
-from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.config import load_platform_values
 from foretoken.platform.helm_client import (
     HelmClient,

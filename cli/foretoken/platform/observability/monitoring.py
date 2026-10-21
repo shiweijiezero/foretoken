@@ -19,12 +19,12 @@ from foretoken.accelerators.metax import (
 from foretoken.accelerators.nvidia import NvidiaMetrics, NvidiaMetricsDiscovery
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
-from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.helm_client import HelmClient, merge_values
 from foretoken.platform.observability.resources import (
     mark_managed_metrics_scraper_namespace,
     unmark_managed_metrics_scraper_namespace,
 )
+from foretoken.platform.prometheus import PrometheusRef, select_prometheus
 from foretoken.platform.types import ReleaseRef
 
 

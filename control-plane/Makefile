@@ -39,6 +39,14 @@ build: generate manifests fmt vet
 .PHONY: verify
 verify: generate manifests fmt vet
 
+.PHONY: verify-chart
+verify-chart:
+	go run ./hack/verify-deployment --root "$(abspath ..)" --chart-only
+
+.PHONY: verify-deployment
+verify-deployment:
+	go run ./hack/verify-deployment --root "$(abspath ..)" --context "$(TEST_CONTEXT)"
+
 $(CONTROLLER_GEN):
 	@mkdir -p $(LOCALBIN)
 	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)

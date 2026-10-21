@@ -27,7 +27,7 @@ from foretoken.kubernetes.client import (
     ResourceRef,
     resource_ref,
 )
-from foretoken.observability import (
+from foretoken.platform.prometheus import (
     PrometheusRef,
     prometheus_query,
     prometheus_selects_service_monitor,

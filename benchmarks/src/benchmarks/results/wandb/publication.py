@@ -8,17 +8,25 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import wandb
 
+from benchmarks.results.recording.database import (
+    DATABASE_FILENAME,
+    RunRecords,
+    read_record,
+    read_records,
+    write_records,
+)
 from benchmarks.results.recording.directories import figure_source
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.recovery import (
     measurement_complete,
@@ -32,19 +40,21 @@ logger = logging.getLogger(__name__)
 
 def sync_results(sources: list[Path], *, figures: Path, figure_owner: Path | None) -> None:
     """Publish resolved runs independently, attaching a plot export only to its recorded owner."""
-    recordings = [source for source in sources
-                  if (source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb"))]
-    if not recordings:
-        raise ValueError("No W&B recordings found in the selected results")
+    recordings = 0
     failures = []
-    for source in recordings:
+    for source in sources:
         try:
+            if not read_records(source, ("wandb.json",)) and not any((source / "wandb").glob("*/run-*.wandb")):
+                continue
+            recordings += 1
             sync_publication(source, plots=figures if source == figure_owner else None, exclude_plots=figures)
-        except (OSError, ValueError, RuntimeError, wandb.errors.Error) as error:
+        except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
             logger.error("W&B publication failed for %s: %s", source, error)
             failures.append(error)
     if failures:
         raise RuntimeError(f"W&B publication failed for {len(failures)} run(s)") from failures[0]
+    if not recordings:
+        raise ValueError("No W&B recordings found in the selected results")
 
 
 def sync_publication(
@@ -54,20 +64,19 @@ def sync_publication(
     """Publish a sealed recording, including diagnostics from an interrupted measurement."""
     directory = directory.resolve()
     with publication_lock(directory):
-        context = json.loads((directory / "context.json").read_text())
+        context = read_record(directory, "context.json")
         publication = None
         run = None
         try:
-            saved_inputs = (directory / "publication.json").is_file() or (directory / "metrics.json").is_file()
-            if measurement_complete(directory, context) and saved_inputs:
+            if measurement_complete(directory, context):
                 publication = publication_inputs(directory, context)
                 run = restore_run(directory, publication)
             elif context["status"] == "completed":
                 raise ValueError(f"Completed results are missing metrics.json in {directory}")
-        except (OSError, ValueError) as error:
+        except (OSError, sqlite3.Error, ValueError) as error:
             try:
                 publish_saved_wandb(directory, None, None, native_synced=native_synced)
-            except (OSError, ValueError, RuntimeError, wandb.errors.Error):
+            except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error):
                 logger.exception("W&B diagnostic publication also failed")
             _record_publication_error(directory, error, publication)
             raise
@@ -88,16 +97,19 @@ def publish_saved_wandb(
     """Publish saved W&B outputs and retain their outcome while the caller owns the result lock."""
     if publication is not None:
         publication["publication_pending"] = True
-        write_json(str(directory), "publication.json", publication)
+        write_records(directory, {"publication.json": publication})
+    if (directory / DATABASE_FILENAME).is_file():
+        with closing(RunRecords(directory)) as records:
+            records.export()
     try:
         _upload_wandb(directory, run, native_synced=native_synced, refresh_plots=refresh_plots)
-    except (OSError, ValueError, RuntimeError, wandb.errors.Error) as error:
+    except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
         _record_publication_error(directory, error, publication)
         raise
     if publication is not None:
         publication.update(publication_pending=False, recovered_at=datetime.now(UTC).isoformat())
         publication.pop("publication_error", None)
-        write_json(str(directory), "publication.json", publication)
+        write_records(directory, {"publication.json": publication})
 
 
 def _publishers() -> dict[str, Callable[[Any, BenchmarkRun], None]]:
@@ -133,10 +145,10 @@ def publisher_name(publisher: Callable[[Any, BenchmarkRun], None]) -> str:
 
 def _wandb_identity(directory: Path) -> dict[str, Any]:
     """Read the original destination, deriving identity only for a unique legacy recording."""
-    path = directory / "wandb.json"
-    if path.is_file():
-        return json.loads(path.read_text())
-    config = json.loads((directory / "config.json").read_text())
+    documents = read_records(directory, ("wandb.json", "config.json"))
+    if "wandb.json" in documents:
+        return documents["wandb.json"]
+    config = documents["config.json"]
     destination = config.get("base", config)["wandb"]
     recordings = {path.resolve() for path in (directory / "wandb").glob("*/run-*.wandb")}
     if len(recordings) != 1:
@@ -153,7 +165,7 @@ def _wandb_identity(directory: Path) -> dict[str, Any]:
         "entity": destination.get("entity", ""), "base_url": wandb.setup().settings.base_url,
         "directory": Path(os.path.relpath(recording.parent, directory)).as_posix(), "publisher": publisher,
     }
-    write_json(str(directory), "wandb.json", identity)
+    write_records(directory, {"wandb.json": identity})
     return identity
 
 
@@ -166,7 +178,7 @@ def _diagnostic_paths(directory: Path) -> dict[str, list[str]]:
         "responses": sorted(responses),
         "warmup": ["warmup_metrics.json", "warmup_raw_output.json"],
     }
-    if not (directory / "publication.json").is_file():
+    if not read_records(directory, ("publication.json",)):
         groups["diagnostics"] = ["config.json", "metrics.json", "environment.json", "raw_output.json", "raw_results.json"]
         if (directory / "native").is_dir():
             groups["native"] = ["native"]
@@ -177,7 +189,7 @@ def record_wandb_diagnostics(directory: Path) -> None:
     """Retain the exact diagnostic file selection before the recorder releases its result lock."""
     identity = _wandb_identity(directory)
     identity["diagnostics"] = _diagnostic_paths(directory)
-    write_json(str(directory), "wandb.json", identity)
+    write_records(directory, {"wandb.json": identity})
 
 
 def _publish_artifacts(
@@ -235,12 +247,12 @@ def _record_publication_error(
     try:
         if publication is not None:
             publication.update(publication_pending=True, publication_error=str(error))
-            write_json(str(directory), "publication.json", publication)
-        elif (directory / "wandb.json").is_file():
-            identity = json.loads((directory / "wandb.json").read_text())
+            write_records(directory, {"publication.json": publication})
+        elif (documents := read_records(directory, ("wandb.json",))):
+            identity = documents["wandb.json"]
             identity["publication_error"] = str(error)
-            write_json(str(directory), "wandb.json", identity)
-    except (OSError, ValueError):
+            write_records(directory, {"wandb.json": identity})
+    except (OSError, sqlite3.Error, ValueError):
         logger.exception("Could not retain the W&B publication error")
 
 
@@ -265,7 +277,7 @@ def _upload_wandb(
         api = wandb.Api(overrides={"base_url": identity["base_url"]})
         entity = identity["entity"] or api.default_entity
         identity["entity"] = entity
-        write_json(str(directory), "wandb.json", identity)
+        write_records(directory, {"wandb.json": identity})
         if not native_synced and not published:
             logger.info("Synchronizing W&B recording: %s", directory)
             environment = os.environ.copy()
@@ -281,7 +293,7 @@ def _upload_wandb(
                 raise RuntimeError(f"W&B synchronization failed for {directory}; saved results remain available for retry")
         scope = "results" if run is not None else "diagnostics"
         logger.info("Publishing W&B %s: %s/%s/%s", scope, entity, identity["project"], identity["id"])
-        context = json.loads((directory / "context.json").read_text())
+        context = read_record(directory, "context.json")
         exit_code = run.exit_code if run is not None else context.get("exit_code")
         if exit_code is None:
             exit_code = 1
@@ -321,4 +333,4 @@ def _upload_wandb(
         identity.update(published_scope=scope, plots_published=plots)
         identity.pop("recovered", None)
         identity.pop("publication_error", None)
-        write_json(str(directory), "wandb.json", identity)
+        write_records(directory, {"wandb.json": identity})

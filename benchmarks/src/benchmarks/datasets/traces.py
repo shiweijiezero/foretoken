@@ -89,6 +89,7 @@ class ArrivalTraceReader:
         yield from iter_dataset_rows(self.trace_selector)
 
     def _iter_events(self) -> Iterator[ArrivalTraceEvent]:
+        """Normalize rows while keeping one detected format across both window-selection passes."""
         row_parser: TraceRowParser | None = None
         for dataset_path, line_number, source_row_index, row in self._iter_rows():
             if row_parser is None:

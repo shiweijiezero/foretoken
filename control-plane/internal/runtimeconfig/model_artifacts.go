@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Projects model sources while retaining the selected application's preparation contract.
 package runtimeconfig
 
 import api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -13,9 +14,9 @@ const SharedModelCachePreparationVersion int32 = 2
 
 // ModelPreparationVersion retains an application's acquisition contract across controller upgrades.
 // Selections written before this field used vLLM preparation v1 and native Omni acquisition.
-func ModelPreparationVersion(selection *api.ApplicationSelection, backend string) int32 {
-	if selection != nil && selection.PreparationVersion != nil {
-		return *selection.PreparationVersion
+func ModelPreparationVersion(selectedVersion *int32, backend string) int32 {
+	if selectedVersion != nil {
+		return *selectedVersion
 	}
 	if backend == "vllm" {
 		return 1

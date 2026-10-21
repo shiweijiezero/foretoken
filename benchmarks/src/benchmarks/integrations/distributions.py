@@ -9,8 +9,8 @@ import math
 from collections.abc import Iterable
 from typing import Self
 
-import httpx
 import numpy as np
+from openai import APIStatusError, OpenAI
 
 from benchmarks.model_service import ModelService
 
@@ -20,10 +20,12 @@ class CompletionComparisonClient:
 
     def __init__(self, service: ModelService, *, timeout: float) -> None:
         self._model = service.model
-        self._url = service.api_root + "/completions"
-        self._client = httpx.Client(
-            headers={**service.request_headers, "Authorization": f"Bearer {service.api_key}"},
+        self._client = OpenAI(
+            base_url=service.api_root,
+            api_key=service.api_key,
+            default_headers=service.request_headers,
             timeout=timeout,
+            max_retries=0,
         )
 
     def __enter__(self) -> Self:
@@ -34,16 +36,15 @@ class CompletionComparisonClient:
 
     def generate(self, prefix: list[int], max_tokens: int) -> dict[str, object]:
         """Return the service's native generated IDs, text, and finish reason for a greedy continuation."""
-        response = self._client.post(self._url, json={
-            "model": self._model,
-            "prompt": prefix,
-            "max_tokens": max_tokens,
-            "temperature": 0,
-            "stream": False,
-            "return_token_ids": True,
-        })
-        response.raise_for_status()
-        payload = response.json()
+        response = self._client.completions.create(
+            model=self._model,
+            prompt=prefix,
+            max_tokens=max_tokens,
+            temperature=0,
+            stream=False,
+            extra_body={"return_token_ids": True},
+        )
+        payload = response.model_dump()
         try:
             choice = payload["choices"][0]
             token_ids = choice["token_ids"]
@@ -72,28 +73,31 @@ class CompletionComparisonClient:
         Checking vocabulary coverage prevents silently interpreting top-k output
         or colliding decoded-token strings as a complete probability distribution.
         """
-        response = self._client.post(self._url, json={
-            "model": self._model,
-            "prompt": prefix,
-            "max_tokens": 1,
-            "logprobs": vocabulary_size,
-            "return_tokens_as_token_ids": True,
-            "temperature": 1.0,
-            "top_p": 1.0,
-            "top_k": 0,
-            "min_p": 0.0,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0,
-            "repetition_penalty": 1.0,
-            "stream": False,
-        })
-        if response.is_error:
+        try:
+            response = self._client.completions.create(
+                model=self._model,
+                prompt=prefix,
+                max_tokens=1,
+                logprobs=vocabulary_size,
+                temperature=1.0,
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                stream=False,
+                extra_body={
+                    "return_tokens_as_token_ids": True,
+                    "top_k": 0,
+                    "min_p": 0.0,
+                    "repetition_penalty": 1.0,
+                },
+            )
+        except APIStatusError as error:
             raise ValueError(
-                f"Distribution scoring for {self._model!r} returned HTTP {response.status_code}. "
+                f"Distribution scoring for {self._model!r} returned HTTP {error.status_code}. "
                 "The service must support full-vocabulary logprobs and return_tokens_as_token_ids; "
                 "for vLLM, configure max-logprobs=-1."
-            )
-        payload = response.json()
+            ) from error
+        payload = response.model_dump()
         try:
             distribution = payload["choices"][0]["logprobs"]["top_logprobs"][0]
             if not isinstance(distribution, dict) or not distribution:

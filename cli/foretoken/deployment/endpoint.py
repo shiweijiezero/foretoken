@@ -12,11 +12,11 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from foretoken.arguments import EndpointCommand
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DeploymentInstance, resolve_deployment_target
 from foretoken.deployment.manifest import DEPLOYMENT_UID_LABEL, ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
+from foretoken.processes.execution import CommandExecution
 
 
 @dataclass(frozen=True)

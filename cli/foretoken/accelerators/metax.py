@@ -20,10 +20,10 @@ from foretoken.accelerators.discovery import (
     ExporterMonitor,
     MetricRequirement,
 )
+from foretoken.downloads.sources import platform_image_reference
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
 from foretoken.kubernetes.documents import encode_resources
-from foretoken.network_sources import platform_image_reference
 
 
 @dataclass(frozen=True)
@@ -82,10 +82,12 @@ class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable MetaX GPU."""
+        from kubernetes.utils.quantity import parse_quantity
+
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         for resource in METAX_GPU_RESOURCES:
             try:
-                if int(str(allocatable.get(resource))) > 0:
+                if parse_quantity(allocatable.get(resource)) > 0:
                     return True
             except (TypeError, ValueError):
                 continue

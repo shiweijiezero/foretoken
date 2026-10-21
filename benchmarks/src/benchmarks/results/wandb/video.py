@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import wandb
+
+from benchmarks.results.recording.database import read_recorded_requests
 
 if TYPE_CHECKING:
     from benchmarks.results.types import BenchmarkRun
@@ -82,10 +83,8 @@ def publish_video_wandb(
     run: BenchmarkRun,
 ) -> None:
     """Publish video summaries, request rows and media to the final online session."""
-    raw_results = json.loads(
-        run.artifacts["raw_results"].read_text(encoding="utf-8")
-    )
     directory = run.artifacts["raw_results"].parent
+    raw_results = sorted(read_recorded_requests(directory, "raw_results"), key=lambda row: row["index"])
     videos = []
     for result in raw_results:
         if not result.get("success") or not result.get("output_path"):

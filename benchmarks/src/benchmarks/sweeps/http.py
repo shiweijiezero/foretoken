@@ -10,7 +10,9 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, cast
+
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from benchmarks.config.benchmark import (
     BenchmarkConfig,
@@ -18,6 +20,14 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     normalize_output_token_limit,
     parse_duration_seconds,
+)
+from benchmarks.config.decoding import (
+    BOOLEAN,
+    INTEGER,
+    NUMBER,
+    OPTIONAL_INTEGER,
+    OPTIONAL_NUMBER,
+    STRING,
 )
 from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.reporting.http import format_benchmark_config, log_sweep_results
@@ -38,60 +48,72 @@ from benchmarks.sweeps.core import (
 )
 
 logger = logging.getLogger(__name__)
+_DATASET_SELECTORS = TypeAdapter(str | list[str], config=ConfigDict(strict=True, hide_input_in_errors=True))
+_DATASET_WEIGHTS = TypeAdapter(str | list[float], config=ConfigDict(strict=True, hide_input_in_errors=True))
+_WEIGHT_VALUES = TypeAdapter(list[float], config=ConfigDict(hide_input_in_errors=True))
+_SLO_CRITERIA = TypeAdapter(dict[str, str] | list[dict[str, str]], config=ConfigDict(strict=True, hide_input_in_errors=True))
+_EXTRA_BODY = TypeAdapter(dict[str, Any], config=ConfigDict(strict=True, hide_input_in_errors=True))
+_SERVICE_CHOICE = TypeAdapter(
+    dict[Literal["name", "path", "url", "model", "health_url"], str],
+    config=ConfigDict(strict=True, hide_input_in_errors=True),
+)
 
 
 def _dataset_selectors(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]
+    """Decode one source or an explicit mixed-source choice without coercing row selectors."""
+    selected = _DATASET_SELECTORS.validate_python(value)
+    return selected if isinstance(selected, list) else [selected]
 
 
-def _preserve_value(value: Any) -> Any:
-    return value
+def _dataset_weights(value: Any) -> list[float]:
+    """Decode relative dataset weights, retaining the CLI's comma-separated syntax."""
+    weights = _DATASET_WEIGHTS.validate_python(value)
+    return _WEIGHT_VALUES.validate_python(weights.split(",")) if isinstance(weights, str) else weights
 
 
 def _slo_criteria(value: Any) -> list[dict[str, str]]:
     """Keep one sweep choice as a group of criteria for the existing SLO config."""
-    return [value] if isinstance(value, dict) else value
+    criteria = _SLO_CRITERIA.validate_python(value)
+    return [criteria] if isinstance(criteria, dict) else criteria
 
 
 # Only HTTP request, generation, and workload choices are exposed by this adapter.
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
-    "max_concurrency": ("load", "max_concurrency", int),
-    "num_prompts": ("load", "request_count", int),
-    "warmup_requests": ("load", "warmup_requests", int),
-    "request_rate": ("load", "arrival_rate", float),
-    "arrival_pattern": ("load", "arrival_pattern", str),
-    "burstiness": ("load", "burstiness", float),
+    "max_concurrency": ("load", "max_concurrency", INTEGER.validate_python),
+    "num_prompts": ("load", "request_count", INTEGER.validate_python),
+    "warmup_requests": ("load", "warmup_requests", INTEGER.validate_python),
+    "request_rate": ("load", "arrival_rate", NUMBER.validate_python),
+    "arrival_pattern": ("load", "arrival_pattern", STRING.validate_python),
+    "burstiness": ("load", "burstiness", NUMBER.validate_python),
     "duration": ("load", "duration_seconds", parse_duration_seconds),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
-    "min_output_length": ("generation", "min_output_length", int),
-    "max_output_length": ("generation", "max_output_length", int),
-    "stream": ("generation", "stream", _preserve_value),
-    "top_p": ("generation", "top_p", _preserve_value),
-    "top_k": ("generation", "top_k", _preserve_value),
-    "min_p": ("generation", "min_p", _preserve_value),
-    "temperature": ("generation", "temperature", _preserve_value),
-    "frequency_penalty": ("generation", "frequency_penalty", _preserve_value),
-    "presence_penalty": ("generation", "presence_penalty", _preserve_value),
-    "repetition_penalty": ("generation", "repetition_penalty", _preserve_value),
-    "extra_body": ("generation", "extra_body", dict),
+    "min_output_length": ("generation", "min_output_length", INTEGER.validate_python),
+    "max_output_length": ("generation", "max_output_length", INTEGER.validate_python),
+    "stream": ("generation", "stream", BOOLEAN.validate_python),
+    "top_p": ("generation", "top_p", OPTIONAL_NUMBER.validate_python),
+    "top_k": ("generation", "top_k", OPTIONAL_INTEGER.validate_python),
+    "min_p": ("generation", "min_p", OPTIONAL_NUMBER.validate_python),
+    "temperature": ("generation", "temperature", OPTIONAL_NUMBER.validate_python),
+    "frequency_penalty": ("generation", "frequency_penalty", OPTIONAL_NUMBER.validate_python),
+    "presence_penalty": ("generation", "presence_penalty", OPTIONAL_NUMBER.validate_python),
+    "repetition_penalty": ("generation", "repetition_penalty", OPTIONAL_NUMBER.validate_python),
+    "extra_body": ("generation", "extra_body", _EXTRA_BODY.validate_python),
     "dataset": ("workload", "dataset_selectors", _dataset_selectors),
-    "trace": ("trace", "trace_selector", str),
+    "trace": ("trace", "trace_selector", STRING.validate_python),
     "trace_start": ("trace", "start_offset_seconds", parse_duration_seconds),
     "trace_duration": ("trace", "duration_seconds", parse_duration_seconds),
-    "trace_synthetic_prefix_reuse": ("trace", "synthetic_prefix_reuse", _preserve_value),
-    "dataset_weights": ("workload", "dataset_weights", lambda value: [float(item) for item in (value.split(",") if isinstance(value, str) else value)]),
-    "dataset_offset": ("workload", "row_offset", int),
-    "tokenizer_path": ("workload", "tokenizer", str),
-    "random_seed": ("workload", "random_seed", int),
-    "min_prompt_length": ("workload", "minimum_prompt_tokens", int),
-    "max_prompt_length": ("workload", "maximum_prompt_tokens", int),
-    "prefix_length": ("workload", "shared_prefix_tokens", int),
-    "apply_chat_template": ("workload", "apply_chat_template", _preserve_value),
-    "prompt": ("workload", "fixed_prompt", str),
-    "max_turns": ("workload", "max_turns", int),
-    "conversation_history": ("workload", "conversation_history", str),
+    "trace_synthetic_prefix_reuse": ("trace", "synthetic_prefix_reuse", BOOLEAN.validate_python),
+    "dataset_weights": ("workload", "dataset_weights", _dataset_weights),
+    "dataset_offset": ("workload", "row_offset", INTEGER.validate_python),
+    "tokenizer_path": ("workload", "tokenizer", STRING.validate_python),
+    "random_seed": ("workload", "random_seed", INTEGER.validate_python),
+    "min_prompt_length": ("workload", "minimum_prompt_tokens", INTEGER.validate_python),
+    "max_prompt_length": ("workload", "maximum_prompt_tokens", INTEGER.validate_python),
+    "prefix_length": ("workload", "shared_prefix_tokens", INTEGER.validate_python),
+    "apply_chat_template": ("workload", "apply_chat_template", BOOLEAN.validate_python),
+    "prompt": ("workload", "fixed_prompt", STRING.validate_python),
+    "max_turns": ("workload", "max_turns", INTEGER.validate_python),
+    "conversation_history": ("workload", "conversation_history", STRING.validate_python),
     "slo_params": ("slo", "params", _slo_criteria),
 }
 
@@ -104,12 +126,35 @@ class ParameterSweepBenchmark:
 
     def run(self) -> BenchmarkRun:
         """Run HTTP repetitions and return the aggregate completion result."""
-        sweep = self.benchmark.sweep
         resources = ExitStack()
         adapter = _HttpSweepAdapter(resources)
+        definition, combinations = self._prepare_points(adapter)
+        execution = run_sweep(
+            self.benchmark, definition, adapter,
+            mode="parameter_sweep", combinations=combinations,
+            service_resources=resources,
+        )
+        if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
+            log_sweep_results(execution.points)
+        return execution.run
+
+    def _prepare_points(self, adapter: _HttpSweepAdapter) -> tuple[SweepDefinition, list[SweepPoint]]:
+        """Combine workload points with CLI services unless a point selects its own service."""
+        sweep = self.benchmark.sweep
         definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name, sweep.resume)
+        choices = self.benchmark.service_choices
         if sweep.path:
             combinations = load_core_sweep_points(definition, adapter)
+            if len(choices) > 1:
+                services = [
+                    {"health_url": self.benchmark.service.health_url, **choice}
+                    for choice in choices
+                ]
+                combinations = [
+                    {**point, "service": choice}
+                    for point in combinations
+                    for choice in ([point["service"]] if "service" in point else services)
+                ]
         else:
             definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison", sweep.resume)
             combinations = [
@@ -118,7 +163,7 @@ class ParameterSweepBenchmark:
                     _PARAMETER_GROUP: "service-comparison",
                     "service": choice,
                 }
-                for choice in self.benchmark.service_choices
+                for choice in choices
             ]
         # Complete all workloads for a method before releasing its temporary service.
         methods: dict[str, ModelServiceSource] = {}
@@ -129,14 +174,7 @@ class ParameterSweepBenchmark:
             methods[source.name] = source
         order = {name: index for index, name in enumerate(methods)}
         combinations.sort(key=lambda point: order[adapter.apply_point(self.benchmark, point).service.name])
-        execution = run_sweep(
-            self.benchmark, definition, adapter,
-            mode="parameter_sweep", combinations=combinations,
-            service_resources=resources,
-        )
-        if len(execution.points) > 1 and not self.benchmark.outputs.includes("quiet"):
-            log_sweep_results(execution.points)
-        return execution.run
+        return definition, combinations
 
 
 def _service_choice(value: Any) -> dict[str, str]:
@@ -146,15 +184,7 @@ def _service_choice(value: Any) -> dict[str, str]:
         if not path:
             raise ValueError("sweep service paths cannot be empty")
         return {"name": Path(path).name, "path": path}
-    if not isinstance(value, dict):
-        raise ValueError(  # noqa: TRY004 - CLI callers render sweep input errors.
-            "sweep service must be a path or an object with name and path or url"
-        )
-    unknown = set(value) - {"name", "path", "url", "model", "health_url"}
-    if unknown:
-        raise ValueError("Unsupported sweep service fields: " + ", ".join(sorted(unknown)))
-    if not all(isinstance(item, str) for item in value.values()):
-        raise ValueError("sweep service fields must be strings")
+    value = _SERVICE_CHOICE.validate_python(value)
     if not value.get("name", "").strip() or bool(value.get("path")) == bool(value.get("url")):
         raise ValueError("sweep service requires a non-empty name and exactly one path or url")
     return value
@@ -178,6 +208,12 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
         unknown = set(record) - set(self.axis_fields) - {_BENCHMARK_NAME, _PARAMETER_GROUP}
         if unknown:
             raise ValueError(f"Unsupported sweep keys on line {line_no}: " + ", ".join(sorted(unknown)))
+        for key in (_BENCHMARK_NAME, _PARAMETER_GROUP):
+            if key in record:
+                try:
+                    STRING.validate_python(record[key])
+                except ValidationError as error:
+                    raise ValueError(f"Invalid sweep field {key!r}: {error}") from error
 
     def apply_point(self, config: BenchmarkConfig, point: SweepPoint) -> BenchmarkConfig:
         """Apply explicit workload axes and the selected service without mutating the base benchmark."""
@@ -194,7 +230,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 **{section: replace(getattr(updated, section), **updates)},
             )
         if "service" in point:
-            choice = _service_choice(point["service"])
+            choice = cast(dict[str, str], point["service"])
             path = choice.get("path", "")
             if path:
                 path = str((Path.cwd() / Path(path).expanduser()).resolve())
@@ -255,12 +291,4 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 output_dir=output_dir,
                 wandb_group=wandb_group,
             ).run()
-        metrics = dict(result.metrics)
-        metrics["gpu_count"] = (
-            self.service.gpu_count
-            if self.service is not None and self.selection == selection
-            and metrics.get("throughput", {}).get("generation_tokens_per_second_per_gpu") is not None
-            else metrics.get("gpu_count")
-        )
-        metrics["label"] = label
-        return replace(result, metrics=metrics)
+        return result

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Stabilizes capacity recommendations and limits each adjustment to one replica.
 package adjustment
 
 import (

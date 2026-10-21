@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
 
+## Schedule multi-node replicas
+
+A platform administrator can select [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) for complete-group placement, [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) for quota admission, or both. Foretoken continues to own model capacity, readiness and request draining. Single-node replicas and CPU-only model preparation keep their ordinary scheduling path.
+
+The native controllers and queues must already exist. For the combined example, prepare Volcano Queue `inference`, enable Kueue's LeaderWorkerSet integration and create LocalQueue `inference` in each service namespace. Save this platform selection in `deploy/platform-values.yaml`:
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+Omit either field to use only the other integration. Run `foretoken install --values deploy/platform-values.yaml`, retaining the original source or registry options, then redeploy the instances that should adopt the queues. Foretoken enables Volcano support in its managed LeaderWorkerSet controller; an independently installed controller remains under its administrator's control.
+
+Platform updates do not change existing or stopped instances. Their selected queues remain fixed until the next explicit `foretoken deploy`. Use `leaderWorkerScheduling: null` to clear the selection for new deployments.
+
 ## Instance concurrency
 
 To bound accepted, unfinished work at each text model-server instance, including its engine queue, add this setting to the model YAML:

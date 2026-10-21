@@ -150,8 +150,17 @@ impl ApiStore {
             .await
     }
 
+    /// Observes remote cancellation without letting notifications replace the execution-owner check.
+    pub(crate) async fn wait_cancelled(&self, id: &str) -> Result<(), StoreError> {
+        let mut changes = self.cancellation_changes(id);
+        while !self.cancellation_requested(id).await? {
+            changes.changed().await;
+        }
+        Ok(())
+    }
+
     /// Reads cancellation independently of HTTP consumers and detects a lost cache record.
-    pub(crate) async fn cancellation_requested(&self, id: &str) -> Result<bool, StoreError> {
+    async fn cancellation_requested(&self, id: &str) -> Result<bool, StoreError> {
         self.transition(
             "cancellation_requested",
             &None,

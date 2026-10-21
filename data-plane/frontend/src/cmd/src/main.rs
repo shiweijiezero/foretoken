@@ -14,6 +14,8 @@ use foretoken_kv_indexer::KvIndexDegradedReason;
 use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{RuntimeGeneration, router};
 use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 /// Publishes controller snapshots to the HTTP frontend and owns admission-close and shutdown drain.
 #[tokio::main]
@@ -56,40 +58,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bind the HTTP listener before launching the refresh loops. The process can remain
     // live while readiness stays false until a valid routing snapshot is published.
     let listener = tokio::net::TcpListener::bind(config.listen_address).await?;
-    tokio::spawn(refresh_active_generation(generation.clone()));
-    tokio::spawn(watch_serving_snapshot(
-        generation.clone(),
-        config.serving_snapshot,
-        None,
-        builder,
-    ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
     let (app, response_tasks) = router(generation.clone(), models, ledger)?;
-    let shutdown = Arc::new(tokio::sync::Notify::new());
-    let server_shutdown = shutdown.clone();
+    let shutdown = CancellationToken::new();
+    let background = TaskTracker::new();
+    background.spawn(
+        shutdown
+            .child_token()
+            .run_until_cancelled_owned(refresh_active_generation(generation.clone())),
+    );
+    background.spawn(
+        shutdown
+            .child_token()
+            .run_until_cancelled_owned(watch_serving_snapshot(
+                generation.clone(),
+                config.serving_snapshot,
+                None,
+                builder,
+            )),
+    );
     let mut server = Box::pin(
         axum::serve(listener, app)
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
+            .with_graceful_shutdown(shutdown.clone().cancelled_owned())
             .into_future(),
     );
 
-    // A server failure exits immediately; an operating-system shutdown follows the
-    // admission-close and bounded drain sequence below.
-    tokio::select! {
-        result = &mut server => {
-            result?;
-            return Ok(());
-        }
-        () = shutdown_signal() => {}
-    }
+    // A server failure exits after ancillary work stops; signals also drain accepted requests.
+    let stopped = tokio::select! {
+        result = &mut server => Some(result),
+        () = shutdown_signal() => None,
+    };
 
-    // Reject new requests before stopping the HTTP server, then allow accepted streams
-    // to finish within the process drain budget, independently of live request settings.
+    // Reject new requests before stopping HTTP and snapshot work. Cancellation remains visible
+    // even when Axum has not yet polled its graceful-shutdown future.
     generation.close_admission();
-    shutdown.notify_waiters();
+    shutdown.cancel();
+    background.close();
+    if let Some(result) = stopped {
+        background.wait().await;
+        result?;
+        return Ok(());
+    }
     let drained = tokio::time::timeout(config.drain, async {
-        let (served, ()) = tokio::join!(server.as_mut(), response_tasks.drain());
+        let (served, (), ()) =
+            tokio::join!(server.as_mut(), response_tasks.drain(), background.wait());
         served
     })
     .await;

@@ -139,7 +139,7 @@ def compile_rust(root: Path, component: str, output: Path, cache: Path, environm
         environment[f"GIT_CONFIG_VALUE_{index}"] = "https://github.com/"
         environment["GIT_CONFIG_COUNT"] = str(index + 1)
     cargo = ["cargo"]
-    if registry := environment.get("FORETOKEN_CARGO_REGISTRY"):
+    if (registry := environment.get("FORETOKEN_CARGO_REGISTRY")) and registry != "sparse+https://index.crates.io/":
         cargo += [
             "--config", 'source.crates-io.replace-with="foretoken-mirror"',
             "--config", "source.foretoken-mirror.registry=" + json.dumps(registry),
@@ -155,7 +155,7 @@ def compile_rust(root: Path, component: str, output: Path, cache: Path, environm
 
     # Image layers restore source mtimes on each solve. Keep the prepared tree beside
     # Cargo's artifacts so unchanged dependencies remain incremental in both callers.
-    target = Path(environment["CARGO_TARGET_DIR"]).resolve()
+    target = (root / "data-plane" / environment["CARGO_TARGET_DIR"]).resolve()
     metadata = tomllib.loads((root / "data-plane/Cargo.toml").read_text())["workspace"]["metadata"]["foretoken"]
     upstream = root / "data-plane" / metadata["vllm_source"] / "rust"
     prepared = target / "vllm-rust"
@@ -176,7 +176,8 @@ def compile_rust(root: Path, component: str, output: Path, cache: Path, environm
     binary = "foretoken-frontend" if component == "frontend" else environment.get("FORETOKEN_MODEL_SERVER_BINARY", "foretoken-model-server")
     package = "foretoken-frontend" if component == "frontend" else "foretoken-model-server"
     subprocess.run(
-        [*cargo, "build", "--locked", "--release", "--manifest-path", "Cargo.toml", "--package", package, "--bin", binary],
+        [*cargo, "run", "--locked", "--manifest-path", "xtask/Cargo.toml", "--", "build", "--",
+         *cargo[1:], "--release", "--package", package, "--bin", binary],
         cwd=root / "data-plane", env=environment, check=True,
     )
     binaries = output / "bin"
