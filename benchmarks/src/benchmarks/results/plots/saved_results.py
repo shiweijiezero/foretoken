@@ -14,6 +14,7 @@ from typing import Any
 from benchmarks.results.plots.charts.quality import _quality_charts, comparison_charts
 from benchmarks.results.plots.charts.slo import _slo_charts
 from benchmarks.results.plots.data import Chart, _method
+from benchmarks.results.recording.database import read_record, read_records
 from benchmarks.results.recording.directories import (
     _parent_plan,
     discover_result_directories,
@@ -73,7 +74,7 @@ def read_saved_results(
     observed: set[Path] = set()
     plans: dict[Path, list[_RecordedRun]] = {}
     for source in directories:
-        context = json.loads(source.context.read_text()) if source.context is not None else {}
+        context = read_record(source.context.parent, source.context.name) if source.context is not None else {}
         command = source.context.parent.parent if source.context is not None else None
         iteration = command.parent.parent if command is not None and command.parent.name == "runs" else None
         identity = {
@@ -109,13 +110,14 @@ def read_saved_results(
                     saved.conditions["protocol"] = measured[kind].get("protocol")
                     saved.conditions["reference_model"] = measured[kind].get("reference_model")
             comparison = comparison_charts(measured)
+            search = read_records(saved.directory, ("slo_results.json",)).get("slo_results.json")
             charts = []
             if comparison is not None:
                 charts, identities = comparison
             elif "scores" in measured:
                 charts, identities = _quality_charts(measured), [saved.method]
-            elif (saved.directory / "slo_results.json").is_file():
-                charts = _slo_charts(json.loads((saved.directory / "slo_results.json").read_text()))
+            elif search is not None:
+                charts = _slo_charts(search)
                 identities = [saved.method]
             else:
                 identities = [saved.method]
@@ -323,21 +325,19 @@ def _leaf(
     exit_code: int | None, started: bool, status: str | None = None,
 ) -> _RecordedRun:
     """Read one measurement, retaining the parent's plan when execution never reached it."""
-    task_path = directory / "task.json"
-    if task_path.is_file():
-        task = json.loads(task_path.read_text())
+    task = read_records(directory, ("task.json",)).get("task.json")
+    if task is not None:
         exit_code, status, started = task["exit_code"], task["status"], True
         if status == "completed" and exit_code:
             status = "failed"
     source = task_source(directory)
-    if (source / "config.json").is_file():
+    documents = read_records(source, ("config.json", "metrics.json", "context.json"))
+    if "config.json" in documents:
         configuration = source / "config.json"
-        conditions = _conditions(json.loads(configuration.read_text()))
+        conditions = _conditions(documents["config.json"])
         started = True
-    metrics_path = source / "metrics.json"
-    metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else None
-    context_path = source / "context.json"
-    context = json.loads(context_path.read_text()) if context_path.is_file() else None
+    metrics = documents.get("metrics.json")
+    context = documents.get("context.json")
     if context is not None:
         exit_code = context["measurement_exit_code"]
         started = True
@@ -348,29 +348,33 @@ def _leaf(
 
 def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
     """Follow the saved sweep/evaluation plan rather than rediscovering nested native reports."""
-    configuration = task_source(directory) / "config.json"
-    if not configuration.is_file():
-        search_path = directory / "slo_results.json"
-        if search_path.is_file():
-            # Search summaries have no top-level configuration. Probe records
-            # carry the fixed workload; concurrency and criteria belong to the search.
-            probe = next(iter(sorted(directory.glob("group-*/max-concurrency-*/run-*/config.json"))), None)
-            conditions = _conditions(json.loads(probe.read_text())) if probe is not None else {}
+    source = task_source(directory)
+    configuration = source / "config.json"
+    documents = read_records(source, ("config.json", "metrics.json", "context.json", "slo_results.json", "sweep_points.json"))
+    if "config.json" not in documents:
+        if "slo_results.json" in documents:
+            # Older search summaries retain their fixed workload only in probe records.
+            probe = None
+            conditions = {}
+            for child in sorted(directory.glob("group-*/max-concurrency-*/run-*")):
+                saved = read_records(child, ("config.json",)).get("config.json")
+                if saved is not None:
+                    probe, conditions = child / "config.json", _conditions(saved)
+                    break
             for field in ("max_concurrency", "slo_params", "slo_search"):
                 conditions.pop(field, None)
-            search = json.loads(search_path.read_text())
+            search = documents["slo_results.json"]
             conditions.update(
                 mode="slo_search", concurrency_limit_unit=search["concurrency_limit_unit"],
                 slo_params=[group["criteria"] for group in search["groups"]],
             )
             yield _RecordedRun(directory, probe, conditions, "default", None, None, True)
-        elif (directory / "context.json").is_file():
+        elif "context.json" in documents:
             yield _leaf(directory, None, {}, "default", None, True)
         return
-    config = json.loads(configuration.read_text())
+    config = documents["config.json"]
     if config.get("mode") in {"parameter_sweep", "video_parameter_sweep"}:
-        points_path = directory / "sweep_points.json"
-        points = json.loads(points_path.read_text()) if points_path.is_file() else []
+        points = documents.get("sweep_points.json", [])
         observed = {(point["combination"], point["run_number"]): point for point in points}
         for combination in config["combinations"]:
             children = [directory / combination["dir"] / f"run={number}" for number in range(config["num_runs"])]
@@ -382,9 +386,13 @@ def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
             }}
             # Repetitions share one prepared point configuration. A completed
             # sibling supplies its resolved model and mode for unfinished repeats.
-            saved = next((child / "config.json" for child in children if (child / "config.json").is_file()), None)
+            configurations = (
+                read_records(task_source(child), ("config.json",)).get("config.json")
+                for child in children
+            )
+            saved = next((value for value in configurations if value is not None), None)
             if saved is not None:
-                planned = _conditions(json.loads(saved.read_text()))
+                planned = _conditions(saved)
             for number, child in enumerate(children):
                 point = observed.get((combination["dir"], number))
                 yield _leaf(child, configuration, planned, method,
@@ -392,8 +400,7 @@ def _recorded_runs(directory: Path) -> Iterator[_RecordedRun]:
                             point is not None and point.get("status") != "pending",
                             point.get("status") if point is not None else None)
         return
-    metrics_path = directory / "metrics.json"
-    metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else None
+    metrics = documents.get("metrics.json")
     if metrics is not None and "evaluation_comparison" in metrics:
         # The comparison owns method labels and exit states; child reports own
         # native scores and environment snapshots. Never count the aggregate twice.

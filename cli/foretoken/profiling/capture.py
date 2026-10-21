@@ -24,6 +24,7 @@ class ProfileRun:
         self, command: ProfileCommand, *, deployment: ForetokenDeployment | None = None,
         kubectl: Kubectl | None = None,
     ) -> None:
+        """Resolve one capture target before deployment changes; start creates its ProfileRun."""
         self.command = command
         self.wait_seconds = timeout_seconds(command.timeout)
         if self.wait_seconds <= 0:

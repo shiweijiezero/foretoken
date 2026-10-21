@@ -12,9 +12,9 @@ from typing import Any
 import yaml
 
 from foretoken.arguments import InstallCommand
+from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
-from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.helm_client import HelmClient, value_at
 from foretoken.platform.networking.gateway_resources import (
     _discover_gateway_class,

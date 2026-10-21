@@ -48,6 +48,25 @@ impl Generation for RuntimeGeneration {
         self.acquire_admission(request).await
     }
 
+    fn video_task_service(
+        &self,
+        model: &str,
+    ) -> Result<super::VideoServiceReference, GenerationError> {
+        let slot = self.ready_state()?;
+        if !slot.models.iter().any(|candidate| candidate == model) {
+            return Err(GenerationError::ModelNotFound);
+        }
+        if slot.state.models.contains_key(model) {
+            return Err(GenerationError::InvalidRequest);
+        }
+        let video = slot
+            .state
+            .video
+            .as_ref()
+            .ok_or(GenerationError::Unavailable)?;
+        video.service(model).cloned()
+    }
+
     async fn generate_video(
         &self,
         request: crate::VideoRequest,
@@ -58,14 +77,28 @@ impl Generation for RuntimeGeneration {
             .video
             .as_ref()
             .ok_or(GenerationError::Unavailable)?;
-        if !video.models.contains(&request.model) {
+        if !video.models.contains_key(&request.model) {
             return Err(GenerationError::InvalidRequest);
+        }
+        // Resolve and dispatch within this one generation; a task must not migrate to another service.
+        if let Some(expected) = &request.model_service_uid
+            && &video.service(&request.model)?.uid != expected
+        {
+            return Err(GenerationError::Unavailable);
         }
         let context = RouterRequest::video(request.model.clone(), request.request_id.clone());
         let mut session = slot.state.router.start(context).await;
         let decision = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
+        if request.model_service_uid.as_ref().is_some_and(|expected| {
+            !video.inventory.model_routes().routes().iter().any(|route| {
+                route.route_target_id == decision.route_target_id
+                    && &route.target.service_uid == expected
+            })
+        }) {
+            return Err(GenerationError::Unavailable);
+        }
         let endpoint = video
             .inventory
             .http_endpoint(&decision)
@@ -404,7 +437,7 @@ impl RuntimeGeneration {
                     .state
                     .video
                     .as_ref()
-                    .is_some_and(|video| video.models.contains(model)))
+                    .is_some_and(|video| video.models.contains_key(model)))
                 && slot.control.model_ready(model, &allowed_pools)
             {
                 return Ok(slot);

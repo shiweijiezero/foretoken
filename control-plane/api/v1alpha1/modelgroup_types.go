@@ -194,6 +194,10 @@ const InstanceAdmissionFileProtocol uint32 = 1
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
+	// LeaderWorkerScheduling fixes native placement and quota admission across platform updates.
+	// +optional
+	LeaderWorkerScheduling *LeaderWorkerScheduling `json:"leaderWorkerScheduling,omitempty"`
+
 	// PreparationVersion selects native acquisition (0), vLLM preparation (1), or shared-cache preparation (2).
 	// +optional
 	// +kubebuilder:validation:Minimum=0

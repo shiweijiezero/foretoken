@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
@@ -24,6 +25,7 @@ from benchmarks.config.video_cli import parse_video_arguments
 from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
+from benchmarks.results.recording.database import read_record
 from benchmarks.results.recording.logs import configure_logging
 from benchmarks.results.reporting.http import (
     format_benchmark_config,
@@ -74,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     run = run_benchmark(benchmark, prepare_service, outputs=outputs)
             if run.exit_code:
                 raise SystemExit(run.exit_code)
-    except (DeploymentError, OSError, ValueError, wandb.errors.Error) as exc:
+    except (DeploymentError, OSError, sqlite3.Error, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 
 
@@ -109,7 +111,7 @@ def _run_video(arguments: Sequence[str]) -> None:
             )
             if result["exit_code"]:
                 raise SystemExit(result["exit_code"])
-    except (OSError, ValueError, wandb.errors.Error) as exc:
+    except (OSError, sqlite3.Error, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 
 
@@ -125,10 +127,10 @@ def _recover_completed(
 
     source = Path(resume).resolve()
     with publication_lock(source):
-        context = json.loads((source / "context.json").read_text())
-    if not measurement_complete(source, context):
-        return None
-    saved = json.loads((source / "config.json").read_text())
+        context = read_record(source, "context.json")
+        if not measurement_complete(source, context):
+            return None
+        saved = read_record(source, "config.json")
     original = saved.get("base", saved)
     remaining = []
     options = iter(arguments)

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Defines trigger decisions and classifies unavailable, stale, or incomplete observations.
 package core
 
 import "time"

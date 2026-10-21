@@ -51,9 +51,9 @@ from foretoken.build.state import (
     local_candidates,
     write_source_state,
 )
-from foretoken.command_execution import CommandExecution
+from foretoken.downloads.sources import select_build_sources
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
-from foretoken.network_sources import select_build_sources
+from foretoken.processes.execution import CommandExecution
 
 _LOCAL_IMAGE_PREFIX = "docker.io/library/foretoken-dev"
 

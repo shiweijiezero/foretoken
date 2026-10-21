@@ -21,9 +21,9 @@ from foretoken.build.cluster.images import (
 )
 from foretoken.build.cluster.storage import SOURCE_BUILD_UID, ensure_shared_build_cache
 from foretoken.build.cluster.transfer import synchronize_inputs
-from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
+from foretoken.processes.execution import CommandExecution
 
 
 class CompilerWorkspace(AbstractContextManager):
@@ -36,6 +36,7 @@ class CompilerWorkspace(AbstractContextManager):
         pull_secrets: tuple[str, ...] = (), credentials: dict[str, Any] | None = None,
         cancellation: CommandExecution | None = None,
     ) -> None:
+        """Bind private workspaces, artifact storage and shared caches; __enter__ allocates the compiler Pod."""
         self.kubectl = kubectl
         self.namespace = namespace
         self.claim = claim

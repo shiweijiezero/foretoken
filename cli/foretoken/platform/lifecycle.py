@@ -27,7 +27,6 @@ from foretoken.build.state import (
     source_operation,
     source_uninstall,
 )
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
@@ -37,7 +36,6 @@ from foretoken.kubernetes.client import (
     timeout_seconds,
 )
 from foretoken.kubernetes.mutation import DeploymentMutation
-from foretoken.observability import PrometheusRef
 from foretoken.platform.config import (
     default_platform_config,
     grafana_anonymous_access_from_values,
@@ -66,6 +64,7 @@ from foretoken.platform.observability.monitoring import (
     MonitoringLifecycle,
     MonitoringPlan,
 )
+from foretoken.platform.prometheus import PrometheusRef
 from foretoken.platform.rdma import (
     RDMASelection,
     require_unused_managed_rdma,
@@ -79,6 +78,7 @@ from foretoken.platform.storage.model_distribution import (
     ModelDistributionLifecycle,
 )
 from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef, RuntimeOverrides
+from foretoken.processes.execution import CommandExecution
 
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages
@@ -355,7 +355,7 @@ class PlatformLifecycle:
             _print_plan("LoadBalancer", load_balancer.action, load_balancer.detail)
             raise DeploymentError(load_balancer.detail)
         gateway_config, gateway = self._gateway.resolve_install(command, platform, platform_exists)
-        leader_worker = self._leader_worker.resolve_install()
+        leader_worker = self._leader_worker.resolve_install(merged)
         discovery = ExporterDiscovery(self._kubectl, command.timeout)
         runtime = self._resolve_runtime(command, install_source, values, stored, discovery.nodes, source_base_image)
         rdma = select_rdma(
@@ -626,9 +626,11 @@ def _select_runtime(nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrid
 
 def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
     """Read one node's allocatable extended-resource capacity."""
+    from kubernetes.utils.quantity import parse_quantity
+
     value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
     try:
-        return int(str(value))
+        return int(parse_quantity(str(value)))
     except (TypeError, ValueError):
         return 0
 

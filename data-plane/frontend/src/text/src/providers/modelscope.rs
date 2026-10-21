@@ -161,6 +161,8 @@ async fn repository_files(
         .unwrap_or_default())
 }
 
+/// Acquires one metadata file for snapshot resolution, preserving offline cache reads.
+/// A complete private file is renamed into place before processor loading can discover it.
 async fn download_file(
     client: &reqwest::Client,
     model_id: &str,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Defines the Chart-compiled controller and directory contracts selected by deployments.
 package deployments
 
 import (

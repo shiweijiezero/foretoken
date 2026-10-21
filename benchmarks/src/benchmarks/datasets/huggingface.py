@@ -19,7 +19,7 @@ from datasets import (
     load_dataset,
     load_dataset_builder,
 )
-from foretoken.network_sources import select_huggingface_endpoint
+from foretoken.downloads.sources import select_huggingface_endpoint
 from huggingface_hub import hf_hub_download, parse_hf_uri, snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 

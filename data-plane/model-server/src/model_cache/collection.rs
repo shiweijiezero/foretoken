@@ -4,7 +4,7 @@
 //! Collects retired provider snapshots after rechecking consumers under the shared-cache lock.
 
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -381,10 +381,9 @@ async fn run_provider(
     let directory = std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV)
         .map(|directory| PathBuf::from(directory).join("python"))
         .unwrap_or_else(|| PathBuf::from(PYTHON_MODULE_PATH));
-    let script = fs::read_to_string(directory.join("foretoken_cache_gc.py"))?;
     let payload = serde_json::to_vec(&request).map_err(io::Error::other)?;
     let mut child = Command::new(crate::engine::python_executable())
-        .args(["-c", &script])
+        .arg(directory.join("foretoken_cache_gc.py"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

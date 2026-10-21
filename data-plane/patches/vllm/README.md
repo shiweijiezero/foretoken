@@ -29,7 +29,7 @@ Patch paths are relative to this directory. Patches use `-p1` against the upstre
 
 Edit upstream source and regenerate unified diffs. Keep shared behavior in `common/` and interface-specific changes in `compatibility/`. Check the selected patch stack against each affected source version and exercise the changed runtime behavior.
 
-The model-server image uses `apply.py`; engine-source builds use `engine_patches()` from `vllm_patches.py`. Both select Python rules from the catalog. Rust source preparation selects its `rust` entries. Repeat preparation or image construction to verify reuse of an already-patched tree.
+The model-server image uses `apply.py`; engine-source builds use `engine_patches()` from `vllm_patches.py`. Both select Python rules from the catalog. Rust builds and source maintenance use `source.rs` to prepare the catalog's `rust` entries. Repeat preparation or image construction to verify reuse of an already-patched tree.
 
 Image and source builds share dependency adaptation in `vllm_patches.py`. Preserve the engine image's NCCL override and packages required by other consumers when updating dependencies.
 

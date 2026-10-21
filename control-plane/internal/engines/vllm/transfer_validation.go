@@ -16,7 +16,7 @@ func CompleteECRuntime(runtime *inferencev1alpha1.ModelGroupECRuntimeConfig, rol
 	}
 	return runtime.ProfileName != "" &&
 		runtime.ProfileRevision != "" &&
-		runtime.Connector == "ECExampleConnector" &&
+		runtime.Connector == ecConnector &&
 		runtime.Role == role &&
 		runtime.SharedStorageClaim != "" &&
 		runtime.SharedStoragePath != ""
@@ -24,5 +24,5 @@ func CompleteECRuntime(runtime *inferencev1alpha1.ModelGroupECRuntimeConfig, rol
 
 // CompletePDRuntime checks the Mooncake transfer fields shared by workload and routing validation.
 func CompletePDRuntime(runtime *inferencev1alpha1.ModelGroupPDRuntimeConfig) bool {
-	return runtime != nil && runtime.ProfileName != "" && runtime.ProfileRevision != "" && runtime.Connector == "MooncakeConnector" && (runtime.Protocol == "rdma" || runtime.Protocol == "tcp") && runtime.BootstrapPort > 0 && runtime.AbortRequestTimeoutSeconds > 0
+	return runtime != nil && runtime.ProfileName != "" && runtime.ProfileRevision != "" && runtime.Connector == pdConnector && (runtime.Protocol == "rdma" || runtime.Protocol == "tcp") && runtime.BootstrapPort > 0 && runtime.AbortRequestTimeoutSeconds > 0
 }

@@ -215,17 +215,35 @@
     </section>
   </main>
   <script>
+    // Pin the published postMessage API that accepts stream imports.
     const $ = (id) => document.getElementById(id),
-      perfettoOrigin = "https://ui.perfetto.dev";
+      perfettoUrl = "https://ui.perfetto.dev/v58.3-396449694/",
+      perfettoOrigin = new URL(perfettoUrl).origin;
     let store = null,
       files = [],
       nsight = false,
       selected = null,
       selection = 0,
-      frame = null,
-      ping = null,
-      handshakeTimeout = null,
-      listener = null;
+      trace = null;
+    const transferableStreams = (() => {
+      if (typeof ReadableStream === "undefined") return false;
+      const channel = new MessageChannel();
+      try {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        });
+        channel.port1.postMessage(stream, [stream]);
+        return true;
+      } catch (error) {
+        if (error.name !== "DataCloneError") throw error;
+        return false;
+      } finally {
+        channel.port1.close();
+        channel.port2.close();
+      }
+    })();
     const message = (text) => {
       $("status").textContent = text;
     };
@@ -340,81 +358,96 @@
         );
       }
     }
-    // Transfer only the current trace after the expected Perfetto frame acknowledges readiness.
+    // The frame owns parsing; this page owns the authenticated fetch until its
+    // selection ends. Older browsers retain Perfetto's ArrayBuffer transport.
     async function openTrace() {
       if (!store || !selected || selected.format !== "perfetto") return;
       const ticket = ++selection,
         file = selected,
         storeId = store.id;
       clearViewer();
+      const current = { controller: new AbortController() };
+      trace = current;
       $("open").disabled = true;
       message("Reading trace from the cluster…");
       try {
-        const buffer = await (
-          await request(
-            `api/trace?store=${encodeURIComponent(storeId)}&file=${encodeURIComponent(file.name)}`,
-          )
-        ).arrayBuffer();
-        if (ticket !== selection) return;
-        frame = document.createElement("iframe");
+        const response = await request(
+          `api/trace?store=${encodeURIComponent(storeId)}&file=${encodeURIComponent(file.name)}`,
+          "GET",
+          current.controller.signal,
+        );
+        const payload = {
+          title: file.model || file.service || file.name.split("/").pop(),
+          fileName: file.name.split("/").pop(),
+        };
+        if (transferableStreams) {
+          payload.stream = response.body;
+          payload.bytesTotal = file.size;
+        } else {
+          payload.buffer = await response.arrayBuffer();
+        }
+        if (ticket !== selection || current.controller.signal.aborted) return;
+        const frame = document.createElement("iframe");
         frame.title = "Perfetto trace viewer";
         frame.referrerPolicy = "no-referrer";
-        listener = (event) => {
+        current.listener = (event) => {
           if (
-            event.source !== frame?.contentWindow ||
+            trace !== current ||
+            event.source !== frame.contentWindow ||
             event.origin !== perfettoOrigin ||
             event.data !== "PONG"
           )
             return;
-          clearInterval(ping);
-          clearTimeout(handshakeTimeout);
-          window.removeEventListener("message", listener);
-          listener = null;
+          clearInterval(current.ping);
+          clearTimeout(current.handshakeTimeout);
+          window.removeEventListener("message", current.listener);
+          current.listener = null;
           frame.contentWindow.postMessage(
-            {
-              perfetto: {
-                buffer,
-                title: file.model || file.service || file.name.split("/").pop(),
-                fileName: file.name.split("/").pop(),
-              },
-            },
+            { perfetto: payload },
             perfettoOrigin,
-            [buffer],
+            [payload.stream ?? payload.buffer],
           );
           message("Trace sent to Perfetto. Choose another file to continue.");
         };
-        window.addEventListener("message", listener);
-        frame.src = perfettoOrigin;
+        window.addEventListener("message", current.listener);
+        frame.src = perfettoUrl;
         $("viewer").append(frame);
-        ping = setInterval(
-          () => frame?.contentWindow.postMessage("PING", perfettoOrigin),
+        current.ping = setInterval(
+          () => frame.contentWindow?.postMessage("PING", perfettoOrigin),
           200,
         );
-        handshakeTimeout = setTimeout(() => {
+        // Match Perfetto's own bootstrap budget while its assets load.
+        current.handshakeTimeout = setTimeout(() => {
           clearViewer();
           message(
             "Perfetto did not respond. Check access to ui.perfetto.dev and try again.",
           );
-        }, 30000);
+        }, 120000);
         message("Connecting to Perfetto…");
       } catch (error) {
-        if (ticket === selection)
+        if (ticket === selection && !current.controller.signal.aborted) {
+          clearViewer();
           message(`Unable to open trace: ${error.message}`);
+        }
       } finally {
         if (ticket === selection) $("open").disabled = false;
       }
     }
-    // End the current frame's handshake before switching traces or unloading the page.
+    // Abort both pending and transferred fetch streams before releasing the frame.
     function clearViewer() {
-      clearInterval(ping);
-      clearTimeout(handshakeTimeout);
-      if (listener) window.removeEventListener("message", listener);
-      listener = null;
+      const current = trace;
+      trace = null;
+      if (current) {
+        current.controller.abort();
+        clearInterval(current.ping);
+        clearTimeout(current.handshakeTimeout);
+        if (current.listener)
+          window.removeEventListener("message", current.listener);
+      }
       $("viewer").replaceChildren();
-      frame = null;
     }
-    async function request(path, method = "GET") {
-      const response = await fetch(path, { cache: "no-store", method });
+    async function request(path, method = "GET", signal) {
+      const response = await fetch(path, { cache: "no-store", method, signal });
       if (!response.ok) {
         const body = await response.json();
         throw new Error(body.error || `Request failed (${response.status})`);
@@ -509,7 +542,7 @@
         if (ticket === selection) $("open").disabled = false;
       }
     };
-    window.addEventListener("beforeunload", clearViewer);
+    window.addEventListener("pagehide", clearViewer);
     refresh();
   </script>
 </html>

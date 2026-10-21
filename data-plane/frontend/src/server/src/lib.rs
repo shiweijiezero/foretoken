@@ -20,5 +20,5 @@ pub use http::router;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
     ModelRuntime, RequestSnapshot, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl,
-    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization,
+    RuntimeDiagnostics, RuntimeGeneration, RuntimeState, Tokenization, VideoServiceReference,
 };

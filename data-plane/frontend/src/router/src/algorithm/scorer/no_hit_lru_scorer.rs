@@ -3,11 +3,13 @@
 
 //! Cold-request LRU scoring.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
+use lru::LruCache;
 use serde::Deserialize;
 
 use super::ScoringOutcome;
@@ -16,18 +18,17 @@ use crate::{
     RoutingStage,
 };
 
-const DEFAULT_LRU_CAPACITY: usize = 1024;
+const DEFAULT_LRU_CAPACITY: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 
 struct ColdHistory {
-    records: VecDeque<(RouteTargetId, u32)>,
-    capacity: usize,
+    records: LruCache<(RouteTargetId, u32), ()>,
     activated_version: Option<u64>,
 }
 
 /// Prefers targets least recently selected for cold requests; hot requests leave history unchanged.
 /// Published configurations share history and its current capacity across request lifetimes.
 pub struct NoHitLruScorer {
-    capacity: usize,
+    capacity: NonZeroUsize,
     history: Arc<Mutex<ColdHistory>>,
 }
 
@@ -36,8 +37,7 @@ impl Default for NoHitLruScorer {
         Self {
             capacity: DEFAULT_LRU_CAPACITY,
             history: Arc::new(Mutex::new(ColdHistory {
-                records: VecDeque::new(),
-                capacity: DEFAULT_LRU_CAPACITY,
+                records: LruCache::sparse(DEFAULT_LRU_CAPACITY),
                 activated_version: None,
             })),
         }
@@ -46,7 +46,7 @@ impl Default for NoHitLruScorer {
 
 impl NoHitLruScorer {
     /// Parses the capacity for both initial construction and immutable replacements.
-    fn configured_capacity(parameters: serde_json::Value) -> Result<usize, String> {
+    fn configured_capacity(parameters: serde_json::Value) -> Result<NonZeroUsize, String> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Parameters {
@@ -58,7 +58,8 @@ impl NoHitLruScorer {
             .lru_size
             .filter(|size| *size > 0)
             .map_or(Ok(DEFAULT_LRU_CAPACITY), |size| {
-                usize::try_from(size).map_err(|error| error.to_string())
+                let capacity = usize::try_from(size).map_err(|error| error.to_string())?;
+                Ok(NonZeroUsize::new(capacity).expect("configured LRU capacity is positive"))
             })
     }
 }
@@ -75,8 +76,7 @@ impl RouteScorer for NoHitLruScorer {
         *self = Self {
             capacity,
             history: Arc::new(Mutex::new(ColdHistory {
-                records: VecDeque::new(),
-                capacity,
+                records: LruCache::sparse(capacity),
                 activated_version: None,
             })),
         };
@@ -107,9 +107,7 @@ impl RouteScorer for NoHitLruScorer {
             return;
         }
         history.activated_version = Some(snapshot_version);
-        history.capacity = self.capacity;
-        let excess = history.records.len().saturating_sub(history.capacity);
-        history.records.drain(..excess);
+        history.records.resize(self.capacity);
     }
 
     /// Returns scores without committing a selection or changing cold-request history.
@@ -174,9 +172,9 @@ impl RouteScorer for NoHitLruScorer {
             .expect("cold-request history lock poisoned")
             .records
             .iter()
-            .cloned()
+            .rev()
             .enumerate()
-            .map(|(position, key)| (key, position))
+            .map(|(position, (key, _))| (key.clone(), position))
             .collect();
         let keys: Vec<_> = candidates
             .iter()
@@ -234,15 +232,8 @@ impl RouteScorer for NoHitLruScorer {
                     candidate.data_parallel_rank,
                 );
                 let mut history = history.lock().expect("cold-request history lock poisoned");
-                if let Some(position) = history.records.iter().position(|existing| existing == &key)
-                {
-                    history.records.remove(position);
-                }
-                history.records.push_back(key);
-                // Retired requests use the published capacity, never their scorer's old setting.
-                if history.records.len() > history.capacity {
-                    history.records.pop_front();
-                }
+                // The shared cache retains the published capacity even for retired requests.
+                history.records.put(key, ());
             })),
         }
     }

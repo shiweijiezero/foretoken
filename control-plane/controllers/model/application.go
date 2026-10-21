@@ -39,7 +39,7 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 		}
 	}
 	base := service.DeepCopy()
-	applications := make(map[string]inferencev1alpha1.ApplicationSelection, len(desiredPools))
+	applications := make(map[string]inferencev1alpha1.ModelApplicationSelection, len(desiredPools))
 	for index := range desiredPools {
 		selected := &desiredPools[index]
 		template := &selected.Template
@@ -87,7 +87,7 @@ func (reconciler *ServiceReconciler) selectPoolApplications(ctx context.Context,
 
 // selectPoolApplication retains execution choices independently of changing platform defaults.
 // Existing image-only Pools adopt their actual cohort, never a newly configured file publication.
-func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, compiled compiler.ModelPool, previous *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ApplicationSelection, error) {
+func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, compiled compiler.ModelPool, previous *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ModelApplicationSelection, error) {
 	template := compiled.Template
 	deployment := service.Spec.DeploymentRevision
 	image := reconciler.RuntimeProfile.Image
@@ -98,7 +98,7 @@ func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, 
 		image = reconciler.RuntimeProfile.NsightImage
 		imageProfile = "nsight"
 	}
-	matches := func(selected inferencev1alpha1.ApplicationSelection) bool {
+	matches := func(selected inferencev1alpha1.ModelApplicationSelection) bool {
 		return selected.DeploymentRevision == deployment && selected.SourceRevision == template.SourceRevision && selected.ImageProfile == imageProfile
 	}
 	if selected, exists := service.Status.PoolApplications[compiled.Name]; exists && matches(selected) {
@@ -122,7 +122,13 @@ func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, 
 		}
 	}
 	preparationVersion := runtimeconfig.SharedModelCachePreparationVersion
-	selection := &inferencev1alpha1.ApplicationSelection{Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment, AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion}
+	selection := &inferencev1alpha1.ModelApplicationSelection{
+		ApplicationSelection: inferencev1alpha1.ApplicationSelection{
+			Image: image, ImageProfile: imageProfile, SourceRevision: template.SourceRevision, DeploymentRevision: deployment,
+			AdmissionStore: reconciler.RuntimeProfile.AdmissionStore.DeepCopy(), PreparationVersion: &preparationVersion,
+		},
+		LeaderWorkerScheduling: reconciler.RuntimeProfile.LeaderWorkerScheduling.DeepCopy(),
+	}
 	if template.Backend == "vllm" {
 		selection.InstanceAdmissionProtocol = inferencev1alpha1.InstanceAdmissionFileProtocol
 	}
@@ -171,7 +177,7 @@ func (reconciler *ServiceReconciler) selectPoolApplication(ctx context.Context, 
 
 // recoverPoolApplication fills a legacy selection from its actual execution cohort.
 // It reports whether a Group provided an executable choice, leaving idle Pools unselected otherwise.
-func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ApplicationSelection) (bool, error) {
+func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ModelApplicationSelection) (bool, error) {
 	reader := reconciler.APIReader
 	if reader == nil {
 		reader = reconciler.Client
@@ -183,6 +189,7 @@ func (reconciler *ServiceReconciler) recoverPoolApplication(ctx context.Context,
 	for _, group := range groups {
 		if len(groups) == 1 || group.Spec.Revision == pool.Status.PreparedRevision || group.Spec.Revision == servingconfig.ServingRevision(service, pool) {
 			selection.Image = group.Spec.Runtime.Image
+			selection.LeaderWorkerScheduling = group.Spec.Runtime.LeaderWorkerScheduling.DeepCopy()
 			selection.ApplicationURL = group.Spec.Runtime.ApplicationURL
 			selection.AdmissionStore = group.Spec.Runtime.AdmissionStore.DeepCopy()
 			selection.InstanceAdmissionProtocol = group.Spec.Runtime.InstanceAdmissionProtocol
@@ -282,8 +289,8 @@ func (reconciler *ServiceReconciler) sourceSelectionAllowed(ctx context.Context,
 
 // retainPreparationVersion recovers the protocol of an application selected before it was persisted.
 // A committed cohort is authoritative; uncommitted cohorts must agree on the same executable contract.
-func (reconciler *ServiceReconciler) retainPreparationVersion(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ApplicationSelection, backend string) error {
-	version := runtimeconfig.ModelPreparationVersion(selection, backend)
+func (reconciler *ServiceReconciler) retainPreparationVersion(ctx context.Context, service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, selection *inferencev1alpha1.ModelApplicationSelection, backend string) error {
+	version := runtimeconfig.ModelPreparationVersion(selection.PreparationVersion, backend)
 	if pool != nil {
 		reader := reconciler.APIReader
 		if reader == nil {

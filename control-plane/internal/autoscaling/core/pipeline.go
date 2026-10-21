@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Evaluates targets through trigger, recommendation, adjustment, and capacity resolution.
 package core
 
 import "fmt"

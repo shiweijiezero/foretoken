@@ -55,16 +55,16 @@ from foretoken.build.state import (
     runtime_settings,
     write_source_state,
 )
-from foretoken.command_execution import cleanup_commands
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
     service_requires_execution,
 )
+from foretoken.downloads.sources import select_build_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
-from foretoken.network_sources import select_build_sources
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
+from foretoken.processes.execution import cleanup_commands
 
 _APPLICATION_PARTS = {
     "control-plane": ("go",),

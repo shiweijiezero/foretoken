@@ -5,15 +5,23 @@
 
 from __future__ import annotations
 
-import json
 import logging
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from benchmarks.results.recording.database import (
+    DATABASE_FILENAME,
+    RunRecords,
+    read_record,
+    read_recorded_requests,
+    read_records,
+)
 from benchmarks.results.recording.directories import figure_source
 from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.requests import (
+    export_http_requests,
     load_http_measurements,
     read_request_records,
 )
@@ -24,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 def restore_run(directory: Path, publication: dict[str, Any]) -> BenchmarkRun:
     """Rebuild a saved run for recovery or publication while the caller owns its result lock."""
-    metrics = json.loads((directory / "metrics.json").read_text())
+    metrics = read_record(directory, "metrics.json")
+    if (directory / DATABASE_FILENAME).is_file():
+        with closing(RunRecords(directory)) as records:
+            records.export()
     artifacts = {name: (directory / path).resolve() for name, path in publication["artifacts"].items() if name != "plots"}
     plots = publication["artifacts"].get("plots")
     if plots is not None:
@@ -40,9 +51,22 @@ def restore_run(directory: Path, publication: dict[str, Any]) -> BenchmarkRun:
         if len(raw) != metrics["request_num"]:
             raise ValueError(f"Cannot recover completed measurement: request records are incomplete in {directory}")
         measurements = load_http_measurements(raw)
-        if not (directory / "raw_output.json").is_file():
-            write_json(str(directory), "raw_output.json", raw, compact=True)
-        artifacts["raw_output"] = directory / "raw_output.json"
+        artifacts["raw_output"] = export_http_requests(
+            directory, metrics, traced=publication["record"].get("mode") == "arrival_trace",
+        )
+    elif publication["record"].get("mode") == "video_generation":
+        raw = read_recorded_requests(directory, "raw_results")
+        if len(raw) != metrics["request_num"]:
+            raise ValueError(f"Cannot recover completed measurement: video records are incomplete in {directory}")
+        artifacts["raw_results"] = write_json(str(directory), "raw_results.json", sorted(raw, key=lambda row: row["index"]))
+    warmup = read_records(directory, ("warmup_metrics.json",)).get("warmup_metrics.json")
+    if warmup is not None:
+        if "stream" in warmup:
+            export_http_requests(directory, warmup, name="warmup_raw_output")
+        else:
+            write_json(str(directory), "warmup_raw_output.json", sorted(
+                read_recorded_requests(directory, "warmup_raw_output"), key=lambda row: row["index"],
+            ))
     for name, filename in (
         ("config", "config.json"), ("metrics", "metrics.json"), ("environment", "environment.json"),
         ("warmup_metrics", "warmup_metrics.json"), ("warmup_raw_output", "warmup_raw_output.json"),
@@ -65,6 +89,9 @@ def restore_run(directory: Path, publication: dict[str, Any]) -> BenchmarkRun:
 
 def measurement_complete(directory: Path, context: dict[str, Any]) -> bool:
     """Identify saved measurement completion independently of later output failures."""
+    if (directory / DATABASE_FILENAME).is_file():
+        documents = read_records(directory, ("config.json", "metrics.json", "publication.json"))
+        return context.get("measurement_exit_code") is not None and len(documents) == 3
     return context.get("measurement_exit_code") is not None or (
         context.get("phase") == "finalization" and (directory / "metrics.json").is_file()
     )
@@ -72,11 +99,11 @@ def measurement_complete(directory: Path, context: dict[str, Any]) -> bool:
 
 def publication_inputs(directory: Path, context: dict[str, Any]) -> dict[str, Any]:
     """Read publication inputs under the caller's result lock, including older aggregate recordings."""
-    path = directory / "publication.json"
-    if path.is_file():
-        return json.loads(path.read_text())
-    record = json.loads((directory / "config.json").read_text())
-    metrics = json.loads((directory / "metrics.json").read_text())
+    documents = read_records(directory, ("publication.json", "config.json", "metrics.json"))
+    if "publication.json" in documents:
+        return documents["publication.json"]
+    record = documents["config.json"]
+    metrics = documents["metrics.json"]
     exit_code = context.get("measurement_exit_code")
     if exit_code is None:
         if "sweep" in metrics:

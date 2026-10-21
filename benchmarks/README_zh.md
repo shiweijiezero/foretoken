@@ -72,6 +72,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 
 | 记录 | 用途 |
 | --- | --- |
+| `records.sqlite3` | 保存请求测量和运行状态，供恢复使用；移动结果时一并保留 |
 | `metrics.json` | 查看已测得的汇总结果 |
 | `context.json` | 查看运行结果和所处阶段，并单独确认测量的退出状态 |
 | `run.log` | 排查准备、执行过程及错误 |

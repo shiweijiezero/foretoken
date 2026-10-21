@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import itertools
-import json
 import logging
 import os
 from collections import Counter
@@ -20,8 +19,11 @@ from typing import Any, Generic, Protocol, TypeVar
 from benchmarks.datasets.rows import iter_jsonl_rows
 from benchmarks.results.measurements.sweeps import summarize_sweep, write_sweep_csv
 from benchmarks.results.output import ResultOutputs
-from benchmarks.results.recording.files import write_json
-from benchmarks.results.recording.tasks import run_task, task_source
+from benchmarks.results.recording.tasks import (
+    completed_measurement,
+    run_task,
+    task_source,
+)
 from benchmarks.results.recovery import prepare_task_resume
 from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
@@ -154,19 +156,17 @@ def run_sweep(
         if definition.resume:
             prepare_task_resume(Path(definition.resume), root, plan, outputs=config.outputs)
             plan["resumed_from"] = str(Path(definition.resume).resolve())
-        artifacts["config"] = write_json(experiment_dir, "config.json", plan)
-        outputs.open(plan)
+        outputs.open(plan, configuration=plan)
+        artifacts["config"] = root / "config.json"
         # Imported task records are references, not new samples. Populate all reused
         # tasks before dispatch so progress also covers completed points later in the plan.
         for point in all_points:
             task_dir = root / point["combination"] / f"run={point['run_number']}"
-            task_path = task_dir / "task.json"
-            if task_path.is_file():
-                saved = json.loads(task_path.read_text(encoding="utf-8"))
-                if saved["status"] == "completed":
-                    point.update(saved["metrics"], status="failed" if saved["exit_code"] else "completed",
-                                 exit_code=saved["exit_code"], reused=True)
-                    point["result"] = os.path.relpath(task_source(task_dir), root)
+            saved = completed_measurement(task_dir)
+            if saved is not None:
+                point.update(saved["metrics"], status="failed" if saved["exit_code"] else "completed",
+                             exit_code=saved["exit_code"], reused=True)
+                point["result"] = os.path.relpath(task_source(task_dir), root)
 
         def checkpoint(*, finished: bool = False) -> dict[str, Any]:
             """Publish the current task inventory and derived metrics after each transition."""
@@ -179,11 +179,12 @@ def run_sweep(
                       for key in ("request_num", "success_num", "failed_num")}
             totals["sweep"] = {"status": status, "tasks": len(all_points),
                                **{state: counts[state] for state in ("completed", "failed", "interrupted", "running", "pending")}}
-            artifacts["sweep_points"] = write_json(experiment_dir, "sweep_points.json", all_points)
             summary = summarize_sweep(all_points, num_runs=definition.num_runs)
-            artifacts["sweep_summary"] = write_json(experiment_dir, "sweep_summary.json", summary)
+            documents = outputs.records.publish({
+                "sweep_points.json": all_points, "sweep_summary.json": summary, "metrics.json": totals,
+            })
+            artifacts.update({Path(name).stem: path for name, path in documents.items()})
             artifacts["sweep_summary_csv"] = write_sweep_csv(summary, experiment_dir)
-            artifacts["metrics"] = write_json(experiment_dir, "metrics.json", totals)
             if finished:
                 log = logger.info if status == "completed" else logger.error
                 log("Sweep %s: completed=%s/%s, failed=%s, interrupted=%s, pending=%s",
@@ -269,7 +270,10 @@ def expand_sweep_point(
         values = value if isinstance(value, list) else [value]
         if not values:
             raise ValueError(f"Sweep axis {key!r} cannot be empty")
-        active[key] = [caster(item) for item in values]
+        try:
+            active[key] = [caster(item) for item in values]
+        except ValueError as error:
+            raise ValueError(f"Invalid sweep axis {key!r}: {error}") from error
     rest = {
         key: value
         for key, value in record.items()
@@ -303,8 +307,11 @@ def load_sweep_points(
             raise TypeError(
                 f"Each sweep JSONL line must be an object, got {type(record)} on line {line_no}"
             )
-        adapter.validate_record(record, line_no)
-        points.extend(expand_sweep_point(record, adapter.axis_fields))
+        try:
+            adapter.validate_record(record, line_no)
+            points.extend(expand_sweep_point(record, adapter.axis_fields))
+        except ValueError as error:
+            raise ValueError(f"Invalid sweep at {definition.path}:{line_no}: {error}") from error
     names = [sweep_directory_name(sweep_point_name(point)) for point in points]
     duplicates = {name for name, count in Counter(names).items() if count > 1}
     if duplicates:

@@ -14,7 +14,6 @@ from typing import Any
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
 from foretoken.build.state import source_operation
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
@@ -32,6 +31,7 @@ from foretoken.kubernetes.client import (
 )
 from foretoken.kubernetes.documents import encode_resources
 from foretoken.kubernetes.mutation import DeploymentMutation
+from foretoken.processes.execution import CommandExecution
 from foretoken.working_directory import resolve_runtime_directory
 
 

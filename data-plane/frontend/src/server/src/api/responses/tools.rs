@@ -43,6 +43,8 @@ impl ToolNames {
         Ok((lowered, names))
     }
 
+    /// Reserves an unambiguous parser name and lowers one function or custom-text declaration.
+    /// The request-local map retains the original namespace and output representation.
     fn push(
         &mut self,
         tool: &Value,

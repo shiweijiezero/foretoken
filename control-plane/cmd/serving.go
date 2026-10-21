@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/storage/runtimecache"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers/video"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/deployments"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/observability"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
@@ -72,12 +74,15 @@ type servingOptions struct {
 	runtimeClassName                      string
 	gpuNodeSelectorKey                    string
 	gpuNodeSelectorValue                  string
-	profiles                              runtimeconfig.Profiles
+	profiles                              vllmconfig.RuntimeProfiles
+	rdmaResourceName                      string
+	rdmaResourceCount                     int
 	autoscalingTelemetryConfigurationPath string
 	workloadImagePullSecretNames          []string
 	cacheClaimName                        string
 	cacheMountPath                        string
 	cacheDirectoryBindings                runtimeconfig.RuntimeCacheDirectoryBindings
+	leaderWorkerScheduling                *inferencev1alpha1.LeaderWorkerScheduling
 	admissionStoreURLSecretName           string
 	admissionStoreURLSecretKey            string
 	responseStoreURLSecretName            string
@@ -181,6 +186,15 @@ func parseServingOptions() servingOptions {
 		}
 		return nil
 	})
+	flag.Func("leader-worker-scheduling", "JSON selection of native placement and quota admission queues for distributed model groups.", func(value string) error {
+		var selection *inferencev1alpha1.LeaderWorkerScheduling
+		if err := json.Unmarshal([]byte(value), &selection); err != nil {
+			return err
+		}
+		var err error
+		options.leaderWorkerScheduling, err = runtimeconfig.ResolveLeaderWorkerScheduling(selection)
+		return err
+	})
 	flag.StringVar(&options.admissionStoreURLSecretName, "admission-store-url-secret-name", "", "Namespace-local Secret containing the shared admission ledger URL.")
 	flag.StringVar(&options.admissionStoreURLSecretKey, "admission-store-url-secret-key", "", "Key in the admission ledger URL Secret.")
 	flag.StringVar(&options.responseStoreURLSecretName, "response-store-url-secret-name", "", "Namespace-local Secret containing the shared API cache URL.")
@@ -210,8 +224,8 @@ func parseServingOptions() servingOptions {
 	flag.IntVar(&options.profiles.PD.BootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
 	flag.IntVar(&options.profiles.PD.AbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
 	flag.StringVar(&options.profiles.PD.RDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
-	flag.StringVar(&options.profiles.RDMA.ResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
-	flag.IntVar(&options.profiles.RDMA.ResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
+	flag.StringVar(&options.rdmaResourceName, "rdma-resource-name", "", "Kubernetes extended resource that injects runtime RDMA devices.")
+	flag.IntVar(&options.rdmaResourceCount, "rdma-resource-count", 0, "RDMA device-plugin allocation units requested by each distributed runtime Pod.")
 	flag.StringVar(&options.profiles.MooncakeStore.Name, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
 	flag.StringVar(&options.profiles.MooncakeStore.Revision, "vllm-mooncake-store-profile-revision", "", "Opaque platform-owned Mooncake Store profile revision.")
 	flag.StringVar(&options.profiles.MooncakeStore.ConfigMapName, "vllm-mooncake-store-config-map-name", "", "Mooncake Store ConfigMap name.")
@@ -298,17 +312,21 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	if err := options.profiles.Validate(); err != nil {
+	var rdma *inferencev1alpha1.RDMAAllocation
+	if options.rdmaResourceName != "" {
+		if options.rdmaResourceCount < 1 || int64(options.rdmaResourceCount) > math.MaxInt32 {
+			ctrl.Log.Error(errors.New("RDMA resource count must be a positive int32"), "invalid RDMA allocation")
+			os.Exit(1)
+		}
+		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: options.rdmaResourceName, ResourceCount: int32(options.rdmaResourceCount)}
+	}
+	if err := options.profiles.Validate(rdma); err != nil {
 		ctrl.Log.Error(err, "invalid vLLM runtime profile")
 		os.Exit(1)
 	}
-	var rdma *inferencev1alpha1.RDMAAllocation
-	if options.profiles.RDMA.ResourceName != "" {
-		rdma = &inferencev1alpha1.RDMAAllocation{ResourceName: options.profiles.RDMA.ResourceName, ResourceCount: int32(options.profiles.RDMA.ResourceCount)}
-	}
-	var mooncakePD *runtimeconfig.PDProfile
-	var ec *runtimeconfig.ECProfile
-	var mooncakeStore *runtimeconfig.MooncakeStoreProfile
+	var mooncakePD *vllmconfig.PDProfile
+	var ec *vllmconfig.ECProfile
+	var mooncakeStore *vllmconfig.MooncakeStoreProfile
 	if options.profiles.EC.Name != "" {
 		ec = &options.profiles.EC
 	}
@@ -346,19 +364,20 @@ func resolveServingConfiguration(options servingOptions) servingConfiguration {
 		observabilityPrometheus:               options.observabilityPrometheus,
 		observabilityLabelsJSON:               options.observabilityLabelsJSON,
 		runtimeProfile: resolver.RuntimeProfile{
-			Image:              options.inferenceEngineImage,
-			OmniImage:          options.omniInferenceEngineImage,
-			NsightImage:        options.nsightImage,
-			AdmissionStore:     admissionStore,
-			ModelServerPort:    int32(options.modelServerPort),
-			DeviceResourceName: options.gpuResourceName,
-			RuntimeClassName:   options.runtimeClassName,
-			NodeSelectorKey:    options.gpuNodeSelectorKey,
-			NodeSelectorValue:  options.gpuNodeSelectorValue,
-			MooncakePD:         mooncakePD,
-			RDMA:               rdma,
-			EC:                 ec,
-			MooncakeStore:      mooncakeStore,
+			Image:                  options.inferenceEngineImage,
+			LeaderWorkerScheduling: options.leaderWorkerScheduling,
+			OmniImage:              options.omniInferenceEngineImage,
+			NsightImage:            options.nsightImage,
+			AdmissionStore:         admissionStore,
+			ModelServerPort:        int32(options.modelServerPort),
+			DeviceResourceName:     options.gpuResourceName,
+			RuntimeClassName:       options.runtimeClassName,
+			NodeSelectorKey:        options.gpuNodeSelectorKey,
+			NodeSelectorValue:      options.gpuNodeSelectorValue,
+			MooncakePD:             mooncakePD,
+			RDMA:                   rdma,
+			EC:                     ec,
+			MooncakeStore:          mooncakeStore,
 		},
 	}
 }

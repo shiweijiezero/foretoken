@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+# Builds the non-root Mooncake Store master and client runtime with its native transport libraries.
+
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG BUILD_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
 ARG RUNTIME_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04

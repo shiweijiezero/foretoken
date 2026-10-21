@@ -127,7 +127,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		var catalogErr error
 		models, admission, catalogErr = projectConfiguredModels(frontend, services, pools.Items, modelGroups.Items, previous.Models)
 		if catalogErr != nil {
-			var unavailable *modelCatalogProjectionError
+			var unavailable *servingconfig.ModelCatalogProjectionError
 			if !errors.As(catalogErr, &unavailable) {
 				return false, catalogErr
 			}

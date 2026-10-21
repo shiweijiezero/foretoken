@@ -16,7 +16,6 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 from benchmarks.model_service import ModelService
 from benchmarks.results.output import ResultOutputs
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.tasks import run_task
 from benchmarks.results.recovery import prepare_task_resume
 from benchmarks.results.reporting.http import log_slo_results
@@ -95,9 +94,8 @@ class SloAutoTuneBenchmark:
                     outputs=self.benchmark.outputs,
                 )
                 plan["resumed_from"] = str(Path(self.benchmark.sweep.resume).resolve())
-            write_json(outputs.execution_dir, "config.json", plan)
             outputs.sink_factory = sinks
-            outputs.open(record)
+            outputs.open(record, configuration=plan)
             probes: list[dict[str, Any]] = []
             groups: list[dict[str, Any]] = []
             winning_run: BenchmarkRun | None = None
@@ -119,7 +117,7 @@ class SloAutoTuneBenchmark:
                 "probes": probes,
                 "groups": groups,
             }
-            artifact = write_json(outputs.execution_dir, "slo_results.json", search)
+            artifact = outputs.records.publish({"slo_results.json": search})["slo_results.json"]
             run = BenchmarkRun(
                 record=record,
                 metrics={

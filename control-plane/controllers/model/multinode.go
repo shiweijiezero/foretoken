@@ -94,6 +94,7 @@ func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group 
 			},
 		},
 	}
+	configureLeaderWorkerScheduling(desired, group.Spec.Runtime.LeaderWorkerScheduling)
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
 		return modelGroupWorkloadState{}, fmt.Errorf("set LeaderWorkerSet owner: %w", err)
 	}
@@ -107,6 +108,9 @@ func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group 
 	}
 	// An older cohort keeps its original Pod template while the Pool rolls out the new contract.
 	if group.Spec.Runtime.PreparationVersion > 0 || current.ResourceVersion == "" {
+		if err := reconciler.requireLeaderWorkerQueueAdmission(ctx, desired, group.Spec.Runtime.LeaderWorkerScheduling); err != nil {
+			return modelGroupWorkloadState{createdAt: current.CreationTimestamp.Time}, err
+		}
 		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
 			return modelGroupWorkloadState{}, fmt.Errorf("apply LeaderWorkerSet: %w", err)
 		}

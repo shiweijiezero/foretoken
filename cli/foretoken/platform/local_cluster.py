@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 """Create and remove local kind and k3d development clusters."""
 
 from __future__ import annotations

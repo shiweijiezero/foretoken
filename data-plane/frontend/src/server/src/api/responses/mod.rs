@@ -15,7 +15,6 @@ pub use execution::ResponseTasks;
 
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
@@ -243,6 +242,7 @@ fn replay(
     mut after: i64,
 ) -> impl futures::Stream<Item = Result<Event, Infallible>> + Send {
     async_stream::stream! {
+        let mut changes = store.response_changes(&id);
         loop {
             let response = match store.response(&caller, &id).await {
                 Ok(response) if !response.replay_expired => response,
@@ -269,7 +269,7 @@ fn replay(
             }
             if had_events { continue; }
             if !matches!(response.status.as_str(), "queued" | "in_progress") { return; }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            changes.changed().await;
         }
     }
 }

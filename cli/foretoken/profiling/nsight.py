@@ -17,7 +17,11 @@ from uuid import uuid4
 
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
-from foretoken.profiling.storage import CaptureFileSource, ProfileStorage, ViewerResources
+from foretoken.profiling.storage import (
+    CaptureFileSource,
+    ProfileStorage,
+    ViewerResources,
+)
 
 
 @dataclass(frozen=True)
