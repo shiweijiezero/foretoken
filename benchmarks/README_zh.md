@@ -32,7 +32,7 @@ foretoken perf examples/quickstart/qwen3-0.6b \
   --output local,wandb
 ```
 
-汇总结果包括请求成功率、延迟和吞吐量。流式请求还报告首 token 耗时（TTFT）和每输出 token 耗时（TPOT）。
+交互终端会在测量期间显示已完成请求数。汇总结果包括请求成功率、延迟和吞吐量。流式请求还报告首 token 耗时（TTFT）和每输出 token 耗时（TPOT）。
 
 `perf` 的 `--duration`、`--timeout`、`--trace-start` 和 `--trace-duration` 可带时间单位，例如 `500ms`、`30s`、`8min`（或 `8m`）、`1.5h`、`1d`，不带单位时按秒解释。扫描文件中，带单位的值写成字符串，例如 `"duration": ["30s", "2min"]`。
 
@@ -68,7 +68,7 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
 
-本地结果按运行分别保存在 `results/` 下，`--output-dir` 可修改结果父目录。选择 W&B 时，打开终端打印的运行链接，查看进度与结果。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。查看图表或恢复上传，见 [W&B 输出](docs/perf/wandb_zh.md)。
+本地结果按运行分别保存在 `results/` 下，`--output-dir` 可修改结果父目录。选择 W&B 时，终端会打印结果目录；在线上传还会打印后台日志位置，便于查看运行链接与同步状态。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。查看图表或恢复上传，见 [W&B 输出](docs/perf/wandb_zh.md)。
 
 | 记录 | 用途 |
 | --- | --- |
@@ -76,11 +76,12 @@ foretoken eval examples/quickstart/qwen3-0.6b \
 | `metrics.json` | 查看已测得的汇总结果 |
 | `context.json` | 查看运行结果和所处阶段，并单独确认测量的退出状态 |
 | `run.log` | 排查准备、执行过程及错误 |
+| `wandb-sync.log`，启用在线 W&B 时生成 | 查看后台上传进度、运行链接和恢复命令 |
 | `environment.json`、`sources/` | 查看保存在本地的服务配置与可用源码归档 |
 | `raw_output.jsonl`（HTTP）、`raw_results.jsonl`（视频） | 逐条查看已完成请求，中断后也可用于排查 |
 | `responses.jsonl`，需选择 `--output local,raw` | 查看 HTTP 请求输入和响应内容，包括 reasoning 和工具调用 |
 
-普通模式和 quiet 模式均记录日志；`quiet` 关闭评测进度和汇总输出，仍显示错误和 W&B 同步消息。预热记录使用 `warmup_` 文件名前缀。质量评分、框架报告和性能剖析产物见下方专项指南。
+普通模式和 quiet 模式均记录日志；`quiet` 关闭评测进度和汇总输出，仍显示错误、W&B 结果目录和上传日志位置。预热记录使用 `warmup_` 文件名前缀。质量评分、框架报告和性能剖析产物见下方专项指南。
 
 使用 `experiment` 将评测归入命名迭代，在包含代码改动的源码目录执行：
 

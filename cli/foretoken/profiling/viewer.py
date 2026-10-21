@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import socket
 import threading
@@ -22,6 +23,8 @@ from foretoken.profiling.nsight import NsightViewerSessions
 from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
 
+logger = logging.getLogger(__name__)
+
 
 def view(command: ProfileViewCommand) -> None:
     """Print a loopback capture viewer URL and retain native sessions and readers until handlers finish."""
@@ -37,7 +40,7 @@ def view(command: ProfileViewCommand) -> None:
         ProfileViewer(history, storage, nsight) as server,
     ):
         print(f"Profile viewer: {server.origin}{server.session_path}", flush=True)
-        print("Press Ctrl+C to stop.", flush=True)
+        logger.info("Press Ctrl+C to stop.")
         server.serve_forever()
 
 

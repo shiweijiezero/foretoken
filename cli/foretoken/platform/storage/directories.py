@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import posixpath
 import subprocess
@@ -24,6 +25,8 @@ from foretoken.working_directory import (
     repository_data_directory,
     resolve_runtime_directory,
 )
+
+logger = logging.getLogger(__name__)
 
 _PLATFORM_UID_LABEL = "inference.foretoken.io/platform-uid"
 
@@ -73,7 +76,7 @@ def prepare_directory_bindings(
                         raise DeploymentError(
                             f"Cannot discover shared storage for {directory}; platform values must select its NFS source or an existing claim"
                         )
-                    print(f"No shared mount was found for {directory}; no directory claim was prepared", flush=True)
+                    logger.warning("No shared mount was found for %s; no directory claim was prepared", directory)
                     del prepared[name]
                     continue
                 entry.update(source)

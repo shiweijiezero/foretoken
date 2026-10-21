@@ -17,6 +17,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use thiserror::Error;
+use tracing::Instrument;
 use vllm_llm::{GenerateOutput, GenerateRequest};
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<GenerateOutput, LlmFacadeError>> + Send>>;
 
@@ -157,11 +158,14 @@ impl MultiStageCleanup {
             .clone()
             .or_else(|| tokio::runtime::Handle::try_current().ok());
         if let Some(runtime) = runtime {
-            runtime.spawn(async move {
-                for (facade, request_id) in stages {
-                    let _ = facade.abort(&[request_id]).await;
+            runtime.spawn(
+                async move {
+                    for (facade, request_id) in stages {
+                        let _ = facade.abort(&[request_id]).await;
+                    }
                 }
-            });
+                .in_current_span(),
+            );
         }
     }
 }

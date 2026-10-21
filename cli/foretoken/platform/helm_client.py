@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -31,6 +32,8 @@ from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 from foretoken.processes.execution import CommandExecution, run_command
 from foretoken.processes.tools import resolve_tool
+
+logger = logging.getLogger(__name__)
 
 
 class HelmCommandError(DeploymentError):
@@ -107,7 +110,7 @@ class HelmClient:
                             execution.check()
                         if index == len(candidates) - 1:
                             raise
-                        print("Chart mirror unavailable; using the original source", flush=True)
+                        logger.warning("Chart mirror unavailable; using the original source")
                         continue
                     (metadata,) = destination.glob("*/Chart.yaml")
                     chart = metadata.parent

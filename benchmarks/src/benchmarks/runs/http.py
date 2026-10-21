@@ -172,6 +172,7 @@ class HttpBenchmark:
         outputs.start_observers()
         progress = outputs.http_progress(
             stream=benchmark.generation.stream,
+            total=workload.request_count,
             criteria=benchmark.slo.params[0] if benchmark.slo.params else None,
         )
         profile = create_benchmark_profile(benchmark, self.service, outputs.execution_dir)
@@ -192,6 +193,7 @@ class HttpBenchmark:
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
+            outputs.http_request_completed()
 
         async def execute(index, episode, scheduled_at, deadline):
             return await self._execute_episode(

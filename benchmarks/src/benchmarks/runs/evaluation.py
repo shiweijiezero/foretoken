@@ -239,7 +239,7 @@ def _execute(
                     line = line.replace(service.api_key, "[redacted]")
                 log.write(line)
                 log.flush()
-                print(line, end="", flush=True)
+                print(line, end="", file=sys.stderr, flush=True)
             code = process.wait()
             on_complete(code)
             return code

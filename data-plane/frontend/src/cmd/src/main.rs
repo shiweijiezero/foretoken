@@ -61,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
     let (app, response_tasks) = router(generation.clone(), models, ledger)?;
+    tracing::info!("frontend HTTP listener bound; waiting for serving configuration");
     let shutdown = CancellationToken::new();
     let background = TaskTracker::new();
     background.spawn(
@@ -98,8 +99,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(result) = stopped {
         background.wait().await;
         result?;
+        tracing::info!("frontend stopped");
         return Ok(());
     }
+    tracing::info!(
+        drain_seconds = config.drain.as_secs(),
+        "frontend admission closed; draining accepted requests"
+    );
     let drained = tokio::time::timeout(config.drain, async {
         let (served, (), ()) =
             tokio::join!(server.as_mut(), response_tasks.drain(), background.wait());
@@ -113,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!("frontend requests did not drain before the shutdown deadline");
         }
     }
+    tracing::info!("frontend stopped");
     Ok(())
 }
 

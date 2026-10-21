@@ -3,14 +3,16 @@
 
 """Resolve, acquire and collect fixed-revision ModelScope snapshots using their native cache layout."""
 
+import logging
 import os
 import shutil
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .cache import cache_path, remove
 from .peer import cached_peer_snapshot, distributed_directory, download_peer_file
+
+logger = logging.getLogger(__name__)
 
 
 def resolve(repository, revision):
@@ -126,9 +128,9 @@ def snapshot(repository, revision):
                         return cache.put_file(entry, str(target))
                     error = "downloaded file did not match provider metadata"
                 target.unlink(missing_ok=True)
-                print(
-                    f"Peer acquisition unavailable ({entry['Path']}: {error}); using the provider SDK",
-                    file=sys.stderr,
+                logger.warning(
+                    "Peer acquisition unavailable (%s: %s); using the provider SDK",
+                    entry["Path"], error,
                 )
             return download_file(
                 url, entry, temporary, cache, api.builder_headers(api.headers), cookies

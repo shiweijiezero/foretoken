@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from collections.abc import Callable, Iterator, Sequence
@@ -54,6 +55,8 @@ from foretoken.build.state import (
 from foretoken.downloads.sources import select_build_sources
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.processes.execution import CommandExecution
+
+logger = logging.getLogger(__name__)
 
 _LOCAL_IMAGE_PREFIX = "docker.io/library/foretoken-dev"
 
@@ -351,7 +354,7 @@ def _select_build_arguments(
         registry_mirrors = selected.registry_mirrors
         environment.update(selected.environment)
         for selection in selected.messages:
-            print(f"Source mirror selected: {selection}", flush=True)
+            logger.info("Source mirror selected: %s", selection)
         arguments = build_arguments(environment)
     else:
         arguments = dict(saved_arguments)

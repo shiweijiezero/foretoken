@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -47,6 +48,8 @@ from foretoken.build.records import (
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
 from foretoken.processes.execution import CommandExecution, cleanup_commands
+
+logger = logging.getLogger(__name__)
 
 SOURCE_INSTALL_ANNOTATION = "foretoken.io/install-source"
 
@@ -110,7 +113,7 @@ def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared
             if remaining <= 0:
                 raise DeploymentError(f"Timed out after {timeout} waiting for {description}") from None
             if not reported:
-                print(f"Waiting for {description} (up to {timeout})", flush=True)
+                logger.info("Waiting for %s (up to %s)", description, timeout)
                 reported = True
             time.sleep(min(0.2, remaining))
 
@@ -513,7 +516,7 @@ def reconcile_source_resources(
         try:
             retained.update(ApplicationFiles(kubectl, config.namespace).source_images(consumers))
         except DeploymentError as exc:
-            print(f"Source image cleanup deferred: {exc}", flush=True)
+            logger.warning("Source image cleanup deferred: %s", exc)
             return
     retained.update(
         image for state in states.values()

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
@@ -23,6 +24,8 @@ from foretoken.build.cluster.images import (
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, resource_ref, timeout_seconds
 from foretoken.kubernetes.documents import encode_resources
+
+logger = logging.getLogger(__name__)
 
 SOURCE_BUILD_CACHE_LABEL = "inference.foretoken.io/source-build-cache"
 SOURCE_BUILD_UID = 65531
@@ -681,7 +684,10 @@ def _ensure_build_cache(
                     raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
             if claim_binding is None and not consumers and not recorded_legacy:
                 raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
-            print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
+            logger.info(
+                "Replacing compiler cache %s/%s on the selected local storage; published applications are retained",
+                namespace, name,
+            )
             owners = existing["metadata"].get("ownerReferences", owners)
             for resource, obj in [*(("pods", pod) for pod in consumers), ("persistentvolumeclaims", existing)]:
                 metadata = obj["metadata"]

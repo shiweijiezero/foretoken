@@ -287,7 +287,7 @@ def _upload_wandb(
             result = subprocess.run(
                 [sys.executable, "-m", "wandb", "sync", "--include-synced", "--entity", entity,
                  "--project", identity["project"], "--id", identity["id"], str(native)],
-                env=environment, check=False,
+                env=environment, check=False, stdout=sys.stderr, stderr=sys.stderr,
             )
             if result.returncode:
                 raise RuntimeError(f"W&B synchronization failed for {directory}; saved results remain available for retry")

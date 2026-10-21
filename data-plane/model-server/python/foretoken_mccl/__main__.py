@@ -18,6 +18,7 @@ def main() -> None:
 
         run_probe(options)
         return
+    os.environ.setdefault("VLLM_LOGGING_STREAM", "ext://sys.stderr")
     if importlib.util.find_spec("vllm_metax") is not None:
         from vllm.platforms import current_platform
 

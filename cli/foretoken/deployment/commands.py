@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import time
 
 from foretoken.arguments import DeleteCommand, DeployCommand, StopCommand
@@ -18,6 +19,8 @@ from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
 from foretoken.kubernetes.documents import encode_resources
 from foretoken.processes.execution import CommandExecution
 from foretoken.profiling import ProfileRun
+
+logger = logging.getLogger(__name__)
 
 
 def deploy(command: DeployCommand) -> None:
@@ -50,9 +53,9 @@ def delete(command: DeleteCommand) -> None:
         deployment = resolve_deployment_target(
             command.target, kubectl, name=command.name, allow_missing=True, missing_instance_ok=True,
         )
-        print(f"Deleting deployment instance {deployment.name}")
+        logger.info("Deleting deployment instance %s", deployment.name)
         DeploymentLifecycle(kubectl).delete(deployment, command.timeout)
-        print("Foretoken deployment deleted")
+        logger.info("Foretoken deployment deleted")
 
 
 def stop(command: StopCommand) -> None:
@@ -72,7 +75,10 @@ def stop(command: StopCommand) -> None:
         submission.apply(encode_resources(objects), patch_services=True)
 
         def report(elapsed: float, progress: ResourceProgress) -> None:
-            print(f"[{elapsed:6.1f}s] {progress.resource.display_name}: {progress.state} — {progress.detail or progress.reason}", flush=True)
+            logger.info(
+                "[%6.1fs] %s: %s — %s", elapsed, progress.resource.display_name,
+                progress.state, progress.detail or progress.reason,
+            )
 
         def observe(resources: tuple[ResourceRef, ...], elapsed: float, budget: float) -> None:
             submission.check()
@@ -85,4 +91,4 @@ def stop(command: StopCommand) -> None:
             if resources:
                 wait_for_resources(resources, kubectl, command.timeout, report=report, observe=observe)
             submission.check()
-        print("Foretoken services stopped; configuration, storage and build caches are retained")
+        logger.info("Foretoken services stopped; configuration, storage and build caches are retained")

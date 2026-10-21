@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -19,6 +20,8 @@ from foretoken.kubernetes.client import Kubectl, ResourceRef, resource_ref
 from foretoken.platform.helm_client import HelmClient, HelmCommandError
 from foretoken.platform.types import ReleaseRef
 from foretoken.processes.execution import CommandExecution
+
+logger = logging.getLogger(__name__)
 
 _PROXY_SERVICE = "foretoken-model-downloads"
 _PROXY_LABEL = "foretoken.io/model-download-proxy"
@@ -104,9 +107,9 @@ class ModelDistributionLifecycle:
                 supported = False
         selector = daemon["spec"]["selector"] if daemon else {}
         if not supported or not selector.get("matchLabels") or selector.get("matchExpressions"):
-            print(
-                f"Model downloads: {plan.release.display_name} has no compatible endpoint; using model providers directly",
-                flush=True,
+            logger.warning(
+                "Model downloads: %s has no compatible endpoint; using model providers directly",
+                plan.release.display_name,
             )
             return ""
         return self._prepare_proxy_service(reference.namespace, selector["matchLabels"], port)
@@ -222,7 +225,7 @@ class ModelDistributionLifecycle:
                     raise
                 if execution := CommandExecution.current():
                     execution.check()
-                print(f"Shared download chart is unavailable; using model providers directly: {error}", flush=True)
+                logger.warning("Shared download chart is unavailable; using model providers directly: %s", error)
                 return False
             args[3] = str(prepared)
             helm.set_chart_image_sources(
@@ -235,7 +238,7 @@ class ModelDistributionLifecycle:
                 execution.check()
             if completed.returncode:
                 detail = completed.stderr.strip() or completed.stdout.strip()
-                print(f"Shared download installation failed; using model providers directly: {detail}", flush=True)
+                logger.warning("Shared download installation failed; using model providers directly: %s", detail)
                 return False
         return True
 
@@ -304,9 +307,9 @@ class ModelDistributionLifecycle:
             current["metadata"].get("labels", {}).get(key) == value
             for key, value in labels.items()
         ):
-            print(
-                f"Model downloads: Service {namespace}/{_PROXY_SERVICE} has another owner; using model providers directly",
-                flush=True,
+            logger.warning(
+                "Model downloads: Service %s/%s has another owner; using model providers directly",
+                namespace, _PROXY_SERVICE,
             )
             return ""
         # Create is conditional on absence. Replace retains the observed UID/version
@@ -349,10 +352,7 @@ class ModelDistributionLifecycle:
             execution.check()
         if completed.returncode:
             detail = completed.stderr.strip() or completed.stdout.strip()
-            print(
-                f"Shared download Service is unavailable; using model providers directly: {detail}",
-                flush=True,
-            )
+            logger.warning("Shared download Service is unavailable; using model providers directly: %s", detail)
             return ""
         return self._proxy_url(namespace)
 

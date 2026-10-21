@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable
 from typing import Any, Self
@@ -209,7 +210,10 @@ class StartupProgress:
         if previous:
             args.append("--previous=true")
         try:
-            return subprocess.Popen(self.kubectl.command(args), stdin=subprocess.DEVNULL)
+            return subprocess.Popen(
+                self.kubectl.command(args), stdin=subprocess.DEVNULL,
+                stdout=sys.stderr, stderr=sys.stderr,
+            )
         except OSError as exc:
             raise DeploymentError(
                 f"cannot follow logs for {metadata['name']}/{container}: {exc}"

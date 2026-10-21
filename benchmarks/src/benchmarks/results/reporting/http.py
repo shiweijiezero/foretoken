@@ -70,12 +70,12 @@ class ConsoleSink:
         return None
 
 
-def print_model_service(service: ModelService) -> None:
-    """Print the public model service selected from the Foretoken deployment."""
-    print(f"Model service: {service.chat_completions_url}")
+def log_model_service(service: ModelService) -> None:
+    """Report the selected deployment service through the benchmark's diagnostic outputs."""
+    logger.info("Model service: %s", service.chat_completions_url)
     if service.hostname:
-        print(f"Hostname: {service.hostname}")
-    print(f"Models: {', '.join(service.models)}")
+        logger.info("Hostname: %s", service.hostname)
+    logger.info("Models: %s", ", ".join(service.models))
 
 
 def format_benchmark_config(

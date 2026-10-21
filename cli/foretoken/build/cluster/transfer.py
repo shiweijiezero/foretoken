@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import tarfile
 import tempfile
@@ -16,6 +17,8 @@ from pathlib import Path
 
 from foretoken.errors import DeploymentError
 from foretoken.processes.execution import CommandExecution
+
+logger = logging.getLogger(__name__)
 
 
 def synchronize_inputs(
@@ -38,7 +41,7 @@ def synchronize_inputs(
     changed = [name for name in files if previous.get(name) != versions[name]]
     removed = sorted(previous.keys() - versions.keys())
     if not changed and not removed:
-        print("Source transfer: reused unchanged workspace", flush=True)
+        logger.info("Source transfer: reused unchanged workspace")
         return
 
     # Removing the receipt before publication makes a retry restore the full input
@@ -75,9 +78,9 @@ mv "$incoming.inputs" "$receipt"
                 item.size = len(data)
                 item.mode = 0o644
                 archive.addfile(item, io.BytesIO(data))
-        print(
-            f"Source transfer: {len(changed)} changed files, {len(removed)} removed files, {stream.tell()} compressed bytes",
-            flush=True,
+        logger.info(
+            "Source transfer: %s changed files, %s removed files, %s compressed bytes",
+            len(changed), len(removed), stream.tell(),
         )
         stream.seek(0)
         result = execution.run(
@@ -86,4 +89,4 @@ mv "$incoming.inputs" "$receipt"
         )
     if result.returncode:
         raise DeploymentError("source delta upload failed")
-    print(f"Source transfer completed in {time.monotonic() - started:.1f}s", flush=True)
+    logger.info("Source transfer completed in %.1fs", time.monotonic() - started)

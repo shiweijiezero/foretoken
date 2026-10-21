@@ -4,16 +4,18 @@
 """Resolve, acquire and collect Hugging Face snapshots while preserving native blob ownership."""
 
 import hashlib
+import logging
 import os
 import shutil
 import stat
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
 from .cache import cache_path, remove
 from .peer import cached_peer_snapshot, distributed_directory, download_peer_file
+
+logger = logging.getLogger(__name__)
 
 
 def resolve(repository, revision):
@@ -326,10 +328,7 @@ def _peer_snapshot(root, repository, revision, files, sources, validate):
                 if errors
                 else "downloaded files did not match provider metadata"
             )
-            print(
-                f"Peer acquisition unavailable ({reason}); using the provider SDK",
-                file=sys.stderr,
-            )
+            logger.warning("Peer acquisition unavailable (%s); using the provider SDK", reason)
             return None
         temporary.rename(directory)
     return str(directory)

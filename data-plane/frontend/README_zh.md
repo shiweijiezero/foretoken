@@ -227,6 +227,8 @@ spec:
 
 ## 运维
 
+排查请求时，可用响应头 `x-request-id` 关联前端诊断日志。已保存的 Responses 和 Chat Completions 仍使用各自的 API 对象 ID。
+
 用 `foretoken status` 查看部署实例，`foretoken delete` 删除实例，参数传入对应实例名。也可以传入配置目录；部署时使用了 `--name` 的，操作时沿用该名称。指标、日志和告警见[可观测性指南](../../observability/README_zh.md)。
 
 | 接口 | 用途 |

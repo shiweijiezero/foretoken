@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use foretoken_request_ledger::{LedgerError, Outcome, RequestLedger, ReservationRef};
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::telemetry::AdmissionAttempt;
 use crate::{Admission, AdmissionError};
@@ -319,7 +320,10 @@ impl AdmissionPermit {
         if state.accepted {
             return Ok(false);
         }
-        match shared.ledger.retry(&shared.reference).await? {
+        match batch.model.ledger_result(
+            "retry_dispatch",
+            shared.ledger.retry(&shared.reference).await,
+        )? {
             Outcome::Applied => {
                 state.rules = None;
                 batch.model.defer(&shared.reference.request);
@@ -357,16 +361,16 @@ impl Drop for AdmissionPermit {
                     ..shared.reference.clone()
                 };
                 loop {
-                    match shared.ledger.cancel(&reference).await {
+                    match batch.model.ledger_result("cancel", shared.ledger.cancel(&reference).await) {
                         Ok(()) => break,
                         Err(error) => {
-                            tracing::warn!(error = %error, "request reservation cleanup will retry");
+                            tracing::debug!(model = %reference.model, reservation = %reference.request, slot, %error, "request reservation cleanup will retry");
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
                 }
             }
             batch.model.changed.notify_waiters();
-        });
+        }.in_current_span());
     }
 }

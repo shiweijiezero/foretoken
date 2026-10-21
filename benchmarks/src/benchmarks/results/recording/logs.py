@@ -1,62 +1,90 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Retain nested command logs while preserving the caller's terminal streams."""
+"""Retain nested run diagnostics without making file capture own terminal rendering."""
 
 from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from collections.abc import Iterator
+from contextlib import (
+    ExitStack,
+    closing,
+    contextmanager,
+    redirect_stderr,
+    redirect_stdout,
+)
 from io import TextIOBase
 from pathlib import Path
 from typing import TextIO
 
-
-def configure_logging(console_enabled: bool) -> None:
-    """Configure benchmark progress while retaining only warnings from transport and font libraries."""
-    logging.basicConfig(
-        level=logging.INFO if console_enabled else logging.ERROR,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        # Native evaluator imports may install handlers before CLI configuration.
-        force=True,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("fontTools").setLevel(logging.WARNING)
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 
 @contextmanager
 def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
-    """Retain output in command and child logs; quiet only suppresses terminal output.
+    """Attach run files to standard logging and retain raw output in enclosing runs.
 
-    Each nested run receives its own logging records and raw output; enclosing
-    logs retain the complete execution. Only the outer scope redirects streams.
+    Logging handlers retain severity and tracebacks. Raw framework output is
+    captured separately; only the outer run replaces the Python streams.
     """
     root = logging.getLogger()
     root_level = root.level
+    diagnostics = logging.getLogger("benchmarks.results.output")
+    diagnostics_level = diagnostics.level
     enclosing = sys.stdout if isinstance(sys.stdout, _RunLogStream) else None
     stream = enclosing.owner if enclosing is not None else _RunLogStream(sys.stdout)
-    with (Path(directory) / "run.log").open("a", encoding="utf-8", buffering=1) as log:
+    # Non-propagating framework loggers keep their own console configuration.
+    # Attach the file at their boundary rather than duplicating propagated records.
+    loggers = [root] + [
+        logger for logger in list(root.manager.loggerDict.values())
+        if isinstance(logger, logging.Logger) and not logger.propagate
+    ]
+    with closing(logging.FileHandler(Path(directory) / "run.log", encoding="utf-8")) as log:
+        log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
         stream.logs.append(log)
         stream.quiet_scopes.append(quiet)
+        for logger in loggers:
+            logger.addHandler(log)
         try:
             root.setLevel(min(root_level, logging.INFO))
-            stream.capture_handlers()
-            if enclosing is not None:
+            diagnostics.setLevel(logging.DEBUG)
+            with ExitStack() as contexts:
+                if enclosing is None:
+                    console_loggers = [logger for logger in loggers if any(
+                        isinstance(handler, logging.StreamHandler)
+                        and not isinstance(handler, logging.FileHandler)
+                        and handler.stream in (sys.stdout, sys.stderr)
+                        for handler in logger.handlers
+                    )]
+                    contexts.enter_context(logging_redirect_tqdm(loggers=console_loggers))
+                handlers = {
+                    handler: handler.level
+                    for logger in loggers for handler in logger.handlers
+                    if isinstance(handler, logging.StreamHandler)
+                    and not isinstance(handler, logging.FileHandler)
+                }
+                for handler, level in handlers.items():
+                    handler.setLevel(max(level, logging.ERROR if any(stream.quiet_scopes) else logging.INFO))
+                    contexts.callback(handler.setLevel, level)
+                if enclosing is None:
+                    contexts.enter_context(redirect_stdout(stream))
+                    contexts.enter_context(redirect_stderr(_RunLogStream(sys.stderr, owner=stream)))
                 yield
-            else:
-                stderr = _RunLogStream(sys.stderr, owner=stream)
-                with redirect_stdout(stream), redirect_stderr(stderr):
-                    yield
         finally:
             stream.flush()
+            for logger in loggers:
+                logger.removeHandler(log)
             stream.logs.remove(log)
             stream.quiet_scopes.pop()
-            if enclosing is None:
-                stream.restore_handlers()
             root.setLevel(root_level)
+            diagnostics.setLevel(diagnostics_level)
+
+
+def terminal_stream(stream: TextIO) -> TextIO:
+    """Return the actual terminal for progress renderers without recording cursor updates."""
+    return stream.console if isinstance(stream, _RunLogStream) else stream
 
 
 def print_result_location(message: str) -> None:
@@ -64,88 +92,48 @@ def print_result_location(message: str) -> None:
     stream = sys.stderr
     if isinstance(stream, _RunLogStream):
         stream.retain(message + "\n")
-        stream = stream.console
-    print(message, file=stream, flush=True)
+    print(message, file=terminal_stream(stream), flush=True)
 
 
 class _RunLogStream(TextIOBase):
-    """Retain command and child logs while preserving each original terminal stream."""
+    """Retain raw framework text while standard handlers own structured log records."""
 
     def __init__(self, console: TextIO, *, owner: _RunLogStream | None = None) -> None:
         self.console = console
         self.owner = owner or self
         if owner is None:
-            self.logs: list[TextIO] = []
+            self.logs: list[logging.FileHandler] = []
             self.quiet_scopes: list[bool] = []
-            self.handlers: dict[
-                logging.StreamHandler, tuple[int, Callable[[logging.LogRecord], bool]]
-            ] = {}
 
     def retain(self, text: str) -> None:
-        """Write output once to every enclosing run without forwarding to a terminal."""
-        for log in self.owner.logs:
-            log.write(text)
+        """Serialize raw writes with each file handler's ordinary logging writes."""
+        for handler in self.owner.logs:
+            handler.acquire()
+            try:
+                handler.stream.write(text)
+                handler.flush()
+            finally:
+                handler.release()
 
     def write(self, text: str) -> int:
-        """Retain raw output and tee it to its original stream unless quiet is active."""
+        """Retain raw output and forward it unless the active result scope is quiet."""
         self.retain(text)
         if not any(self.owner.quiet_scopes):
             self.console.write(text)
         return len(text)
 
     def flush(self) -> None:
-        """Flush logs and the original terminal before publication or SDK shutdown."""
-        for log in self.owner.logs:
-            log.flush()
+        """Flush retained files and terminal output before result publication or cleanup."""
+        for handler in self.owner.logs:
+            handler.flush()
         self.console.flush()
 
+    def fileno(self) -> int:
+        """Let native diagnostic writers target the current run rather than the caller's pipe."""
+        if self.owner.logs:
+            return self.owner.logs[-1].stream.fileno()
+        return self.console.fileno()
+
     def isatty(self) -> bool:
-        """Disable terminal-only progress formatting in retained logs."""
+        """Keep raw framework progress escape sequences out of retained transcripts."""
         return False
-
-    def capture_handlers(self) -> None:
-        """Intercept console handlers once, including handlers added by nested adapters."""
-        root = logging.getLogger()
-        loggers = [root] + [
-            item for item in list(root.manager.loggerDict.values())
-            if isinstance(item, logging.Logger)
-        ]
-        for item in loggers:
-            for handler in item.handlers:
-                if (
-                    not isinstance(handler, logging.StreamHandler)
-                    or isinstance(handler, logging.FileHandler)
-                    or handler in self.handlers
-                ):
-                    continue
-                stream = handler.stream
-                if isinstance(stream, _RunLogStream):
-                    stream = stream.console
-                level = handler.level
-
-                def capture(
-                    record: logging.LogRecord, *, handler=handler, stream=stream, level=level
-                ) -> bool:
-                    """Retain a handler record once and honor the active terminal scope."""
-                    text = handler.format(record) + handler.terminator
-                    self.retain(text)
-                    if (
-                        record.levelno >= logging.ERROR
-                        or (not any(self.quiet_scopes) and record.levelno >= level)
-                    ):
-                        stream.write(text)
-                        stream.flush()
-                    return False
-
-                self.handlers[handler] = (level, capture)
-                handler.addFilter(capture)
-                handler.setLevel(logging.DEBUG)
-
-    def restore_handlers(self) -> None:
-        """Restore console filters and levels when the outer command releases capture."""
-        for handler, (level, capture) in self.handlers.items():
-            handler.removeFilter(capture)
-            handler.setLevel(level)
-            stream = handler.stream
-            if isinstance(stream, _RunLogStream) and stream.owner is self:
-                handler.setStream(stream.console)

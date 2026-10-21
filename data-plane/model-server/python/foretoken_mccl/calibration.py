@@ -13,6 +13,10 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+from vllm.logger import init_logger
+
+logger = init_logger(f"vllm.{__name__}")
+
 
 def _visible_ports() -> list[str]:
     """Find active, allocated ports after the MetaX adapter excludes unusable RoCE GIDs."""
@@ -148,11 +152,7 @@ class McclNetworkCalibration:
                     json.dumps({"ports": candidate, "timeout": timeout}),
                 )
                 rows = self._measure(candidate, timeout)
-                print(
-                    f"MCCL network calibration: ports={candidate}, measurements={rows}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                logger.info("MCCL network calibration: ports=%s, measurements=%s", candidate, rows)
                 if rows is not None:
                     score = statistics.mean(math.log(row["seconds"]) for row in rows)
                     if score < best_score:
@@ -209,11 +209,7 @@ class McclNetworkCalibration:
                         break
                     self._measure(command["ports"], command["timeout"])
             os.environ["MCCL_IB_HCA"] = "=" + ",".join(selection[self.index])
-            print(
-                f"MCCL selected ports for member {self.index}: {os.environ['MCCL_IB_HCA']}",
-                file=sys.stderr,
-                flush=True,
-            )
+            logger.info("MCCL selected ports for member %s: %s", self.index, os.environ["MCCL_IB_HCA"])
         finally:
             # Members acknowledge the final result before the leader closes its store server.
             self.store.set(f"finished/{self.index}", b"1")

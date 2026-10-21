@@ -38,9 +38,9 @@ TTFT 是首 token 延迟，E2EL 是生成完成延迟。TPOT 是每个请求的�
 {job="foretoken", namespace="foretoken-demo"}
 ```
 
-用 `pod`、`container`、`node` 或 `stream` 缩小范围。在查询末尾加 `|~ "(?i)error"` 查找错误，或加 `|= "request-id"` 并替换为要追踪的请求标识。
+用 `pod`、`container`、`node` 或 `stream` 缩小范围。平台服务可按 `app` 跨命名空间查询，例如 `{job="foretoken", app="foretoken-deployment-manager"}`。在查询末尾加 `|~ "(?i)error"` 查找错误，或加 `|= "request-id"` 并替换为要追踪的请求标识。
 
-采集范围包括模型服务及其推理引擎、前端、KV 服务和控制器。服务 Pod 或其命名空间删除后，已采集的日志仍可查询。
+采集范围包括模型服务及其推理引擎、模型准备任务、前端、KV 服务、视频任务、缓存回收任务及平台服务。Pod 或其命名空间删除后，已采集的日志仍可查询。
 
 ## 告警
 

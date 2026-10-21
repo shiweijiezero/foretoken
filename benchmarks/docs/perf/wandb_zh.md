@@ -12,7 +12,7 @@ foretoken perf examples/quickstart/qwen3-0.6b \
   --wandb-run-name quickstart
 ```
 
-打开终端打印的运行链接即可查看结果，quiet 模式也会显示链接。`--wandb-entity` 选择账号或团队。需要对比的运行使用相同的 `--wandb-group`，在该分组的 Workspace 中查看。扫描和多数据集运行在未指定 group 时自动分组，单次评测默认不分组。
+终端会打印结果目录；在线上传时，还会打印 `wandb-sync.log` 的位置，quiet 模式也保留这些信息。日志包含运行链接、上传进度和失败后的恢复命令，测量命令退出后上传仍会继续。`--wandb-entity` 选择账号或团队。需要对比的运行使用相同的 `--wandb-group`，在该分组的 Workspace 中查看。扫描和多数据集运行在未指定 group 时自动分组，单次评测默认不分组。
 
 ## 查看进度与比较结果
 

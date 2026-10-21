@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from foretoken.diagnostics import configure_logging
 from foretoken.errors import DeploymentError
 
 from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
@@ -26,10 +27,9 @@ from benchmarks.model_service import ModelService, ModelServiceResolver
 from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.recording.database import read_record
-from benchmarks.results.recording.logs import configure_logging
 from benchmarks.results.reporting.http import (
     format_benchmark_config,
-    print_model_service,
+    log_model_service,
 )
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.http import HttpBenchmark
@@ -68,8 +68,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     def prepare_service() -> ModelService:
                         """Keep serving resources in the command scope, including deferred SLO probes."""
                         service = services.enter_context(resolver.benchmark(benchmark))
-                        if benchmark.service.kustomize_path and not quiet:
-                            print_model_service(service)
+                        if benchmark.service.kustomize_path:
+                            log_model_service(service)
                         logger.info("%s", format_benchmark_config(benchmark, service))
                         return service
 

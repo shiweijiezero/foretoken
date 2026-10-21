@@ -227,6 +227,8 @@ With `spec.modelPools`, add it to each applicable Pool's `features.structuredOut
 
 ## Operations
 
+Use the response's `x-request-id` header to correlate frontend request diagnostics. Saved Responses and Chat Completions retain their separate API object IDs.
+
 Pass the deployment instance name to `foretoken status` to inspect it, or to `foretoken delete` to remove it. Both commands also accept its configuration directory, with the original `--name` when one was selected. Metrics, logs, and alerts are covered by [Observability](../../observability/README.md).
 
 | Endpoint | Purpose |

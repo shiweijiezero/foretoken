@@ -1361,6 +1361,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "tracing",
  "vllm-llm",
 ]
 
@@ -1529,6 +1530,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "tower-http",
  "tracing",
  "uuid",
  "vllm-llm",
@@ -5171,6 +5173,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

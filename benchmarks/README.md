@@ -32,7 +32,7 @@ foretoken perf examples/quickstart/qwen3-0.6b \
   --output local,wandb
 ```
 
-The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
+An interactive terminal shows completed requests during measurement. The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
 
 Performance time values may include a unit such as `s`, `min`, or `h`; unitless values use seconds.
 
@@ -68,7 +68,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
-Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, open the printed run link to follow progress and view results. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or resume an upload.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. With W&B selected, the command prints the result directory. Online uploads also print the background log location, where you can find the run link and upload status. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs. See [W&B output](docs/perf/wandb.md) to view results or resume an upload.
 
 | Record | Use |
 | --- | --- |
@@ -76,11 +76,12 @@ Local results use a separate directory under `results/` for each run; `--output-
 | `metrics.json` | Read the measured aggregate results |
 | `context.json` | Check the run outcome and phase separately from the measurement exit status |
 | `run.log` | Inspect preparation, execution, and errors |
+| `wandb-sync.log`, with online W&B output | Inspect background upload progress, run links, and recovery instructions |
 | `environment.json`, `sources/` | Inspect the service configuration and available source archives, saved locally |
 | `raw_output.jsonl` (HTTP), `raw_results.jsonl` (video) | Inspect requests as they complete, including records retained after interruption |
 | `responses.jsonl`, with `--output local,raw` | Inspect HTTP inputs and response content, including reasoning and tool calls |
 
-Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B synchronization messages remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
+Logs are recorded in both normal and quiet modes. `quiet` suppresses benchmark progress and summaries; errors and W&B result and upload-log locations remain visible. Warmup records use the `warmup_` filename prefix. Quality scores, framework reports, and profiling captures are described in the linked guides below.
 
 Use `experiment` to group measurements under a named iteration. Run from the checkout containing the code changes:
 

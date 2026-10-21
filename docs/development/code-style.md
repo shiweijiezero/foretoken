@@ -115,6 +115,8 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 Follow the surrounding code and the executable checks for each subtree.
 
+Python modules emit diagnostics through a named `logger = logging.getLogger(__name__)`; application entry points configure handlers and formatting. Send progress and diagnostics to stderr, and keep explicit command results such as endpoint URLs, JSON and status tables on stdout. Report an error at the boundary that can act on it, preserving its cause for recorded logs rather than printing it again at every layer.
+
 - Rust data plane: run `make verify-data-plane`. It checks formatting and compiles all workspace targets with Clippy.
 - Go control plane: run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
 - Python CLI: keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.

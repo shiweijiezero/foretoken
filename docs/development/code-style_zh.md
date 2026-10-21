@@ -115,6 +115,8 @@ YAML 应便于阅读和修改：
 
 遵循相邻代码的既有惯例，以及各子目录配置的可执行检查。
 
+Python 模块通过 `logger = logging.getLogger(__name__)` 创建的具名 logger 输出诊断，日志处理器和格式由应用入口配置。进度和诊断写入 stderr；端点 URL、JSON、状态表等显式命令结果保留在 stdout。在能够处理错误的边界报告错误，并为记录日志保留原始原因，不逐层重复打印同一错误。
+
 - Rust 数据面：运行 `make verify-data-plane`，检查格式，并对工作区的全部构建目标执行编译和 Clippy 检查。
 - Go 控制面：运行 `make -C control-plane verify`。生成代码和 CRD 通过 Makefile 目标重新生成，不单独手工修改。
 - Python CLI：公共参数定义和解析应与命令执行分离，跨越该边界时返回明确的命令类型，不传递 `argparse.Namespace`；应在 Kubernetes 环境中实际执行受影响的已安装命令。

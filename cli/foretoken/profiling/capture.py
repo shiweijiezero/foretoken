@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-import sys
+import logging
 import time
 from typing import Any, Literal
 
@@ -15,6 +15,8 @@ from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+
+logger = logging.getLogger(__name__)
 
 
 class ProfileRun:
@@ -77,11 +79,11 @@ class ProfileRun:
             input_text=json.dumps(resource),
         ).stdout)
         self.name, self.uid = created["metadata"]["name"], created["metadata"]["uid"]
-        print(f"ProfileRun {self.namespace}/{self.name}", flush=True)
-        print("View captures: foretoken profile view", flush=True)
+        logger.info("ProfileRun %s/%s", self.namespace, self.name)
+        logger.info("View captures: foretoken profile view")
 
     def observe(self) -> dict[str, Any]:
-        """Read this capture's status and print progress changes."""
+        """Read this capture's status and report progress changes."""
         run = json.loads(self.kubectl.run([
             "get", "profilerun", self.name, "-n", self.namespace,
             "-o", "json", "--request-timeout=20s",
@@ -91,7 +93,7 @@ class ProfileRun:
         self.status = run.get("status", {})
         progress = (self.status.get("phase", "Pending"), self.status.get("message", ""))
         if progress != self._previous:
-            print(f"{progress[0]}: {progress[1]}".rstrip(": "), flush=True)
+            logger.info("%s", f"{progress[0]}: {progress[1]}".rstrip(": "))
             self._previous = progress
         return self.status
 
@@ -107,16 +109,15 @@ class ProfileRun:
             "patch", "profilerun", self.name, "-n", self.namespace,
             "--type=json", "-p", json.dumps(patch), "--request-timeout=20s",
         ])
-        print(f"{action} requested for ProfileRun {self.namespace}/{self.name}.", flush=True)
+        logger.info("%s requested for ProfileRun %s/%s.", action, self.namespace, self.name)
 
     def cancel(self) -> None:
         """Request cancellation during caller cleanup without hiding the original failure."""
         try:
             self.request("Cancel")
         except DeploymentError as error:
-            print(
-                f"Could not submit cancellation: {error}. Runtime deadlines remain active.",
-                file=sys.stderr,
+            logger.warning(
+                "Could not submit cancellation: %s. Runtime deadlines remain active.", error,
             )
 
     def wait(self, *, require_success: bool = True) -> None:

@@ -42,7 +42,6 @@ impl From<foretoken_request_ledger::LedgerError> for AdmissionError {
         if matches!(&error, foretoken_request_ledger::LedgerError::OwnerClosed) {
             return Self::Closed;
         }
-        tracing::warn!(error = %error, "request capacity operation failed");
         Self::StoreUnavailable
     }
 }

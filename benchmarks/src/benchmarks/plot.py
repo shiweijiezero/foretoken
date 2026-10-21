@@ -12,6 +12,10 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from pathlib import Path
 
+from foretoken.diagnostics import configure_logging
+
+logger = logging.getLogger(__name__)
+
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Export saved figures and optionally synchronize original W&B runs without measuring again."""
@@ -58,6 +62,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     options = parser.parse_args(argv)
     from benchmarks.results.plots.export import default_output_directory, render_results
 
+    configure_logging()
     output = (options.output_dir or default_output_directory(*options.sources, base=options.base)).resolve()
     sources = []
     errors = []
@@ -65,10 +70,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if options.sync_wandb:
         from benchmarks.results.recording.directories import result_sources
         from benchmarks.results.recording.locks import publication_lock
-        from benchmarks.results.recording.logs import configure_logging
         from benchmarks.results.wandb.publication import sync_results
 
-        configure_logging(True)
         selected = [*options.sources, *([options.base] if options.base is not None else [])]
         try:
             sources = result_sources(*selected)
@@ -93,7 +96,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (OSError, sqlite3.Error, ValueError) as error:
         if not options.sync_wandb:
             raise SystemExit(str(error)) from error
-        logging.getLogger(__name__).error("Figure export failed: %s; synchronizing saved results", error)
+        logger.error("Figure export failed: %s; synchronizing saved results", error)
         errors.append(error)
     if options.sync_wandb:
         try:

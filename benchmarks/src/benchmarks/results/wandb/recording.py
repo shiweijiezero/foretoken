@@ -72,11 +72,7 @@ class WandbSink:
             init_kwargs["group"] = self.group
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
-        try:
-            self._run = wandb.init(**init_kwargs)
-        except wandb.errors.Error:
-            logger.exception("W&B local recording initialization failed")
-            raise
+        self._run = wandb.init(**init_kwargs)
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
         if requested_mode != "disabled":
@@ -91,10 +87,12 @@ class WandbSink:
                 "publisher": publisher_name(self.publisher),
             }
             write_records(Path(self.execution_dir), {"wandb.json": identity})
-            print_result_location(f"W&B local run: {directory}")
+            print_result_location(f"Results: {self.execution_dir}")
+            logger.info("W&B local recording: %s", directory)
             if requested_mode not in {"offline", "dryrun"}:
                 try:
                     self._sync = start_sync(Path(self.execution_dir), directory)
+                    print_result_location(f"W&B background upload log: {Path(self.execution_dir) / 'wandb-sync.log'}")
                 except OSError as error:
                     logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
 
@@ -133,9 +131,6 @@ class WandbSink:
                     if not failed:
                         raise
                     logger.exception("W&B recorder cleanup also failed")
-        except wandb.errors.Error:
-            logger.exception("W&B local recording finalization failed")
-            raise
         finally:
             if self._sync is not None:
                 self._sync.stdin.close()
