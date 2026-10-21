@@ -23,12 +23,12 @@ from foretoken.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken.cluster import run as run_cluster
 from foretoken.deployment.commands import delete, deploy, stop
 from foretoken.deployment.endpoint import print_endpoint
 from foretoken.deployment.status import show_status
 from foretoken.errors import DeploymentError
 from foretoken.platform.commands import install, uninstall
+from foretoken.platform.local_cluster import run as run_cluster
 from foretoken.profiling.viewer import view
 
 

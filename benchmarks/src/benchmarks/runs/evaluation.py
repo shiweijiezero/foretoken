@@ -74,18 +74,22 @@ def run_evaluation(
             active_outputs.publish_progress(row, axis="Evaluation/Elapsed (s)")
 
         started = time.monotonic()
-        code = _execute(config, service, directory, publish_progress, active_outputs)
-        metrics = read_metrics(directory / "native")
-        run = BenchmarkRun(
-            record=record,
-            metrics={**metrics, "duration_seconds": time.monotonic() - started},
-            measurements=None,
-            artifacts={
-                "native": directory / "native",
-                "log": directory / "evaluator.log",
-            },
-            exit_code=code,
-        )
+        run: BenchmarkRun
+
+        def measured(code: int) -> None:
+            """Commit native scores and their outcome before progress and process cleanup."""
+            nonlocal run
+            metrics = read_metrics(directory / "native")
+            run = BenchmarkRun(
+                record=record,
+                metrics={**metrics, "duration_seconds": time.monotonic() - started},
+                measurements=None,
+                artifacts={"native": directory / "native", "log": directory / "evaluator.log"},
+                exit_code=code,
+            )
+            active_outputs.save_measurement(run)
+
+        code = _execute(config, service, directory, publish_progress, active_outputs, measured)
         active_outputs.publish(run)
         if code:
             logger.error(
@@ -188,6 +192,7 @@ def _execute(
     config: EvaluationConfig, service: ModelService, directory: Path,
     publish_progress: Callable[[dict[str, Any]], None],
     outputs: ResultOutputs,
+    on_complete: Callable[[int], None],
 ) -> int:
     """Stream native progress into a retained log; interrupt and reap the child before service cleanup."""
     native = directory / "native"
@@ -236,7 +241,7 @@ def _execute(
                 log.flush()
                 print(line, end="", flush=True)
             code = process.wait()
-            outputs.finish_measurement(code)
+            on_complete(code)
             return code
         except BaseException:
             if process.poll() is None:

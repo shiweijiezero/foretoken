@@ -446,7 +446,7 @@ type ModelServiceStatus struct {
 	// PoolApplications retains controller-selected execution settings when a Pool is recreated.
 	// The controller publishes selections before materializing their Pool and Group contracts.
 	// +optional
-	PoolApplications map[string]ApplicationSelection `json:"poolApplications,omitempty"`
+	PoolApplications map[string]ModelApplicationSelection `json:"poolApplications,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:Minimum=0

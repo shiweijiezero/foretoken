@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
 
+## 多节点副本的调度与配额
+
+平台管理员可以用 [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) 为完整执行组选择节点，用 [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) 控制配额准入，也可以组合两者。模型容量、就绪判断与请求排空仍由 Foretoken 管理。单节点副本和不占用 GPU 的模型准备任务保持原有调度方式。
+
+原生控制器和队列需要提前准备。以下组合示例使用名为 `inference` 的 Volcano Queue，同时启用 Kueue 的 LeaderWorkerSet 集成，并在各服务命名空间创建名为 `inference` 的 LocalQueue。将配置保存到 `deploy/platform-values.yaml`：
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+只需要一种集成时，省略另一字段即可。执行 `foretoken install --values deploy/platform-values.yaml`，保留原安装命令的源码和镜像仓库选项，再重新部署需要采用队列的实例。Foretoken 会为自己托管的 LeaderWorkerSet 控制器启用 Volcano 支持；独立安装的控制器仍由其管理员配置。
+
+平台更新不会改变运行中或已暂停的实例。已有实例继续使用选定的队列，直到下一次明确执行 `foretoken deploy`。通过 `leaderWorkerScheduling: null` 清除新部署的选择。
+
 ## 实例并发上限
 
 要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：

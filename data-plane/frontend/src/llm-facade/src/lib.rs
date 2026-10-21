@@ -65,6 +65,23 @@ pub trait LlmFacade: Send + Sync {
     async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError>;
 }
 
+/// Resolves selected execution stages without exposing registry ownership.
+pub trait LlmFacadeResolver: Send + Sync {
+    /// Resolves exactly one selected stage. Router Core keeps all health,
+    /// capacity, topology, and pipeline-scope decisions; execution only opens endpoints.
+    fn resolve_stage(
+        &self,
+        decision: &RouteDecision,
+        stage: RouteStage,
+    ) -> Option<Arc<dyn LlmFacade>>;
+
+    /// Returns the live prefill bootstrap endpoint for P/D request construction.
+    ///
+    /// The workflow reads it immediately before starting prefill and passes it to the decode
+    /// connector; `None` prevents the workflow from admitting that staged request.
+    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
+}
+
 /// Best-effort cleanup for execution stages that have been admitted but not completed.
 ///
 /// Register a stage before its `generate` future is awaited.  Dropping the guard aborts every
@@ -73,6 +90,11 @@ pub trait LlmFacade: Send + Sync {
 pub struct MultiStageCleanup {
     stages: Vec<(Arc<dyn LlmFacade>, String)>,
     runtime: Option<tokio::runtime::Handle>,
+}
+
+struct CleanupStream {
+    stream: TokenStream,
+    cleanup: MultiStageCleanup,
 }
 
 impl Default for MultiStageCleanup {
@@ -123,6 +145,8 @@ impl MultiStageCleanup {
         self.stages.clear();
     }
 
+    /// Transfers unfinished stage IDs to best-effort abort requests when the workflow loses its consumer.
+    /// Native termination, rather than this detached acknowledgement, releases execution capacity.
     fn spawn_abort(&mut self) {
         if self.stages.is_empty() {
             return;
@@ -148,11 +172,6 @@ impl Drop for MultiStageCleanup {
     }
 }
 
-struct CleanupStream {
-    stream: TokenStream,
-    cleanup: MultiStageCleanup,
-}
-
 impl Stream for CleanupStream {
     type Item = Result<GenerateOutput, LlmFacadeError>;
 
@@ -175,21 +194,4 @@ impl Stream for CleanupStream {
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-/// Resolves selected execution stages without exposing registry ownership.
-pub trait LlmFacadeResolver: Send + Sync {
-    /// Resolves exactly one selected stage. Router Core keeps all health,
-    /// capacity, topology, and pipeline-scope decisions; execution only opens endpoints.
-    fn resolve_stage(
-        &self,
-        decision: &RouteDecision,
-        stage: RouteStage,
-    ) -> Option<Arc<dyn LlmFacade>>;
-
-    /// Returns the live prefill bootstrap endpoint for P/D request construction.
-    ///
-    /// The workflow reads it immediately before starting prefill and passes it to the decode
-    /// connector; `None` prevents the workflow from admitting that staged request.
-    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
 }

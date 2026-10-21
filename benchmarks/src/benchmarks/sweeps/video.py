@@ -10,7 +10,10 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, ClassVar
 
+from pydantic import ValidationError
+
 from benchmarks.config.benchmark import parse_duration_seconds
+from benchmarks.config.decoding import INTEGER, NUMBER, STRING
 from benchmarks.config.video import VideoBenchmarkConfig, VideoParameterSweepConfig
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.results.wandb.recording import wandb_run_timestamp
@@ -25,18 +28,18 @@ from benchmarks.sweeps.core import (
 )
 
 _VIDEO_SWEEP_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
-    "width": ("width", int),
-    "height": ("height", int),
-    "num_frames": ("num_frames", int),
-    "fps": ("fps", int),
-    "num_inference_steps": ("num_inference_steps", int),
-    "aspect_ratio": ("aspect_ratio", str),
-    "flow_shift": ("flow_shift", float),
-    "audio_flow_shift": ("audio_flow_shift", float),
-    "seed": ("seed", int),
-    "max_concurrency": ("concurrency", int),
+    "width": ("width", INTEGER.validate_python),
+    "height": ("height", INTEGER.validate_python),
+    "num_frames": ("num_frames", INTEGER.validate_python),
+    "fps": ("fps", INTEGER.validate_python),
+    "num_inference_steps": ("num_inference_steps", INTEGER.validate_python),
+    "aspect_ratio": ("aspect_ratio", STRING.validate_python),
+    "flow_shift": ("flow_shift", NUMBER.validate_python),
+    "audio_flow_shift": ("audio_flow_shift", NUMBER.validate_python),
+    "seed": ("seed", INTEGER.validate_python),
+    "max_concurrency": ("concurrency", INTEGER.validate_python),
     "duration": ("duration_s", parse_duration_seconds),
-    "warmup_requests": ("warmup_requests", int),
+    "warmup_requests": ("warmup_requests", INTEGER.validate_python),
 }
 
 
@@ -79,6 +82,12 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
                 f"Unsupported video sweep keys on line {line_no}: "
                 + ", ".join(sorted(unknown))
             )
+        for key in (_BENCHMARK_NAME, _PARAMETER_GROUP):
+            if key in record:
+                try:
+                    STRING.validate_python(record[key])
+                except ValidationError as error:
+                    raise ValueError(f"Invalid video sweep field {key!r}: {error}") from error
 
     def apply_point(
         self,
@@ -87,8 +96,8 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
     ) -> VideoBenchmarkConfig:
         """Apply video axes to each dataset request and its run schedule without mutating the base configuration."""
         updates = {
-            attribute: caster(point[key])
-            for key, (attribute, caster) in _VIDEO_SWEEP_FIELDS.items()
+            attribute: point[key]
+            for key, (attribute, _) in _VIDEO_SWEEP_FIELDS.items()
             if key in point
         }
         request_updates = {

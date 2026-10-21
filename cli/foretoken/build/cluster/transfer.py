@@ -14,8 +14,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from foretoken.command_execution import CommandExecution
 from foretoken.errors import DeploymentError
+from foretoken.processes.execution import CommandExecution
 
 
 def synchronize_inputs(

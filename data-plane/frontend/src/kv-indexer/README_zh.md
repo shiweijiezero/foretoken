@@ -33,7 +33,7 @@ fn candidate_prefix(
     indexer: &dyn KvPrefixIndexer,
 ) -> KvPrefixQueryResult {
     match request.kv_prefix_lookup(
-        &candidate.route_target_id,
+        candidate.route_target_id.as_str(),
         candidate.data_parallel_rank,
     ) {
         Ok(lookup) => indexer.prefix_matches(lookup),

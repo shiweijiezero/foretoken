@@ -3,7 +3,7 @@
 
 //! vLLM-compatible Prometheus metrics and Foretoken-owned admission telemetry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -66,14 +66,22 @@ enum QueueStage {
 struct QueueCounts {
     runtime_preparation: u64,
     backend_dispatch: u64,
+    runtime_scopes: usize,
+    observed: bool,
 }
 
 #[derive(Debug)]
 struct FrontendCollector {
-    kv_index: Option<(String, Option<String>, usize, usize)>,
+    kv_index: (String, Option<String>, usize, usize),
 }
 
 static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, QueueCounts>>> = OnceLock::new();
+
+/// Retains observed zero-valued queue labels while an immutable runtime can still use their Pools.
+pub struct QueueMetricsScope {
+    targets: Vec<QueuedTarget>,
+}
+
 /// RAII ownership of one request waiting for admission to a fixed target set.
 pub struct QueueGuard {
     targets: Vec<QueuedTarget>,
@@ -85,6 +93,43 @@ impl From<&ScalingTarget> for QueuedTarget {
             service_uid: target.service_uid.clone(),
             target_kind: "Pool".to_owned(),
             target_id: target.uid.clone(),
+        }
+    }
+}
+
+impl QueueMetricsScope {
+    /// Registers one runtime's candidate Pools without publishing unobserved idle samples.
+    /// Runtime state retains the scope until its last request releases that generation.
+    pub fn new(candidates: &[RouteTargetSet]) -> Self {
+        let targets = candidates
+            .iter()
+            .flat_map(|candidate| candidate.targets())
+            .map(QueuedTarget::from)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut values = queued_lock();
+        for target in &targets {
+            values.entry(target.clone()).or_default().runtime_scopes += 1;
+        }
+        Self { targets }
+    }
+}
+
+impl Drop for QueueMetricsScope {
+    fn drop(&mut self) {
+        let mut values = queued_lock();
+        for target in &self.targets {
+            let counts = values
+                .get_mut(target)
+                .expect("queue metric scope is registered");
+            counts.runtime_scopes -= 1;
+            if counts.runtime_scopes == 0
+                && counts.runtime_preparation == 0
+                && counts.backend_dispatch == 0
+            {
+                values.remove(target);
+            }
         }
     }
 }
@@ -109,6 +154,7 @@ impl QueueGuard {
         let mut values = queued_lock();
         for target in &targets {
             let counts = values.entry(target.clone()).or_default();
+            counts.observed = true;
             match stage {
                 QueueStage::RuntimePreparation => counts.runtime_preparation += 1,
                 QueueStage::BackendDispatch => counts.backend_dispatch += 1,
@@ -122,12 +168,20 @@ impl Drop for QueueGuard {
     fn drop(&mut self) {
         let mut values = queued_lock();
         for target in &self.targets {
-            let counts = values.entry(target.clone()).or_default();
+            let counts = values
+                .get_mut(target)
+                .expect("queued request target is registered");
             let value = match self.stage {
                 QueueStage::RuntimePreparation => &mut counts.runtime_preparation,
                 QueueStage::BackendDispatch => &mut counts.backend_dispatch,
             };
             *value = value.saturating_sub(1);
+            if counts.runtime_scopes == 0
+                && counts.runtime_preparation == 0
+                && counts.backend_dispatch == 0
+            {
+                values.remove(target);
+            }
         }
     }
 }
@@ -138,6 +192,7 @@ impl Drop for QueueGuard {
 pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     let targets = queued_lock()
         .iter()
+        .filter(|(_, counts)| counts.observed)
         .map(|(target, counts)| AutoscalingTargetTelemetry {
             target: target.clone(),
             runtime_queued_requests: counts.runtime_preparation,
@@ -157,11 +212,6 @@ pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     }
 }
 
-/// Renders the frontend's OpenMetrics response without KV-index status for callers that do not expose index diagnostics.
-pub async fn scrape() -> Response {
-    render(None)
-}
-
 /// Renders the OpenMetrics response with a caller-provided KV-index status snapshot.
 ///
 /// The KV-aware metrics route supplies the status values; their ownership remains with the indexer.
@@ -171,7 +221,7 @@ pub async fn scrape_with_kv_index(
     sources_healthy: usize,
     sources_total: usize,
 ) -> Response {
-    render(Some((state, reason, sources_healthy, sources_total)))
+    render((state, reason, sources_healthy, sources_total))
 }
 
 /// Records one non-metrics HTTP response start after its handler returns a response.
@@ -221,7 +271,7 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
 }
 
 // All owners encode into one OpenMetrics document; only the endpoint writes its EOF marker.
-fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
+fn render((state, reason, healthy, total): (&str, Option<&str>, usize, usize)) -> Response {
     let encoded = (|| {
         let mut body = String::new();
         encode_registry(&mut body, METRICS.registry())?;
@@ -229,9 +279,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
         foretoken_admission::encode_metrics(&mut body)?;
         let mut registry = Registry::default();
         registry.register_collector(Box::new(FrontendCollector {
-            kv_index: kv_index.map(|(state, reason, healthy, total)| {
-                (state.to_owned(), reason.map(str::to_owned), healthy, total)
-            }),
+            kv_index: (state.to_owned(), reason.map(str::to_owned), healthy, total),
         }));
         encode_registry(&mut body, &registry)?;
         encode_eof(&mut body)?;
@@ -259,44 +307,43 @@ impl Collector for FrontendCollector {
             None,
             MetricType::Gauge,
         )?;
-        for (target, counts) in queued_lock().iter() {
+        for (target, counts) in queued_lock().iter().filter(|(_, counts)| counts.observed) {
             let count = counts
                 .runtime_preparation
                 .saturating_add(counts.backend_dispatch);
             queues.encode_family(target)?.encode_gauge(&count)?;
         }
-        if let Some((state, reason, healthy, total)) = &self.kv_index {
-            for (name, help, value) in [
-                (
-                    "foretoken_kv_index_enabled",
-                    "Whether KV locality indexing is enabled",
-                    u64::from(!matches!(state.as_str(), "disabled" | "unavailable")),
-                ),
-                (
-                    "foretoken_kv_index_sources_healthy",
-                    "Healthy KV event sources",
-                    *healthy as u64,
-                ),
-                (
-                    "foretoken_kv_index_sources_total",
-                    "Configured KV event sources",
-                    *total as u64,
-                ),
-            ] {
-                encoder
-                    .encode_descriptor(name, help, None, MetricType::Gauge)?
-                    .encode_gauge(&value)?;
-            }
+        let (state, reason, healthy, total) = &self.kv_index;
+        for (name, help, value) in [
+            (
+                "foretoken_kv_index_enabled",
+                "Whether KV locality indexing is enabled",
+                u64::from(!matches!(state.as_str(), "disabled" | "unavailable")),
+            ),
+            (
+                "foretoken_kv_index_sources_healthy",
+                "Healthy KV event sources",
+                *healthy as u64,
+            ),
+            (
+                "foretoken_kv_index_sources_total",
+                "Configured KV event sources",
+                *total as u64,
+            ),
+        ] {
             encoder
-                .encode_descriptor(
-                    "foretoken_kv_index_degraded",
-                    "Whether KV locality observations are degraded",
-                    None,
-                    MetricType::Gauge,
-                )?
-                .encode_family(&[("reason", reason.as_deref().unwrap_or("none"))])?
-                .encode_gauge(&u64::from(state == "degraded"))?;
+                .encode_descriptor(name, help, None, MetricType::Gauge)?
+                .encode_gauge(&value)?;
         }
+        encoder
+            .encode_descriptor(
+                "foretoken_kv_index_degraded",
+                "Whether KV locality observations are degraded",
+                None,
+                MetricType::Gauge,
+            )?
+            .encode_family(&[("reason", reason.as_deref().unwrap_or("none"))])?
+            .encode_gauge(&u64::from(state == "degraded"))?;
         Ok(())
     }
 }

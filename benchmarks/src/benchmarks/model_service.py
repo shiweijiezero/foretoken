@@ -18,7 +18,6 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from foretoken.command_execution import CommandExecution, cleanup_commands, run_command
 from foretoken.deployment.endpoint import resolve_frontend_endpoint
 from foretoken.deployment.instances import DeploymentInstance, storage_only_instance
 from foretoken.deployment.lifecycle import DeploymentLifecycle
@@ -26,6 +25,11 @@ from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.deployment.status import wait_for_resources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.processes.execution import (
+    CommandExecution,
+    cleanup_commands,
+    run_command,
+)
 
 from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
 from benchmarks.profiling import CaptureCleanupError

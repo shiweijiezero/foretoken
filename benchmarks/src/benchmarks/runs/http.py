@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -28,7 +28,6 @@ from benchmarks.results.measurements.requests import (
     summarize_measurements,
 )
 from benchmarks.results.output import ResultOutputs
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.requests import request_measurement_record
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.scheduling import run_schedule
@@ -123,10 +122,10 @@ class HttpBenchmark:
             nonlocal origin
             origin = value
 
-        def record_completed(response: dict[str, Any]) -> None:
+        async def record_completed(response: dict[str, Any]) -> None:
             """Flush warmup evidence on its own clock before the next conversation turn."""
             item = request_measurement(response, origin)
-            writer.write({
+            await writer.awrite({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
@@ -186,10 +185,10 @@ class HttpBenchmark:
             if progress is not None:
                 progress.start(value)
 
-        def record_completed(response: dict[str, Any]) -> None:
+        async def record_completed(response: dict[str, Any]) -> None:
             """Flush each formal completion before live progress or another conversation turn."""
             item = request_measurement(response, origin)
-            writer.write({
+            await writer.awrite({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
@@ -256,6 +255,10 @@ class HttpBenchmark:
             include_normalized_throughput=workload.trace_events is None,
             slo_criteria=criteria, itl_summary=itl.summary(),
         )
+        metrics["gpu_count"] = (
+            self.service.gpu_count
+            if metrics["throughput"].get("generation_tokens_per_second_per_gpu") is not None else None
+        )
         metrics.update(summarize_measurement_groups(
             measurements, total_time=duration, stream=benchmark.generation.stream,
             arrival_rate=benchmark.load.arrival_rate,
@@ -302,16 +305,6 @@ class HttpBenchmark:
             http_series_published=False,
         )
         outputs.save_measurement(run)
-        if workload.trace_events is not None:
-            artifacts["raw_output"] = write_json(
-                outputs.execution_dir, "raw_output.json", [
-                    {
-                        **{key: value for key, value in row.items() if key != "started_at"},
-                        **request_measurement_record(item, stream=benchmark.generation.stream),
-                    }
-                    for row, item in zip(records, measurements)
-                ], compact=True,
-            )
         return run
 
     async def _execute_episode(
@@ -326,7 +319,7 @@ class HttpBenchmark:
         phase: str,
         itl: ITLStatistics,
         group_itl: dict[str, dict[str, ITLStatistics]],
-        record_completed: Callable[[dict[str, Any]], None],
+        record_completed: Callable[[dict[str, Any]], Awaitable[None]],
         progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
@@ -431,7 +424,7 @@ class HttpBenchmark:
             generated_text = response.pop("generated_text")
             response.pop("tool_calls")
             result.records.append(response)
-            record_completed(response)
+            await record_completed(response)
             if progress is not None:
                 progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:

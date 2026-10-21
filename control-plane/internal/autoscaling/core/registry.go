@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Defines factories and descriptors for the compiled autoscaling stages.
 package core
 
 import "encoding/json"

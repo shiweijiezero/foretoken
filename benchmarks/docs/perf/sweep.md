@@ -39,7 +39,7 @@ foretoken perf examples/quickstart/qwen3-0.6b --dataset random \
 
 Keep only length pairs and concurrency levels supported by the selected model and service. The model context must accommodate input, output, and chat-template overhead. Fixed output lengths require service support for `min_tokens` and `ignore_eos`. The tokenizer is inferred from the selected model; use `--tokenizer-path` to override it.
 
-Each JSONL row keeps related settings together. Fields use CLI names with underscores, such as `request_rate`. Lists define sweep axes, and multiple axes in a row expand into all combinations. To mix two datasets in each run, use a nested list: `"dataset": [["first.jsonl", "second.jsonl"]]`.
+Each JSONL row keeps related settings together. Fields use CLI names with underscores, such as `request_rate`. Lists define sweep axes, and multiple axes in a row expand into all combinations. To mix two datasets in each run, use a nested list: `"dataset": [["first.jsonl", "second.jsonl"]]`. Use JSON booleans and integers for the corresponding options, such as `"stream": false` and `"max_concurrency": 4`; quoted booleans and fractional counts are rejected.
 
 `--slo-params` scores the fixed workload. Add `--slo-search` to [search concurrency](slo.md); with a sweep, `--num-runs` repeats the complete search for each point, with one measurement per probe.
 
@@ -108,14 +108,14 @@ The rate controls conversation starts, while the request budget counts HTTP turn
 
 ## Compare methods
 
-Pass multiple Kustomize examples to measure the same workload on each service:
+After preparing the [BF16 and 4-bit examples](../../../examples/feature/quantized-model/README.md), pass both Kustomize directories to measure the same workload on each service:
 
 ```bash
-foretoken perf examples/quickstart/qwen3-0.6b examples/quickstart3 \
+foretoken perf examples/feature/quantized-model/bf16 examples/feature/quantized-model/bitsandbytes \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A sweep row's `service` list provides the same choices. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/feature/quantized-model/README.md):
+Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. With a sweep, rows without `service` run on every service selected by the command. A row's explicit `service` replaces those selections. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares those deployments across concurrency settings:
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import select
 import shlex
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -46,7 +47,7 @@ def synchronize(directory: Path, native: Path) -> int:
     # Recovery takes result then native locks; release native before following that order.
     try:
         sync_publication(directory, native_synced=True)
-    except (OSError, ValueError, RuntimeError, wandb.errors.Error) as error:
+    except (OSError, sqlite3.Error, ValueError, RuntimeError, wandb.errors.Error) as error:
         print(f"W&B publication failed: {error}. Resume with: {retry}", file=sys.stderr, flush=True)
         return 1
     return 0

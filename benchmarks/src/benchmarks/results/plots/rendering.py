@@ -107,17 +107,13 @@ def _charts(
                     axis.plot(xs, ys, **{**style, "linestyle": "none"})
                 else:
                     axis.plot(xs, ys, **style)
-                for x, y, error in zip(xs, ys, series.stddev):
-                    if error is not None:
-                        axis.errorbar(
-                            x,
-                            y,
-                            yerr=error,
-                            color=_PALETTE[slot],
-                            linewidth=0.8,
-                            capsize=2,
-                            linestyle="none",
-                        )
+                errors = [(x, y, error) for x, y, error in zip(xs, ys, series.stddev) if error is not None]
+                if errors:
+                    error_x, error_y, yerr = zip(*errors)
+                    axis.errorbar(
+                        error_x, error_y, yerr=yerr, fmt="none",
+                        color=_PALETTE[slot], linewidth=0.8, capsize=2,
+                    )
             if chart.kind == "pareto":
                 frontier = []
                 best = math.inf
@@ -304,19 +300,16 @@ def _pareto(
                     linewidth=0.7,
                     label=method,
                 )
-                for row in subset:
-                    xerr = _numeric(row["per_user_stddev"])
-                    yerr = _numeric(row["per_gpu_stddev"])
-                    if xerr is not None or yerr is not None:
+                for field, direction in (("per_user_stddev", "xerr"), ("per_gpu_stddev", "yerr")):
+                    errors = [
+                        (row["per_user_tokens_per_second"], row["per_gpu_tokens_per_second"], error)
+                        for row in subset if (error := _numeric(row[field])) is not None
+                    ]
+                    if errors:
+                        error_x, error_y, deviations = zip(*errors)
                         axis.errorbar(
-                            row["per_user_tokens_per_second"],
-                            row["per_gpu_tokens_per_second"],
-                            xerr=xerr,
-                            yerr=yerr,
-                            color=color,
-                            linewidth=0.8,
-                            capsize=2,
-                            linestyle="none",
+                            error_x, error_y, **{direction: deviations}, fmt="none",
+                            color=color, linewidth=0.8, capsize=2,
                         )
                 frontier = []
                 best = -math.inf
@@ -377,7 +370,7 @@ def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
 
 def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
     axis.set_title(
-        textwrap.fill(title, width=46), loc="left", fontsize=9, color="#0b0b0b", pad=9
+        title, wrap=True, loc="left", fontsize=9, color="#0b0b0b", pad=9
     )
     axis.set_xlabel(xlabel, fontsize=8)
     axis.set_ylabel(ylabel, fontsize=8)

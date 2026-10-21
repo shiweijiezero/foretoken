@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import codecs
 import os
 import subprocess
 from pathlib import Path
@@ -38,19 +37,17 @@ def _checkout_roots(root: Path) -> tuple[Path, Path] | None:
         if checkout != source:
             return None
         worktrees = subprocess.run(
-            ["git", "-c", "core.quotePath=true", "-C", str(source), "worktree", "list", "--porcelain"],
+            ["git", "-C", str(source), "worktree", "list", "--porcelain", "-z"],
             capture_output=True, check=True,
         )
     except FileNotFoundError:
         return None
     except subprocess.CalledProcessError as error:
         raise DeploymentError(f"cannot read Git worktree paths: {os.fsdecode(error.stderr).strip()}") from error
-    primary = worktrees.stdout.split(b"\n\n", 1)[0].splitlines()
+    primary = worktrees.stdout.split(b"\0\0", 1)[0].split(b"\0")
     if b"bare" in primary:
         return checkout, checkout
     path = primary[0].removeprefix(b"worktree ")
-    if path.startswith(b'"'):
-        path = codecs.escape_decode(path[1:-1])[0]
     return checkout, Path(os.fsdecode(path)).resolve()
 
 

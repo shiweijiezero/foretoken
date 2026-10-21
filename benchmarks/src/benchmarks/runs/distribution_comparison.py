@@ -12,9 +12,9 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
 from foretoken.errors import DeploymentError
+from openai import APIError
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig
@@ -144,7 +144,7 @@ def run_distribution_comparison(
                         if len(points) == len(comparison.candidates):
                             run = measured_run(None)
                             outputs.save_measurement(run)
-        except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
+        except (DeploymentError, ValueError, OSError, APIError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Distribution comparison stopped: %s", error)
             if not points:
@@ -223,7 +223,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                     for tokens in prompt_windows:
                         try:
                             reference_samples.append(client.generate(tokens, comparison.max_tokens))
-                        except (httpx.HTTPError, ValueError) as error:
+                        except (APIError, ValueError) as error:
                             reference_samples.append({"error": str(error)})
 
             labels: set[str] = set()
@@ -242,7 +242,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                             else:
                                 try:
                                     candidate_sample = client.generate(tokens, comparison.max_tokens)
-                                except (httpx.HTTPError, ValueError) as error:
+                                except (APIError, ValueError) as error:
                                     candidate_sample = {"error": str(error)}
                             samples.append(_greedy_sample(reference_sample, candidate_sample, index, metadata["label"]))
                         candidate_rows = [row for row in samples if row["candidate"] == metadata["label"]]
@@ -258,7 +258,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                         if len(points) == len(comparison.candidates):
                             run = measured_run(None)
                             outputs.save_measurement(run)
-        except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
+        except (DeploymentError, ValueError, OSError, APIError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Greedy comparison stopped: %s", error)
             if not samples:

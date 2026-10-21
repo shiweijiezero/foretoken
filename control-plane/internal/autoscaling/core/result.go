@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Resolves capacity recommendations against replica bounds and execution lifecycle constraints.
 package core
 
 import "fmt"

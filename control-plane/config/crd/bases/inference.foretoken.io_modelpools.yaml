@@ -169,6 +169,23 @@ spec:
                         format: int32
                         maximum: 1
                         type: integer
+                      leaderWorkerScheduling:
+                        description: LeaderWorkerScheduling retains placement and
+                          quota queues when platform defaults change.
+                        properties:
+                          kueueLocalQueueName:
+                            description: KueueLocalQueueName selects quota admission
+                              in the workload's namespace.
+                            maxLength: 63
+                            pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          volcanoQueueName:
+                            description: VolcanoQueueName selects Volcano group placement;
+                              omission keeps the ordinary scheduler.
+                            maxLength: 253
+                            pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                        type: object
                       preparationVersion:
                         description: |-
                           PreparationVersion pins the selected executable's artifact acquisition and cache contract.

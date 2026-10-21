@@ -4,8 +4,14 @@
 //! Typed reads of vLLM metrics and cumulative model-server latency observations.
 
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, DataParallelTelemetry,
+    CumulativeHistogram, CumulativeHistogramBucket, DataParallelTelemetry, HistogramMoments,
 };
+use prometheus_client::encoding::protobuf::{
+    encode,
+    openmetrics_data_model::{HistogramValue, histogram_value::Sum, metric_point::Value},
+};
+use prometheus_client::metrics::histogram::Histogram;
+use prometheus_client::registry::Registry;
 use vllm_metrics::{EngineLabels, METRICS};
 
 // The selected vLLM crate does not expose its request histogram boundaries. Keep the compatible
@@ -24,17 +30,10 @@ const E2E_BUCKETS_SECONDS: &[f64] = &[
     480.0, 960.0, 1920.0, 7680.0,
 ];
 
-struct BoundaryHistogram {
-    boundaries: &'static [f64],
-    cumulative_counts: Vec<u64>,
-    count: u64,
-    sum_seconds: f64,
-}
-
 pub(crate) struct BoundaryLatencyMetrics {
-    ttft: BoundaryHistogram,
-    tpot: BoundaryHistogram,
-    e2e: BoundaryHistogram,
+    ttft: Histogram,
+    tpot: Histogram,
+    e2e: Histogram,
 }
 
 pub(crate) struct VllmMetricsSnapshot {
@@ -76,23 +75,22 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
         .iter()
         .map(request_cost_metrics)
         .collect::<Vec<_>>();
-    let sum = |read: fn(
-        &foretoken_model_protocol::RequestCostTelemetry,
-    ) -> Option<foretoken_model_protocol::HistogramMoments>| {
-        if costs.is_empty() {
-            return None;
-        }
-        costs.iter().map(read).try_fold(
-            foretoken_model_protocol::HistogramMoments::default(),
-            |total, value| {
-                let value = value?;
-                Some(foretoken_model_protocol::HistogramMoments {
-                    sum: total.sum + value.sum,
-                    count: total.count + value.count,
+    let sum =
+        |read: fn(&foretoken_model_protocol::RequestCostTelemetry) -> Option<HistogramMoments>| {
+            if costs.is_empty() {
+                return None;
+            }
+            costs
+                .iter()
+                .map(read)
+                .try_fold(HistogramMoments::default(), |total, value| {
+                    let value = value?;
+                    Some(HistogramMoments {
+                        sum: total.sum + value.sum,
+                        count: total.count + value.count,
+                    })
                 })
-            },
-        )
-    };
+        };
     // Aggregate exactly the same rank observations used by the router; missing ranks stay unknown.
     let scheduler_running_requests =
         sum_metric(&data_parallel_ranks, |rank| rank.scheduler_running_requests);
@@ -136,9 +134,9 @@ impl BoundaryLatencyMetrics {
     /// Creates empty latency accumulators owned by the vLLM backend adapter.
     pub(crate) fn new() -> Self {
         Self {
-            ttft: BoundaryHistogram::new(TTFT_BUCKETS_SECONDS),
-            tpot: BoundaryHistogram::new(TPOT_BUCKETS_SECONDS),
-            e2e: BoundaryHistogram::new(E2E_BUCKETS_SECONDS),
+            ttft: Histogram::new(TTFT_BUCKETS_SECONDS.iter().copied()),
+            tpot: Histogram::new(TPOT_BUCKETS_SECONDS.iter().copied()),
+            e2e: Histogram::new(E2E_BUCKETS_SECONDS.iter().copied()),
         }
     }
 
@@ -166,47 +164,10 @@ impl BoundaryLatencyMetrics {
         CumulativeHistogram,
     ) {
         (
-            self.ttft.snapshot(),
-            self.tpot.snapshot(),
-            self.e2e.snapshot(),
+            cumulative_histogram(&self.ttft),
+            cumulative_histogram(&self.tpot),
+            cumulative_histogram(&self.e2e),
         )
-    }
-}
-
-impl BoundaryHistogram {
-    fn new(boundaries: &'static [f64]) -> Self {
-        Self {
-            boundaries,
-            cumulative_counts: vec![0; boundaries.len()],
-            count: 0,
-            sum_seconds: 0.0,
-        }
-    }
-
-    fn observe(&mut self, seconds: f64) {
-        self.count += 1;
-        self.sum_seconds += seconds;
-        for (boundary, count) in self.boundaries.iter().zip(&mut self.cumulative_counts) {
-            if seconds <= *boundary {
-                *count += 1;
-            }
-        }
-    }
-
-    fn snapshot(&self) -> CumulativeHistogram {
-        CumulativeHistogram {
-            count: self.count,
-            sum_seconds: self.sum_seconds,
-            buckets: self
-                .boundaries
-                .iter()
-                .zip(&self.cumulative_counts)
-                .map(|(le_seconds, count)| CumulativeHistogramBucket {
-                    le_seconds: *le_seconds,
-                    count: *count,
-                })
-                .collect(),
-        }
     }
 }
 
@@ -220,46 +181,78 @@ fn sum_metric<T>(observations: &[T], read: impl Fn(&T) -> Option<u64>) -> Option
         .try_fold(0_u64, |total, value| total.checked_add(value?))
 }
 
-/// Reads the two rank-local request-length histograms through prometheus-client's public encoder.
-/// Histogram::get is private in the pinned library. Encoding these in-process handles avoids a
-/// scrape, text endpoint, or dependency on a Prometheus server in the routing control loop.
+/// Reads engine-owned request moments through the upstream typed encoder, without scraping text.
 fn request_cost_metrics(labels: &EngineLabels) -> foretoken_model_protocol::RequestCostTelemetry {
-    use foretoken_model_protocol::{HistogramMoments, RequestCostTelemetry};
-    use prometheus_client::{encoding::text::encode, registry::Registry};
-    let mut registry = Registry::default();
-    for (name, family) in [
-        ("prompt", &METRICS.request.request_prompt_tokens),
-        ("generation", &METRICS.request.request_generation_tokens),
-    ] {
-        // Every configured rank has a zero baseline before its first request.
-        let histogram = family.get_or_create(labels);
-        registry.register(name, "Internal histogram observation", histogram.clone());
-    }
-    let mut encoded = String::new();
-    encode(&mut encoded, &registry).expect("encoding in-memory histograms into String cannot fail");
-    let read = |name: &str| -> Option<HistogramMoments> {
-        let sum_name = format!("{name}_sum");
-        let count_name = format!("{name}_count");
-        let mut sum = None;
-        let mut count = None;
-        for line in encoded.lines() {
-            let Some((key, value)) = line.split_once(' ') else {
-                continue;
-            };
-            if key == sum_name {
-                sum = Some(value.parse().expect("histogram sum is numeric"));
-            }
-            if key == count_name {
-                count = Some(value.parse().expect("histogram count is numeric"));
-            }
-        }
+    let read = |histogram: &Histogram| {
+        let value = histogram_value(histogram);
         Some(HistogramMoments {
-            sum: sum?,
-            count: count?,
+            sum: histogram_sum(&value),
+            count: value.count,
         })
     };
-    RequestCostTelemetry {
-        prompt_tokens: read("prompt"),
-        generation_tokens: read("generation"),
+    // Every configured rank has a zero baseline before its first request.
+    foretoken_model_protocol::RequestCostTelemetry {
+        prompt_tokens: read(&METRICS.request.request_prompt_tokens.get_or_create(labels)),
+        generation_tokens: read(
+            &METRICS
+                .request
+                .request_generation_tokens
+                .get_or_create(labels),
+        ),
+    }
+}
+
+/// Captures a histogram's count, sum, and buckets under the upstream histogram's single read lock.
+fn histogram_value(histogram: &Histogram) -> HistogramValue {
+    let mut registry = Registry::default();
+    registry.register(
+        "observation",
+        "Internal histogram observation",
+        histogram.clone(),
+    );
+    let mut family = encode(&registry)
+        .expect("encoding an in-memory histogram cannot fail")
+        .metric_families
+        .pop()
+        .expect("one histogram family was registered");
+    let value = family
+        .metrics
+        .pop()
+        .expect("a histogram has one metric")
+        .metric_points
+        .pop()
+        .expect("a histogram has one metric point")
+        .value;
+    match value {
+        Some(Value::HistogramValue(value)) => value,
+        _ => unreachable!("the registered metric is a histogram"),
+    }
+}
+
+fn histogram_sum(histogram: &HistogramValue) -> f64 {
+    match &histogram.sum {
+        Some(Sum::DoubleValue(sum)) => *sum,
+        _ => unreachable!("prometheus-client histograms encode a floating-point sum"),
+    }
+}
+
+/// Converts upstream exclusive buckets into the cumulative finite buckets of backend telemetry.
+fn cumulative_histogram(histogram: &Histogram) -> CumulativeHistogram {
+    let value = histogram_value(histogram);
+    CumulativeHistogram {
+        count: value.count,
+        sum_seconds: histogram_sum(&value),
+        buckets: value
+            .buckets
+            .into_iter()
+            .take_while(|bucket| bucket.upper_bound != f64::MAX)
+            .scan(0, |total, bucket| {
+                *total += bucket.count;
+                Some(CumulativeHistogramBucket {
+                    le_seconds: bucket.upper_bound,
+                    count: *total,
+                })
+            })
+            .collect(),
     }
 }

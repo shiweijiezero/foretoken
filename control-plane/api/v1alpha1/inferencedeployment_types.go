@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Defines deployment-instance intent, controller status, and shared membership identity.
 package v1alpha1
 
 import (

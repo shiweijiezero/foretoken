@@ -9,12 +9,13 @@ import asyncio
 import logging
 import os
 import shutil
+import sqlite3
 import time
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any, Self, cast
+from typing import Any, Self
 
 import wandb
 from foretoken.errors import DeploymentError
@@ -35,6 +36,7 @@ from benchmarks.results.observations.environment import (
 )
 from benchmarks.results.observations.prometheus import PrometheusObserver
 from benchmarks.results.observations.replicas import KubernetesReplicaObserver
+from benchmarks.results.recording.database import RunRecords
 from benchmarks.results.recording.files import (
     result_directory_path,
     write_gpu_allocation_csv,
@@ -44,6 +46,7 @@ from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.logs import capture_run_logs
 from benchmarks.results.recording.requests import (
     RequestRecordWriter,
+    export_http_requests,
     request_measurement_record,
 )
 from benchmarks.results.recording.responses import ResponseWriter
@@ -98,6 +101,7 @@ class ResultOutputs:
         self._exit_code = 0
         self._context: dict[str, Any] = {}
         self._publication_lock = None
+        self._records: RunRecords | None = None
 
     def __enter__(self) -> Self:
         """Acquire the execution directory and capture preparation through publication."""
@@ -121,12 +125,13 @@ class ResultOutputs:
             lock = publication_lock(Path(self.execution_dir))
             lock.__enter__()
             self._publication_lock = lock
+            self._records = RunRecords(Path(self.execution_dir))
             self._context = {
                 "status": "running", "phase": "preparation", "exit_code": None,
                 "measurement_exit_code": None,
                 "started_at": datetime.now(UTC).isoformat(), "finished_at": None,
             }
-            write_json(self.execution_dir, "context.json", self._context)
+            self.records.publish({"context.json": self._context})
             self._resources.enter_context(
                 capture_run_logs(self.execution_dir, quiet=outputs.includes("quiet"))
             )
@@ -135,9 +140,15 @@ class ResultOutputs:
             raise
         return self
 
-    def open(self, record: dict[str, Any], *, start_observers: bool = True) -> None:
-        """Open result sinks and configuration; callers may defer observation until after warmup."""
+    def open(
+        self, record: dict[str, Any], *, start_observers: bool = True,
+        configuration: dict[str, Any] | None = None,
+    ) -> None:
+        """Retain the executed plan and open destinations; observation may begin after warmup."""
         directory = self.execution_dir
+        self.records.publish({"config.json": configuration if configuration is not None else {
+            **self.benchmark.to_dict(), **record,
+        }})
         outputs = self.benchmark.outputs
         if self.sink_factory is not None:
             sinks = self.sink_factory(directory)
@@ -167,9 +178,7 @@ class ResultOutputs:
 
     def publish(self, run: BenchmarkRun) -> None:
         """Save completed measurements before bounded observation finalization and presentation."""
-        self._context["phase"] = "finalization"
-        write_json(self.execution_dir, "context.json", self._context)
-        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
+        self.save_measurement(run)
         deadline = time.monotonic() + OBSERVATION_TIMEOUT_SECONDS
         # Stop both samplers before joining either. Their in-flight reads and
         # final snapshots share this deadline rather than starting fresh budgets.
@@ -181,10 +190,6 @@ class ResultOutputs:
             path = Path(self.execution_dir) / f"{name}.json"
             if path.is_file():
                 run.artifacts[name] = path
-        if run.exit_code is not None:
-            self._exit_code = run.exit_code
-        elif int(run.metrics["success_num"]) == 0:
-            self._exit_code = 1
         if self.benchmark.outputs.includes("quiet") and run.measurements is not None and run.metrics["failed_num"]:
             logger.error(
                 "%s/%s requests failed; see %s",
@@ -253,11 +258,13 @@ class ResultOutputs:
                 self.execution_dir, "environment.json", self._environment,
             )
         # Destination failures must leave the final measurements and publication inputs reusable.
-        write_json(self.execution_dir, "metrics.json", run.metrics)
-        self._save_publication(run)
+        self.records.publish({
+            "metrics.json": run.metrics,
+            "publication.json": self._publication_record(run),
+        })
         for sink in self._sinks:
             sink.publish(run)
-            self._save_publication(run)
+            self.records.publish({"publication.json": self._publication_record(run)})
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once without replacing an active benchmark failure."""
@@ -295,22 +302,28 @@ class ResultOutputs:
             if error is not None:
                 self._context["error_type"] = type(error).__name__
             try:
-                write_json(self.execution_dir, "context.json", self._context)
-            except OSError:
+                if self._records is not None:
+                    self._records.publish({"context.json": self._context})
+            except (OSError, sqlite3.Error):
                 if error is None:
                     self._exit_code = 1
                     raise
                 logger.exception("Could not retain final run context")
             finally:
-                if self._publication_lock is not None:
-                    self._publication_lock.__exit__(None, None, None)
-                    self._publication_lock = None
-                self._release_execution_directory(preserve=self._exit_code != 0)
-                self._sinks = []
-                self._execution_dir = None
-                self._replica_observer = None
-                self._prometheus_observer = None
-                self._exit_code = 0
+                try:
+                    if self._records is not None:
+                        self._records.close()
+                finally:
+                    self._records = None
+                    if self._publication_lock is not None:
+                        self._publication_lock.__exit__(None, None, None)
+                        self._publication_lock = None
+                    self._release_execution_directory(preserve=self._exit_code != 0)
+                    self._sinks = []
+                    self._execution_dir = None
+                    self._replica_observer = None
+                    self._prometheus_observer = None
+                    self._exit_code = 0
         return False
 
     @property
@@ -320,23 +333,38 @@ class ResultOutputs:
             raise RuntimeError("result outputs are not active")
         return self._execution_dir
 
+    @property
+    def records(self) -> RunRecords:
+        """Return this active run's record connection without transferring its lifetime."""
+        if self._records is None:
+            raise RuntimeError("result outputs are not active")
+        return self._records
+
     def start_measurement(self) -> None:
         """Record actual execution or checkpoint reuse before the leaf runner begins measurement."""
         if self._context["phase"] == "preparation":
             self._context["phase"] = "measurement"
-            write_json(self.execution_dir, "context.json", self._context)
-
-    def finish_measurement(self, exit_code: int) -> None:
-        """Retain the leaf's confirmed outcome before progress, transport, or profile cleanup."""
-        self._context.update(phase="finalization", measurement_exit_code=exit_code)
-        self._exit_code = exit_code
-        write_json(self.execution_dir, "context.json", self._context)
+            self.records.publish({"context.json": self._context})
 
     def save_measurement(self, run: BenchmarkRun) -> None:
-        """Save measured metrics before recording completion so results can be recovered offline."""
-        run.artifacts["metrics"] = write_json(self.execution_dir, "metrics.json", run.metrics)
-        self._save_publication(run)
-        self.finish_measurement(cast(int, run.exit_code))
+        """Commit metrics, publication inputs and the measured outcome as one checkpoint."""
+        self._exit_code = run.exit_code if run.exit_code is not None else int(run.metrics["success_num"] == 0)
+        self._context.update(phase="finalization", measurement_exit_code=self._exit_code)
+        directory = Path(self.execution_dir)
+        run.artifacts.update(config=directory / "config.json", metrics=directory / "metrics.json")
+        if run.measurements is not None:
+            run.artifacts["raw_output"] = directory / "raw_output.json"
+        self.records.publish({
+            "metrics.json": run.metrics,
+            "publication.json": self._publication_record(run),
+            "context.json": self._context,
+        })
+        if run.measurements is not None:
+            export_http_requests(directory, run.metrics, traced=run.record.get("mode") == "arrival_trace")
+        elif run.record.get("mode") == "video_generation":
+            write_json(self.execution_dir, "raw_results.json", sorted(
+                self.records.requests("raw_results"), key=lambda row: row["index"],
+            ))
 
     def publish_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Send a measured progress snapshot to each selected live destination."""
@@ -354,7 +382,7 @@ class ResultOutputs:
 
     def create_request_writer(self, name: str) -> RequestRecordWriter:
         """Open a completed-request journal and close it with this run's result resources."""
-        writer = RequestRecordWriter(Path(self.execution_dir) / f"{name}.jsonl")
+        writer = RequestRecordWriter(Path(self.execution_dir) / f"{name}.jsonl", self.records)
         self._resources.callback(writer.close)
         return writer
 
@@ -412,8 +440,8 @@ class ResultOutputs:
 
     def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
         """Persist the completed warmup before measurement or a warmup failure."""
+        self.records.publish({"warmup_metrics.json": metrics})
         write_json(self.execution_dir, "warmup_raw_output.json", rows, compact=True)
-        write_json(self.execution_dir, "warmup_metrics.json", metrics)
 
     def record_http_warmup(
         self,
@@ -465,13 +493,13 @@ class ResultOutputs:
             shutil.rmtree(directory)
         self._temporary_execution_dir = False
 
-    def _save_publication(self, run: BenchmarkRun) -> None:
-        """Retain the publication inputs needed to finish outputs without another measurement."""
-        write_json(self.execution_dir, "publication.json", {
+    def _publication_record(self, run: BenchmarkRun) -> dict[str, Any]:
+        """Describe output recovery using the same measured run and relative artifact identities."""
+        return {
             "record": run.record, "exit_code": run.exit_code if run.exit_code is not None else self._exit_code,
             "http_series_published": run.http_series_published,
             "has_measurements": run.measurements is not None,
             "artifacts": {name: Path(os.path.relpath(path, self.execution_dir)).as_posix() for name, path in run.artifacts.items()},
             "output": list(self.benchmark.outputs.destinations),
             "publication_pending": self.benchmark.outputs.includes("wandb") and wandb.setup().settings.mode != "disabled",
-        })
+        }

@@ -24,6 +24,7 @@ import (
 	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
+// main executes generation or task-directory cleanup for one controller-owned worker Job.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -110,6 +111,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 	httpRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if serviceUID := os.Getenv("FORETOKEN_VIDEO_MODEL_SERVICE_UID"); serviceUID != "" {
+		httpRequest.Header.Set("x-foretoken-model-service-uid", serviceUID)
+	}
 	writeResult := make(chan error, 1)
 	go func() {
 		writeErr := writeMultipart(multipartWriter, root, request, model)

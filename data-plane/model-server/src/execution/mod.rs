@@ -8,6 +8,7 @@ mod admission;
 use std::sync::Arc;
 
 use futures::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent, TokenStream};
 pub use admission::{
@@ -29,9 +30,6 @@ pub(crate) struct ExecutionStore {
     pub(crate) pod_uid: String,
     pub(crate) epoch: u64,
 }
-
-/// Signals output-consumer cancellation to the independent execution task.
-struct CancelExecution(Arc<tokio::sync::Notify>);
 
 /// Submission or termination evidence used to settle one stage's ledger reservation.
 #[derive(Clone, Copy)]
@@ -118,7 +116,7 @@ pub(crate) async fn start_execution(
                 return;
             }
         };
-        let cancel = Arc::new(tokio::sync::Notify::new());
+        let cancel = CancellationToken::new();
         let cancellation = cancel.clone();
         let (completed, mut completion) = tokio::sync::watch::channel(false);
         let crate::backend::BackendGeneration {
@@ -126,17 +124,21 @@ pub(crate) async fn start_execution(
             completion: mut engine_completion,
         } = generation;
         tokio::spawn(async move {
+            let remote_cancellation = async {
+                if let Some((store, reference)) = &shared {
+                    loop {
+                        match store.ledger.wait_cancelled(reference).await {
+                            Ok(()) => return,
+                            Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                        }
+                    }
+                }
+                std::future::pending::<()>().await;
+            };
             let cancellation_requested = async {
-                loop {
-                    tokio::select! {
-                        _ = cancellation.notified() => return,
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {},
-                    }
-                    if let Some((store, reference)) = &shared
-                        && matches!(store.ledger.cancelled(reference).await, Ok(true))
-                    {
-                        return;
-                    }
+                tokio::select! {
+                    () = cancellation.cancelled() => {},
+                    () = remote_cancellation => {},
                 }
             };
             let result = tokio::select! {
@@ -178,7 +180,7 @@ pub(crate) async fn start_execution(
                 completed.send_replace(true);
             }
         });
-        let cleanup = CancelExecution(cancel);
+        let cleanup = cancel.drop_guard();
         let output: crate::backend::TokenStream = Box::pin(async_stream::stream! {
             let _cleanup = cleanup;
             while let Some(item) = stream.next().await {
@@ -199,12 +201,6 @@ pub(crate) async fn start_execution(
     received
         .await
         .map_err(|_| ExecutionError::Backend(BackendError::RequestFailed))?
-}
-
-impl Drop for CancelExecution {
-    fn drop(&mut self) {
-        self.0.notify_one();
-    }
 }
 
 /// Resolve unknown native completion through supervisor-confirmed process termination.

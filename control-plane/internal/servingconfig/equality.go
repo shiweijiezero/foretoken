@@ -27,7 +27,7 @@ func (snapshot Snapshot) SameConfiguration(other Snapshot) bool {
 }
 
 func equalScalingModel(left, right Model) bool {
-	return left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID &&
+	return left.ServiceName == right.ServiceName && left.ServiceGeneration == right.ServiceGeneration && left.ServiceUID == right.ServiceUID &&
 		left.Model == right.Model && left.Source == right.Source && left.Revision == right.Revision &&
 		left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision &&
 		reflect.DeepEqual(left.PrefixCacheIsolation, right.PrefixCacheIsolation) &&

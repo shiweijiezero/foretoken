@@ -17,14 +17,8 @@ use crate::video_task::VideoTaskRequest;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VideoTaskSubmit {
-    model_service_ref: ModelServiceReference,
+    model: String,
     request: VideoTaskRequest,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelServiceReference {
-    name: String,
 }
 
 /// HTTP acknowledgement with URLs for subsequent task operations.
@@ -44,12 +38,20 @@ pub(super) fn router() -> Router<ApiState> {
         .route("/v1/videos/{id}/content", axum::routing::get(content))
 }
 
+/// Resolves public model intent before the task client persists resources or copies inputs.
 async fn create(State(state): State<ApiState>, Json(request): Json<VideoTaskSubmit>) -> Response {
     let Some(client) = state.video_tasks else {
         return StatusCode::NOT_IMPLEMENTED.into_response();
     };
+    let service = match state.generation.video_task_service(&request.model) {
+        Ok(service) => service,
+        Err(crate::GenerationError::InvalidRequest) => {
+            return super::client_error("model must identify exactly one video service");
+        }
+        Err(error) => return super::openai_error(error),
+    };
     match client
-        .create(&request.model_service_ref.name, request.request)
+        .create(&request.model, &service, request.request)
         .await
     {
         Ok(id) => (

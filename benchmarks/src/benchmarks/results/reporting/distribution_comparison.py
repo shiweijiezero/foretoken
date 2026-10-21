@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from tabulate import tabulate
+
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.results.recording.comparisons import (
     write_distribution_comparison_artifacts,
@@ -96,8 +98,10 @@ class DistributionComparisonConsoleSink:
                 _format(point["top1_agreement"] * 100),
                 _format(point["mean_centered_logit_rmse"]),
             ])
-        widths = [max(len(str(row[index])) for row in table) for index in range(len(headers))]
-        lines.extend("  ".join(str(value).ljust(width) for value, width in zip(row, widths)) for row in table)
+        lines.append(tabulate(
+            table[1:], headers=headers, tablefmt="plain", disable_numparse=True,
+            colalign=("left", "left", "right", "right", "right", "right", "right"),
+        ))
         logger.info("\n%s", "\n".join(lines))
 
     def close(self, *, exit_code: int = 0) -> None:

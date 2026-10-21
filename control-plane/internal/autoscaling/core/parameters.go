@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Decodes explicitly declared algorithm parameters while preserving omitted defaults.
 package core
 
 import (

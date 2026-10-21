@@ -16,10 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from foretoken.command_execution import command_deadline, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.mutation import mutation_lock_fds
-from foretoken.tools import resolve_tool
+from foretoken.processes.execution import command_deadline, run_command
+from foretoken.processes.tools import resolve_tool
 
 
 @dataclass(frozen=True)

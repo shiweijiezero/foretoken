@@ -458,6 +458,8 @@ fn kv_http_client() -> reqwest::Client {
         .expect("static KV index HTTP client configuration is valid")
 }
 
+/// Fetches one source page for refresh without advancing its cursor or mutating the index.
+/// HTTP 409 carries reset state; `apply` owns epoch validation and invalidation for both responses.
 async fn fetch_delta(
     client: &reqwest::Client,
     source: KvEventSourceConfig,
@@ -589,6 +591,8 @@ fn apply(
     );
     Ok(())
 }
+/// Invalidates one source's cursor and facts together after refresh detects a broken epoch or page.
+/// Other sources retain their independent observations and routing eligibility.
 fn clear(state: &State, s: &KvEventSourceConfig) {
     if let Some(c) = state.cursors.lock().unwrap().remove(&s.event_source_id) {
         state.index.lock().unwrap().clear_source(&KvEventSourceId {

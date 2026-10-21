@@ -72,6 +72,11 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
+  # Optional placement and quota admission for multi-node replicas; native controllers and queues must exist.
+  # leaderWorkerScheduling:
+  #   volcanoQueueName: inference
+  #   kueueLocalQueueName: inference
+  leaderWorkerScheduling: {}
   # Use an existing namespace PVC by default; an explicit authorized directory takes precedence.
   cache:
     claimName: ""

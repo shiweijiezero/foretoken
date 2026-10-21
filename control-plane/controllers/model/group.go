@@ -129,6 +129,14 @@ func (reconciler *GroupReconciler) Reconcile(ctx context.Context, request ctrl.R
 
 	executionWorkload, err := reconciler.reconcileWorkload(ctx, group, deployment)
 	if err != nil {
+		// Retain previously admitted execution while repair waits; reject an unallocated target.
+		if errors.Is(err, errKueueAdmissionInactive) && executionWorkload.createdAt.IsZero() {
+			state := modelGroupMaterializedState(false, schedulingNotEvaluated())
+			state.phase = inferencev1alpha1.ModelGroupPhaseFailed
+			state.materialized = modelGroupConditionState{status: metav1.ConditionFalse, reason: "QueueAdmissionUnavailable", message: err.Error()}
+			state.target = metav1.Condition{Status: metav1.ConditionFalse, Reason: "QueueAdmissionUnavailable", Message: err.Error()}
+			err = errors.Join(err, reconciler.updateStatus(ctx, group, state))
+		}
 		return ctrl.Result{}, err
 	}
 	if err := reconciler.reconcileService(ctx, group, pool); err != nil {

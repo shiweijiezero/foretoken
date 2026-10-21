@@ -228,7 +228,7 @@ impl OutputItemStreamer {
             }),
             Some(OpenItem::Message { item_id, text }) => Some(ResponseOutputItem::Message {
                 id: item_id.clone(),
-                role: AssistantRole,
+                role: AssistantRole::Assistant,
                 status: ResponseItemStatus::InProgress,
                 content: vec![ResponseOutputContentPart::OutputText {
                     text: text.clone(),
@@ -294,7 +294,7 @@ impl OutputItemStreamer {
         let item_id = format!("msg_{}", Uuid::new_v4().simple());
         let item = ResponseOutputItem::Message {
             id: item_id.clone(),
-            role: AssistantRole,
+            role: AssistantRole::Assistant,
             status: ResponseItemStatus::InProgress,
             content: vec![],
         };
@@ -434,7 +434,7 @@ impl OutputItemStreamer {
                 };
                 let item = ResponseOutputItem::Message {
                     id: item_id.clone(),
-                    role: AssistantRole,
+                    role: AssistantRole::Assistant,
                     status,
                     content: vec![part.clone()],
                 };

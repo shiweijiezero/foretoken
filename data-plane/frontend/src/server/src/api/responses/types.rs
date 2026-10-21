@@ -13,6 +13,11 @@
 
 use std::collections::HashMap;
 
+pub(super) use async_openai::types::chat::StopConfiguration;
+pub(super) use async_openai::types::responses::{
+    AssistantRole, IncompleteDetails, Status as ResponseItemStatus,
+    TextResponseFormatConfiguration as ResponseTextFormat,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -54,33 +59,12 @@ pub struct ResponsesReasoning {
     pub summary: Option<String>,
 }
 
-/// Responses API `text.format` variants.
-///
-/// Mirrors the `ResponseTextConfig.format` union from the OpenAI SDK. Note
-/// the `json_schema` variant is flat here (`type` next to `name`/`schema`),
-/// unlike the chat-completions shape where the schema is nested under a
-/// `json_schema` key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResponseTextFormat {
-    Text,
-    JsonObject,
-    JsonSchema {
-        name: String,
-        #[serde(default)]
-        description: Option<String>,
-        schema: Value,
-        #[serde(default)]
-        strict: Option<bool>,
-    },
-}
-
 /// Responses API `text` configuration.
 ///
 /// Unsupported verbosity directives are rejected during lowering.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ResponseTextConfig {
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_text_format")]
     pub format: Option<ResponseTextFormat>,
     #[serde(default)]
     pub verbosity: Option<String>,
@@ -181,7 +165,7 @@ pub struct ResponsesRequest {
     #[serde(default)]
     pub seed: Option<i64>,
     #[serde(default)]
-    pub stop: Option<Value>,
+    pub stop: Option<StopConfiguration>,
     #[serde(default)]
     pub ignore_eos: bool,
     #[serde(default = "default_true")]
@@ -340,19 +324,6 @@ pub enum TextPart {
     SummaryText { text: String },
 }
 
-/// Status of a response object or one of its output items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResponseItemStatus {
-    Queued,
-    InProgress,
-    Incomplete,
-    Failed,
-    Cancelling,
-    Cancelled,
-    Completed,
-}
-
 /// One `output_text` content part of an output message item.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -398,10 +369,7 @@ pub enum ResponseOutputItem {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AssistantRole;
-
-/// Usage block of a completed response.
+/// Usage block of a completed response, retaining the native counters' full `usize` range.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResponseUsage {
     pub input_tokens: usize,
@@ -419,14 +387,6 @@ pub struct InputTokensDetails {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputTokensDetails {
     pub reasoning_tokens: usize,
-}
-
-/// `incomplete_details` block set when generation stopped early.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IncompleteDetails {
-    /// Currently only `max_output_tokens` is produced; `content_filter` is
-    /// not implemented (same as the Python frontend).
-    pub reason: String,
 }
 
 /// The top-level response object returned by non-streaming requests and
@@ -519,13 +479,20 @@ impl TextPart {
     }
 }
 
-impl serde::Serialize for AssistantRole {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str("assistant")
+/// Preserves the endpoint's explicit null fields while the SDK owns format decoding.
+fn serialize_text_format<S>(
+    format: &Option<ResponseTextFormat>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut value = serde_json::to_value(format).map_err(serde::ser::Error::custom)?;
+    if let Some(ResponseTextFormat::JsonSchema(schema)) = format {
+        value["description"] = schema.description.clone().into();
+        value["strict"] = schema.strict.into();
     }
+    value.serialize(serializer)
 }
 
 fn default_true() -> bool {

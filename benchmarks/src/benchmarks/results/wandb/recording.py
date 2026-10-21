@@ -15,9 +15,10 @@ from typing import Any
 
 import wandb
 
-from benchmarks.results.recording.files import write_json
+from benchmarks.results.recording.database import write_records
 from benchmarks.results.recording.logs import print_result_location
 from benchmarks.results.types import BenchmarkRun, ResultConfiguration, _WandbPublisher
+from benchmarks.results.wandb.axes import define_axis_metrics
 from benchmarks.results.wandb.sync import start_sync
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class WandbSink:
         self.run_config = run_config
         self._run: Any | None = None
         self._sync: subprocess.Popen[bytes] | None = None
-        self._progress_fields: set[tuple[str, str]] = set()
+        self._progress_axes: set[str] = set()
 
     def open(self, record: dict[str, Any]) -> None:
         """Open native recording before requests, preserving W&B's configured offline/disabled modes."""
@@ -89,7 +90,7 @@ class WandbSink:
                 "directory": Path(os.path.relpath(directory, self.execution_dir)).as_posix(),
                 "publisher": publisher_name(self.publisher),
             }
-            write_json(self.execution_dir, "wandb.json", identity)
+            write_records(Path(self.execution_dir), {"wandb.json": identity})
             print_result_location(f"W&B local run: {directory}")
             if requested_mode not in {"offline", "dryrun"}:
                 try:
@@ -99,13 +100,9 @@ class WandbSink:
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Bind live fields to their domain axis and queue them through the owned run."""
-        if (axis, axis) not in self._progress_fields:
-            self._run.define_metric(axis, hidden=True)
-            self._progress_fields.add((axis, axis))
-        for key in row.keys() - {axis}:
-            if (key, axis) not in self._progress_fields:
-                self._run.define_metric(key, step_metric=axis, step_sync=False)
-                self._progress_fields.add((key, axis))
+        if axis not in self._progress_axes:
+            define_axis_metrics(self._run, axis)
+            self._progress_axes.add(axis)
         self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:

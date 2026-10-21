@@ -19,6 +19,12 @@ local function ok(value) return {'ok', value or ''} end
 local function missing() return {'not_found', ''} end
 local function invalid(message) return {'invalid', message} end
 local function pending(status) return status == 'queued' or status == 'in_progress' end
+-- Notifications carry keys, never public data or completion evidence. ACLs may
+-- deny advisory publication without invalidating the atomic state transition.
+local function changed(object, cancellation)
+    redis.pcall('PUBLISH', ARGV[7], object)
+    if cancellation then redis.pcall('PUBLISH', ARGV[7], object .. ':cancel') end
+end
 local function expired(object, field)
     local value = redis.call('HGET', object, field)
     return value and value ~= '' and tonumber(value) <= now
@@ -122,6 +128,7 @@ local function drop_record(object, id, scope)
     redis.call('SREM', acknowledgement_index, object)
     redis.call('ZREM', expiry_index, object)
     redis.call('ZREM', replay_index, object)
+    changed(object, true)
 end
 local function item_page(list)
     local length = redis.call('LLEN', list)
@@ -244,7 +251,10 @@ if action == 'cancel' then
     local object = record(input.id, 'response')
     if not object then return missing() end
     if redis.call('HGET', object, 'background') ~= '1' then return invalid('only background responses can be cancelled') end
-    if pending(redis.call('HGET', object, 'status')) then redis.call('HSET', object, 'cancel_requested', '1') end
+    if pending(redis.call('HGET', object, 'status')) then
+        redis.call('HSET', object, 'cancel_requested', '1')
+        changed(object, true)
+    end
     return ok(redis.call('HGET', object, 'body'))
 end
 if action == 'delete_response' then
@@ -255,6 +265,7 @@ if action == 'delete_response' then
         redis.call('HSET', object, 'expires_at', now)
         if redis.call('HGET', object, 'reservation') == '' then enqueue_expiry(object) end
     end
+    changed(object, false)
     return ok()
 end
 if action == 'cancellation_requested' then
@@ -271,6 +282,7 @@ if action == 'publish' then
     if input.body ~= '' then redis.call('HSET', object, 'body', input.body, 'status', input.status) end
     append_events(object, input.events)
     redis.call('HINCRBY', object, 'version', 1)
+    changed(object, false)
     return ok()
 end
 if action == 'failure_snapshot' then
@@ -320,9 +332,10 @@ if action == 'finish' then
     redis.call('HINCRBY', object, 'version', 1)
     append_events(object, input.events)
     redis.call('SREM', pending_index, object)
-    redis.call('ZADD', replay_index, now + replay * 1000, object)
+    redis.call('PEXPIREAT', object .. ':events', now + replay * 1000)
     if redis.call('HGET', object, 'reservation') == '' then enqueue_expiry(object)
     else redis.call('SADD', acknowledgement_index, object) end
+    changed(object, true)
     return ok(input.body)
 end
 if action == 'events' or action == 'has_event' then
@@ -500,8 +513,12 @@ end
 if action == 'collect' then
     -- Any frontend can reclaim expired cache objects, including those from a stopped service.
     -- Public reads enforce expiry independently of these bounded collection batches.
-    for _, object in ipairs(redis.call('ZRANGEBYSCORE', replay_index, '-inf', now, 'LIMIT', 0, 256)) do
-        redis.call('DEL', object .. ':events')
+    -- Older writers retain replay deadlines in the shared index. Hand each deadline
+    -- to Redis without changing its event payloads or extending its lifetime.
+    local replay = redis.call('ZRANGE', replay_index, 0, 255, 'WITHSCORES')
+    for index = 1, #replay, 2 do
+        local object = replay[index]
+        redis.call('PEXPIREAT', object .. ':events', replay[index + 1])
         redis.call('ZREM', replay_index, object)
     end
     for _, object in ipairs(redis.call('ZRANGEBYSCORE', expiry_index, '-inf', now, 'LIMIT', 0, 256)) do

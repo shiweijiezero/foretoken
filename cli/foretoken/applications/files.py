@@ -25,9 +25,9 @@ from foretoken.build.records import (
     WORKSPACE_LABEL,
     WORKSPACE_SELECTION_KEY,
 )
-from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 if TYPE_CHECKING:
     from foretoken.build.cluster.compiler import CompilerWorkspace

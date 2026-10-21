@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Retires instance resources before removing their controller and delegated permissions.
 package deployments
 
 import (

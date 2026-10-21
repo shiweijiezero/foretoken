@@ -372,8 +372,8 @@ def _measure(probe: str, *arguments: str) -> float | None:
     # The same file runs standalone in the probe process; only its parent needs
     # the CLI lifecycle. A stuck system resolver must terminate with that process.
     # Safe-path mode retains user-site installs without importing from this source directory.
-    from foretoken.command_execution import CommandExecution, run_command
     from foretoken.errors import DeploymentError
+    from foretoken.processes.execution import CommandExecution, run_command
 
     execution = CommandExecution.current()
     try:

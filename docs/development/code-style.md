@@ -28,7 +28,13 @@ Design the complete configuration, execution, observation, decision, and cleanup
 - Do not copy a complete lifecycle into multiple runners, controllers, or adapters. Share the common execution path and keep each caller responsible only for its distinct policy or input.
 - Shared protocol values, defaults, state transitions, and derived calculations must have one authoritative definition. Consumers should use a typed contract or shared helper instead of copying strings, numbers, or algorithms.
 
-Foretoken integrates with mature inference engines and Kubernetes projects. Reuse their public interfaces and owning paths where they fit. Keep version-sensitive or backend-specific behavior in a thin adapter; platform APIs and common control flow should use inference-engine-neutral domain types.
+## Community libraries and frameworks
+
+Before adding or substantially revising a general-purpose responsibility, actively look for maintained community libraries, SDKs, tools, and frameworks, beyond the standard library and dependencies already in the repository. This includes parsing and validation, protocol clients, concurrency, persistence, scheduling, and observability, as well as inference engines and Kubernetes integrations.
+
+Evaluate candidates through their actual public APIs, documentation, and relevant source. Check maintenance, licensing, supported versions, dependency and deployment costs, and the required behavior under concurrency, cancellation, deadlines, failure, and recovery. Prefer the option that reduces total implementation and maintenance work while preserving the component's responsibilities and supported capabilities.
+
+Reuse the upstream component's complete owning path rather than wrapping its types around another handwritten implementation. Keep only necessary domain adaptation, migrate producers and consumers together, and delete superseded code, state, configuration, and tests. Common APIs remain engine-neutral; backend- or version-specific details stay in thin adapters. When domain code must remain, explain the concrete requirement the available upstream interfaces do not cover in the relevant design or review, rather than relying on a generic claim that custom code is simpler.
 
 Do not build compatibility probes, fallback implementations, or plugin frameworks for versions and backends the repository does not currently support.
 
@@ -89,6 +95,8 @@ Review every first-party source file exceeding 300 effective code lines and ever
 Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries. Keep primary functions focused on meaningful stages of the complete operation; move domain policy, protocol handling, and resource construction into the stages that own them. Preserve a readable execution order and shared cleanup rather than shortening the entry point through chains of forwarding helpers.
 
 After substantial feature growth, review the final responsibility map rather than accepting code growth as inevitable. Remove replaced paths, duplicate state, repeated stages, and forwarding layers with no independent ownership; move domain policy out of entry points; and verify that a split reduces the total concepts and implementation that maintainers must understand.
+
+Each first-party source file with an independent responsibility should explain that purpose in a concise file or module comment after the license notice. File-level purpose, type responsibilities, and the contracts of complete stages are distinct; a class or function comment does not replace the file overview. Empty package markers, generated or upstream files, and self-explanatory small partial files do not need mechanical boilerplate.
 
 Comments explain information the code cannot express clearly:
 
