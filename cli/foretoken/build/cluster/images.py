@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
+
+from loguru import logger
 
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
@@ -189,16 +192,26 @@ class NodeImageStore:
             )
         return int(match[1])
 
-    def export_command(self, image: str, archive: str, platform: str) -> list[str]:
-        """Return a synchronous OCI export for the builder's cancellation-aware executor."""
+    def export_layout(self, image: str, layout: str, platform: str) -> None:
+        """Stream node content into a builder-owned OCI layout without storing an intermediate archive."""
+        started = time.monotonic()
+        logger.info("Preparing node image {} for BuildKit", image)
         command = [*self.containerd(), "images", "export"]
         if self._major_version() == 2:
             # The transfer client's asynchronous receiver can close an unfinished archive.
             command.append("--local")
-        return [*command, "--skip-manifest-json", "--platform", platform, archive, image]
+        self.run([
+            "bash", "-ec",
+            'set -o pipefail; layout=$1; shift; "$@" | tar --no-same-owner -xf - -C "$layout"',
+            "export", layout,
+            *command, "--skip-manifest-json", "--platform", platform, "-", image,
+        ])
+        logger.info("Node image {} prepared for BuildKit in {:.1f}s", image, time.monotonic() - started)
 
     def import_layout(self, layout: str, image: str) -> None:
         """Import and pin every OCI alias; ctr 1.x pins before its long unpack stage."""
+        started = time.monotonic()
+        logger.info("Importing source image {} into the node", image)
         command = [*self.containerd(), "images", "import"]
         major = self._major_version()
         if major == 2:
@@ -240,6 +253,7 @@ class NodeImageStore:
         self._import_layout(
             layout, [*command, "--index-name", image, "-"], metadata_only=major == 1
         )
+        logger.info("Source image {} imported into the node in {:.1f}s", image, time.monotonic() - started)
 
     def _import_layout(
         self, layout: str, command: list[str], *, metadata_only: bool = False

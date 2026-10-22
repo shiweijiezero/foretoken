@@ -136,6 +136,8 @@ class CompilerWorkspace(AbstractContextManager):
 
     def export_application(self, component: str, destination: str, *, engine: bool = False) -> None:
         """Deliver completed component files and its optional engine overlay for publication."""
+        started = time.monotonic()
+        logger.info("Exporting {} application files", component)
         self._deliver_output(self.execution_root + "/exports/" + component, destination)
         if engine:
             exported = destination + "-engine"
@@ -144,6 +146,7 @@ class CompilerWorkspace(AbstractContextManager):
                 "sh", "-ec", 'cp -R "$1/engine" "$2/"; cp "$1/engine-environment.json" "$2/"',
                 "assemble", exported, destination,
             ], container=self.artifact_container)
+        logger.info("{} application files exported in {:.1f}s", component, time.monotonic() - started)
 
     def compile_engine(self, image: str, arguments: dict[str, str], *, cache_id: str, build_native: bool) -> None:
         """Start the exact runtime's native compiler on the synchronized inputs and export its engine files."""

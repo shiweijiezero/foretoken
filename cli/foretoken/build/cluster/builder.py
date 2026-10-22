@@ -116,6 +116,7 @@ class ClusterBuilder(AbstractContextManager):
 
         Dependency resolution uses metadata_only to inspect a base without exporting its layers.
         """
+        started = time.monotonic()
         # Concurrency belongs to this invocation, not a saved environment recipe.
         arguments = {key: value for key, value in (arguments or {}).items() if key != "BUILD_JOBS"}
         if jobs := os.environ.get("BUILD_JOBS"):
@@ -200,7 +201,6 @@ class ClusterBuilder(AbstractContextManager):
             output = f"type=oci,name={image},oci-mediatypes=true,dest={local_output},tar=false"
         else:
             output = f"type=image,name={image},push={str(push).lower()}"
-        started = time.monotonic()
         self.run([*args, "--output", output], capture=capture)
         if local_output:
             self._deliver_output(local_output, destination or layout)
@@ -498,6 +498,7 @@ class ClusterBuilder(AbstractContextManager):
             .get("storage", pvc["spec"]["resources"]["requests"]["storage"])
         )
         gc_limits = _cache_gc_limits(capacity)
+        artifact_uid = 1000 if artifact_nfs_isolated else SOURCE_BUILD_UID
         # Keep canonical image names so BuildKit can fall back from a mirror to the origin.
         # An image-supplied daemon configuration remains authoritative.
         mirrors = "".join(
@@ -720,7 +721,7 @@ fi
                 "command": ["sh", "-c", "trap 'exit 0' TERM INT; sleep infinity & wait"],
                 "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
                 "securityContext": {
-                    "runAsUser": 1000 if artifact_nfs_isolated else SOURCE_BUILD_UID,
+                    "runAsUser": artifact_uid,
                     "runAsGroup": 1000,
                     "allowPrivilegeEscalation": False,
                     "capabilities": {"drop": ["ALL"]},
@@ -732,12 +733,13 @@ fi
             })
         if self.containerd_socket:
             # Only local kind/k3d installation uses node image import. The compiler
-            # never receives the runtime socket; archives remain on the cluster volume.
+            # never receives the runtime socket; OCI layouts remain on the cluster volume.
             # GNU tar preserves PAX sizes for OCI layer blobs larger than 8 GiB.
             images, volumes = images_container_spec(
                 self.tools_image, self.containerd_socket
             )
-            images["securityContext"]["runAsUser"] = SOURCE_BUILD_UID
+            # Streaming extraction uses the artifact volume's ordinary writer identity.
+            images["securityContext"]["runAsUser"] = artifact_uid
             images["volumeMounts"].insert(0, {"name": "cache", "mountPath": self.mount})
             spec["volumes"] += volumes
             spec["containers"].append(images)
@@ -914,20 +916,7 @@ done
         machine = self.run(["uname", "-m"], capture=True).strip()
         platform = "linux/" + {"x86_64": "amd64", "aarch64": "arm64"}[machine]
         store = NodeImageStore(self.kubectl, self.namespace, self.name, self.binding)
-        self.run(
-            store.export_command(name, layout + "/image.tar", platform),
-            container="images",
-        )
-        self.run(
-            [
-                "sh",
-                "-ec",
-                'tar --no-same-owner -xf "$1/image.tar" -C "$1"; rm "$1/image.tar"',
-                "extract",
-                layout,
-            ],
-            container=self.artifact_container if self.execution_claim != self.claim else "images",
-        )
+        store.export_layout(name, layout, platform)
         digest = self.read_json(layout + "/index.json")["manifests"][0]["digest"]
         cached_path = self.root + "/images/" + identifier
         self.run(["mkdir", "-p", self.root + "/images"], container=self.artifact_container)

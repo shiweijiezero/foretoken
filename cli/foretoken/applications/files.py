@@ -20,6 +20,8 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
+from loguru import logger
+
 from foretoken.build.records import (
     SOURCE_BUILD_KEY,
     WORKSPACE_LABEL,
@@ -132,6 +134,8 @@ class ApplicationFiles:
         timeout: str,
     ) -> dict[str, str]:
         """Join a source build's publishers before returning their actual immutable revisions."""
+        started = time.monotonic()
+        logger.info("Publishing applications: {}", ", ".join(item.component for item in publications))
         with ThreadPoolExecutor(max_workers=len(publications)) as writers, builder.cancellation:
             pending = {
                 publication.component: writers.submit(
@@ -144,7 +148,9 @@ class ApplicationFiles:
                 )
                 for publication in publications
             }
-            return {component: future.result() for component, future in pending.items()}
+            revisions = {component: future.result() for component, future in pending.items()}
+        logger.info("Applications published in {:.1f}s", time.monotonic() - started)
+        return revisions
 
     def publish(
         self,
@@ -195,6 +201,8 @@ class ApplicationFiles:
         self, builder: CompilerWorkspace, revision: str, record: dict[str, Any], *, timeout: str,
     ) -> dict[str, Any]:
         """Publish exact inputs and completed build choices independently of application deduplication."""
+        started = time.monotonic()
+        logger.info("Publishing completed source build")
         descriptor = builder.root + "/completed-build.json"
         builder.run(
             ["sh", "-ec", 'cat > "$1"', "record", descriptor],
@@ -208,6 +216,7 @@ class ApplicationFiles:
         ]
         with self._publisher(arguments, builder.binding, timeout, builder=builder) as (job, deadline), self.kubectl.until(deadline):
             self._wait(job, deadline)
+        logger.info("Completed source build published in {:.1f}s", time.monotonic() - started)
         return {
             "url": self.endpoint + "/" + relative + "/build.json",
             "applications": {

@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import application_references
@@ -58,6 +61,8 @@ class Helm(HelmClient):
         timeout: str,
     ) -> None:
         """Install resolved platform intent while storage owners retain bootstrap and publication lifetimes."""
+        started = time.monotonic()
+        logger.info("Installing platform release {}", release.display_name)
         source_mode = source_images is not None
         chart = (
             str(source_images.inputs / "deploy" / "charts" / "foretoken")
@@ -138,6 +143,7 @@ class Helm(HelmClient):
                     kubectl, self.platform_configuration(), retiring=False,
                     clear_source_build=not source_mode,
                 )
+        logger.info("Platform release {} ready in {:.1f}s", release.display_name, time.monotonic() - started)
 
     def platform_release(self) -> ReleaseRef:
         """Return the Foretoken release identity shared by installation and source consumers."""
