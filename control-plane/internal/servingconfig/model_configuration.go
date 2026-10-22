@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -31,7 +32,7 @@ func ModelConfigurationApplied(ctx context.Context, kubeClient client.Client, re
 	}
 	for index := range frontends.Items {
 		frontend := &frontends.Items[index]
-		if !frontend.DeletionTimestamp.IsZero() || frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0 {
+		if !frontend.DeletionTimestamp.IsZero() || FrontendStopped(frontend) {
 			continue
 		}
 		pending := fmt.Sprintf("Waiting for frontend %q to apply the model service configuration", frontend.Name)
@@ -67,4 +68,14 @@ func ModelConfigurationApplied(ctx context.Context, kubeClient client.Client, re
 		}
 	}
 	return true, "Ready", "Model instances and frontend configuration are ready", nil
+}
+
+// FrontendStopped identifies a confirmed current stop with no remaining routing consumers.
+// Model configuration and drain callers can ignore snapshots retained by such a frontend.
+func FrontendStopped(frontend *inferencev1alpha1.FrontendService) bool {
+	ready := meta.FindStatusCondition(frontend.Status.Conditions, workload.ConditionReady)
+	return (frontend.Spec.Suspend || frontend.Spec.Replicas != nil && *frontend.Spec.Replicas == 0) &&
+		frontend.Status.ObservedGeneration == frontend.Generation &&
+		ready != nil && ready.ObservedGeneration == frontend.Generation &&
+		ready.Status == metav1.ConditionFalse && ready.Reason == "ScaledToZero"
 }

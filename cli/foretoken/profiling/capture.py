@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from typing import Any, Literal
 
 from loguru import logger
@@ -16,6 +17,7 @@ from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.deployment.manifest import ForetokenDeployment, load_deployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 
 class ProfileRun:
@@ -45,6 +47,7 @@ class ProfileRun:
         self.service_name = selected[0]
         self.name = ""
         self.uid = ""
+        self._deployment_uid = ""
         self.status: dict[str, Any] = {}
         self._previous: tuple[str, str] | None = None
 
@@ -56,15 +59,15 @@ class ProfileRun:
     def start(self) -> None:
         """Create one capture and retain its identity for observation and cancellation."""
         service = self.kubectl.get("modelservice", self.service_name, self.namespace)
+        self._deployment_uid = service["metadata"]["labels"][DEPLOYMENT_UID_LABEL]
+        name = "profile-" + uuid.uuid4().hex
         resource = {
             "apiVersion": "inference.foretoken.io/v1alpha1",
             "kind": "ProfileRun",
             "metadata": {
-                "generateName": "profile-",
+                "name": name,
                 "namespace": self.namespace,
-                "labels": {
-                    DEPLOYMENT_UID_LABEL: service["metadata"]["labels"][DEPLOYMENT_UID_LABEL],
-                },
+                "labels": {DEPLOYMENT_UID_LABEL: self._deployment_uid},
             },
             "spec": {
                 "modelServiceRef": {"name": self.service_name},
@@ -73,11 +76,22 @@ class ProfileRun:
                 "action": "Capture",
             },
         }
-        created = json.loads(self.kubectl.run(
-            ["create", "-f", "-", "-o", "json", "--request-timeout=20s"],
-            input_text=json.dumps(resource),
-        ).stdout)
-        self.name, self.uid = created["metadata"]["name"], created["metadata"]["uid"]
+        if execution := CommandExecution.current():
+            execution.check()
+        self.name = name
+        try:
+            # Accepted creation keeps its response lifetime through parent cancellation.
+            with CommandExecution(20, report_failure=False):
+                created = json.loads(self.kubectl.run(
+                    ["create", "-f", "-", "-o", "json", "--request-timeout=20s"],
+                    input_text=json.dumps(resource),
+                ).stdout)
+            self.uid = created["metadata"]["uid"]
+        except BaseException as error:
+            # The preselected name permits UID recovery after an interrupted or lost reply.
+            with cleanup_commands(error, timeout=20):
+                self._recover_creation()
+            raise
         logger.info("ProfileRun {}/{}", self.namespace, self.name)
         logger.info("View captures: foretoken profile view")
 
@@ -98,6 +112,8 @@ class ProfileRun:
 
     def request(self, action: Literal["Finish", "Cancel"]) -> None:
         """Stop only this capture; Finish cannot override another caller's cancellation."""
+        if self.name and not self.uid:
+            self._recover_creation()
         if not self.uid or self.terminal:
             return
         patch = [{"op": "test", "path": "/metadata/uid", "value": self.uid}]
@@ -135,3 +151,18 @@ class ProfileRun:
             f"stopped waiting after {self.command.timeout}; ProfileRun {self.namespace}/{self.name} "
             "continues independently. Inspect its status with the command above."
         )
+
+    def _recover_creation(self) -> None:
+        """Recover a lost creation receipt without adopting another deployment's capture."""
+        run = self.kubectl.get_if_exists("profilerun", self.name, self.namespace, timeout=20)
+        if run is None:
+            self.name = ""
+            return
+        if (
+            run["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != self._deployment_uid
+            or run["spec"]["modelServiceRef"]["name"] != self.service_name
+            or run["spec"]["engine"] != self.command.profile_engine
+            or run["spec"]["duration"] != self.command.profile_duration
+        ):
+            raise DeploymentError("ProfileRun creation identity does not match this capture")
+        self.uid = run["metadata"]["uid"]

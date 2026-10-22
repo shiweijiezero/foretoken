@@ -39,7 +39,7 @@ func (r *Reconciler) retire(ctx context.Context, deployment *api.InferenceDeploy
 		pending = pending || remaining
 	}
 	if pending {
-		return waiting, nil
+		return waiting, r.restoreRetirementController(ctx, deployment)
 	}
 	for _, objects := range []client.ObjectList{&api.FrontendServiceList{}, &api.ModelServiceList{}, &api.KVServiceList{}} {
 		remaining, err := r.retireMembers(ctx, deployment, objects, true)
@@ -58,7 +58,7 @@ func (r *Reconciler) retire(ctx context.Context, deployment *api.InferenceDeploy
 		pending = pending || remaining
 	}
 	if pending {
-		return waiting, nil
+		return waiting, r.restoreRetirementController(ctx, deployment)
 	}
 
 	remaining, err := r.retireMembers(ctx, deployment, &api.RuntimeCacheList{}, true)
@@ -113,7 +113,7 @@ func (r *Reconciler) retire(ctx context.Context, deployment *api.InferenceDeploy
 		pending = true
 	}
 	if pending {
-		return waiting, nil
+		return waiting, r.restoreRetirementController(ctx, deployment)
 	}
 
 	// Foreground retirement of the controller completes before its credentials,
@@ -167,6 +167,40 @@ func (r *Reconciler) retire(ctx context.Context, deployment *api.InferenceDeploy
 	base := deployment.DeepCopy()
 	controllerutil.RemoveFinalizer(deployment, deploymentFinalizer)
 	return ctrl.Result{}, r.Patch(ctx, deployment, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+// restoreRetirementController recovers a missing finalizer executor from its persisted selection.
+// It retains the selected application and access bindings rather than adopting current platform defaults.
+func (r *Reconciler) restoreRetirementController(ctx context.Context, deployment *api.InferenceDeployment) error {
+	key := client.ObjectKey{Namespace: deployment.Namespace, Name: ResourceName(string(deployment.UID))}
+	controller := new(appsv1.Deployment)
+	if err := r.APIReader.Get(ctx, key, controller); err == nil {
+		if controller.Labels[api.DeploymentUIDLabel] != string(deployment.UID) {
+			return fmt.Errorf("controller %s has another owner", key)
+		}
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	configuration := new(corev1.ConfigMap)
+	if err := r.APIReader.Get(ctx, key, configuration); err != nil {
+		return fmt.Errorf("read controller selection for retirement: %w", err)
+	}
+	if configuration.Labels[api.DeploymentUIDLabel] != string(deployment.UID) {
+		return fmt.Errorf("controller configuration %s has another owner", key)
+	}
+	var selection controllerSelection
+	if err := json.Unmarshal([]byte(configuration.Data[selectionKey]), &selection); err != nil {
+		return fmt.Errorf("decode controller selection for retirement: %w", err)
+	}
+	var access struct {
+		DirectoryBindings map[string]string `json:"directoryBindings"`
+	}
+	if err := json.Unmarshal([]byte(configuration.Data[AccessKey]), &access); err != nil {
+		return fmt.Errorf("decode controller access for retirement: %w", err)
+	}
+	_, err := r.materializeController(ctx, deployment, &selection, access.DirectoryBindings)
+	return err
 }
 
 // retireMembers lists only one instance; native owner GC retires its derived execution resources.

@@ -284,13 +284,9 @@ func (reconciler *GroupReconciler) routingWithdrawn(ctx context.Context, group *
 			if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), latest); err != nil {
 				return false, client.IgnoreNotFound(err)
 			}
-			ready := meta.FindStatusCondition(latest.Status.Conditions, workload.ConditionReady)
 			// A confirmed stop has no live routing consumers. Retained snapshots
 			// may still contain old routes, but cannot delay backend retirement.
-			if latest.UID == frontend.UID && latest.Status.ObservedGeneration == latest.Generation &&
-				(latest.Spec.Suspend || latest.Spec.Replicas != nil && *latest.Spec.Replicas == 0) &&
-				ready != nil && ready.ObservedGeneration == latest.Generation &&
-				ready.Status == metav1.ConditionFalse && ready.Reason == "ScaledToZero" {
+			if latest.UID == frontend.UID && servingconfig.FrontendStopped(latest) {
 				continue
 			}
 		}

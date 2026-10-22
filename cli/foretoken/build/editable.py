@@ -75,18 +75,6 @@ _APPLICATION_IMAGE_KEYS = {
 }
 
 
-def _executing_services(objects: Iterable[dict[str, Any]]) -> Iterator[tuple[dict[str, Any], str]]:
-    """Select first-party services requesting execution for source preparation and activation."""
-    for obj in objects:
-        component = SERVICE_COMPONENTS.get(obj.get("kind"))
-        if (
-            component is not None
-            and str(obj.get("apiVersion") or "").startswith("inference.foretoken.io/")
-            and service_requires_execution(obj)
-        ):
-            yield obj, component
-
-
 class EditableDeployment:
     """Own local source comparison, candidate preparation and target-service activation."""
 
@@ -956,3 +944,15 @@ class EditableDeployment:
             if endpoint.get("conditions", {}).get("ready") is True
         }
         return bool(pods) and {pod["metadata"]["uid"] for pod in pods} <= endpoints
+
+
+def _executing_services(objects: Iterable[dict[str, Any]]) -> Iterator[tuple[dict[str, Any], str]]:
+    """Select first-party services requesting execution for source preparation and activation."""
+    for obj in objects:
+        component = SERVICE_COMPONENTS.get(obj.get("kind"))
+        if (
+            component is not None
+            and str(obj.get("apiVersion") or "").startswith("inference.foretoken.io/")
+            and service_requires_execution(obj)
+        ):
+            yield obj, component

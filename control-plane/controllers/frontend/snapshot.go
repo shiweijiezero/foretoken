@@ -18,16 +18,25 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 var errFrontendCacheIsolationUnsupported = errors.New("redeploy the frontend with the current application to use prefixCacheIsolation")
 
+// servingSnapshotResult separates rejected configuration from publication or observation failures.
+type servingSnapshotResult struct {
+	Published          bool
+	ConfigurationError error
+}
+
 // reconcileServingSnapshot publishes routing, settings, and membership at one version boundary.
-// It reports whether all protocol views were published; preserved configuration still refreshes membership.
-func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (bool, error) {
+// Rejected intent can retain membership updates; runtime errors return to the controller's retry owner.
+func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, preserveConfiguration bool) (servingSnapshotResult, error) {
 	name := servingconfig.ConfigMapName(frontend, frontend.Status.ServingConfigVersion)
 	protocols := servingconfig.ProtocolVersions(frontend)
 	type servingPublication struct {
@@ -48,14 +57,14 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		if err := reader.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: publicationName}, current); apierrors.IsNotFound(err) {
 			continue
 		} else if err != nil {
-			return false, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
+			return servingSnapshotResult{}, fmt.Errorf("get serving snapshot ConfigMap: %w", err)
 		}
 		if !metav1.IsControlledBy(current, frontend) {
-			return false, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", publicationName)
+			return servingSnapshotResult{}, fmt.Errorf("ConfigMap %q is not controlled by FrontendService", publicationName)
 		}
 		snapshot, valid, err := readServingPublication([]byte(current.Data[servingconfig.SnapshotKey]))
 		if err != nil {
-			return false, fmt.Errorf("decode published serving snapshot: %w", err)
+			return servingSnapshotResult{}, fmt.Errorf("decode published serving snapshot: %w", err)
 		}
 		// A partial publication can leave the legacy view with newer cohort and member
 		// provenance. At equal versions, retain the primary view's complete routes.
@@ -68,11 +77,11 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		}
 	}
 	if preserveConfiguration && (!previousValid || frontend.Status.ServingConfigVersion < servingconfig.AdmissionProtocol) {
-		return false, nil
+		return servingSnapshotResult{}, nil
 	}
 	instancePods, err := reconciler.frontendInstancePods(ctx, frontend, previous.FrontendInstances)
 	if err != nil {
-		return false, err
+		return servingSnapshotResult{}, err
 	}
 	frontendInstances := make([]string, 0, len(instancePods))
 	consumedViews := make(map[string]bool)
@@ -90,7 +99,7 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 	})
 	backendInstances, err := reconciler.backendInstances(ctx, frontend.Namespace, previous.BackendInstances)
 	if err != nil {
-		return false, err
+		return servingSnapshotResult{}, err
 	}
 	configuration := previous
 	if primary, exists := publications[frontend.Status.ServingConfigVersion]; preserveConfiguration && exists {
@@ -103,11 +112,11 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 	if !preserveConfiguration {
 		requestTimeout, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.Request)
 		if err != nil {
-			return false, fmt.Errorf("parse request timeout: %w", err)
+			return servingSnapshotResult{ConfigurationError: fmt.Errorf("parse request timeout: %w", err)}, nil
 		}
 		streamIdle, err := runtimeconfig.WholeDurationSeconds(frontend.Spec.Timeouts.StreamIdle)
 		if err != nil {
-			return false, fmt.Errorf("parse stream idle timeout: %w", err)
+			return servingSnapshotResult{ConfigurationError: fmt.Errorf("parse stream idle timeout: %w", err)}, nil
 		}
 		settings = servingconfig.Settings{
 			RouterPipeline:        frontend.Spec.RouterPipeline,
@@ -118,18 +127,18 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		// Catalog and routes use the same observed resources for this publication.
 		var pools inferencev1alpha1.ModelPoolList
 		if err := reconciler.List(ctx, &pools, client.InNamespace(frontend.Namespace)); err != nil {
-			return false, fmt.Errorf("list ModelPools for model catalog: %w", err)
+			return servingSnapshotResult{}, fmt.Errorf("list ModelPools for model catalog: %w", err)
 		}
 		var modelGroups inferencev1alpha1.ModelGroupList
 		if err := reconciler.List(ctx, &modelGroups, client.InNamespace(frontend.Namespace)); err != nil {
-			return false, fmt.Errorf("list ModelGroups for model catalog: %w", err)
+			return servingSnapshotResult{}, fmt.Errorf("list ModelGroups for model catalog: %w", err)
 		}
 		var catalogErr error
 		models, admission, catalogErr = projectConfiguredModels(frontend, services, pools.Items, modelGroups.Items, previous.Models)
 		if catalogErr != nil {
 			var unavailable *servingconfig.ModelCatalogProjectionError
 			if !errors.As(catalogErr, &unavailable) {
-				return false, catalogErr
+				return servingSnapshotResult{ConfigurationError: catalogErr}, nil
 			}
 		}
 		// A service without a proven catalog identity cannot contribute executable routes.
@@ -143,12 +152,12 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		if projectionErr != nil {
 			var splitProjectionError *servingconfig.SplitRoutingProjectionError
 			if !errors.As(projectionErr, &splitProjectionError) {
-				return false, projectionErr
+				return servingSnapshotResult{ConfigurationError: projectionErr}, nil
 			}
 			// Service-local split failures have already been excluded from the partial projection.
 		}
 		if err := servingconfig.ValidateRoutingIdentities(models, groups, pdComponents, epdComponents); err != nil {
-			return false, err
+			return servingSnapshotResult{ConfigurationError: err}, nil
 		}
 		projectionErr = errors.Join(catalogErr, projectionErr)
 	}
@@ -168,6 +177,9 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		contentsChanged = !previousView.SameConfiguration(snapshot)
 	}
 	if contentsChanged || missingConsumedView || primaryVersion < version || version == 0 {
+		if version == ^uint64(0) {
+			return servingSnapshotResult{}, fmt.Errorf("serving snapshot publication version is exhausted")
+		}
 		version++
 	}
 	snapshot.Version = version
@@ -176,10 +188,14 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 	if frontend.Status.ServingSnapshotVersion < version {
 		base := frontend.DeepCopy()
 		frontend.Status.ServingSnapshotVersion = version
-		setFrontendCondition(frontend, servingconfig.ConditionRoutingReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
-		setFrontendCondition(frontend, workload.ConditionReady, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
+		// Retain an existing failure until publication and acknowledgement recover.
+		for _, condition := range []string{servingconfig.ConditionRoutingReady, workload.ConditionReady} {
+			if !meta.IsStatusConditionFalse(frontend.Status.Conditions, condition) {
+				setFrontendCondition(frontend, condition, metav1.ConditionFalse, "ConfigurationPending", "Waiting for frontend replicas to apply the serving configuration")
+			}
+		}
 		if err := reconciler.Status().Patch(ctx, frontend, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-			return false, fmt.Errorf("reserve serving snapshot version: %w", err)
+			return servingSnapshotResult{}, fmt.Errorf("reserve serving snapshot version: %w", err)
 		}
 	}
 	// Protocol-specific routes share one version and identical ledger inputs. Updating the
@@ -197,11 +213,11 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 			view.BackendInstances = backendInstances
 		}
 		if err := reconciler.publishServingSnapshot(ctx, frontend, servingconfig.ConfigMapName(frontend, protocol), servingSnapshotForProtocol(view, protocol), publication.configMap); err != nil {
-			return false, err
+			return servingSnapshotResult{}, err
 		}
 	}
 	if err := reconciler.publishServingSnapshot(ctx, frontend, name, snapshot, publications[frontend.Status.ServingConfigVersion].configMap); err != nil {
-		return false, err
+		return servingSnapshotResult{}, err
 	}
 	// Updating Pod metadata prompts kubelet to refresh the projected ConfigMap.
 	// Consumer acknowledgements still come from the frontend's active generation.
@@ -218,10 +234,10 @@ func (reconciler *Reconciler) reconcileServingSnapshot(ctx context.Context, fron
 		}
 		pod.Annotations[refreshAnnotation] = refreshVersion
 		if err := reconciler.Patch(ctx, pod, client.MergeFrom(base)); err != nil && !apierrors.IsNotFound(err) {
-			return true, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
+			return servingSnapshotResult{Published: true, ConfigurationError: projectionErr}, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
 		}
 	}
-	return true, projectionErr
+	return servingSnapshotResult{Published: true, ConfigurationError: projectionErr}, nil
 }
 
 // servingSnapshotForProtocol projects only settings and routes understood by the selected application.
@@ -306,11 +322,38 @@ func (reconciler *Reconciler) publishServingSnapshot(ctx context.Context, fronte
 		updated.Labels = make(map[string]string)
 	}
 	updated.Labels[workload.FrontendServiceLabel] = frontend.Name
+	// The informer can deliver before Update returns. Hold receipt ownership
+	// across the write so its echo cannot trigger another partial publication.
+	reconciler.snapshotWriteMu.Lock()
+	defer reconciler.snapshotWriteMu.Unlock()
 	// Retain UID and resourceVersion so deletion cannot silently recreate a view at an already-acknowledged version.
 	if err := reconciler.Update(ctx, updated); err != nil {
 		return fmt.Errorf("update serving snapshot ConfigMap: %w", err)
 	}
+	if reconciler.snapshotWrites == nil {
+		reconciler.snapshotWrites = make(map[types.UID][]string)
+	}
+	reconciler.snapshotWrites[updated.UID] = append(reconciler.snapshotWrites[updated.UID], updated.ResourceVersion)
 	return nil
+}
+
+// snapshotInputChanged consumes this publisher's exact write receipts and preserves external changes.
+// Informer delivery can skip intermediate versions; their earlier receipts then retire together.
+func (reconciler *Reconciler) snapshotInputChanged(update event.UpdateEvent) bool {
+	reconciler.snapshotWriteMu.Lock()
+	defer reconciler.snapshotWriteMu.Unlock()
+	uid := update.ObjectNew.GetUID()
+	versions := reconciler.snapshotWrites[uid]
+	index := slices.Index(versions, update.ObjectNew.GetResourceVersion())
+	if index < 0 {
+		return true
+	}
+	if index+1 == len(versions) {
+		delete(reconciler.snapshotWrites, uid)
+	} else {
+		reconciler.snapshotWrites[uid] = versions[index+1:]
+	}
+	return false
 }
 
 // readServingPublication separates admission-schema migration from published identity provenance.

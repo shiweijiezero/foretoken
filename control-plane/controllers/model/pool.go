@@ -21,9 +21,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -125,13 +128,16 @@ func (reconciler *PoolReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	template, err := resolver.ResolveModelPool(pool.Spec.Template, reconciler.RuntimeProfile)
 	if err == nil && template.ECRuntime != nil {
 		claim := new(corev1.PersistentVolumeClaim)
-		err = reader.Get(ctx, client.ObjectKey{Namespace: pool.Namespace, Name: template.ECRuntime.SharedStorageClaim}, claim)
-		if err == nil {
-			template.ECRuntime.SharedStorageIdentity, err = runtimeconfig.ParseStorageIdentity(claim.Annotations[runtimeconfig.DirectoryOwnerAnnotation])
-			if err == nil && template.ECRuntime.SharedStorageIdentity == nil {
-				identity := runtimeconfig.DefaultStorageIdentity()
-				template.ECRuntime.SharedStorageIdentity = &identity
-			}
+		if err := reader.Get(ctx, client.ObjectKey{Namespace: pool.Namespace, Name: template.ECRuntime.SharedStorageClaim}, claim); err != nil {
+			state, stateErr := reconciler.currentActiveState(ctx, pool, servingconfig.ServingRevision(service, pool))
+			state.Reason, state.Message = "StorageUnavailable", "Waiting for encoder transfer storage"
+			statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionUnknown, "StorageUnavailable", err.Error(), state)
+			return ctrl.Result{}, errors.Join(client.IgnoreNotFound(err), stateErr, statusErr)
+		}
+		template.ECRuntime.SharedStorageIdentity, err = runtimeconfig.ParseStorageIdentity(claim.Annotations[runtimeconfig.DirectoryOwnerAnnotation])
+		if err == nil && template.ECRuntime.SharedStorageIdentity == nil {
+			identity := runtimeconfig.DefaultStorageIdentity()
+			template.ECRuntime.SharedStorageIdentity = &identity
 		}
 	}
 	if err != nil {
@@ -558,7 +564,17 @@ func rolloutMessage(state groupState) string {
 func (reconciler *PoolReconciler) SetupWithManager(manager ctrl.Manager) error {
 	reconciler.APIReader = manager.GetAPIReader()
 	return ctrl.NewControllerManagedBy(manager).
-		For(&inferencev1alpha1.ModelPool{}).
+		For(&inferencev1alpha1.ModelPool{}, ctrlbuilder.WithPredicates(predicate.Funcs{
+			UpdateFunc: func(update event.UpdateEvent) bool {
+				// A reservation is durable publication state, not a new input.
+				// Failed ConfigMap writes must retain controller-runtime's error backoff.
+				before := update.ObjectOld.(*inferencev1alpha1.ModelPool).DeepCopy()
+				after := update.ObjectNew.(*inferencev1alpha1.ModelPool)
+				before.ResourceVersion, before.ManagedFields = after.ResourceVersion, after.ManagedFields
+				before.Status.InstanceAdmissionVersion = after.Status.InstanceAdmissionVersion
+				return !reflect.DeepEqual(before, after)
+			},
+		})).
 		Owns(&inferencev1alpha1.ModelGroup{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).

@@ -16,6 +16,22 @@ OutputTokenLimit = int | list[int]
 _DURATION = TypeAdapter(str | float, config=ConfigDict(strict=True, hide_input_in_errors=True))
 _OUTPUT_TOKEN_LIMIT = TypeAdapter(OutputTokenLimit, config=ConfigDict(strict=True, hide_input_in_errors=True))
 
+# Accepted search names map only to measurements emitted by the request aggregator.
+SLO_SEARCH_METRICS = {
+    **{
+        f"{statistic}_{metric}": (metric, "mean" if statistic == "avg" else statistic)
+        for metric in ("latency", "ttft", "tpot")
+        for statistic in ("avg", "p50", "p95", "p99")
+    },
+    "rps": ("throughput", "requests_per_second"),
+    "tps": ("throughput", "generation_tokens_per_second"),
+    "latency.mean": ("latency", "mean"),
+    "ttft.mean": ("ttft", "mean"),
+    "tpot.mean": ("tpot", "mean"),
+    "throughput.requests_per_second": ("throughput", "requests_per_second"),
+    "throughput.generation_tokens_per_second": ("throughput", "generation_tokens_per_second"),
+}
+
 
 @dataclass
 class ModelServiceSource:
@@ -351,6 +367,9 @@ class SloTuneConfig:
             if unknown:
                 raise ValueError("request SLO metrics are latency, ttft, tpot and itl; aggregate metrics require --slo-search")
             return
+        unknown = {name for group in self.params for name in group} - SLO_SEARCH_METRICS.keys()
+        if unknown:
+            raise ValueError("unsupported SLO search metrics: " + ", ".join(sorted(unknown)))
         if self.num_runs < 1:
             raise ValueError("--num-runs must be >= 1")
         if self.lower_bound < 1:

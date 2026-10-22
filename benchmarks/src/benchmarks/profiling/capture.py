@@ -202,11 +202,12 @@ class BenchmarkProfile:
 
     def _cancel_and_wait(self) -> None:
         """Keep serving resources until cancellation and artifact publication are observed."""
-        if not self.run.uid or self.run.terminal:
+        if not self.run.name or self.run.terminal:
             return
         try:
             self.run.request("Cancel")
-            self.run.wait(require_success=False)
+            if self.run.uid:
+                self.run.wait(require_success=False)
         except (DeploymentError, OSError, KeyboardInterrupt) as error:
             raise CaptureCleanupError(
                 f"could not confirm capture cleanup: {error}; inspect ProfileRun "

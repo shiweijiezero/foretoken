@@ -8,6 +8,7 @@ package video
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -36,6 +37,9 @@ const (
 )
 
 var videoTaskNamePattern = regexp.MustCompile(`^video-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
+
+// videoTaskFrontendRejection distinguishes missing task authority from a failed cluster observation.
+type videoTaskFrontendRejection string
 
 // Reconciler owns worker Jobs, retention and PVC cleanup for VideoTasks.
 type Reconciler struct {
@@ -177,7 +181,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 // verifyVideoTaskFrontend rejects worker authority not derived from the admitting FrontendService.
 func (r *Reconciler) verifyVideoTaskFrontend(ctx context.Context, task *inferencev1alpha1.VideoTask) (*inferencev1alpha1.FrontendService, error) {
 	if !videoTaskNamePattern.MatchString(task.Name) {
-		return nil, fmt.Errorf("VideoTask name must be a video-prefixed UUID")
+		return nil, videoTaskFrontendRejection("VideoTask name must be a video-prefixed UUID")
 	}
 	workerImage := r.WorkerImage
 	if task.Status.Plan != nil {
@@ -196,11 +200,11 @@ func (r *Reconciler) verifyVideoTaskFrontend(ctx context.Context, task *inferenc
 		worker := task.Spec.Worker
 		endpoint := fmt.Sprintf("http://%s.%s.svc:%d", frontend.Name, frontend.Namespace, r.FrontendPort)
 		if task.Labels[videoFrontendUIDLabel] != task.Spec.FrontendUID || worker.Image != workerImage || worker.Endpoint != endpoint || worker.OutputClaimName != frontend.Spec.VideoTasks.ClaimName || worker.OutputPath != fmt.Sprintf("tasks/%s/result.mp4", task.Name) {
-			return nil, fmt.Errorf("VideoTask worker does not match its FrontendService configuration")
+			return nil, videoTaskFrontendRejection("VideoTask worker does not match its FrontendService configuration")
 		}
 		return frontend, nil
 	}
-	return nil, fmt.Errorf("the admitting FrontendService no longer exists or video tasks are disabled")
+	return nil, videoTaskFrontendRejection("the admitting FrontendService no longer exists or video tasks are disabled")
 }
 
 // prepareVideoTask snapshots the ready ModelService before any worker executes.
@@ -388,6 +392,10 @@ func (r *Reconciler) cleanupVideoTask(ctx context.Context, task *inferencev1alph
 		// An unverified task has no authority to select a PVC for cleanup.
 		frontend, err := r.verifyVideoTaskFrontend(ctx, task)
 		if err != nil {
+			var rejected videoTaskFrontendRejection
+			if !errors.As(err, &rejected) {
+				return ctrl.Result{}, err
+			}
 			if !task.DeletionTimestamp.IsZero() {
 				base := task.DeepCopy()
 				controllerutil.RemoveFinalizer(task, videoTaskFinalizer)
@@ -462,6 +470,11 @@ func (r *Reconciler) writeVideoTaskStatus(ctx context.Context, task *inferencev1
 		return nil
 	}
 	return r.Status().Patch(ctx, task, client.MergeFromWithOptions(current, client.MergeFromWithOptimisticLock{}))
+}
+
+// Error exposes the rejected task authority for status publication and cleanup decisions.
+func (rejection videoTaskFrontendRejection) Error() string {
+	return string(rejection)
 }
 
 func videoTaskTerminal(phase string) bool {

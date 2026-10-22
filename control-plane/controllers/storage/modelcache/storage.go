@@ -61,10 +61,11 @@ func (reconciler *Reconciler) validateCollectionResource(object client.Object, r
 func (reconciler *Reconciler) collectionSourceVolume(ctx context.Context, record modelCacheCollectionRecord, reference runtimeconfig.ModelCacheReference) (*corev1.PersistentVolume, error) {
 	claim := new(corev1.PersistentVolumeClaim)
 	var volume *corev1.PersistentVolume
-	if err := reconciler.APIReader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: reference.ClaimName}, claim); err == nil {
-		if claim.UID != reference.ClaimUID {
-			return nil, fmt.Errorf("model cache claim %s/%s no longer matches its source reference", record.Namespace, reference.ClaimName)
-		}
+	err := reconciler.APIReader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: reference.ClaimName}, claim)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("read model cache source claim: %w", err)
+	}
+	if err == nil && claim.UID == reference.ClaimUID {
 		owner, err := runtimeconfig.ParseStorageIdentity(claim.Annotations[runtimeconfig.DirectoryOwnerAnnotation])
 		if err != nil {
 			return nil, err
@@ -85,7 +86,9 @@ func (reconciler *Reconciler) collectionSourceVolume(ctx context.Context, record
 		} else if err != nil {
 			return nil, fmt.Errorf("read model cache source volume: %w", err)
 		}
-	} else if apierrors.IsNotFound(err) {
+	} else {
+		// A same-name replacement is not this source's storage. Recover only a
+		// volume still bound to the recorded UID, just as after claim deletion.
 		var volumes corev1.PersistentVolumeList
 		if err := reconciler.APIReader.List(ctx, &volumes); err != nil {
 			return nil, fmt.Errorf("find model cache source volume: %w", err)
@@ -104,8 +107,6 @@ func (reconciler *Reconciler) collectionSourceVolume(ctx context.Context, record
 		if volume == nil {
 			return nil, nil
 		}
-	} else {
-		return nil, fmt.Errorf("read model cache source claim: %w", err)
 	}
 	binding := volume.Spec.ClaimRef
 	if binding == nil || binding.Namespace != record.Namespace || binding.Name != reference.ClaimName || binding.UID != reference.ClaimUID {

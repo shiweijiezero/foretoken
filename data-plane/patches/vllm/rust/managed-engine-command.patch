@@ -1,10 +1,33 @@
 diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/src/process.rs
 --- a/rust/src/managed-engine/src/process.rs
 +++ b/rust/src/managed-engine/src/process.rs
-@@ -92,6 +92,12 @@
+@@ -5,7 +5,6 @@
+ use std::net::TcpListener;
+ use std::process::{Command as StdCommand, ExitStatus, Stdio};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, Ordering};
+ use std::time::Duration;
+
+ use anyhow::{Context, Result};
+@@ -74,11 +73,12 @@
+     }
+ }
+
+-/// RAII-style handle for one managed Python headless engine subprocess.
++/// Shared handle for monitoring and explicitly shutting down one engine process group.
+ #[derive(Clone)]
+ pub struct ManagedEngineHandle {
+     child: Arc<Mutex<Child>>,
+-    shutdown_started: Arc<AtomicBool>,
++    process_group: u32,
++    shutdown_complete: Arc<Mutex<bool>>,
+ }
+
+ impl ManagedEngineHandle {
+@@ -92,16 +92,24 @@
              "starting managed Python headless engine"
          );
- 
+
 +        Self::spawn_command(command).await
 +    }
 +
@@ -13,4 +36,148 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
 +    pub async fn spawn_command(command: StdCommand) -> Result<Self> {
          let mut command = Command::from(command);
          command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
- 
+
+         process_group::configure(&mut command);
+
+         let child = command.spawn().context("failed to spawn managed engine")?;
++        let process_group = child.id().expect("newly spawned engine has a process ID");
+
+         Ok(Self {
+             child: Arc::new(Mutex::new(child)),
+-            shutdown_started: Arc::new(AtomicBool::new(false)),
++            process_group,
++            shutdown_complete: Arc::new(Mutex::new(false)),
+         })
+     }
+
+@@ -124,19 +132,17 @@
+
+     /// Terminate the managed engine process group and wait for it to stop.
+     pub async fn shutdown(&self, timeout: Duration) -> Result<()> {
+-        if self.shutdown_started.swap(true, Ordering::SeqCst) {
++        // Concurrent callers must observe completed cleanup, not just its start.
++        let mut complete = self.shutdown_complete.lock().await;
++        if *complete {
+             return Ok(());
+         }
+-
+-        let Some(pid) = self.child.lock().await.id() else {
+-            return Ok(());
+-        };
++        let pid = self.process_group;
+
+         // Enforce a minimum shutdown timeout to give the engine process enough time to
+         // clean up.
+         let shutdown_timeout = std::cmp::max(timeout, MIN_SHUTDOWN_TIMEOUT);
+
+-        // First, try to gracefully terminate.
+         info!(
+             pid,
+             ?shutdown_timeout,
+@@ -144,20 +150,35 @@
+         );
+         process_group::terminate(pid)?;
+
+-        // Wait for the process to exit on its own.
+-        if tokio::time::timeout(shutdown_timeout, self.wait_for_exit()).await.is_ok() {
+-            return Ok(());
+-        }
+-
+-        // If it doesn't exit within the timeout, force kill it.
+-        info!(
+-            pid,
+-            "managed engine did not exit within timeout, sending SIGKILL"
+-        );
+-        process_group::kill(pid)?;
+-
+-        let _ = self.wait_for_exit().await;
++        match tokio::time::timeout(shutdown_timeout, self.wait_for_group_exit()).await {
++            Ok(result) => result?,
++            Err(_) => {
++                info!(
++                    pid,
++                    "managed engine process group did not exit within timeout, sending SIGKILL"
++                );
++                process_group::kill(pid)?;
++                self.wait_for_group_exit().await?;
++            }
++        }
++        *complete = true;
+         Ok(())
++    }
++
++    /// Reap the launcher and adopted children before confirming that its group has retired.
++    async fn wait_for_group_exit(&self) -> Result<()> {
++        let mut interval = interval(CHILD_POLL_INTERVAL);
++        loop {
++            interval.tick().await;
++            if self.try_wait().await.is_some() {
++                // A PID-1 or subreaper frontend inherits orphaned workers. Reap them
++                // only after Tokio has recorded the launcher's own exit status.
++                process_group::reap(self.process_group)?;
++                if !process_group::exists(self.process_group)? {
++                    return Ok(());
++                }
++            }
++        }
+     }
+ }
+
+@@ -181,24 +202,49 @@
+
+     /// Send SIGTERM to the managed Python process group.
+     pub fn terminate(pid: u32) -> Result<()> {
+-        signal(pid, libc::SIGTERM)
++        signal(pid, libc::SIGTERM).map(|_| ())
+     }
+
+     /// Send SIGKILL to the managed Python process group.
+     pub fn kill(pid: u32) -> Result<()> {
+-        signal(pid, libc::SIGKILL)
+-    }
+-
+-    /// Deliver one signal to the managed Python process group.
+-    fn signal(pid: u32, signal: i32) -> Result<()> {
++        signal(pid, libc::SIGKILL).map(|_| ())
++    }
++
++    /// Check whether the owned group still contains processes, including unreaped children.
++    pub fn exists(pid: u32) -> Result<bool> {
++        signal(pid, 0)
++    }
++
++    /// Reap exited descendants adopted by this process without consuming other groups' children.
++    pub fn reap(pid: u32) -> Result<()> {
++        loop {
++            let result =
++                unsafe { libc::waitpid(-(pid as i32), std::ptr::null_mut(), libc::WNOHANG) };
++            if result > 0 {
++                continue;
++            }
++            if result == 0 {
++                return Ok(());
++            }
++            let error = io::Error::last_os_error();
++            match error.raw_os_error() {
++                Some(libc::EINTR) => continue,
++                Some(libc::ECHILD) => return Ok(()),
++                _ => return Err(error).context("failed to reap managed engine descendants"),
++            }
++        }
++    }
++
++    /// Deliver one signal, returning false once the managed process group no longer exists.
++    fn signal(pid: u32, signal: i32) -> Result<bool> {
+         let rc = unsafe { libc::kill(-(pid as i32), signal) };
+         if rc == 0 {
+-            return Ok(());
++            return Ok(true);
+         }
+
+         let error = io::Error::last_os_error();
+         if matches!(error.raw_os_error(), Some(code) if code == libc::ESRCH) {
+-            return Ok(());
++            return Ok(false);
+         }
+         Err(error).context("failed to signal managed engine process group")
+     }

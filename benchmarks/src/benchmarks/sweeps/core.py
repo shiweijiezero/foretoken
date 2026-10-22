@@ -220,7 +220,7 @@ def run_sweep(
         except BaseException:
             try:
                 checkpoint(finished=True)
-            except BaseException:
+            except BaseException:  # noqa: BLE001 - Final checkpoints must not replace the active run failure.
                 logger.exception("Could not retain the sweep outcome")
             raise
         totals = checkpoint(finished=True)

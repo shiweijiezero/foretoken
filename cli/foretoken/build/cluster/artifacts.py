@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from foretoken.build.cluster.images import (
@@ -118,6 +119,8 @@ def _bind_artifact_claim(
 ) -> dict[str, Any]:
     """Let the native scheduler bind a claim without mounting it, then remove the owned Pod."""
     metadata = claim["metadata"]
+    name = "foretoken-artifact-bind-" + uuid.uuid4().hex[:12]
+    identity: dict[str, Any] | None = None
     spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "activeDeadlineSeconds": max(1, math.ceil(deadline - time.monotonic())),
@@ -155,50 +158,38 @@ def _bind_artifact_claim(
                 "matchFields": [{"key": "metadata.name", "operator": "In", "values": [node]}]
             }]}
         }}
-    cancellation.check()
-    pod = json.loads(kubectl.run(
-        ["create", "-f", "-", "-o", "json"],
-        input_text=json.dumps({
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "generateName": "foretoken-artifact-bind-",
-                "namespace": namespace,
-                "labels": {
-                    SOURCE_BUILD_POD_LABEL: "true",
-                    SOURCE_BUILD_BINDING_LABEL: metadata["labels"][SOURCE_BUILD_BINDING_LABEL],
-                },
-                "ownerReferences": [{
-                    "apiVersion": "v1", "kind": "PersistentVolumeClaim",
-                    "name": metadata["name"], "uid": metadata["uid"],
-                }],
-            },
-            "spec": spec,
-        }),
-        timeout=max(1.0, deadline - time.monotonic()),
-    ).stdout)
-    identity = pod["metadata"]
-
     def remove_binder() -> None:
-        """Delete only this binder UID, including when cancellation races normal cleanup."""
-        current = kubectl.get_if_exists("pod", identity["name"], namespace, timeout=timeout_seconds(timeout))
-        if current is None or current["metadata"]["uid"] != identity["uid"]:
+        """Recover this operation's Pod after a lost create response, then delete its observed UID."""
+        current = kubectl.get_if_exists(
+            "pod", identity["name"] if identity is not None else name,
+            namespace, timeout=timeout_seconds(timeout),
+        )
+        if current is None:
+            return
+        observed = current["metadata"]
+        if identity is not None:
+            if observed["uid"] != identity["uid"]:
+                return
+        elif not any(
+            owner.get("kind") == "PersistentVolumeClaim" and owner.get("uid") == metadata["uid"]
+            for owner in observed.get("ownerReferences", [])
+        ):
             return
         try:
             kubectl.run(
-                ["delete", "--raw", f"/api/v1/namespaces/{namespace}/pods/{identity['name']}", "-f", "-"],
+                ["delete", "--raw", f"/api/v1/namespaces/{namespace}/pods/{observed['name']}", "-f", "-"],
                 input_text=json.dumps({
                     "apiVersion": "v1", "kind": "DeleteOptions",
-                    "preconditions": {"uid": identity["uid"]},
+                    "preconditions": {"uid": observed["uid"]},
                 }),
                 timeout=timeout_seconds(timeout),
             )
         except DeploymentError:
-            current = kubectl.get_if_exists("pod", identity["name"], namespace, timeout=timeout_seconds(timeout))
-            if current is not None and current["metadata"]["uid"] == identity["uid"]:
+            current = kubectl.get_if_exists("pod", observed["name"], namespace, timeout=timeout_seconds(timeout))
+            if current is not None and current["metadata"]["uid"] == observed["uid"]:
                 raise
             return
-        kubectl.wait_deleted("pod", identity, timeout)
+        kubectl.wait_deleted("pod", observed, timeout)
 
     def bound(value: dict[str, Any]) -> bool:
         """Reject a replaced or retiring claim rather than preparing another owner's volume."""
@@ -218,7 +209,32 @@ def _bind_artifact_claim(
 
     error = None
     try:
+        # Name and ownership are known before submission so cancellation can
+        # retire a binder whose API creation succeeded without a client receipt.
         cancellation.register(remove_binder)
+        cancellation.check()
+        pod = json.loads(kubectl.run(
+            ["create", "-f", "-", "-o", "json"],
+            input_text=json.dumps({
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "metadata": {
+                    "name": name,
+                    "namespace": namespace,
+                    "labels": {
+                        SOURCE_BUILD_POD_LABEL: "true",
+                        SOURCE_BUILD_BINDING_LABEL: metadata["labels"][SOURCE_BUILD_BINDING_LABEL],
+                    },
+                    "ownerReferences": [{
+                        "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                        "name": metadata["name"], "uid": metadata["uid"],
+                    }],
+                },
+                "spec": spec,
+            }),
+            timeout=max(1.0, deadline - time.monotonic()),
+        ).stdout)
+        identity = pod["metadata"]
         return wait_for_object(
             lambda: kubectl.get("pvc", metadata["name"], namespace, timeout=max(1.0, deadline - time.monotonic())),
             bound, deadline, f"artifact PVC {namespace}/{metadata['name']} to bind",

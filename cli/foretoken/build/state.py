@@ -52,14 +52,6 @@ from foretoken.processes.execution import CommandExecution, cleanup_commands
 SOURCE_INSTALL_ANNOTATION = "foretoken.io/install-source"
 
 
-def _source_home() -> Path:
-    return (
-        Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        / "foretoken"
-        / "source"
-    )
-
-
 def context_identity(kubectl: Kubectl) -> dict[str, str]:
     """Read connection identity locally without adding API permissions to release deploys."""
     return {"server": kubectl.server}
@@ -92,28 +84,6 @@ def has_server_binding(kubectl: Kubectl) -> bool:
         if state.get("context", {}).get("server") == server:
             return True
     return False
-
-
-def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared: bool = False) -> None:
-    """Bound lock acquisition without expiring a live source operation's ownership."""
-    import fcntl
-
-    deadline = time.monotonic() + timeout_seconds(timeout)
-    reported = False
-    while True:
-        if execution := CommandExecution.current():
-            execution.check()
-        try:
-            fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
-            return
-        except BlockingIOError:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise DeploymentError(f"Timed out after {timeout} waiting for {description}") from None
-            if not reported:
-                logger.info("Waiting for {} (up to {})", description, timeout)
-                reported = True
-            time.sleep(min(0.2, remaining))
 
 
 @contextmanager
@@ -437,26 +407,6 @@ def application_images(documents: Iterable[dict[str, Any]]) -> set[str]:
     return images
 
 
-def _source_image_access(
-    pods: Iterable[dict[str, Any]],
-) -> dict[tuple[str, str], tuple[str, tuple[str, ...]]]:
-    """Read node runtime access from actual builder Pods, without opening workstation credentials."""
-    access = {}
-    for pod in pods:
-        spec = pod["spec"]
-        node = spec.get("nodeName")
-        socket = next(
-            (volume["hostPath"]["path"] for volume in spec.get("volumes", []) if volume["name"] == "runtime-socket"),
-            None,
-        )
-        images = next((container for container in spec["containers"] if container["name"] == "images"), None)
-        if node and socket and images:
-            access[node, socket] = (
-                images["image"], tuple(item["name"] for item in spec.get("imagePullSecrets", [])),
-            )
-    return access
-
-
 def reconcile_source_resources(
     kubectl: Kubectl, timeout: str, *, checkout: Path | None = None,
 ) -> None:
@@ -539,23 +489,6 @@ def reconcile_source_resources(
                     )
                 store.pin_records(records)
                 store.release_except(retained)
-
-
-def _remove_source_object(kubectl: Kubectl, document: dict[str, Any], timeout: str) -> None:
-    """Retire one observed writer or cache UID without touching a replacement resource."""
-    metadata = document["metadata"]
-    namespace, name, uid = (metadata[key] for key in ("namespace", "name", "uid"))
-    kind = document["kind"]
-    current = kubectl.get_if_exists(kind, name, namespace)
-    if current is None or current["metadata"]["uid"] != uid:
-        return
-    try:
-        kubectl.delete_object(current, timeout, match_version=False)
-    except DeploymentError:
-        current = kubectl.get_if_exists(kind, name, namespace)
-        if current is not None and current["metadata"]["uid"] == uid:
-            raise
-        return
 
 
 @contextmanager
@@ -705,3 +638,70 @@ def source_uninstall(
                             binding=binding, pull_secrets=secrets,
                         ) as store:
                             store.release_except(retained)
+
+
+def _source_home() -> Path:
+    return (
+        Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+        / "foretoken"
+        / "source"
+    )
+
+
+def _acquire_source_lock(lock: TextIO, timeout: str, description: str, *, shared: bool = False) -> None:
+    """Bound lock acquisition without expiring a live source operation's ownership."""
+    import fcntl
+
+    deadline = time.monotonic() + timeout_seconds(timeout)
+    reported = False
+    while True:
+        if execution := CommandExecution.current():
+            execution.check()
+        try:
+            fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeploymentError(f"Timed out after {timeout} waiting for {description}") from None
+            if not reported:
+                logger.info("Waiting for {} (up to {})", description, timeout)
+                reported = True
+            time.sleep(min(0.2, remaining))
+
+
+def _source_image_access(
+    pods: Iterable[dict[str, Any]],
+) -> dict[tuple[str, str], tuple[str, tuple[str, ...]]]:
+    """Read node runtime access from actual builder Pods, without opening workstation credentials."""
+    access = {}
+    for pod in pods:
+        spec = pod["spec"]
+        node = spec.get("nodeName")
+        socket = next(
+            (volume["hostPath"]["path"] for volume in spec.get("volumes", []) if volume["name"] == "runtime-socket"),
+            None,
+        )
+        images = next((container for container in spec["containers"] if container["name"] == "images"), None)
+        if node and socket and images:
+            access[node, socket] = (
+                images["image"], tuple(item["name"] for item in spec.get("imagePullSecrets", [])),
+            )
+    return access
+
+
+def _remove_source_object(kubectl: Kubectl, document: dict[str, Any], timeout: str) -> None:
+    """Retire one observed writer or cache UID without touching a replacement resource."""
+    metadata = document["metadata"]
+    namespace, name, uid = (metadata[key] for key in ("namespace", "name", "uid"))
+    kind = document["kind"]
+    current = kubectl.get_if_exists(kind, name, namespace)
+    if current is None or current["metadata"]["uid"] != uid:
+        return
+    try:
+        kubectl.delete_object(current, timeout, match_version=False)
+    except DeploymentError:
+        current = kubectl.get_if_exists(kind, name, namespace)
+        if current is not None and current["metadata"]["uid"] == uid:
+            raise
+        return

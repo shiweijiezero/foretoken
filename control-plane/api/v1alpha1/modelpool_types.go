@@ -68,15 +68,6 @@ type NormalizedKVOffload struct {
 	Filesystem bool `json:"filesystem,omitempty"`
 }
 
-// Bytes returns exact positive byte capacity for compiler validation and runtime projection.
-func (offload NormalizedKVOffload) Bytes() (int64, error) {
-	bytes := offload.CPUCacheSize.Value()
-	if bytes <= 0 || offload.CPUCacheSize.CmpInt64(bytes) != 0 {
-		return 0, fmt.Errorf("kvCache.offload.cpuCacheSize must be a positive integer number of bytes")
-	}
-	return bytes, nil
-}
-
 // NormalizedKVCache is the controller-owned cache configuration attached to ModelPool.
 // +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one storage mode"
 type NormalizedKVCache struct {
@@ -359,6 +350,15 @@ type ModelPoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ModelPool `json:"items"`
+}
+
+// Bytes returns exact positive byte capacity for compiler validation and runtime projection.
+func (offload NormalizedKVOffload) Bytes() (int64, error) {
+	bytes := offload.CPUCacheSize.Value()
+	if bytes <= 0 || offload.CPUCacheSize.CmpInt64(bytes) != 0 {
+		return 0, fmt.Errorf("kvCache.offload.cpuCacheSize must be a positive integer number of bytes")
+	}
+	return bytes, nil
 }
 
 func init() {

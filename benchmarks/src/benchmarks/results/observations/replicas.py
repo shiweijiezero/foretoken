@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
@@ -72,7 +73,8 @@ class KubernetesReplicaObserver:
         self._kubectl = kubectl
         self._stop = threading.Event()
         self._stop_deadline: float | None = None
-        self._thread: threading.Thread | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._sampling: Future[None] | None = None
         self._observations: list[ReplicaObservation] = []
         self._errors = 0
         self._last_error: str | None = None
@@ -111,14 +113,17 @@ class KubernetesReplicaObserver:
 
     def start(self, *, deadline: float | None = None) -> None:
         """Read the pre-measurement boundary within the caller's budget, then sample independently."""
-        if self._thread is not None:
+        if self._executor is not None:
             raise RuntimeError("replica observer is already active")
         self._sample(deadline=deadline)
-        self._thread = threading.Thread(
-            target=self._run,
-            name="foretoken-benchmark-resources",
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="foretoken-benchmark-resources",
         )
-        self._thread.start()
+        try:
+            self._sampling = self._executor.submit(self._run)
+        except BaseException:
+            self.close()
+            raise
 
     def finish(
         self, time_origin: float, duration: float | None = None, *, deadline: float | None = None,
@@ -175,18 +180,26 @@ class KubernetesReplicaObserver:
         self._stop.set()
 
     def close(self, *, deadline: float | None = None) -> None:
-        """Join the bounded in-flight sample; repeated calls are harmless."""
-        thread = self._thread
-        if thread is None:
+        """Join the bounded sample and propagate worker failures; repeated calls are harmless."""
+        executor, self._executor = self._executor, None
+        if executor is None:
             return
-        self._thread = None
+        sampling, self._sampling = self._sampling, None
         self.stop(deadline if deadline is not None else time.monotonic() + OBSERVATION_TIMEOUT_SECONDS)
-        thread.join()
+        try:
+            if sampling is not None:
+                sampling.result()
+        finally:
+            executor.shutdown(wait=True)
 
     def _run(self) -> None:
-        """Schedule observations until the result owner stops this sampler."""
-        while not self._stop.wait(DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS):
-            self._sample()
+        """Schedule observations and expose unexpected failures before the result owner joins."""
+        try:
+            while not self._stop.wait(DEFAULT_REPLICA_SAMPLE_INTERVAL_SECONDS):
+                self._sample()
+        except BaseException:
+            logger.exception("Replica observation stopped unexpectedly")
+            raise
 
     def _sample(self, *, deadline: float | None = None) -> None:
         """Share one read budget across replica status, GPU ownership, and application provenance."""
@@ -206,7 +219,7 @@ class KubernetesReplicaObserver:
                 raise DeploymentError("a selected ModelService was replaced during observation")
             # Bind replica and GPU records to the same service lifetime before publishing either.
             self._service_uids = service_uids
-        except (DeploymentError, KeyError, TypeError, ValueError) as exc:
+        except (DeploymentError, OSError, KeyError, TypeError, ValueError) as exc:
             self._errors += 1
             self._last_error = str(exc)
             self._gpu_failures.append(time.perf_counter())
@@ -221,7 +234,7 @@ class KubernetesReplicaObserver:
         try:
             with kubectl.until(deadline):
                 self._gpu_samples.append(self._read_gpu_sample(identities, kubectl))
-        except (DeploymentError, KeyError, TypeError, ValueError) as exc:
+        except (DeploymentError, OSError, KeyError, TypeError, ValueError) as exc:
             self._gpu_failures.append(time.perf_counter())
             self._last_gpu_error = str(exc)
         if self._workload_samples:

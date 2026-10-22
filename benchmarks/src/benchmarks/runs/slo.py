@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.config.benchmark import SLO_SEARCH_METRICS, BenchmarkConfig
 from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 from benchmarks.model_service import ModelService
 from benchmarks.results.output import ResultOutputs
@@ -24,14 +24,6 @@ from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.http import publish_slo_wandb
 from benchmarks.results.wandb.recording import WandbSink, wandb_run_timestamp
 from benchmarks.runs.http import HttpBenchmark
-
-_SLO_ALIASES = {
-    "latency.mean": "avg_latency",
-    "ttft.mean": "avg_ttft",
-    "tpot.mean": "avg_tpot",
-    "throughput.requests_per_second": "rps",
-    "throughput.generation_tokens_per_second": "tps",
-}
 
 
 class SloAutoTuneBenchmark:
@@ -285,26 +277,9 @@ class SloAutoTuneBenchmark:
 
 def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
     """Resolve a supported SLO metric from a probe, retaining unavailable measurements as None."""
-    name = _SLO_ALIASES.get(name, name)
-    if name in {"avg_latency", "avg_ttft", "avg_tpot", "rps", "tps"}:
-        if name == "rps":
-            value = metrics["throughput"].get("requests_per_second")
-        elif name == "tps":
-            value = metrics["throughput"].get("generation_tokens_per_second")
-        else:
-            value = metrics[name.removeprefix("avg_")]["mean"]
-        return float(value) if value is not None else None
-    for prefix in ("p50", "p90", "p95", "p99"):
-        if name == f"{prefix}_latency":
-            value = metrics["latency"].get(prefix)
-            return float(value) if value is not None else None
-        if name == f"{prefix}_ttft":
-            value = metrics["ttft"].get(prefix)
-            return float(value) if value is not None else None
-        if name == f"{prefix}_tpot":
-            value = metrics["tpot"].get(prefix)
-            return float(value) if value is not None else None
-    raise ValueError(f"unknown SLO metric: {name}")
+    section, statistic = SLO_SEARCH_METRICS[name]
+    value = metrics[section][statistic]
+    return float(value) if value is not None else None
 
 
 def _average_metric_values(
