@@ -4,7 +4,6 @@
 """Report node-visible RoCE parents for the platform installer's short-lived Pod."""
 
 import errno
-import fcntl
 import ipaddress
 import json
 import socket
@@ -16,8 +15,20 @@ _SIOCGIFADDR = 0x8915
 _SIOCGIFNETMASK = 0x891B
 
 
+def is_roce_port(port: Path) -> bool:
+    """Identify InfiniBand-transport Ethernet ports for node setup and inspection."""
+    # IB_CA (1) excludes iWARP; a GID table distinguishes RoCE from raw-packet-only ports.
+    return (
+        (port.parent.parent / "node_type").read_text().startswith("1:")
+        and (port / "link_layer").read_text().strip() == "Ethernet"
+        and (port / "gids/0").is_file()
+    )
+
+
 def discover_interfaces() -> dict:
     """Return installer-visible RoCE parents without opening accelerator or verbs devices."""
+    import fcntl
+
     net = Path("/sys/class/net")
     masters = {
         interface.name
@@ -27,9 +38,7 @@ def discover_interfaces() -> dict:
     ports = tuple(Path("/sys/class/infiniband").glob("*/ports/*"))
     active_roce_ports = 0
     for port in ports:
-        if (port / "link_layer").read_text().strip() != "Ethernet" or not (
-            port / "state"
-        ).read_text().startswith("4:"):
+        if not is_roce_port(port) or not (port / "state").read_text().startswith("4:"):
             continue
         active_roce_ports += 1
         for entry in (port / "gid_attrs/ndevs").iterdir():
@@ -42,6 +51,16 @@ def discover_interfaces() -> dict:
             if name and (net / name).exists():
                 masters.add(name)
 
+    # Dormant node anchors keep their names without becoming active Pod attachments.
+    connected = set()
+    for name in masters:
+        try:
+            if (net / name / "carrier").read_text().strip() == "1":
+                connected.add(name)
+        except OSError as error:
+            if error.errno != errno.EINVAL:
+                raise
+    masters = connected
     prefixes = {name: [] for name in masters}
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
         for name in masters:

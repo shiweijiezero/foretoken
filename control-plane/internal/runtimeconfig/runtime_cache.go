@@ -7,6 +7,7 @@ package runtimeconfig
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	volumehelpers "k8s.io/component-helpers/storage/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -25,7 +28,17 @@ const (
 	RuntimeCacheClaimLabel = "inference.foretoken.io/runtime-cache-claim"
 	// RuntimeCacheDirectoryAnnotation records the filesystem selected by a prepared claim.
 	RuntimeCacheDirectoryAnnotation = "inference.foretoken.io/runtime-cache-directory"
+	// RuntimeCacheVolumeTopologyAnnotation holds the platform-observed binding and native placement constraint.
+	RuntimeCacheVolumeTopologyAnnotation = "inference.foretoken.io/runtime-cache-volume-topology"
 )
+
+// RuntimeCacheVolumeTopology lets namespace consumers read bound-volume placement
+// published by the platform owner on their PVC without receiving PV access.
+type RuntimeCacheVolumeTopology struct {
+	ClaimUID     types.UID                  `json:"claimUID"`
+	VolumeName   string                     `json:"volumeName"`
+	NodeAffinity *corev1.VolumeNodeAffinity `json:"nodeAffinity"`
+}
 
 // RuntimeCacheDirectoryBindings authorizes exact directories without granting PV access.
 // Directories absent from the map are not authorized.
@@ -39,7 +52,7 @@ type RuntimeCacheProfile struct {
 }
 
 // Resolve selects an explicit directory, an existing-claim default, or a managed cache.
-func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
+func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Reader, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	var caches inferencev1alpha1.RuntimeCacheList
 	if err := kubeClient.List(ctx, &caches, client.InNamespace(namespace)); err != nil {
 		return nil, false, fmt.Errorf("list RuntimeCaches: %w", err)
@@ -103,8 +116,8 @@ func (profile RuntimeCacheProfile) Validate() error {
 // Self-affinity lets the first consumer establish placement; later preparation, serving,
 // and frontend Pods follow that node without maintaining a second attachment inventory.
 func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
-	claim, err := singleNodeCacheClaim(ctx, reader, namespace, cache)
-	if err != nil || claim == nil {
+	claim, err := runtimeCacheClaim(ctx, reader, namespace, cache)
+	if err != nil || claim == nil || slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany) {
 		return err
 	}
 	if pod.Labels == nil {
@@ -123,12 +136,35 @@ func PlaceRuntimeCache(ctx context.Context, reader client.Reader, namespace stri
 	return nil
 }
 
-// RuntimeCacheNodes restricts automatic device selection to the cache's existing co-location domain.
-// Without scheduled consumers, placement remains with the scheduler.
+// RuntimeCacheNodes restricts device selection to observed volume topology and existing consumers.
+// Unbound claims remain with the scheduler; bound claims wait for the platform's placement observation.
 func RuntimeCacheNodes(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, nodes []corev1.Node) ([]corev1.Node, error) {
-	claim, err := singleNodeCacheClaim(ctx, reader, namespace, cache)
+	claim, err := runtimeCacheClaim(ctx, reader, namespace, cache)
 	if err != nil || claim == nil {
 		return nodes, err
+	}
+	if claim.Status.Phase == corev1.ClaimLost {
+		return nil, fmt.Errorf("runtime cache claim %q has lost its volume", claim.Name)
+	}
+	if claim.Status.Phase == corev1.ClaimBound {
+		encoded := claim.Annotations[RuntimeCacheVolumeTopologyAnnotation]
+		if encoded == "" {
+			return nil, fmt.Errorf("runtime cache claim %q is waiting for bound-volume topology", claim.Name)
+		}
+		var topology RuntimeCacheVolumeTopology
+		if err := json.Unmarshal([]byte(encoded), &topology); err != nil {
+			return nil, fmt.Errorf("read runtime cache volume topology: %w", err)
+		}
+		if topology.ClaimUID != claim.UID || topology.VolumeName != claim.Spec.VolumeName {
+			return nil, fmt.Errorf("runtime cache claim %q is waiting for its current volume binding to be observed", claim.Name)
+		}
+		volume := &corev1.PersistentVolume{Spec: corev1.PersistentVolumeSpec{NodeAffinity: topology.NodeAffinity}}
+		nodes = slices.DeleteFunc(slices.Clone(nodes), func(node corev1.Node) bool {
+			return volumehelpers.CheckNodeAffinity(volume, node.Labels) != nil
+		})
+	}
+	if slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany) {
+		return nodes, nil
 	}
 	var pods corev1.PodList
 	if err := reader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{RuntimeCacheClaimLabel: string(claim.UID)}); err != nil {
@@ -155,17 +191,14 @@ func RuntimeCacheNodes(ctx context.Context, reader client.Reader, namespace stri
 	}), nil
 }
 
-// singleNodeCacheClaim identifies the claims whose consumers need the shared co-location rule.
-func singleNodeCacheClaim(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (*corev1.PersistentVolumeClaim, error) {
+// runtimeCacheClaim reads the selected claim for workload placement without adopting its lifecycle.
+func runtimeCacheClaim(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (*corev1.PersistentVolumeClaim, error) {
 	if cache == nil {
 		return nil, nil
 	}
 	claim := new(corev1.PersistentVolumeClaim)
 	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
-		return nil, fmt.Errorf("read runtime cache access modes: %w", err)
-	}
-	if slices.Contains(claim.Spec.AccessModes, corev1.ReadWriteMany) {
-		return nil, nil
+		return nil, fmt.Errorf("read runtime cache claim: %w", err)
 	}
 	return claim, nil
 }

@@ -301,26 +301,50 @@ impl LaunchPlanV1 {
         } else {
             command
         };
-        if let KvPlan::Pd {
-            connector: KvConnector::Nixl,
-            protocol,
-            device_name,
-            ..
-        } = &self.kv
-        {
-            // Protocol v2 preserves device memory types through software RMA.
-            command.env("UCX_PROTO_ENABLE", "y");
-            // Exclude the other network family without filtering native memory transports.
-            command.env(
-                "UCX_TLS",
-                match protocol {
-                    PdProtocol::Tcp => "^ib",
-                    PdProtocol::Rdma => "^tcp",
-                },
-            );
-            if *protocol == PdProtocol::Rdma && !device_name.is_empty() {
-                command.env("UCX_NET_DEVICES", device_name);
+        match &self.kv {
+            KvPlan::Pd {
+                connector: KvConnector::Mooncake,
+                protocol,
+                ..
             }
+            | KvPlan::MultiConnector {
+                connector: KvConnector::Mooncake,
+                protocol,
+                ..
+            } => {
+                // Mooncake tests presence, so an inherited opposite flag must be removed.
+                command
+                    .env_remove("MC_FORCE_HCA")
+                    .env_remove("MC_FORCE_TCP");
+                command.env(
+                    match protocol {
+                        PdProtocol::Rdma => "MC_FORCE_HCA",
+                        PdProtocol::Tcp => "MC_FORCE_TCP",
+                    },
+                    "1",
+                );
+            }
+            KvPlan::Pd {
+                connector: KvConnector::Nixl,
+                protocol,
+                device_name,
+                ..
+            } => {
+                // Protocol v2 preserves device memory types through software RMA.
+                command.env("UCX_PROTO_ENABLE", "y");
+                // Exclude the other network family without filtering native memory transports.
+                command.env(
+                    "UCX_TLS",
+                    match protocol {
+                        PdProtocol::Tcp => "^ib",
+                        PdProtocol::Rdma => "^tcp",
+                    },
+                );
+                if *protocol == PdProtocol::Rdma && !device_name.is_empty() {
+                    command.env("UCX_NET_DEVICES", device_name);
+                }
+            }
+            _ => {}
         }
         command
     }

@@ -118,7 +118,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		return ModelGroupTemplate{}, fmt.Errorf("engineArgs.all2all-backend=%q requires a platform RDMA allocation", effective.Parallelism.EP.Backend)
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || rdmaRequired || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || effective.RequestsWeightSharing(template, profile.DeviceResourceName) {
+	if effective.RequestsRDMA(template, profile.DeviceResourceName) {
 		rdma = template.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {

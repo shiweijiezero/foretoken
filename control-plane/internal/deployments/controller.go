@@ -62,6 +62,9 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 		For(&api.InferenceDeployment{}).
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(r.deploymentRequests)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.deploymentRequests)).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(r.runtimeCacheDeployments)).
+		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.runtimeCacheDeployments)).
+		Watches(&api.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(r.runtimeCacheDeployments)).
 		Complete(r)
 }
 

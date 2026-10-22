@@ -95,7 +95,6 @@ func ConfigureWeightSources(spec api.ModelGroupSpec, pod *corev1.PodTemplateSpec
 		corev1.EnvVar{Name: "MX_WORKER_HOST", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
 		corev1.EnvVar{Name: "MX_WORKER_GRPC_PORT", Value: strconv.Itoa(int(modelExpressGRPCPort))},
 		corev1.EnvVar{Name: "MX_METADATA_PORT", Value: strconv.Itoa(int(modelExpressMetadataPort))},
-		corev1.EnvVar{Name: "MX_RDMA_NIC_PIN", Value: "auto"},
 	)
 	return nil
 }

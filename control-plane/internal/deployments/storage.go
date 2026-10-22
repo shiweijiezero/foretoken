@@ -6,14 +6,17 @@ package deployments
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	api "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -99,6 +102,86 @@ func (r *Reconciler) prepareDirectories(ctx context.Context, namespace string, s
 		bindings[directory.Directory] = name
 	}
 	return bindings, nil
+}
+
+// publishRuntimeCacheTopology observes only this deployment's selected cache claim.
+// PVC metadata carries the bound-volume constraint without transferring PV access or PVC ownership.
+func (r *Reconciler) publishRuntimeCacheTopology(ctx context.Context, deployment *api.InferenceDeployment, container *corev1.Container, bindings runtimeconfig.RuntimeCacheDirectoryBindings) error {
+	profile := runtimeconfig.RuntimeCacheProfile{
+		ClaimName: controllerArgument(container, "cache-claim"), MountPath: controllerArgument(container, "cache-mount-path"),
+		DirectoryBindings: bindings,
+	}
+	reader := &scopedReader{Reader: r.APIReader, metadata: r.Client, scope: Scope{Namespace: deployment.Namespace, UID: string(deployment.UID)}}
+	binding, ready, err := profile.Resolve(ctx, reader, deployment.Namespace)
+	if err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !ready || binding == nil {
+		return nil
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: deployment.Namespace, Name: binding.ClaimName}, claim); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	encoded := ""
+	if claim.Status.Phase == corev1.ClaimBound && claim.Spec.VolumeName != "" {
+		volume := new(corev1.PersistentVolume)
+		if err := r.APIReader.Get(ctx, client.ObjectKey{Name: claim.Spec.VolumeName}, volume); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("read runtime cache bound volume: %w", err)
+		}
+		if ref := volume.Spec.ClaimRef; ref != nil && ref.Namespace == claim.Namespace && ref.Name == claim.Name && ref.UID == claim.UID {
+			topology := runtimeconfig.RuntimeCacheVolumeTopology{
+				ClaimUID: claim.UID, VolumeName: volume.Name, NodeAffinity: volume.Spec.NodeAffinity,
+			}
+			data, err := json.Marshal(topology)
+			if err != nil {
+				return fmt.Errorf("encode runtime cache volume topology: %w", err)
+			}
+			encoded = string(data)
+		}
+	}
+	if claim.Annotations[runtimeconfig.RuntimeCacheVolumeTopologyAnnotation] == encoded {
+		return nil
+	}
+	base := claim.DeepCopy()
+	if encoded == "" {
+		delete(claim.Annotations, runtimeconfig.RuntimeCacheVolumeTopologyAnnotation)
+	} else {
+		if claim.Annotations == nil {
+			claim.Annotations = make(map[string]string)
+		}
+		claim.Annotations[runtimeconfig.RuntimeCacheVolumeTopologyAnnotation] = encoded
+	}
+	patch, err := identityPatch(claim, client.MergeFrom(base))
+	if err != nil {
+		return err
+	}
+	if err := r.Patch(ctx, claim, patch); err != nil {
+		return fmt.Errorf("publish runtime cache volume topology: %w", err)
+	}
+	return nil
+}
+
+// runtimeCacheDeployments wakes namespace deployments when a cache selection or binding changes.
+// Reconciliation resolves each deployment's actual claim before publishing any metadata.
+func (r *Reconciler) runtimeCacheDeployments(ctx context.Context, object client.Object) []ctrl.Request {
+	namespace := object.GetNamespace()
+	if volume, ok := object.(*corev1.PersistentVolume); ok && volume.Spec.ClaimRef != nil {
+		namespace = volume.Spec.ClaimRef.Namespace
+	}
+	if namespace == "" {
+		return nil
+	}
+	var deployments api.InferenceDeploymentList
+	if err := r.List(ctx, &deployments, client.InNamespace(namespace)); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list deployments for runtime cache observation")
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(deployments.Items))
+	for _, deployment := range deployments.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&deployment)})
+	}
+	return requests
 }
 
 // applyDirectory uses the platform identity rather than whichever instance first requested storage.

@@ -258,9 +258,10 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 	if err := reconciler.List(ctx, &nodes, client.MatchingLabels(group.Spec.Accelerator.NodeSelector)); err != nil {
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
 	}
+	requests := modelResourceRequirements(group.Spec.Resources, group.Spec.Accelerator.DeviceResourceName, group.Spec.RDMA).Requests
 	var terms []corev1.NodeSelectorTerm
 	for _, node := range nodes.Items {
-		if !modelNodeSupportsDevices(node, group.Spec.Accelerator.DeviceResourceName, group.Spec.Resources.Requests.GPU.Count, group.Spec.RDMA) {
+		if !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests) {
 			continue
 		}
 		// Node field selectors accept one value; separate terms express eligible alternatives.

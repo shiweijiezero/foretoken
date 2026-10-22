@@ -134,29 +134,6 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		}
 	}
 
-	requests := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse(string(group.Spec.Resources.Requests.CPU)),
-		corev1.ResourceMemory: resource.MustParse(string(group.Spec.Resources.Requests.Memory)),
-	}
-	limits := corev1.ResourceList{}
-	if group.Spec.Resources.Limits != nil {
-		if group.Spec.Resources.Limits.CPU != nil {
-			limits[corev1.ResourceCPU] = resource.MustParse(string(*group.Spec.Resources.Limits.CPU))
-		}
-		if group.Spec.Resources.Limits.Memory != nil {
-			limits[corev1.ResourceMemory] = resource.MustParse(string(*group.Spec.Resources.Limits.Memory))
-		}
-	}
-	deviceResource := corev1.ResourceName(group.Spec.Accelerator.DeviceResourceName)
-	deviceCount := *resource.NewQuantity(int64(group.Spec.Resources.Requests.GPU.Count), resource.DecimalSI)
-	requests[deviceResource] = deviceCount
-	limits[deviceResource] = deviceCount
-	if rdma := group.Spec.RDMA; rdma != nil {
-		rdmaResource := corev1.ResourceName(rdma.ResourceName)
-		rdmaCount := *resource.NewQuantity(int64(rdma.ResourceCount), resource.DecimalSI)
-		requests[rdmaResource] = rdmaCount
-		limits[rdmaResource] = rdmaCount
-	}
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
@@ -246,7 +223,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						ReadinessProbe:           modelServerProbe(readinessPath, 5, 3),
 						TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-						Resources:                corev1.ResourceRequirements{Requests: requests, Limits: limits},
+						Resources:                modelResourceRequirements(group.Spec.Resources, group.Spec.Accelerator.DeviceResourceName, group.Spec.RDMA),
 					}},
 				},
 			},
@@ -275,6 +252,35 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	runtimeconfig.ConfigurePodStorage(&deployment.Spec.Template.Spec, files.Image, access.Identity, accesses...)
 	return deployment, nil
+}
+
+// modelResourceRequirements projects validated model resources into the Pod contract
+// shared by workload construction, transport selection, and cache preparation placement.
+func modelResourceRequirements(resources inferencev1alpha1.ModelResources, accelerator string, rdma *inferencev1alpha1.RDMAAllocation) corev1.ResourceRequirements {
+	requests := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse(string(resources.Requests.CPU)),
+		corev1.ResourceMemory: resource.MustParse(string(resources.Requests.Memory)),
+	}
+	limits := corev1.ResourceList{}
+	if resources.Limits != nil {
+		if resources.Limits.CPU != nil {
+			limits[corev1.ResourceCPU] = resource.MustParse(string(*resources.Limits.CPU))
+		}
+		if resources.Limits.Memory != nil {
+			limits[corev1.ResourceMemory] = resource.MustParse(string(*resources.Limits.Memory))
+		}
+	}
+	deviceResource := corev1.ResourceName(accelerator)
+	deviceCount := *resource.NewQuantity(int64(resources.Requests.GPU.Count), resource.DecimalSI)
+	requests[deviceResource] = deviceCount
+	limits[deviceResource] = deviceCount
+	if rdma != nil {
+		rdmaResource := corev1.ResourceName(rdma.ResourceName)
+		rdmaCount := *resource.NewQuantity(int64(rdma.ResourceCount), resource.DecimalSI)
+		requests[rdmaResource] = rdmaCount
+		limits[rdmaResource] = rdmaCount
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }
 
 // groupApplicationURL reads the immutable selection, including pre-selection source cohorts.

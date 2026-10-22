@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sync"
@@ -31,10 +32,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -350,7 +354,7 @@ func (reconciler *ServiceReconciler) reconcilePools(ctx context.Context, service
 		byPoolName[pool.Spec.PoolName] = pool
 	}
 
-	if err := reconciler.resolveModelTransports(ctx, service.Namespace, compiledPools); err != nil {
+	if err := reconciler.resolveModelTransports(ctx, service, compiledPools, byPoolName); err != nil {
 		return nil, err
 	}
 	desiredPools, err := reconciler.selectPoolApplications(ctx, service, compiledPools, byPoolName)
@@ -856,14 +860,22 @@ func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) erro
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
 		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
-	if reconciler.CacheProfile.ClaimName != "" {
-		builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
-			if object.GetName() != reconciler.CacheProfile.ClaimName {
-				return nil
-			}
-			return reconciler.modelServicesInNamespace(ctx, object)
+	if reconciler.RuntimeProfile.RDMA != nil {
+		// Node recovery must refresh Pool selections even before a Group can be created.
+		// Ignore heartbeat-only updates; the scoped client keeps enumeration within this deployment.
+		builder = builder.Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace), ctrlbuilder.WithPredicates(predicate.Funcs{
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				before, after := event.ObjectOld.(*corev1.Node), event.ObjectNew.(*corev1.Node)
+				return modelNodeReady(*before) != modelNodeReady(*after) ||
+					before.Spec.Unschedulable != after.Spec.Unschedulable ||
+					before.DeletionTimestamp.IsZero() != after.DeletionTimestamp.IsZero() ||
+					!maps.Equal(before.Labels, after.Labels) ||
+					!apiequality.Semantic.DeepEqual(before.Spec.Taints, after.Spec.Taints) ||
+					!apiequality.Semantic.DeepEqual(before.Status.Allocatable, after.Status.Allocatable)
+			},
 		}))
 	}
+	builder = builder.Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForCacheClaim))
 	if reconciler.Alerts != nil && reconciler.Alerts.WatchRules {
 		builder = builder.Owns(&monitoringv1.PrometheusRule{})
 	}
@@ -894,6 +906,24 @@ func (reconciler *ServiceReconciler) modelServicesInNamespace(ctx context.Contex
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&services.Items[index])})
 	}
 	return requests
+}
+
+// modelServicesForCacheClaim refreshes placement when default or selected cache metadata changes.
+// Claim deletion also wakes consumers; selecting the claim does not require reading the deleted object.
+func (reconciler *ServiceReconciler) modelServicesForCacheClaim(ctx context.Context, claim client.Object) []reconcile.Request {
+	if claim.GetName() != reconciler.CacheProfile.ClaimName {
+		var caches inferencev1alpha1.RuntimeCacheList
+		if err := reconciler.List(ctx, &caches, client.InNamespace(claim.GetNamespace())); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "list RuntimeCaches for model placement")
+			return nil
+		}
+		if !slices.ContainsFunc(caches.Items, func(cache inferencev1alpha1.RuntimeCache) bool {
+			return cache.Status.ClaimName == claim.GetName()
+		}) {
+			return nil
+		}
+	}
+	return reconciler.modelServicesInNamespace(ctx, claim)
 }
 
 // modelServicesForKVService maps a KVService update to ModelServices that reference it.

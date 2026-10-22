@@ -13,6 +13,7 @@ from pathlib import Path
 
 from foretoken.arguments import ClusterCommand
 from foretoken.errors import DeploymentError
+from foretoken.platform.networking.rdma_interfaces import is_roce_port
 from foretoken.working_directory import repository_data_directory
 
 _DEVICE_PLUGIN = (
@@ -105,11 +106,7 @@ def _mount_arguments() -> list[str]:
 def _rdma_mount_arguments(root: Path) -> list[str]:
     """Keep RoCE node interfaces in k3d's startup lifecycle, including node restarts."""
     ports = Path("/sys/class/infiniband").glob("*/ports/*")
-    if not any(
-        (port / "link_layer").read_text().strip() == "Ethernet"
-        and (port / "state").read_text().startswith("4:")
-        for port in ports
-    ):
+    if not any(is_roce_port(port) for port in ports):
         return []
     script = root / "deploy/k3d/prepare-rdma.sh"
     if not script.is_file():

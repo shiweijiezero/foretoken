@@ -134,6 +134,14 @@ func (config EffectiveConfig) RequiresRDMA() bool {
 	}
 }
 
+// RequestsRDMA identifies consumers before transport discovery and after protocol resolution.
+// An omitted P/D protocol permits automatic RDMA; explicit TCP keeps optional NICs unallocated.
+func (config EffectiveConfig) RequestsRDMA(template inferencev1alpha1.NormalizedPoolTemplate, deviceResource string) bool {
+	return template.NodeCount > 1 || config.RequiresRDMA() ||
+		(template.KVTransfer != nil && template.KVTransfer.Protocol != "tcp") ||
+		config.RequestsWeightSharing(template, deviceResource)
+}
+
 // BuildLaunchPlan projects a verified ModelGroupSpec into the private launch wire contract.
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
 	if group.NodeCount < 1 {
