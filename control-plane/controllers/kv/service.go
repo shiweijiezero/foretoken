@@ -639,12 +639,14 @@ func (reconciler *ServiceReconciler) reconcileDelete(ctx context.Context, servic
 	if blocked, err := reconciler.hasConsumers(ctx, service); err != nil {
 		return ctrl.Result{}, err
 	} else if blocked {
-		_ = reconciler.updateStatus(ctx, service, kvServiceStatus{
+		if err := reconciler.updateStatus(ctx, service, kvServiceStatus{
 			phase:          inferencev1alpha1.KVServicePhaseTerminating,
 			infrastructure: kvServiceCondition{reason: "Deleting", message: "KVService is deleting"},
 			pools:          kvServiceCondition{reason: "ReferencesPresent", message: "KVService still has consumers"},
 			ready:          kvServiceCondition{reason: "ReferencesResolved", message: "Wait for ModelService, ModelPool, and ModelGroup consumers to disappear"},
-		})
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{Requeue: true}, nil
 	}
 	pools, err := reconciler.ownedPools(ctx, service)
