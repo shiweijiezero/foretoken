@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from foretoken.kubernetes.client import Kubectl
-from foretoken.observability import METRICS_SCRAPER_LABEL
+from foretoken.platform.prometheus import METRICS_SCRAPER_LABEL
 
 _METRICS_SCRAPER_OWNER_ANNOTATION = "inference.foretoken.io/metrics-scraper-managed-by"
 _METRICS_SCRAPER_OWNER = "foretoken"

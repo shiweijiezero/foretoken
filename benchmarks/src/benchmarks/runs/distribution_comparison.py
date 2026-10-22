@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
 from foretoken.errors import DeploymentError
+from loguru import logger
+from openai import APIError
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig
@@ -37,8 +37,6 @@ from benchmarks.results.reporting.distribution_comparison import (
     greedy_comparison_sinks,
 )
 from benchmarks.results.types import BenchmarkRun
-
-logger = logging.getLogger(__name__)
 
 
 def run_distribution_comparison(
@@ -117,7 +115,7 @@ def run_distribution_comparison(
                             saved = {"metadata": metadata, "environment": serving_environment(service)}
                             checkpoint.put(f"candidate/{candidate_index}", saved)
                             outputs.capture_source_evidence(saved["environment"], kubectl=service.kubectl)
-                            logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
+                            logger.info("Candidate: {} | {}/{} windows already complete", metadata["label"], len(completed), len(windows))
                             client = resources.enter_context(CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds))
                             for window_index, tokens in enumerate(windows):
                                 if window_index in completed:
@@ -144,9 +142,9 @@ def run_distribution_comparison(
                         if len(points) == len(comparison.candidates):
                             run = measured_run(None)
                             outputs.save_measurement(run)
-        except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
+        except (DeploymentError, ValueError, OSError, APIError, KeyboardInterrupt) as error:
             failure = error
-            logger.error("Distribution comparison stopped: %s", error)
+            logger.error("Distribution comparison stopped: {}", error)
             if not points:
                 raise
         if run is None:
@@ -223,7 +221,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                     for tokens in prompt_windows:
                         try:
                             reference_samples.append(client.generate(tokens, comparison.max_tokens))
-                        except (httpx.HTTPError, ValueError) as error:
+                        except (APIError, ValueError) as error:
                             reference_samples.append({"error": str(error)})
 
             labels: set[str] = set()
@@ -242,7 +240,7 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                             else:
                                 try:
                                     candidate_sample = client.generate(tokens, comparison.max_tokens)
-                                except (httpx.HTTPError, ValueError) as error:
+                                except (APIError, ValueError) as error:
                                     candidate_sample = {"error": str(error)}
                             samples.append(_greedy_sample(reference_sample, candidate_sample, index, metadata["label"]))
                         candidate_rows = [row for row in samples if row["candidate"] == metadata["label"]]
@@ -258,15 +256,15 @@ def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComp
                         if len(points) == len(comparison.candidates):
                             run = measured_run(None)
                             outputs.save_measurement(run)
-        except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
+        except (DeploymentError, ValueError, OSError, APIError, KeyboardInterrupt) as error:
             failure = error
-            logger.error("Greedy comparison stopped: %s", error)
+            logger.error("Greedy comparison stopped: {}", error)
             if not samples:
                 raise
         failed_samples = sum(row["error"] is not None for row in samples)
         if failed_samples:
             first_error = next(row["error"] for row in samples if row["error"] is not None)
-            logger.error("%d greedy comparison samples failed; first error: %s", failed_samples, first_error)
+            logger.error("{} greedy comparison samples failed; first error: {}", failed_samples, first_error)
         if run is None:
             run = measured_run(failure)
             outputs.save_measurement(run)
@@ -394,7 +392,7 @@ def _score_reference(
     saved = checkpoint.get("reference")
     completed = checkpoint.reference_done()
     if len(completed) == comparison.num_windows:
-        logger.info("Reusing all %d reference windows", len(completed))
+        logger.info("Reusing all {} reference windows", len(completed))
         outputs.start_measurement()
         return saved
     with resolver.resolve(source) as reference:
@@ -422,7 +420,7 @@ def _score_reference(
         outputs.capture_source_evidence(saved["environment"], kubectl=reference.kubectl)
         vocabulary_size = saved["protocol"]["model_vocab_size"]
         score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
-        logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)
+        logger.info("Reference: {} | {}/{} windows already complete", reference.model, len(completed), comparison.num_windows)
         outputs.start_measurement()
         with CompletionComparisonClient(reference, timeout=source.timeout_seconds) as client:
             for index, tokens in enumerate(saved["windows"]):

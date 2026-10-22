@@ -25,10 +25,12 @@ use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBacke
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
 
+use self::kv_events::KvEventAdapter;
+use self::prefix_lookup::SharedKvLookup;
 use self::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 use super::{
     Backend, BackendError, BackendGeneration, BackendTelemetry, ExecutionControl, GenerateInput,
-    TokenErrorCode, TokenEvent, TokenStream,
+    KvDeltaError, TokenErrorCode, TokenEvent, TokenStream,
 };
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -42,15 +44,21 @@ pub struct VllmBackend {
     kv_connector_utility: bool,
     kv_client: reqwest::Client,
     kv_cleanup: tokio_util::task::TaskTracker,
+    kv_events: Option<Arc<KvEventAdapter>>,
+    shared_kv: Option<SharedKvLookup>,
+    kv_source_endpoint: Option<String>,
 }
 
 impl VllmBackend {
-    /// Creates the model-server adapter and retains the provided vLLM `Llm` facade until shutdown.
+    /// Retains the native facade, KV observations and physical source endpoint for the model-server lifetime.
     pub fn new(
         llm: Llm,
         max_concurrent_requests: Option<u64>,
+        kv_events: Option<Arc<KvEventAdapter>>,
+        shared_kv: Option<SharedKvLookup>,
         bidirectional_kv_xfer: bool,
         kv_connector_utility: bool,
+        kv_source_endpoint: Option<String>,
     ) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
@@ -76,6 +84,9 @@ impl VllmBackend {
                 .build()
                 .expect("static KV client configuration"),
             kv_cleanup: tokio_util::task::TaskTracker::new(),
+            kv_events,
+            shared_kv,
+            kv_source_endpoint,
         }
     }
 
@@ -210,7 +221,8 @@ impl Backend for VllmBackend {
     async fn local_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
-    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError> {
+    ) -> Result<foretoken_model_protocol::KvLocalPrefixResponse, BackendError> {
+        let adapter = self.kv_events.as_ref().ok_or(BackendError::Unavailable)?;
         let guard = self.llm.read().await;
         let client = guard
             .as_ref()
@@ -245,30 +257,68 @@ impl Backend for VllmBackend {
             .ok_or(BackendError::Unavailable)?
             .map_err(BackendError::from_engine_client)?;
         // Native dictionaries encode tiers as strings; rmpv's enum decoder expects arrays.
-        observations
+        let ranks = observations
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(|_| BackendError::Protocol))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(adapter.prefix_response(ranks))
+    }
+
+    async fn shared_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<foretoken_model_protocol::KvSharedPrefixResponse, BackendError> {
+        self.shared_kv
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .lookup(request)
+            .await
+            .ok_or(BackendError::Unavailable)
+    }
+
+    fn kv_delta(
+        &self,
+        dp_rank: u32,
+        epoch: Option<&str>,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<foretoken_model_protocol::KvDeltaResponse, KvDeltaError> {
+        self.kv_events
+            .as_ref()
+            .ok_or(KvDeltaError::Unavailable)?
+            .delta(dp_rank, epoch, after, limit)
     }
 
     async fn retained_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
-    ) -> Result<Vec<foretoken_model_protocol::KvRetainedRankPrefix>, BackendError> {
-        if !self.bidirectional_kv_xfer
+    ) -> Result<foretoken_model_protocol::KvRetainedPrefixResponse, BackendError> {
+        let adapter = self.kv_events.as_ref().ok_or(BackendError::Unavailable)?;
+        let endpoint = self
+            .kv_source_endpoint
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?;
+        let ranks = if !self.bidirectional_kv_xfer
             || request.lora_name.is_some()
             || !request.multimodal.is_empty()
         {
-            return Ok(Vec::new());
-        }
-        self.kv_utility(
-            "retained_prefix",
-            serde_json::json!({
-                "prompt_token_ids": request.prompt_token_ids,
-                "cache_salt": request.cache_salt,
-            }),
-        )
-        .await
+            Vec::new()
+        } else {
+            self.kv_utility(
+                "retained_prefix",
+                serde_json::json!({
+                    "prompt_token_ids": request.prompt_token_ids,
+                    "cache_salt": request.cache_salt,
+                }),
+            )
+            .await?
+        };
+        Ok(foretoken_model_protocol::KvRetainedPrefixResponse {
+            model_group_id: adapter.model_group_id.clone(),
+            scope_id: adapter.scope_id.clone(),
+            model_server_endpoint: endpoint.clone(),
+            ranks,
+        })
     }
 
     async fn claim_kv_prefix(
@@ -277,6 +327,10 @@ impl Backend for VllmBackend {
     ) -> Result<foretoken_model_protocol::KvPrefixClaimResult, BackendError> {
         use foretoken_model_protocol::KvPrefixClaimResult;
         if !self.bidirectional_kv_xfer
+            || !self
+                .kv_events
+                .as_ref()
+                .is_some_and(|source| source.model_group_id == request.source.route_target_id)
             || request.prefix.lora_name.is_some()
             || !request.prefix.multimodal.is_empty()
         {
@@ -317,7 +371,12 @@ impl Backend for VllmBackend {
         request: &foretoken_model_protocol::KvPrefixCancel,
     ) -> Result<foretoken_model_protocol::KvPrefixCancelResult, BackendError> {
         use foretoken_model_protocol::KvPrefixCancelResult;
-        if !self.bidirectional_kv_xfer {
+        if !self.bidirectional_kv_xfer
+            || !self
+                .kv_events
+                .as_ref()
+                .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+        {
             return Ok(KvPrefixCancelResult::Miss);
         }
         #[derive(serde::Deserialize)]

@@ -27,11 +27,12 @@ from foretoken.kubernetes.client import (
     ResourceRef,
     resource_ref,
 )
-from foretoken.observability import (
+from foretoken.platform.prometheus import (
     PrometheusRef,
     prometheus_query,
     prometheus_selects_service_monitor,
 )
+from foretoken.processes.execution import CommandExecution
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,8 @@ class ExporterDiscovery:
                         request_timeout,
                     )
                 except KubernetesServiceUnavailableError as exc:
+                    if execution := CommandExecution.current():
+                        execution.check()
                     if timeout_seconds <= 0:
                         raise
                     # Operator-managed Prometheus Pods can still be rolling after Helm returns.

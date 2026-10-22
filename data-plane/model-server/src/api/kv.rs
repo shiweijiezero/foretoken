@@ -9,11 +9,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use foretoken_model_protocol::{
     KV_OBSERVATION_TIMEOUT, KvDeltaQuery, KvPrefixCancel, KvPrefixCancelResult, KvPrefixClaim,
-    KvPrefixClaimResult, KvPrefixRequest, KvRetainedPrefixResponse,
+    KvPrefixClaimResult, KvPrefixRequest,
 };
 
 use super::{ApiError, AppState};
-use crate::backend::vllm::kv_events::KvDeltaError;
+use crate::backend::KvDeltaError;
 
 /// Query schedulers without admitting a generation or acquiring source blocks.
 pub(super) async fn local_kv_prefix(
@@ -23,16 +23,13 @@ pub(super) async fn local_kv_prefix(
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(adapter) = state.kv_events else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     match tokio::time::timeout(
         KV_OBSERVATION_TIMEOUT,
         state.backend.local_prefixes(&request),
     )
     .await
     {
-        Ok(Ok(ranks)) => Json(adapter.prefix_response(ranks)).into_response(),
+        Ok(Ok(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -45,11 +42,13 @@ pub(super) async fn shared_kv_prefix(
     if !state.health.ready() || !state.health.accepting() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(lookup) = state.shared_kv else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match tokio::time::timeout(KV_OBSERVATION_TIMEOUT, lookup.lookup(&request)).await {
-        Ok(Some(response)) => Json(response).into_response(),
+    match tokio::time::timeout(
+        KV_OBSERVATION_TIMEOUT,
+        state.backend.shared_prefix(&request),
+    )
+    .await
+    {
+        Ok(Ok(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -68,27 +67,13 @@ pub(super) async fn retained_kv_prefix(
     {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let Some(adapter) = state.kv_events.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     match tokio::time::timeout(
         KV_OBSERVATION_TIMEOUT,
         state.backend.retained_prefixes(&request),
     )
     .await
     {
-        Ok(Ok(ranks)) => {
-            let Some(model_server_endpoint) = state.kv_source_endpoint else {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
-            };
-            Json(KvRetainedPrefixResponse {
-                model_group_id: adapter.model_group_id.clone(),
-                scope_id: adapter.scope_id.clone(),
-                model_server_endpoint,
-                ranks,
-            })
-            .into_response()
-        }
+        Ok(Ok(response)) => Json(response).into_response(),
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -104,10 +89,6 @@ pub(super) async fn claim_kv_prefix(
             .metadata
             .kv_transfer()
             .is_some_and(|kv| kv.bidirectional_kv_xfer)
-        || !state
-            .kv_events
-            .as_ref()
-            .is_some_and(|source| source.model_group_id == request.source.route_target_id)
     {
         return Json(KvPrefixClaimResult::Miss).into_response();
     }
@@ -126,14 +107,8 @@ pub(super) async fn cancel_kv_prefix(
         .metadata
         .kv_transfer()
         .is_some_and(|kv| kv.bidirectional_kv_xfer)
-        || !state
-            .kv_events
-            .as_ref()
-            .is_some_and(|source| source.model_group_id == request.source.route_target_id)
+        || !state.health.process_alive()
     {
-        return Json(KvPrefixCancelResult::Miss).into_response();
-    }
-    if !state.health.process_alive() {
         return Json(KvPrefixCancelResult::Miss).into_response();
     }
     match state.backend.cancel_kv_prefix(&request).await {
@@ -142,15 +117,12 @@ pub(super) async fn cancel_kv_prefix(
     }
 }
 
-/// Translate a frontend cursor into a bounded delta or reset signal; the adapter owns cursor history.
+/// Translate a frontend cursor into a bounded delta or reset signal; the backend owns cursor history.
 pub(super) async fn kv_index_delta(
     State(state): State<AppState>,
     Query(query): Query<KvDeltaQuery>,
 ) -> Response {
-    let Some(adapter) = state.kv_events else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match adapter.delta(
+    match state.backend.kv_delta(
         query.dp_rank,
         query.epoch.as_deref(),
         query.after,

@@ -89,6 +89,8 @@ impl PositionalHashIndex {
             .collect()
     }
 
+    /// Returns complete-block prefixes for query consumers without changing source ownership.
+    /// Each placement stands alone; an all-group query converges on its shortest required group.
     fn matching(
         entries: &[Entry],
         query: &KvPrefixQuery<'_>,

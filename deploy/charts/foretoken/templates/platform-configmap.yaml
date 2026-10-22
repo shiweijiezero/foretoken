@@ -43,7 +43,7 @@
     "admissionStore" $admission
     "responseStore" $responseStore
     "modelDistribution" .Values.modelDistribution
-    "rdma" (dict "managed" false "resourceName" (include "foretoken.rdmaResourceName" .) "resourceCount" .Values.rdma.resourceCount)
+    "rdma" (dict "managed" false "resourceName" (include "foretoken.rdmaResourceName" .) "resourceCount" .Values.rdma.resourceCount "networks" .Values.rdma.networks "preparedNetworks" .Values.rdma.preparedNetworks "ipamConfigFile" .Values.rdma.ipamConfigFile)
     "applicationFiles" (dict "origin" (include "foretoken.applicationFilesOrigin" .) "clientImage" (include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.applicationFiles.clientImage)) "releaseURL" "")
     "observability" (dict "mode" .Values.observability.mode "additionalLabels" .Values.observability.additionalLabels "interval" .Values.observability.interval "scrapeTimeout" .Values.observability.scrapeTimeout "prometheus" .Values.observability.prometheus)
 }}

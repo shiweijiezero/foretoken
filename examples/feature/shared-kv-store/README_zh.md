@@ -12,11 +12,11 @@
 | `compact` | 1 | 1 GiB | 4 GiB |
 | `large` | 1 | 4 GiB | 16 GiB |
 
-示例共请求两张 GPU、14 核 CPU、44 GiB 内存和 21 GiB 动态存储，其中包含 Master 快照卷。模型文件和编译缓存保存在 `cache.yaml` 配置的项目根目录 `data/` 中。
+示例共请求两张 GPU、14 核 CPU、44 GiB 内存和 21 GiB 动态存储，其中包含 Master 快照卷。模型文件和编译缓存使用平台默认存储。
 
 ## 部署
 
-使用[从源码安装的平台](../../../docs/deployment/source_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。模型目录的配置见[模型存储](../../../docs/features/model-storage_zh.md)。
+使用[从源码安装的平台](../../../docs/deployment/source_zh.md)、包含 vLLM `MooncakeStoreConnector` 和 `mooncake-transfer-engine` 的 model-server 镜像，以及默认 StorageClass。存储选择见[模型存储](../../../docs/features/model-storage_zh.md)。
 
 在仓库根目录构建 Store 镜像。使用本地 k3d 时，将镜像导入当前集群：
 
@@ -31,11 +31,13 @@ k3d image import foretoken-mooncake --cluster "${K3D_CLUSTER#k3d-}"
 ```bash
 foretoken deploy examples/feature/shared-kv-store --timeout 20m
 FRONTEND_URL="$(foretoken endpoint examples/feature/shared-kv-store)"
+REQUEST_HOST="$(foretoken endpoint examples/feature/shared-kv-store --host)"
 
 for MODEL in Qwen/Qwen3-0.6B Qwen/Qwen2.5-0.5B-Instruct; do
   curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+    -H "Host: $REQUEST_HOST" \
     -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"What is a shared cache?\"}],\"max_tokens\":64}"
+    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"What is a shared cache?\"}]}"
   printf '\n'
 done
 ```

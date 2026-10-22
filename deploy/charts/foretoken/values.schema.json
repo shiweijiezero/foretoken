@@ -114,10 +114,39 @@
         "resourceName": {"type": "string"},
         "resourceCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
         "managed": {"type": "boolean"},
+        "ipamConfigFile": {"type": "string"},
         "image": {"type": "string", "minLength": 1},
         "nodeNames": {
           "type": "array",
           "items": {"type": "string", "minLength": 1}
+        },
+        "networks": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "namespace": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "preparedNetworks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "namespace": {"type": "string", "minLength": 1},
+              "master": {"type": "string", "minLength": 1},
+              "subnet": {"type": "string", "minLength": 1},
+              "active": {"type": "boolean"}
+            },
+            "dependencies": {"master": ["subnet"], "subnet": ["master"]},
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -240,6 +269,20 @@
             "additionalProperties": false
           }
         },
+        "leaderWorkerScheduling": {
+          "type": ["object", "null"],
+          "properties": {
+            "volcanoQueueName": {
+              "type": ["string", "null"], "maxLength": 253,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "kueueLocalQueueName": {
+              "type": ["string", "null"], "maxLength": 63,
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            }
+          },
+          "additionalProperties": false
+        },
         "cache": {
           "type": "object",
           "required": [
@@ -341,6 +384,7 @@
           "type": "object",
           "required": [
             "create",
+            "port",
             "controllerName",
             "name",
             "namespace",
@@ -349,6 +393,11 @@
           "properties": {
             "create": {
               "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
             },
             "controllerName": {
               "type": "string"

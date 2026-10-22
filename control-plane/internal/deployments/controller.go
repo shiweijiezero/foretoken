@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Selects instance controllers, repairs their resources, and publishes their readiness.
 package deployments
 
 import (

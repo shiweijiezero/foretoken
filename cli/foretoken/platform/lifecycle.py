@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.accelerators.discovery import ExporterDiscovery
@@ -27,7 +29,6 @@ from foretoken.build.state import (
     source_operation,
     source_uninstall,
 )
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
@@ -37,7 +38,6 @@ from foretoken.kubernetes.client import (
     timeout_seconds,
 )
 from foretoken.kubernetes.mutation import DeploymentMutation
-from foretoken.observability import PrometheusRef
 from foretoken.platform.config import (
     default_platform_config,
     grafana_anonymous_access_from_values,
@@ -57,6 +57,8 @@ from foretoken.platform.networking.load_balancer import (
     LoadBalancerLifecycle,
     LoadBalancerPlan,
 )
+from foretoken.platform.networking.multus import MultusLifecycle
+from foretoken.platform.networking.rdma import RDMANetworkLifecycle
 from foretoken.platform.observability.logs import (
     LogCollectionLifecycle,
     LogConfig,
@@ -66,6 +68,7 @@ from foretoken.platform.observability.monitoring import (
     MonitoringLifecycle,
     MonitoringPlan,
 )
+from foretoken.platform.prometheus import PrometheusRef
 from foretoken.platform.rdma import (
     RDMASelection,
     require_unused_managed_rdma,
@@ -79,6 +82,7 @@ from foretoken.platform.storage.model_distribution import (
     ModelDistributionLifecycle,
 )
 from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef, RuntimeOverrides
+from foretoken.processes.execution import CommandExecution
 
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages
@@ -145,6 +149,8 @@ class PlatformLifecycle:
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
+        self._multus = MultusLifecycle(self._helm, self._kubectl)
+        self._rdma_networks = RDMANetworkLifecycle(self._kubectl, self._multus)
         self._logs = LogCollectionLifecycle(self._helm)
         self._monitoring = MonitoringLifecycle(self._helm, self._kubectl)
         self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
@@ -181,7 +187,7 @@ class PlatformLifecycle:
         self._load_balancer.apply(plan.load_balancer, command.timeout)
         self._gateway.apply_before_platform(plan.gateway, command.timeout)
         self._leader_worker.apply(plan.leader_worker, command.timeout)
-        _print_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
+        _report_plan("LeaderWorkerSet", "Ready", plan.leader_worker.detail)
         download_proxy = self._model_distribution.apply(
             plan.model_distribution,
             plan.runtime.selection.resource_name if plan.runtime.selection is not None else "",
@@ -194,11 +200,7 @@ class PlatformLifecycle:
             release=plan.platform,
             source_images=prepared.source_images,
             values=command.values,
-            frontend_mode=command.frontend_mode,
-            gateway_name=command.gateway_name,
-            gateway_namespace=command.gateway_namespace,
-            gateway_section_name=command.gateway_section_name,
-            gateway_controller_name=plan.gateway.controller_name,
+            gateway=plan.gateway_config,
             observability_labels=plan.monitoring.labels,
             observability_prometheus=f"{prepared.prometheus.namespace}/{prepared.prometheus.name}",
             grafana_anonymous_access=plan.monitoring.anonymous_access,
@@ -208,6 +210,8 @@ class PlatformLifecycle:
             rdma_resource_name=plan.rdma.resource_name,
             rdma_managed=plan.rdma.managed,
             rdma_node_names=plan.rdma.node_names,
+            rdma_networks=self._rdma_networks,
+            gpu_nodes=plan.runtime.selection.nodes if plan.runtime.selection is not None else (),
             download_proxy_url=download_proxy,
             stored_values=plan.stored_values,
             kubectl=self._kubectl,
@@ -244,11 +248,12 @@ class PlatformLifecycle:
         managed_logs = self._logs.managed_releases()
         gateway = self._gateway.resolve_uninstall(platform, platform_exists=platform_exists)
         deployments = self._retire_deployments(command.timeout)
+        network_definitions = self._rdma_networks.prepare_uninstall(platform)
         dragonfly_managed = helm.is_cli_managed(self._model_distribution.release)
         if (
             platform_exists or source_storage or unadopted_origin or admission_claims
             or monitoring.dcgm_managed or monitoring.prometheus_managed or monitoring.metax_managed
-            or managed_logs or dragonfly_managed or gateway.managed or deployments
+            or managed_logs or dragonfly_managed or gateway.managed or deployments or network_definitions
         ):
             resources = _platform_service_resources(kubectl)
             controllers = tuple(
@@ -269,29 +274,29 @@ class PlatformLifecycle:
         if platform_exists:
             require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
             admission_claims.update((claim["uid"], claim) for claim in self._admission_store.prepare(command.timeout))
-            _print_plan("Foretoken platform", "Remove", platform.display_name)
+            _report_plan("Foretoken platform", "Remove", platform.display_name)
         else:
-            _print_plan("Foretoken platform", "Skip", "not installed")
+            _report_plan("Foretoken platform", "Skip", "not installed")
             if unadopted_origin:
-                _print_plan("Application file storage", "Remove", platform.display_name)
+                _report_plan("Application file storage", "Remove", platform.display_name)
         for name, exists, managed, release in (
             ("NVIDIA DCGM Exporter", monitoring.dcgm_exists, monitoring.dcgm_managed, self._monitoring.dcgm),
             ("Prometheus", monitoring.prometheus_exists, monitoring.prometheus_managed, self._monitoring.prometheus),
         ):
-            _print_plan(name, "Remove" if managed else "Preserve" if exists else "Skip", release.display_name if exists else "no managed release")
+            _report_plan(name, "Remove" if managed else "Preserve" if exists else "Skip", release.display_name if exists else "no managed release")
         metax = self._monitoring.metax_exporter
-        _print_plan(
+        _report_plan(
             "MetaX mxExporter", "Remove" if monitoring.metax_managed else "Preserve",
             f"{metax.namespace}/{metax.daemonset.name}" if monitoring.metax_managed else "not CLI-managed",
         )
-        _print_plan("Gateway Controller", gateway.action, gateway.detail)
+        _report_plan("Gateway Controller", gateway.action, gateway.detail)
         for release in managed_logs:
-            _print_plan("Logs", "Remove", release.display_name + " (retain stored logs)")
+            _report_plan("Logs", "Remove", release.display_name + " (retain stored logs)")
 
         # Instance and storage consumers must be gone before platform tasks, stores,
         # and Helm releases lose the owners that complete their cleanup.
         if remove_directory_bindings(kubectl, platform_uid, command.timeout):
-            _print_plan("Directory bindings", "Removed", "retained directory files")
+            _report_plan("Directory bindings", "Removed", "retained directory files")
         helm.stop_platform_tasks(kubectl, command.timeout)
         with source_uninstall(
             kubectl, command.timeout, namespace=platform.namespace,
@@ -300,26 +305,30 @@ class PlatformLifecycle:
             self._logs.uninstall(managed_logs, command.timeout)
             if platform_exists:
                 helm.uninstall(platform, command.timeout)
-                _print_plan("Foretoken platform", "Removed", platform.display_name)
+                _report_plan("Foretoken platform", "Removed", platform.display_name)
             elif unadopted_origin:
                 self._application_files.retire(unadopted_origin, command.timeout)
-                _print_plan("Application file storage", "Removed", platform.display_name)
+                _report_plan("Application file storage", "Removed", platform.display_name)
         for claim in admission_claims.values():
             kubectl.wait_deleted("persistentvolumeclaim", claim, command.timeout)
         if admission_claims:
-            _print_plan("Admission storage", "Removed", platform.display_name)
+            _report_plan("Admission storage", "Removed", platform.display_name)
         for decision in self._monitoring.uninstall(monitoring, command.timeout):
-            _print_plan(*decision)
+            _report_plan(*decision)
         result = self._gateway.finish_uninstall(gateway, command.timeout)
         if result is not None:
-            _print_plan("Gateway Controller", *result)
-        _print_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
-        _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
+            _report_plan("Gateway Controller", *result)
+        # Helm keeps shared NADs across updates and rollback; the platform retires them after its instances.
+        for network in network_definitions:
+            kubectl.delete_object(network, command.timeout)
+        _report_plan("RDMA networking", *self._multus.finish_uninstall(command.timeout))
+        _report_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
+        _report_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
         result = self._load_balancer.finish_uninstall(command.timeout)
         if result is not None:
-            _print_plan("LoadBalancer", *result)
+            _report_plan("LoadBalancer", *result)
         if source_storage:
-            _print_plan("Source build storage", *remove_build_storage(kubectl, platform.namespace, command.timeout))
+            _report_plan("Source build storage", *remove_build_storage(kubectl, platform.namespace, command.timeout))
         forget_install(kubectl)
 
     def _resolve_install(self, command: InstallCommand, source_base_image: str | None) -> _InstallPlan:
@@ -352,10 +361,13 @@ class PlatformLifecycle:
             anonymous_access = command.grafana_auth == "anonymous"
         load_balancer = self._load_balancer.resolve_install(resolve_load_balancer_config(values))
         if load_balancer.blocking:
-            _print_plan("LoadBalancer", load_balancer.action, load_balancer.detail)
+            _report_plan("LoadBalancer", load_balancer.action, load_balancer.detail)
             raise DeploymentError(load_balancer.detail)
-        gateway_config, gateway = self._gateway.resolve_install(command, platform, platform_exists)
-        leader_worker = self._leader_worker.resolve_install()
+        gateway_config, gateway = self._gateway.resolve_install(
+            command, platform, platform_exists, values=values, stored_values=stored[0] if stored else None,
+        )
+        gateway_config = replace(gateway_config, controller_name=gateway.controller_name or gateway_config.controller_name)
+        leader_worker = self._leader_worker.resolve_install(merged)
         discovery = ExporterDiscovery(self._kubectl, command.timeout)
         runtime = self._resolve_runtime(command, install_source, values, stored, discovery.nodes, source_base_image)
         rdma = select_rdma(
@@ -503,7 +515,7 @@ class PlatformLifecycle:
         prepared: _PreparedInstallation, download_proxy: str,
     ) -> None:
         """Finalize native dependencies and commit source provenance only after platform installation."""
-        _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(
+        _report_plan("Model file distribution", *self._model_distribution.finish_uninstall(
             command.timeout, keep_release=plan.model_distribution.release if download_proxy else None,
             keep_proxy_url=download_proxy,
         ))
@@ -514,32 +526,32 @@ class PlatformLifecycle:
                 self._kubectl, runtime.nodes if runtime is not None else (), discovery.daemonsets,
                 (), (plan.platform.name, plan.platform.namespace),
             )
-            _print_plan(
+            _report_plan(
                 "RDMA", "Available" if allocation.available else "Not available",
                 allocation.detail if allocation.available else (
                     "device plugin has no allocatable RDMA pool on the GPU nodes; check node drivers and network interfaces"
                 ),
             )
         for decision in self._gateway.finish_update(plan.gateway, plan.gateway_config, command.timeout):
-            _print_plan(*decision)
+            _report_plan(*decision)
         if plan.load_balancer.install:
-            _print_plan(
+            _report_plan(
                 "LoadBalancer", "Configured",
                 f"{plan.load_balancer.release.display_name} (Layer 2; address allocation is confirmed per Service)",
             )
         if plan.monitoring.reused_prometheus is None:
-            _print_plan("Prometheus", "Ready", self._monitoring.prometheus.display_name)
+            _report_plan("Prometheus", "Ready", self._monitoring.prometheus.display_name)
         if plan.monitoring.managed_nvidia is not None:
-            _print_plan("NVIDIA DCGM Exporter", "Ready", self._monitoring.dcgm.display_name)
+            _report_plan("NVIDIA DCGM Exporter", "Ready", self._monitoring.dcgm.display_name)
         if prepared.source_images is not None:
             record_install(
                 self._kubectl, command, plan.runtime.source_base_image, prepared.source_images.inputs,
                 build_state=prepared.source_images.build_state,
             )
             reconcile_source_resources(self._kubectl, command.timeout)
-        _print_plan("Foretoken platform", "Ready", plan.platform.display_name)
+        _report_plan("Foretoken platform", "Ready", plan.platform.display_name)
         if not plan.load_balancer.install and plan.load_balancer.action != "Reuse":
-            _print_plan(
+            _report_plan(
                 "LoadBalancer support", plan.load_balancer.action,
                 "model services cannot receive external addresses until the cluster assigns LoadBalancer addresses; "
                 "set loadBalancer.managedAddresses in --values to install managed MetalLB",
@@ -553,7 +565,7 @@ class PlatformLifecycle:
             if DEPLOYMENT_RESOURCE in kubectl.api_resource_names("inference.foretoken.io") else ()
         )
         for deployment in deployments:
-            _print_plan("Deployment instance", "Remove", f"{deployment.namespace}/{deployment.name}")
+            _report_plan("Deployment instance", "Remove", f"{deployment.namespace}/{deployment.name}")
             mutation = DeploymentMutation(kubectl, deployment.namespace, deployment.name, timeout, uid=deployment.uid)
             try:
                 with mutation.hold():
@@ -570,24 +582,24 @@ class PlatformLifecycle:
     def _report_install(self, command: InstallCommand, plan: _InstallPlan) -> None:
         """Describe resolved ownership decisions before applying the first dependency change."""
         if command.editable is not None:
-            _print_plan("Source images", "Build", command.editable)
-        _print_plan("LoadBalancer", plan.load_balancer.action, plan.load_balancer.detail)
-        _print_plan("Gateway Controller", plan.gateway.action, plan.gateway.detail)
-        _print_plan("Prometheus", *plan.monitoring.prometheus_decision)
+            _report_plan("Source images", "Build", command.editable)
+        _report_plan("LoadBalancer", plan.load_balancer.action, plan.load_balancer.detail)
+        _report_plan("Gateway Controller", plan.gateway.action, plan.gateway.detail)
+        _report_plan("Prometheus", *plan.monitoring.prometheus_decision)
         for decision in plan.log_decisions:
-            _print_plan(*decision)
+            _report_plan(*decision)
         for decision in plan.monitoring.exporter_decisions:
-            _print_plan(*decision)
-        _print_plan("Inference runtime", *plan.runtime.decision)
-        _print_plan("RDMA", plan.rdma.action, plan.rdma.detail)
-        _print_plan("LeaderWorkerSet", plan.leader_worker.action, plan.leader_worker.detail)
-        _print_plan("Model file distribution", plan.model_distribution.action, plan.model_distribution.detail)
-        _print_plan("Foretoken platform", "Upgrade" if plan.platform_exists else "Install", plan.platform.display_name)
+            _report_plan(*decision)
+        _report_plan("Inference runtime", *plan.runtime.decision)
+        _report_plan("RDMA", plan.rdma.action, plan.rdma.detail)
+        _report_plan("LeaderWorkerSet", plan.leader_worker.action, plan.leader_worker.detail)
+        _report_plan("Model file distribution", plan.model_distribution.action, plan.model_distribution.detail)
+        _report_plan("Foretoken platform", "Upgrade" if plan.platform_exists else "Install", plan.platform.display_name)
 
 
-def _print_plan(responsibility: str, action: str, detail: str) -> None:
-    """Print one stable platform lifecycle decision."""
-    print(f"{responsibility:<28} {action:<20} {detail}")
+def _report_plan(responsibility: str, action: str, detail: str) -> None:
+    """Report one stable platform lifecycle decision."""
+    logger.info("{:<28} {:<20} {}", responsibility, action, detail)
 
 
 def _select_runtime(nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides) -> _RuntimeSelection | None:
@@ -626,9 +638,11 @@ def _select_runtime(nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrid
 
 def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
     """Read one node's allocatable extended-resource capacity."""
+    from kubernetes.utils.quantity import parse_quantity
+
     value = ((node.get("status") or {}).get("allocatable") or {}).get(resource_name)
     try:
-        return int(str(value))
+        return int(parse_quantity(str(value)))
     except (TypeError, ValueError):
         return 0
 

@@ -51,6 +51,9 @@ pub struct SnapshotParallelism {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotModel {
+    /// Earlier controllers publish discovery without the name needed for durable task submission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
     pub service_uid: String,
     pub model: String,
     pub source: ModelSource,

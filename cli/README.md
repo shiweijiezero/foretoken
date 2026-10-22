@@ -80,11 +80,19 @@ foretoken install
 foretoken install -e .
 ```
 
-The cluster needs a default StorageClass, and GPU nodes need their vendor driver and device plugin. New installations use direct `LoadBalancer` access. Updating the platform does not restart existing instances; redeploy an instance to adopt the updated defaults.
+The cluster needs a default StorageClass, and GPU nodes need their vendor driver and device plugin. New installations share one Gateway entry point. Use `--frontend-mode local` for a separate `LoadBalancer` Service per instance. Updating the platform does not restart existing instances; redeploy an instance to adopt the updated defaults.
 
-Use `--frontend-mode gateway` for [Gateway access](../README.md#gateway-mode). To reuse a Gateway, also provide `--gateway-name` and `--gateway-namespace`; select a listener with `--gateway-section-name` when needed.
+To reuse an existing Gateway, specify `--frontend-mode gateway`, `--gateway-name` and `--gateway-namespace`; select a listener with `--gateway-section-name` when needed. Custom domains and HTTPS are covered by [Gateway configuration](../README.md#gateway-mode).
 
 `--values` applies [Helm settings](../deploy/charts/foretoken/values.yaml), and `--oci-registry` selects the registry prefix for default images and Charts. See [Observability](../observability/README.md#platform-settings) for monitoring settings and [model storage](../docs/features/model-storage.md#distribute-models-across-nodes) for shared model distribution.
+
+New managed Gateways listen for HTTP on port 8081. To use another listener port, add the following to `deploy/platform-values.yaml` and pass `--values deploy/platform-values.yaml` with your installation command:
+
+```yaml
+frontend:
+  gateway:
+    port: 8082
+```
 
 For source builds, standard kind and k3d contexts load images directly; other clusters require `--registry`. Explicit `deploy -e PATH` updates only the selected instance's controller and serving applications. A new workstation can use the source-installed platform without reinstalling it. See [source deployment](../docs/deployment/source.md) for setup, engine checkouts and parallel candidates.
 

@@ -6,22 +6,19 @@
 from __future__ import annotations
 
 import json
-import logging
 import mimetypes
 import os
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import snapshot_download
+from loguru import logger
 
 from benchmarks.config.video import (
     VideoDatasetDefaults,
     VideoGenerationRequest,
     VideoInputFile,
 )
-
-logger = logging.getLogger(__name__)
-
 
 _VIDEOARGUS_TASKS = {
     "T2V": "t2va",
@@ -47,7 +44,7 @@ def resolve_video_dataset(path_or_selector: str) -> str:
     local_manifest = _local_videoargus_manifest(selector_task)
     if local_manifest is not None:
         logger.info(
-            "Resolved %s/%s below FORETOKEN_DATA_ROOT",
+            "Resolved {}/{} below FORETOKEN_DATA_ROOT",
             _VIDEOARGUS_ALIAS,
             selector_task,
         )
@@ -56,7 +53,7 @@ def resolve_video_dataset(path_or_selector: str) -> str:
     data_root = _configured_data_root()
     cache_dir = data_root / "huggingface" / "hub" if data_root else None
     logger.info(
-        "Resolving %s/%s through the Hugging Face cache%s",
+        "Resolving {}/{} through the Hugging Face cache{}",
         _VIDEOARGUS_ALIAS,
         selector_task,
         f" at {cache_dir}" if cache_dir else "",

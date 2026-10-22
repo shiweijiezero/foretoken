@@ -24,7 +24,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 1. 部署示例模型
 
-示例默认使用仓库的 `data/` 目录，管理员准备好目录访问后即可直接部署。集群使用其他存储时，先按[模型存储指南](../features/model-storage_zh.md)调整 `examples/quickstart/qwen3-0.6b/cache.yaml`。自定义域名、HTTPS 或限定主机名的监听器需要设置[匹配的 hostname](../../README_zh.md#网关模式)。
+示例使用平台已准备的默认模型存储。需要其他目录或独立卷时，先按[模型存储指南](../features/model-storage_zh.md)配置。自定义域名、HTTPS 或限定主机名的监听器需要设置[匹配的 hostname](../../README_zh.md#网关模式)。
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m

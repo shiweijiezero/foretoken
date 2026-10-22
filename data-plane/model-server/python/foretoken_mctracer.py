@@ -43,6 +43,7 @@ class Capture:
     """Own one worker's collector and terminal until its native report is exported."""
 
     def __init__(self, directory: str) -> None:
+        """Spawn the collector with a worker-local PTY and log retained until stop() exports the report."""
         self.root = Path(directory)
         self.pid = str(os.getpid())
         self.worker = f"{os.environ['FORETOKEN_POD_UID']}-{self.pid}"

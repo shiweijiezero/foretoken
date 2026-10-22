@@ -22,8 +22,6 @@ import (
 
 type backendDeploymentRequiredError struct{ service string }
 
-type modelCatalogProjectionError struct{ service, reason string }
-
 // projectConfiguredModels resolves model discovery and admission together, independently of capacity.
 // Missing selected artifacts exclude only their service unless its published provenance still matches.
 func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, services []inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, previousModels []servingconfig.Model) ([]servingconfig.Model, map[string]servingconfig.Admission, error) {
@@ -88,9 +86,9 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 			servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 				return servingconfig.ServingRevision(service, pool) == ""
 			})
-			identity, selectedTopology, err := selectedCatalogIdentity(service, pools, groups, previousModels)
+			identity, selectedTopology, err := servingconfig.SelectedCatalogIdentity(service, pools, groups, previousModels)
 			if err != nil {
-				var unavailable *modelCatalogProjectionError
+				var unavailable *servingconfig.ModelCatalogProjectionError
 				if !errors.As(err, &unavailable) {
 					return nil, nil, err
 				}
@@ -111,7 +109,7 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 			}
 		}
 		if topology == "" {
-			topology = catalogTopology(roles)
+			topology = servingconfig.CatalogTopology(roles)
 		}
 		identity := identities[0]
 		for _, other := range identities[1:] {
@@ -135,6 +133,7 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 			targetSets = make([][]servingconfig.ScalingTarget, 0)
 		}
 		models = append(models, servingconfig.Model{
+			ServiceName:           service.Name,
 			ServiceGeneration:     service.Generation,
 			ServiceUID:            string(service.UID),
 			Model:                 identity.Model,
@@ -159,99 +158,9 @@ func projectConfiguredModels(frontend *inferencev1alpha1.FrontendService, servic
 	return models, admission, projectionErr
 }
 
-// selectedCatalogIdentity reads immutable selected artifacts, including draining Groups.
-// Only the same published cohort may supply identity after its artifacts disappear.
-func selectedCatalogIdentity(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, previousModels []servingconfig.Model) (servingconfig.Group, string, error) {
-	selectedRevisions := servingconfig.SortedServingPoolRevisions(service.Status.ServingPoolRevisions)
-	var retained *servingconfig.Model
-	for index := range previousModels {
-		model := &previousModels[index]
-		if model.ServiceUID == string(service.UID) && model.Topology != "" && slices.Equal(model.SelectedPoolRevisions, selectedRevisions) {
-			retained = model
-			break
-		}
-	}
-	var identities []servingconfig.Group
-	var roles []inferencev1alpha1.ModelRole
-	var missing []string
-	for _, selected := range selectedRevisions {
-		found := false
-		for poolIndex := range pools {
-			pool := &pools[poolIndex]
-			if !servingconfig.ModelPoolOwnedBy(pool, service) || string(pool.UID) != selected.PoolUID || pool.Spec.PoolName != selected.PoolName {
-				continue
-			}
-			for groupIndex := range groups {
-				group := &groups[groupIndex]
-				if !servingconfig.ModelGroupOwnedBy(group, pool) || group.Spec.Revision != selected.Revision {
-					continue
-				}
-				found = true
-				identity := servingconfig.RoutingGroupForService(service, pool, group)
-				if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
-					features := group.Spec.Features
-					features.Multimodal = nil
-					identity.Capabilities = servingconfig.RoutingCapabilities(features)
-				}
-				identities = append(identities, identity)
-				roles = append(roles, group.Spec.Role)
-			}
-		}
-		if !found {
-			missing = append(missing, fmt.Sprintf("Pool %q revision %q", selected.PoolName, selected.Revision))
-		}
-	}
-	topology := catalogTopology(roles)
-	if retained != nil {
-		// Missing stages keep their published topology; surviving stages must fit it.
-		if len(roles) > 0 && topology != retained.Topology && !(len(missing) > 0 && topology == "P/D" && retained.Topology == "E/P/D") {
-			return servingconfig.Group{}, "", &servingconfig.RoutingIdentityConflictError{Reason: fmt.Sprintf("ModelService %q selected artifacts conflict with its published topology", service.Name)}
-		}
-		topology = retained.Topology
-		published := servingconfig.Group{
-			Model: retained.Model, Source: retained.Source, Revision: retained.Revision,
-			Tokenizer: retained.Tokenizer, TokenizerRevision: retained.TokenizerRevision,
-			PrefixCacheIsolation: retained.PrefixCacheIsolation,
-		}
-		if len(missing) > 0 {
-			published.Capabilities = slices.Clone(retained.Capabilities)
-		}
-		identities = append(identities, published)
-	}
-	// Validate readable artifacts even when another selected stage is unavailable.
-	if len(identities) > 0 {
-		identity := identities[0]
-		for _, other := range identities[1:] {
-			if !servingconfig.MatchingRoutingIdentity(identity, other) {
-				return servingconfig.Group{}, "", &servingconfig.RoutingIdentityConflictError{Reason: fmt.Sprintf("ModelService %q has conflicting selected model identities", service.Name)}
-			}
-			identity.Capabilities = append(identity.Capabilities, other.Capabilities...)
-		}
-		if len(missing) == 0 || retained != nil {
-			return identity, topology, nil
-		}
-	}
-	return servingconfig.Group{}, "", &modelCatalogProjectionError{service: service.Name, reason: fmt.Sprintf("selected %v has no model identity or matching published provenance", missing)}
-}
-
-func catalogTopology(roles []inferencev1alpha1.ModelRole) string {
-	if slices.Contains(roles, inferencev1alpha1.ModelRoleEncoder) {
-		return "E/P/D"
-	}
-	if slices.Contains(roles, inferencev1alpha1.ModelRolePrefill) || slices.Contains(roles, inferencev1alpha1.ModelRoleDecode) {
-		return "P/D"
-	}
-	return "aggregate"
-}
-
 // Error identifies bounded admission that cannot yet share the selected backend ledger.
 func (err *backendDeploymentRequiredError) Error() string {
 	return fmt.Sprintf("ModelService %q and its frontend must be redeployed with the same admission ledger before bounded admission can be applied", err.service)
-}
-
-// Error reports a service-local selected catalog identity that could not be proven.
-func (err *modelCatalogProjectionError) Error() string {
-	return fmt.Sprintf("model catalog projection for ModelService %q: %s", err.service, err.reason)
 }
 
 // configuredTemplateIdentity uses the runtime's backend compiler for pre-serving discovery.

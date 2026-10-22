@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 """Create and remove local kind and k3d development clusters."""
 
 from __future__ import annotations
@@ -99,6 +102,24 @@ def _mount_arguments() -> list[str]:
     return arguments
 
 
+def _rdma_mount_arguments(root: Path) -> list[str]:
+    """Keep RoCE node interfaces in k3d's startup lifecycle, including node restarts."""
+    ports = Path("/sys/class/infiniband").glob("*/ports/*")
+    if not any(
+        (port / "link_layer").read_text().strip() == "Ethernet"
+        and (port / "state").read_text().startswith("4:")
+        for port in ports
+    ):
+        return []
+    script = root / "deploy/k3d/prepare-rdma.sh"
+    if not script.is_file():
+        raise DeploymentError(f"k3d RoCE preparation script not found: {script}")
+    return [
+        "--volume", "/proc/1/ns/net:/run/foretoken/host-network:ro@server:0",
+        "--volume", f"{script.resolve()}:/bin/k3d-entrypoint-rdma.sh:ro@server:0",
+    ]
+
+
 def _refresh_kubeconfig(kind: str, name: str) -> None:
     """Refresh and select the kubeconfig entry written by a local cluster tool."""
     if kind == "kind":
@@ -141,6 +162,7 @@ def _create_k3d(command: ClusterCommand, root: Path) -> None:
         "--gpus", f'"device={command.gpus}"',
         "--volume", f"{data}:{data}@server:0",
         *_mount_arguments(),
+        *_rdma_mount_arguments(root),
     ]
     _run(arguments)
     _refresh_kubeconfig("k3d", command.name)

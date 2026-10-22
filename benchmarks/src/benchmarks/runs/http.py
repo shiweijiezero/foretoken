@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.workload import HttpWorkload, RequestEpisode
@@ -28,12 +29,9 @@ from benchmarks.results.measurements.requests import (
     summarize_measurements,
 )
 from benchmarks.results.output import ResultOutputs
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.recording.requests import request_measurement_record
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.runs.scheduling import run_schedule
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,10 +121,10 @@ class HttpBenchmark:
             nonlocal origin
             origin = value
 
-        def record_completed(response: dict[str, Any]) -> None:
+        async def record_completed(response: dict[str, Any]) -> None:
             """Flush warmup evidence on its own clock before the next conversation turn."""
             item = request_measurement(response, origin)
-            writer.write({
+            await writer.awrite({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
@@ -137,7 +135,7 @@ class HttpBenchmark:
                 None, "warmup", itl, groups, record_completed,
             )
 
-        logger.info("Warmup: %d HTTP requests", benchmark.load.warmup_requests)
+        logger.info("Warmup: {} HTTP requests", benchmark.load.warmup_requests)
         warmup_load = replace(benchmark.load, arrival_rate=-1.0, duration_seconds=None)
         episodes, duration, origin = await run_schedule(
             list(workload.episodes(warmup=True)), execute, warmup_load,
@@ -173,6 +171,7 @@ class HttpBenchmark:
         outputs.start_observers()
         progress = outputs.http_progress(
             stream=benchmark.generation.stream,
+            total=workload.request_count,
             criteria=benchmark.slo.params[0] if benchmark.slo.params else None,
         )
         profile = create_benchmark_profile(benchmark, self.service, outputs.execution_dir)
@@ -186,13 +185,14 @@ class HttpBenchmark:
             if progress is not None:
                 progress.start(value)
 
-        def record_completed(response: dict[str, Any]) -> None:
+        async def record_completed(response: dict[str, Any]) -> None:
             """Flush each formal completion before live progress or another conversation turn."""
             item = request_measurement(response, origin)
-            writer.write({
+            await writer.awrite({
                 **{key: value for key, value in response.items() if key != "started_at"},
                 **request_measurement_record(item, stream=benchmark.generation.stream),
             })
+            outputs.http_request_completed()
 
         async def execute(index, episode, scheduled_at, deadline):
             return await self._execute_episode(
@@ -201,9 +201,10 @@ class HttpBenchmark:
             )
 
         with profile if profile is not None else nullcontext():
-            logger.info("Measurement: %s HTTP requests", workload.request_count or "duration-bounded")
+            logger.info("Measurement: {} HTTP requests", workload.request_count or "duration-bounded")
             async with asyncio.TaskGroup() as tasks:
                 sampler = tasks.create_task(progress.sample()) if progress is not None else None
+                capture_watch = tasks.create_task(profile.watch()) if profile is not None else None
                 try:
                     completed, duration, origin = await run_schedule(
                         episodes, execute, benchmark.load,
@@ -217,8 +218,10 @@ class HttpBenchmark:
                         itl, groups, profile,
                     )
                 finally:
-                    if sampler is not None:
-                        sampler.cancel()
+                    # A cancelled observer may still be joining accepted I/O.
+                    for task in (sampler, capture_watch):
+                        if task is not None and not task.done() and not task.cancelling():
+                            task.cancel()
             # The durable result above survives progress, profile, or transport cleanup failures.
             if progress is not None:
                 progress.emit(duration, final=True)
@@ -255,6 +258,10 @@ class HttpBenchmark:
             gpu_count=self.service.gpu_count if {item.model for item in measurements} == {self.service.model} else None,
             include_normalized_throughput=workload.trace_events is None,
             slo_criteria=criteria, itl_summary=itl.summary(),
+        )
+        metrics["gpu_count"] = (
+            self.service.gpu_count
+            if metrics["throughput"].get("generation_tokens_per_second_per_gpu") is not None else None
         )
         metrics.update(summarize_measurement_groups(
             measurements, total_time=duration, stream=benchmark.generation.stream,
@@ -302,16 +309,6 @@ class HttpBenchmark:
             http_series_published=False,
         )
         outputs.save_measurement(run)
-        if workload.trace_events is not None:
-            artifacts["raw_output"] = write_json(
-                outputs.execution_dir, "raw_output.json", [
-                    {
-                        **{key: value for key, value in row.items() if key != "started_at"},
-                        **request_measurement_record(item, stream=benchmark.generation.stream),
-                    }
-                    for row, item in zip(records, measurements)
-                ], compact=True,
-            )
         return run
 
     async def _execute_episode(
@@ -326,7 +323,7 @@ class HttpBenchmark:
         phase: str,
         itl: ITLStatistics,
         group_itl: dict[str, dict[str, ITLStatistics]],
-        record_completed: Callable[[dict[str, Any]], None],
+        record_completed: Callable[[dict[str, Any]], Awaitable[None]],
         progress: HttpProgress | None = None,
     ) -> EpisodeResult:
         """Advance one conversation, retaining recorded or generated history and request failures."""
@@ -431,7 +428,7 @@ class HttpBenchmark:
             generated_text = response.pop("generated_text")
             response.pop("tool_calls")
             result.records.append(response)
-            record_completed(response)
+            await record_completed(response)
             if progress is not None:
                 progress.observe(request_measurement(response, progress.origin))
             if not response["success"]:

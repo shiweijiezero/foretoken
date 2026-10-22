@@ -76,6 +76,9 @@ pub(super) async fn run(
         } => Some(result.err().unwrap_or_else(|| "capture supervisor stopped".into())),
     };
 
+    if let Some(message) = &failure {
+        warn!(error = %message, "worker runtime failed; stopping its resources");
+    }
     // Diagnostics close before process retirement; observations cannot outlive this member.
     if let Some(profiler) = &profiler {
         profiler.handle().close();
@@ -83,7 +86,13 @@ pub(super) async fn run(
     shutdown.cancel();
     cache_shutdown.cancel();
     let deadline = Instant::now() + config.launch.drain_timeout();
-    engine.shutdown(config.launch.drain_timeout()).await?;
+    if let Err(error) = engine.shutdown(config.launch.drain_timeout()).await {
+        return Err(io::Error::other(match failure {
+            Some(message) => format!("{message}; engine cleanup also failed: {error}"),
+            None => error,
+        })
+        .into());
+    }
     if let Some(profiler) = &mut profiler {
         profiler.engine_stopped("worker runtime terminated").await;
     }

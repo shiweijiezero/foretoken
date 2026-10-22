@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
-from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.helm_client import (
     HelmClient,
     image_repository_tag,
@@ -248,6 +248,7 @@ def collector_values(
     labels = (
         "job=foretoken,"
         "namespace=$kubernetes['namespace_name'],"
+        "app=$kubernetes['labels']['app.kubernetes.io/name'],"
         "pod=$kubernetes['pod_name'],"
         "pod_uid=$kubernetes['pod_id'],"
         "container=$kubernetes['container_name'],"
@@ -310,9 +311,12 @@ def collector_values(
     Match kube.*
     Logical_Op OR
     Regex $kubernetes['labels']['inference.foretoken.io/model-group'] .+
+    Regex $kubernetes['labels']['inference.foretoken.io/model-preparation-group'] .+
     Regex $kubernetes['labels']['inference.foretoken.io/frontend-service'] .+
     Regex $kubernetes['labels']['inference.foretoken.io/kv-group'] .+
-    Regex $kubernetes['labels']['app.kubernetes.io/name'] ^foretoken-control-plane$
+    Regex $kubernetes['labels']['inference.foretoken.io/video-task'] .+
+    Regex $kubernetes['labels']['inference.foretoken.io/model-cache-collection'] .+
+    Regex $kubernetes['labels']['app.kubernetes.io/name'] ^foretoken-(control-plane|deployment-manager|model-cache-collection|admission-store|response-store|rdma|application-files)$
 """,
             "outputs": f"""[OUTPUT]
     Name loki

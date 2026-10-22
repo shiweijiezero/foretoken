@@ -29,7 +29,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 修改上游源码后重新生成 unified diff。共享行为放在 `common/`，接口差异放在 `compatibility/`。在受影响的源码版本上检查所选补丁，并实际运行改动的功能。
 
-模型镜像通过 `apply.py`、引擎源码构建通过 `vllm_patches.py` 的 `engine_patches()` 选择 Python 规则；Rust 源码准备选择清单中的 `rust` 条目。重复执行准备或镜像构建，检查已应用补丁的源码能否复用。
+模型镜像通过 `apply.py`、引擎源码构建通过 `vllm_patches.py` 的 `engine_patches()` 选择 Python 规则；Rust 构建和源码维护通过 `source.rs` 准备清单中的 `rust` 条目。重复执行准备或镜像构建，检查已应用补丁的源码能否复用。
 
 镜像和源码构建共用 `vllm_patches.py` 中的依赖适配。更新依赖时，保留引擎镜像的 NCCL override 和其他组件仍需使用的包。
 

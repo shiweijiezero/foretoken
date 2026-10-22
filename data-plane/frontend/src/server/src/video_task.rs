@@ -123,7 +123,8 @@ impl VideoTaskClient {
     /// Persists generation intent and stages inputs, returning the task ID to the API adapter.
     pub(crate) async fn create(
         &self,
-        model_service: &str,
+        model: &str,
+        service: &crate::VideoServiceReference,
         mut request: VideoTaskRequest,
     ) -> Result<String, StatusCode> {
         let id = format!("video-{}", Uuid::new_v4());
@@ -154,7 +155,8 @@ impl VideoTaskClient {
             "spec": {
                 "frontendUID": self.frontend_uid,
                 "inputsReady": inputs_ready,
-                "modelServiceRef": {"name": model_service},
+                "model": model,
+                "modelServiceRef": service,
                 "request": request,
                 "worker": {
                     "image": self.worker_image,

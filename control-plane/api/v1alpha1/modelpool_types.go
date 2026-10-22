@@ -118,6 +118,22 @@ type HuggingFaceAccess struct {
 	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
 }
 
+// LeaderWorkerScheduling selects native placement and quota admission for distributed execution.
+// The platform freezes these independent choices before model workloads are created.
+type LeaderWorkerScheduling struct {
+	// VolcanoQueueName selects Volcano group placement; omission keeps the ordinary scheduler.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	VolcanoQueueName string `json:"volcanoQueueName,omitempty"`
+
+	// KueueLocalQueueName selects quota admission in the workload's namespace.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	KueueLocalQueueName string `json:"kueueLocalQueueName,omitempty"`
+}
+
 // ApplicationSelection pins trusted platform execution settings until an explicit deployment.
 // Controllers persist it before creating consumers so recovery never reselects platform defaults.
 type ApplicationSelection struct {
@@ -144,6 +160,14 @@ type ApplicationSelection struct {
 	// +optional
 	// +kubebuilder:validation:Maximum=1
 	InstanceAdmissionProtocol uint32 `json:"instanceAdmissionProtocol,omitempty"`
+}
+
+// ModelApplicationSelection retains model execution and distributed queue choices until redeployment.
+type ModelApplicationSelection struct {
+	ApplicationSelection `json:",inline"`
+	// LeaderWorkerScheduling retains placement and quota queues when platform defaults change.
+	// +optional
+	LeaderWorkerScheduling *LeaderWorkerScheduling `json:"leaderWorkerScheduling,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -177,7 +201,7 @@ type NormalizedPoolTemplate struct {
 
 	// Application is selected by the ModelService controller, not by user model intent.
 	// +optional
-	Application *ApplicationSelection `json:"application,omitempty"`
+	Application *ModelApplicationSelection `json:"application,omitempty"`
 
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+// Lists the capacity-recommendation algorithms compiled into the controller.
 package decision
 
 import "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"

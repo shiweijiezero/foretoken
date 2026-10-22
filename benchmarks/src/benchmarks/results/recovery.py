@@ -5,19 +5,22 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import wandb
+from loguru import logger
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig
 from benchmarks.results.plots.export import render_results
-from benchmarks.results.recording.directories import result_sources
-from benchmarks.results.recording.files import write_json
+from benchmarks.results.recording.database import (
+    read_record,
+    read_records,
+    write_records,
+)
+from benchmarks.results.recording.directories import record_directories, result_sources
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.recovery import (
     measurement_complete,
@@ -28,8 +31,6 @@ from benchmarks.results.recording.tasks import completed_measurement, task_sourc
 from benchmarks.results.types import BenchmarkRun
 from benchmarks.results.wandb.publication import publish_saved_wandb, sync_publication
 
-logger = logging.getLogger(__name__)
-
 
 def recover_results(directory: Path, outputs: BenchmarkOutputConfig) -> BenchmarkRun:
     """Finish completed children before their aggregate, retaining each original measurement and run."""
@@ -37,12 +38,12 @@ def recover_results(directory: Path, outputs: BenchmarkOutputConfig) -> Benchmar
     for source in result_sources(directory):
         if source == directory:
             continue
-        context = json.loads((source / "context.json").read_text())
+        context = read_record(source, "context.json")
         if measurement_complete(source, context):
             recover_publication(source, outputs.for_child_run())
         elif (
             outputs.includes("wandb") and wandb.setup().settings.mode not in {"offline", "dryrun", "disabled"}
-            and ((source / "wandb.json").is_file() or any((source / "wandb").glob("*/run-*.wandb")))
+            and (read_records(source, ("wandb.json",)) or any((source / "wandb").glob("*/run-*.wandb")))
         ):
             sync_publication(source)
     return recover_publication(directory, outputs)
@@ -52,7 +53,7 @@ def recover_publication(directory: Path, outputs: BenchmarkOutputConfig) -> Benc
     """Own saved-output finalization after any active recorder releases its measurement."""
     directory = directory.resolve()
     with publication_lock(directory):
-        context = json.loads((directory / "context.json").read_text())
+        context = read_record(directory, "context.json")
         if not measurement_complete(directory, context):
             raise ValueError(f"No completed measurement to recover in {directory}")
         publication = publication_inputs(directory, context)
@@ -70,8 +71,8 @@ def recover_publication(directory: Path, outputs: BenchmarkOutputConfig) -> Benc
             publication.update(
                 publication_pending=mode in {"offline", "dryrun"}, recovered_at=datetime.now(UTC).isoformat(),
             )
-            write_json(str(directory), "publication.json", publication)
-        logger.info("Recovered saved results without measurement: %s", directory)
+            write_records(directory, {"publication.json": publication})
+        logger.info("Recovered saved results without measurement: {}", directory)
         return run
 
 
@@ -88,7 +89,7 @@ def prepare_task_resume(
     destination = destination.resolve()
     if destination.is_relative_to(source):
         raise ValueError("Resume output must be outside the original result directory")
-    previous = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    previous = read_record(source, "config.json")
 
     def workload(value: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -98,17 +99,19 @@ def prepare_task_resume(
 
     if "base" not in previous or workload(previous) != workload(plan):
         raise ValueError("Resume requires the same workload, service choices, and repetitions as the saved run")
-    for path in source.rglob("task.json"):
-        task = completed_measurement(path.parent)
+    for path in record_directories(source, "task.json"):
+        task = completed_measurement(path)
         if task is None:
             continue
-        origin = task_source(path.parent)
+        origin = task_source(path)
         if not origin.is_dir():
             raise ValueError(f"Original task artifacts are missing: {origin}")
-        if (origin / "context.json").is_file():
+        if read_records(origin, ("context.json",)):
             recover_publication(origin, outputs.for_child_run())
-        target = destination / path.parent.relative_to(source)
+        target = destination / path.relative_to(source)
         target.mkdir(parents=True, exist_ok=True)
-        write_json(str(target), "task.json", {
-            **task, "source": os.path.relpath(origin, target),
-        })
+        with publication_lock(target):
+            write_records(target, {"task.json": {
+                "status": "completed", "exit_code": task["exit_code"],
+                "source": os.path.relpath(origin, target),
+            }})

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import sys
 import time
@@ -15,6 +14,8 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.integrations.video.client import VideoGenerationClient
@@ -30,8 +31,6 @@ from benchmarks.results.recording.video import (
 from benchmarks.results.reporting.video import video_result_sinks
 from benchmarks.results.types import BenchmarkRun
 
-logger = logging.getLogger(__name__)
-
 
 async def run_video_benchmark(
     config: VideoBenchmarkConfig,
@@ -42,7 +41,7 @@ async def run_video_benchmark(
     """Send video requests and persist generated media, samples, and metrics."""
     if dry_run:
         logger.info(
-            "Video dry run validated config:\n%s",
+            "Video dry run validated config:\n{}",
             json.dumps(config.to_dict(), indent=2, ensure_ascii=False),
         )
         return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True, "exit_code": 0}
@@ -59,7 +58,7 @@ async def run_video_benchmark(
         await require_health_endpoint(config.endpoint.health_url)
         logger.info("Video server health check passed")
         run_dir = Path(outputs.execution_dir)
-        outputs.open(record)
+        outputs.open(record, configuration=config.to_dict())
         if config.warmup_requests:
             warmup_dir = run_dir / "warmup"
             warmup_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +136,7 @@ async def _run_requests(
             result = await client.generate(request, index, output)
             # Retain completed requests before SDK publication so interruption
             # never discards their media paths, timings, or failure details.
-            writer.write(video_result_record(result, Path(outputs.execution_dir)))
+            await writer.awrite(video_result_record(result, Path(outputs.execution_dir)))
             return result
         finally:
             semaphore.release()
@@ -147,7 +146,7 @@ async def _run_requests(
         ffprobe_warning = await client.prepare_video_validation()
         if ffprobe_warning is not None:
             logger.warning(
-                "Generated video metadata validation is disabled: %s",
+                "Generated video metadata validation is disabled: {}",
                 ffprobe_warning,
             )
         if not warmup:
@@ -179,13 +178,13 @@ async def _run_requests(
                 outputs.publish_progress(row, axis="video/completed_requests")
             if result.success:
                 logger.info(
-                    "%s request %s completed: %s completed, %s successful, %s failed; client latency %.2fs",
+                    "{} request {} completed: {} completed, {} successful, {} failed; client latency {:.2f}s",
                     "Warmup video" if warmup else "Video", result.sample_id,
                     completed, successful, completed - successful, result.client_e2e_s,
                 )
             else:
                 logger.error(
-                    "%s request %s failed after %.2fs: %s",
+                    "{} request {} failed after {:.2f}s: {}",
                     "Warmup video" if warmup else "Video", result.sample_id,
                     result.client_e2e_s, result.error,
                 )

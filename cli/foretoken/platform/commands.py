@@ -8,9 +8,9 @@ from __future__ import annotations
 import os
 
 from foretoken.arguments import InstallCommand, UninstallCommand
-from foretoken.command_execution import CommandExecution
 from foretoken.kubernetes.client import timeout_seconds
 from foretoken.platform.lifecycle import PlatformLifecycle
+from foretoken.processes.execution import CommandExecution
 
 
 def install(command: InstallCommand) -> None:

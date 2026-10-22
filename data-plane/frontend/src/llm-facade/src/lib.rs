@@ -17,6 +17,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use thiserror::Error;
+use tracing::Instrument;
 use vllm_llm::{GenerateOutput, GenerateRequest};
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<GenerateOutput, LlmFacadeError>> + Send>>;
 
@@ -65,6 +66,27 @@ pub trait LlmFacade: Send + Sync {
     async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError>;
 }
 
+/// Resolves selected execution stages without exposing registry ownership.
+pub trait LlmFacadeResolver: Send + Sync {
+    /// Resolves exactly one selected stage. Router Core keeps all health,
+    /// capacity, topology, and pipeline-scope decisions; execution only opens endpoints.
+    fn resolve_stage(
+        &self,
+        decision: &RouteDecision,
+        stage: RouteStage,
+    ) -> Option<Arc<dyn LlmFacade>>;
+
+    /// Returns the P/D transport selected by this Prefill component's runtime profile.
+    fn pd_connector(
+        &self,
+        prefill: &RouteDecision,
+    ) -> Option<foretoken_model_protocol::KvConnector>;
+
+    /// Returns the selected Prefill's bootstrap endpoint for Mooncake dispatch.
+    /// NIXL uses its producer descriptor and does not require a bootstrap endpoint.
+    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
+}
+
 /// Best-effort cleanup for execution stages that have been admitted but not completed.
 ///
 /// Register a stage before its `generate` future is awaited.  Dropping the guard aborts every
@@ -73,6 +95,11 @@ pub trait LlmFacade: Send + Sync {
 pub struct MultiStageCleanup {
     stages: Vec<(Arc<dyn LlmFacade>, String)>,
     runtime: Option<tokio::runtime::Handle>,
+}
+
+struct CleanupStream {
+    stream: TokenStream,
+    cleanup: MultiStageCleanup,
 }
 
 impl Default for MultiStageCleanup {
@@ -123,6 +150,8 @@ impl MultiStageCleanup {
         self.stages.clear();
     }
 
+    /// Transfers unfinished stage IDs to best-effort abort requests when the workflow loses its consumer.
+    /// Native termination, rather than this detached acknowledgement, releases execution capacity.
     fn spawn_abort(&mut self) {
         if self.stages.is_empty() {
             return;
@@ -133,11 +162,14 @@ impl MultiStageCleanup {
             .clone()
             .or_else(|| tokio::runtime::Handle::try_current().ok());
         if let Some(runtime) = runtime {
-            runtime.spawn(async move {
-                for (facade, request_id) in stages {
-                    let _ = facade.abort(&[request_id]).await;
+            runtime.spawn(
+                async move {
+                    for (facade, request_id) in stages {
+                        let _ = facade.abort(&[request_id]).await;
+                    }
                 }
-            });
+                .in_current_span(),
+            );
         }
     }
 }
@@ -146,11 +178,6 @@ impl Drop for MultiStageCleanup {
     fn drop(&mut self) {
         self.spawn_abort();
     }
-}
-
-struct CleanupStream {
-    stream: TokenStream,
-    cleanup: MultiStageCleanup,
 }
 
 impl Stream for CleanupStream {
@@ -175,25 +202,4 @@ impl Stream for CleanupStream {
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-/// Resolves selected execution stages without exposing registry ownership.
-pub trait LlmFacadeResolver: Send + Sync {
-    /// Resolves exactly one selected stage. Router Core keeps all health,
-    /// capacity, topology, and pipeline-scope decisions; execution only opens endpoints.
-    fn resolve_stage(
-        &self,
-        decision: &RouteDecision,
-        stage: RouteStage,
-    ) -> Option<Arc<dyn LlmFacade>>;
-
-    /// Returns the P/D transport selected by this Prefill component's runtime profile.
-    fn pd_connector(
-        &self,
-        prefill: &RouteDecision,
-    ) -> Option<foretoken_model_protocol::KvConnector>;
-
-    /// Returns the selected Prefill's bootstrap endpoint for Mooncake dispatch.
-    /// NIXL uses its producer descriptor and does not require a bootstrap endpoint.
-    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
 }

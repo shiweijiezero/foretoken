@@ -6,9 +6,7 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 from foretoken.errors import DeploymentError
@@ -93,16 +91,9 @@ def select_rdma(
             owned_plugin = True
             if managed is False:
                 continue
-        for node in nodes:
-            allocatable = node.get("status", {}).get("allocatable", {})
-            for name in resources:
-                # Kubernetes serializes large allocations as quantities such as
-                # 1k. Their coefficient is sufficient to determine availability.
-                coefficient = re.split(
-                    r"[a-zA-Z]", str(allocatable.get(name, 0)), maxsplit=1
-                )[0]
-                if Decimal(coefficient) > 0:
-                    available.add(name)
+        for name in resources:
+            if nodes_with_rdma_allocation(nodes, name):
+                available.add(name)
     if managed is None:
         managed = not external_plugins
     if managed:
@@ -137,6 +128,18 @@ def select_rdma(
         None, "Unavailable",
         "no shared RDMA allocation on the selected GPU nodes; "
         "set rdma.managed=true to provision the device plugin on RDMA-capable nodes",
+    )
+
+
+def nodes_with_rdma_allocation(
+    nodes: tuple[dict[str, Any], ...], resource_name: str,
+) -> tuple[dict[str, Any], ...]:
+    """Return nodes that can consume the selected shared allocation for device and network preparation."""
+    from kubernetes.utils.quantity import parse_quantity
+
+    return tuple(
+        node for node in nodes
+        if parse_quantity(node.get("status", {}).get("allocatable", {}).get(resource_name, "0")) > 0
     )
 
 

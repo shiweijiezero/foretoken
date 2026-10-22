@@ -402,7 +402,7 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "--frontend-mode",
         choices=("local", "gateway"),
-        help="frontend access mode; new releases default to local",
+        help="gateway shares one entry point; local uses a separate LoadBalancer Service per instance",
     )
     install.add_argument(
         "--gateway-name",

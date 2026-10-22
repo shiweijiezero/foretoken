@@ -64,6 +64,7 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/bin/foretoken-model-server /usr/local/bin/foretoken-omni-model-server
 COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/foretoken_prepare.py
+COPY data-plane/model-server/python/foretoken_model_sources/ /opt/foretoken/python/foretoken_model_sources/
 ENTRYPOINT ["foretoken-omni-model-server"]
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime
@@ -91,7 +92,8 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 tzdata \
     && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
-    && "$python_path" -c 'from importlib.metadata import version; print("torch==" + version("torch")); print("vllm==" + version("vllm"))' > /tmp/foretoken-engine-constraints.txt \
+    && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
+      'from vllm_patches import runtime_constraints; print("\n".join(f"{name}==={version}" for name, version in sorted(runtime_constraints(set()).items())))' > /tmp/foretoken-engine-constraints.txt \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \

@@ -38,9 +38,9 @@ In Grafana Explore, select Foretoken Logs and a time range. For the Quick Start 
 {job="foretoken", namespace="foretoken-demo"}
 ```
 
-Narrow the query with `pod`, `container`, `node`, or `stream`. Append `|~ "(?i)error"` to find errors, or `|= "request-id"` with the identifier you are investigating.
+Narrow the query with `pod`, `container`, `node`, or `stream`. Query platform services across namespaces with `app`, for example `{job="foretoken", app="foretoken-deployment-manager"}`. Append `|~ "(?i)error"` to find errors, or `|= "request-id"` with the identifier you are investigating.
 
-Collection includes model servers and their inference engines, frontends, KV services, and the controller. Collected logs remain queryable after a serving Pod or its namespace is deleted.
+Collection includes model servers and their inference engines, model preparation jobs, frontends, KV services, video workers, cache cleanup jobs, and platform services. Collected logs remain queryable after a Pod or its namespace is deleted.
 
 ## Alerts
 

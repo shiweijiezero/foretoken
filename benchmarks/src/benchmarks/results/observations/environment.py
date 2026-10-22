@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import platform
 import subprocess
 import time
@@ -20,10 +19,9 @@ from foretoken.deployment.manifest import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
 from foretoken.platform.config import default_platform_config
+from loguru import logger
 
 from benchmarks.model_service import ModelService
-
-logger = logging.getLogger(__name__)
 
 OBSERVATION_TIMEOUT_SECONDS = 5.0
 
@@ -53,7 +51,7 @@ def client_environment(*, deadline: float | None = None) -> dict[str, Any]:
             source = {"commit": commit, "dirty": bool(changed)}
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             source = {"error": str(error)}
-            logger.warning("Client source observation unavailable: %s", error)
+            logger.warning("Client source observation unavailable: {}", error)
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -178,7 +176,7 @@ def serving_environment(service: ModelService, *, deadline: float | None = None)
                 })
     except DeploymentError as error:
         snapshot["error"] = str(error)
-        logger.warning("Serving environment snapshot incomplete: %s", error)
+        logger.warning("Serving environment snapshot incomplete: {}", error)
     return snapshot
 
 

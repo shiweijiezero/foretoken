@@ -44,6 +44,7 @@ P/D 使用 Mooncake。两端的目标节点都有可分配的 RDMA 设备时，F
 ```bash
 foretoken deploy examples/feature/encoder-prefill-decode --timeout 20m
 export FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/feature/encoder-prefill-decode)"
+export FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/feature/encoder-prefill-decode --host)"
 ```
 
 ## 发送图片请求
@@ -70,7 +71,10 @@ body = {
 request = Request(
     os.environ["FORETOKEN_FRONTEND_URL"] + "/v1/chat/completions",
     data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json"},
+    headers={
+        "Content-Type": "application/json",
+        "Host": os.environ["FORETOKEN_REQUEST_HOST"],
+    },
 )
 with urlopen(request, timeout=300) as response:
     print(json.load(response)["choices"][0]["message"]["content"])

@@ -13,6 +13,7 @@ class PrefixLookupServer:
     """Own one read-only JSON request socket until its engine worker shuts down."""
 
     def __init__(self, endpoint: str, lookup: Callable[[dict], dict]):
+        """Start the responder thread; close() joins it before releasing the owned ZMQ context."""
         self._endpoint = endpoint
         self._lookup = lookup
         self._stopping = threading.Event()

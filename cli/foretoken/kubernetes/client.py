@@ -16,10 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from foretoken.command_execution import command_deadline, run_command
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.mutation import mutation_lock_fds
-from foretoken.tools import resolve_tool
+from foretoken.processes.execution import command_deadline, run_command
+from foretoken.processes.tools import resolve_tool
 
 
 @dataclass(frozen=True)
@@ -217,7 +217,11 @@ class Kubectl:
             timeout=timeout_seconds(timeout),
         )
         if wait:
-            self.wait_deleted(value["kind"], metadata, timeout)
+            # A CRD's resource name can differ from its Kind, including punctuation.
+            name = resource["name"]
+            if "/" in version:
+                name += "." + version.split("/", 1)[0]
+            self.wait_deleted(name, metadata, timeout)
 
     def wait_deleted(
         self, resource: str, metadata: dict[str, Any], timeout: str

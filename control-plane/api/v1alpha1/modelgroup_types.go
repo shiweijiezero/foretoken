@@ -65,6 +65,9 @@ type RDMAAllocation struct {
 	ResourceName string `json:"resourceName"`
 	// +kubebuilder:validation:Minimum=1
 	ResourceCount int32 `json:"resourceCount"`
+	// Networks are platform-prepared Multus attachments, used when a Pool selects no explicit network.
+	// +optional
+	Networks []string `json:"networks,omitempty"`
 }
 
 // P/D connector identities use the class names consumed by the vLLM adapter.
@@ -209,6 +212,10 @@ const InstanceAdmissionFileProtocol uint32 = 1
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
+	// LeaderWorkerScheduling fixes native placement and quota admission across platform updates.
+	// +optional
+	LeaderWorkerScheduling *LeaderWorkerScheduling `json:"leaderWorkerScheduling,omitempty"`
+
 	// PreparationVersion selects native acquisition (0), vLLM preparation (1), or shared-cache preparation (2).
 	// +optional
 	// +kubebuilder:validation:Minimum=0

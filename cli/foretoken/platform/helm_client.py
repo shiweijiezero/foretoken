@@ -18,19 +18,20 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from loguru import logger
 
-from foretoken.command_execution import CommandExecution, run_command
-from foretoken.errors import DeploymentError
-from foretoken.kubernetes.client import Kubectl, ResourceRef
-from foretoken.kubernetes.documents import decode_resources
-from foretoken.network_sources import (
+from foretoken.downloads.sources import (
     select_github_download,
     select_platform_image_sources,
     select_platform_oci_reference,
 )
+from foretoken.errors import DeploymentError
+from foretoken.kubernetes.client import Kubectl, ResourceRef
+from foretoken.kubernetes.documents import decode_resources
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
-from foretoken.tools import resolve_tool
+from foretoken.processes.execution import CommandExecution, run_command
+from foretoken.processes.tools import resolve_tool
 
 
 class HelmCommandError(DeploymentError):
@@ -107,7 +108,7 @@ class HelmClient:
                             execution.check()
                         if index == len(candidates) - 1:
                             raise
-                        print("Chart mirror unavailable; using the original source", flush=True)
+                        logger.warning("Chart mirror unavailable; using the original source")
                         continue
                     (metadata,) = destination.glob("*/Chart.yaml")
                     chart = metadata.parent
@@ -157,7 +158,7 @@ class HelmClient:
         images = {}
         for path in paths:
             owner = path.split(".", 1)[0]
-            if overrides.get("global", {}).get("imageRegistry"):
+            if any(overrides.get("global", {}).get(key) for key in ("imageRegistry", "systemDefaultRegistry")):
                 continue
             try:
                 explicit = value_at(overrides, path)
@@ -167,6 +168,12 @@ class HelmClient:
                 continue
             image = merge_values(value_at(values, path), explicit)
             repository = image["repository"]
+            if not image.get("registry"):
+                host, separator, _ = repository.partition("/")
+                if not separator:
+                    repository = "docker.io/library/" + repository
+                elif "." not in host and ":" not in host and host != "localhost":
+                    repository = "docker.io/" + repository
             version = versions.get(owner, versions[""])
             tag = image.get("tag") or (f"v{version}" if path in version_prefixes else version)
             if path in distroless_paths and image.get("distroless"):

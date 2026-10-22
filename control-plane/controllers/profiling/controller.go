@@ -66,6 +66,17 @@ type profileObservation struct {
 	Capture           *profileRecord `json:"capture"`
 }
 
+// profileCaptureProgress summarizes one ordered pass over the fixed capture participants.
+type profileCaptureProgress struct {
+	action       string
+	allDone      bool
+	anyStopping  bool
+	capturing    int
+	completed    int32
+	gpuActive    int
+	hasArtifacts bool
+}
+
 // Reconcile persists recovery state before starting work, then observes the same runtime identities.
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	run := new(inferencev1alpha1.ProfileRun)
@@ -143,44 +154,74 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	if err != nil || duration < time.Millisecond {
 		return ctrl.Result{}, fmt.Errorf("capture duration must be at least 1ms: %q", run.Spec.Duration)
 	}
-	allDone, anyStopping := true, false
-	capturing := 0
-	completed := int32(0)
-	gpuActive := 0
-	hasArtifacts := false
+	progress, err := r.reconcileCaptureParticipants(ctx, run, plan, pods, action, duration)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	run.Status.Participants, run.Status.CompletedParticipants = int32(len(plan.Participants)), progress.completed
+	run.Status.Phase = "Starting"
+	if progress.capturing == len(plan.Participants) {
+		run.Status.Phase = "Capturing"
+	}
+	if progress.anyStopping || progress.action != "Capture" {
+		run.Status.Phase = "Stopping"
+	}
+	if progress.allDone {
+		now := metav1.Now()
+		run.Status.FinishedAt = &now
+		switch {
+		case run.Status.Reason != "":
+			run.Status.Phase = "Failed"
+		case progress.action == "Cancel":
+			run.Status.Phase = "Cancelled"
+		default:
+			run.Status.Phase = "Succeeded"
+			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", progress.gpuActive, len(plan.Participants))
+		}
+		if progress.hasArtifacts {
+			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: plan.ArtifactDirectory}
+		}
+	}
+	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
+}
+
+// reconcileCaptureParticipants advances the fixed cohort and returns its observed progress.
+// A participant failure cancels later operations in this pass without replacing the first failure.
+func (r *Reconciler) reconcileCaptureParticipants(ctx context.Context, run *inferencev1alpha1.ProfileRun, plan inferencev1alpha1.ProfileExecutionPlan, pods map[string]*corev1.Pod, action string, duration time.Duration) (profileCaptureProgress, error) {
+	progress := profileCaptureProgress{action: action, allDone: true}
 	for _, participant := range plan.Participants {
 		if profileParticipantStopped(run, participant) {
-			action = "Cancel"
+			progress.action = "Cancel"
 			continue
 		}
 		pod := pods[participant.PodUID]
 		if pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
-			allDone = false
+			progress.allDone = false
 			if run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "StopUnconfirmed", "waiting for the selected engine containers to stop"
 			}
-			action = "Cancel"
+			progress.action = "Cancel"
 			continue
 		}
 		observation, err := r.profileHTTP(ctx, participant.Endpoint, string(run.UID), nil)
 		if err != nil {
 			// Loss of contact is not evidence that an engine stopped. Keep the finalizer and plan.
-			allDone = false
+			progress.allDone = false
 			if run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "RuntimeUnreachable", err.Error()
 			}
-			action = "Cancel"
+			progress.action = "Cancel"
 			continue
 		}
 		if observation.RuntimeID != participant.RuntimeID || observation.PodUID != participant.PodUID || observation.GroupUID != participant.GroupUID || observation.RuntimeCacheClaim != plan.RuntimeCacheClaim {
-			allDone = false
+			progress.allDone = false
 			if run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "RuntimeReplaced", "the selected engine process was replaced"
 			}
-			action = "Cancel"
+			progress.action = "Cancel"
 			continue
 		}
-		if observation.Capture == nil || (!profileTerminal(observation.Capture.Phase) && action != "Capture") {
+		if observation.Capture == nil || (!profileTerminal(observation.Capture.Phase) && progress.action != "Capture") {
 			operation := struct {
 				RunUID     string `json:"runUid"`
 				RuntimeID  string `json:"runtimeId"`
@@ -188,28 +229,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 				Action     string `json:"action"`
 				DurationMS int64  `json:"durationMs"`
 				Engine     string `json:"engine,omitempty"`
-			}{string(run.UID), participant.RuntimeID, participant.GroupUID, action, duration.Milliseconds(), ""}
+			}{string(run.UID), participant.RuntimeID, participant.GroupUID, progress.action, duration.Milliseconds(), ""}
 			// Existing PyTorch runtimes predate the engine field and reject unknown fields.
 			if run.Spec.Engine != "pytorch" {
 				operation.Engine = run.Spec.Engine
 			}
 			observation, err = r.profileHTTP(ctx, participant.Endpoint, string(run.UID), operation)
 			if err != nil {
-				allDone = false
+				progress.allDone = false
 				if run.Status.Reason == "" {
 					run.Status.Reason, run.Status.Message = "ControlFailed", err.Error()
 				}
-				action = "Cancel"
+				progress.action = "Cancel"
 				continue
 			}
 		}
 		record := observation.Capture
 		if record == nil || record.RunUID != string(run.UID) {
-			return ctrl.Result{}, fmt.Errorf("runtime returned an invalid capture identity")
+			return profileCaptureProgress{}, fmt.Errorf("runtime returned an invalid capture identity")
 		}
 		expectedArtifact := path.Join(plan.ArtifactDirectory, participant.RuntimeID)
 		if record.ArtifactDir != nil && *record.ArtifactDir == expectedArtifact {
-			hasArtifacts = true
+			progress.hasArtifacts = true
 		}
 		if record.StartedAtUnixMS != nil {
 			started := metav1.NewTime(time.UnixMilli(*record.StartedAtUnixMS))
@@ -223,7 +264,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 				nativeStopped = *record.NativeStopped
 			}
 			if !nativeStopped {
-				allDone = false
+				progress.allDone = false
 			}
 		}
 		switch record.Phase {
@@ -232,51 +273,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 				if run.Status.Reason == "" {
 					run.Status.Reason, run.Status.Message = "InvalidArtifact", "runtime did not publish the expected artifact reference"
 				}
-				action = "Cancel"
+				progress.action = "Cancel"
 			} else {
-				completed++
+				progress.completed++
 				if record.GPUActivity != nil && *record.GPUActivity {
-					gpuActive++
+					progress.gpuActive++
 				}
 			}
 		case "Cancelled", "Failed":
 			if record.Phase == "Failed" && run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "CaptureFailed", record.Message
 			}
-			action = "Cancel"
+			progress.action = "Cancel"
 		default:
-			allDone = false
+			progress.allDone = false
 			if record.Phase == "Capturing" {
-				capturing++
+				progress.capturing++
 			}
-			anyStopping = anyStopping || record.Phase == "Stopping"
+			progress.anyStopping = progress.anyStopping || record.Phase == "Stopping"
 		}
 	}
-	run.Status.Participants, run.Status.CompletedParticipants = int32(len(plan.Participants)), completed
-	run.Status.Phase = "Starting"
-	if capturing == len(plan.Participants) {
-		run.Status.Phase = "Capturing"
-	}
-	if anyStopping || action != "Capture" {
-		run.Status.Phase = "Stopping"
-	}
-	if allDone {
-		now := metav1.Now()
-		run.Status.FinishedAt = &now
-		switch {
-		case run.Status.Reason != "":
-			run.Status.Phase = "Failed"
-		case action == "Cancel":
-			run.Status.Phase = "Cancelled"
-		default:
-			run.Status.Phase = "Succeeded"
-			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
-		}
-		if hasArtifacts {
-			run.Status.Artifact = &inferencev1alpha1.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: plan.ArtifactDirectory}
-		}
-	}
-	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
+	return progress, nil
 }
 
 // profileCohortUnchanged detects scale/replacement changes without retargeting the fixed execution plan.

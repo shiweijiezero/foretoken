@@ -10,7 +10,11 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from pydantic import ConfigDict, TypeAdapter
+
 OutputTokenLimit = int | list[int]
+_DURATION = TypeAdapter(str | float, config=ConfigDict(strict=True, hide_input_in_errors=True))
+_OUTPUT_TOKEN_LIMIT = TypeAdapter(OutputTokenLimit, config=ConfigDict(strict=True, hide_input_in_errors=True))
 
 
 @dataclass
@@ -608,6 +612,7 @@ class BenchmarkConfig:
 
 def parse_duration_seconds(value: str | float) -> float:
     """Convert CLI and sweep time values to seconds; unitless values are seconds."""
+    value = _DURATION.validate_python(value)
     if not isinstance(value, str):
         return float(value)
     match = re.fullmatch(
@@ -625,6 +630,7 @@ def parse_duration_seconds(value: str | float) -> float:
 
 def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
     """Normalize a fixed CLI max-tokens value or range into the internal representation."""
+    value = _OUTPUT_TOKEN_LIMIT.validate_python(value)
     if isinstance(value, int):
         if value < 0:
             raise ValueError(f"max-tokens must be >= 0, got {value}")

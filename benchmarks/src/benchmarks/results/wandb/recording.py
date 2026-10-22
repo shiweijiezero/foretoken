@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -14,13 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from loguru import logger
 
-from benchmarks.results.recording.files import write_json
+from benchmarks.results.recording.database import write_records
 from benchmarks.results.recording.logs import print_result_location
 from benchmarks.results.types import BenchmarkRun, ResultConfiguration, _WandbPublisher
+from benchmarks.results.wandb.axes import define_axis_metrics
 from benchmarks.results.wandb.sync import start_sync
 
-logger = logging.getLogger(__name__)
 _SYSTEM_STATS_INTERVAL_S = 1.0
 
 
@@ -46,7 +46,7 @@ class WandbSink:
         self.run_config = run_config
         self._run: Any | None = None
         self._sync: subprocess.Popen[bytes] | None = None
-        self._progress_fields: set[tuple[str, str]] = set()
+        self._progress_axes: set[str] = set()
 
     def open(self, record: dict[str, Any]) -> None:
         """Open native recording before requests, preserving W&B's configured offline/disabled modes."""
@@ -71,11 +71,7 @@ class WandbSink:
             init_kwargs["group"] = self.group
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
-        try:
-            self._run = wandb.init(**init_kwargs)
-        except wandb.errors.Error:
-            logger.exception("W&B local recording initialization failed")
-            raise
+        self._run = wandb.init(**init_kwargs)
         if self._run is None:
             raise RuntimeError("W&B initialization returned no run")
         if requested_mode != "disabled":
@@ -89,23 +85,21 @@ class WandbSink:
                 "directory": Path(os.path.relpath(directory, self.execution_dir)).as_posix(),
                 "publisher": publisher_name(self.publisher),
             }
-            write_json(self.execution_dir, "wandb.json", identity)
-            print_result_location(f"W&B local run: {directory}")
+            write_records(Path(self.execution_dir), {"wandb.json": identity})
+            print_result_location(f"Results: {self.execution_dir}")
+            logger.info("W&B local recording: {}", directory)
             if requested_mode not in {"offline", "dryrun"}:
                 try:
                     self._sync = start_sync(Path(self.execution_dir), directory)
+                    print_result_location(f"W&B background upload log: {Path(self.execution_dir) / 'wandb-sync.log'}")
                 except OSError as error:
-                    logger.error("W&B live sync could not start: %s; local run retained at %s", error, directory)
+                    logger.error("W&B live sync could not start: {}; local run retained at {}", error, directory)
 
     def log_progress(self, row: dict[str, Any], *, axis: str) -> None:
         """Bind live fields to their domain axis and queue them through the owned run."""
-        if (axis, axis) not in self._progress_fields:
-            self._run.define_metric(axis, hidden=True)
-            self._progress_fields.add((axis, axis))
-        for key in row.keys() - {axis}:
-            if (key, axis) not in self._progress_fields:
-                self._run.define_metric(key, step_metric=axis, step_sync=False)
-                self._progress_fields.add((key, axis))
+        if axis not in self._progress_axes:
+            define_axis_metrics(self._run, axis)
+            self._progress_axes.add(axis)
         self._run.log(row)
 
     def publish(self, run: BenchmarkRun) -> None:
@@ -136,9 +130,6 @@ class WandbSink:
                     if not failed:
                         raise
                     logger.exception("W&B recorder cleanup also failed")
-        except wandb.errors.Error:
-            logger.exception("W&B local recording finalization failed")
-            raise
         finally:
             if self._sync is not None:
                 self._sync.stdin.close()

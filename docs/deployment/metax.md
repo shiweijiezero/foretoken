@@ -24,7 +24,7 @@ The commands below work with direct LoadBalancer access and HTTP Gateway. Gatewa
 
 ## 1. Deploy the example model
 
-The example uses the repository's `data/` directory. Once the administrator has prepared access to it, deploy directly. If the cluster uses different storage, update `examples/quickstart/qwen3-0.6b/cache.yaml` first using the [model storage guide](../features/model-storage.md). Custom domains and HTTPS or hostname-restricted listeners require [a matching hostname](../../README.md#gateway-mode).
+The example uses the platform's prepared default model storage. To choose another directory or a separate volume, follow the [model storage guide](../features/model-storage.md) before deploying. Custom domains and HTTPS or hostname-restricted listeners require [a matching hostname](../../README.md#gateway-mode).
 
 ```bash
 foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m

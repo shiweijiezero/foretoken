@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+# Produces an engine compiler toolchain and dependency environment from the selected serving image.
+
 ARG RUNTIME_IMAGE
 ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22

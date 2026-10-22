@@ -38,7 +38,9 @@ type Admission struct {
 	RoleRules          []inferencev1alpha1.RoleRule `json:"roleRules,omitempty"`
 }
 
+// Model identifies one configured service behind a public model, independently of ready capacity.
 type Model struct {
+	ServiceName           string                                  `json:"service_name,omitempty"`
 	ServiceGeneration     int64                                   `json:"service_generation"`
 	ServiceUID            string                                  `json:"service_uid"`
 	Model                 string                                  `json:"model"`

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Projects workload filesystem identity, volume access, and scoped directory preparation.
 package runtimeconfig
 
 import (

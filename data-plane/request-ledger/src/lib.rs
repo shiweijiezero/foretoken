@@ -3,11 +3,13 @@
 
 //! Shared request reservations transferred from frontend waiting to backend execution.
 
-use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use std::collections::BTreeSet;
+
+use foretoken_redis_client::{KeyWatch, RedisConnection};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
-use tokio::sync::OnceCell;
 
 const MODEL_KEY_PREFIX: &str = "foretoken:requests:";
 static TRANSITION: std::sync::LazyLock<redis::Script> =
@@ -27,8 +29,7 @@ pub struct ReservationRef {
 /// Redis-compatible atomic ledger shared by frontend replicas and execution owners.
 /// Connections open on demand so untracked requests need no request-path store access.
 pub struct RequestLedger {
-    client: redis::Client,
-    connection: OnceCell<ConnectionManager>,
+    connection: RedisConnection,
 }
 
 /// A reservation transition's domain outcome, distinct from storage failure.
@@ -69,8 +70,8 @@ impl RequestLedger {
     /// Validates the configured store address without connecting or exposing it in diagnostics.
     pub fn new(url: &str) -> Result<Self, LedgerError> {
         Ok(Self {
-            client: redis::Client::open(url).map_err(|_| LedgerError::Configuration)?,
-            connection: OnceCell::new(),
+            connection: RedisConnection::new(url, "foretoken:requests")
+                .map_err(|_| LedgerError::Configuration)?,
         })
     }
 
@@ -86,7 +87,7 @@ impl RequestLedger {
     /// Identifies the configured capacity store so shared-cache maintenance uses the matching ledger.
     /// The upstream address representation excludes authentication credentials.
     pub fn storage_identity(&self) -> String {
-        let connection = self.client.get_connection_info();
+        let connection = self.connection.connection_info();
         json!([connection.addr.to_string(), connection.redis.db]).to_string()
     }
 
@@ -123,24 +124,16 @@ impl RequestLedger {
         frontend_instances: &[String],
         backend_instances: &[String],
     ) -> Result<(), LedgerError> {
-        let mut connection = self.connection().await?;
+        let mut connection = self.connection.get().await?;
         let prefix = Self::key(scope, "");
-        let mut keys: std::collections::BTreeSet<String> =
+        let mut keys: BTreeSet<String> =
             models.iter().map(|model| Self::key(scope, model)).collect();
-        let mut cursor = 0_u64;
-        loop {
-            let (next, page): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(format!("{MODEL_KEY_PREFIX}*"))
-                .query_async(&mut connection)
-                .await?;
-            keys.extend(page.into_iter().filter(|key| key.starts_with(&prefix)));
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
-        }
+        keys.extend(
+            self.model_keys()
+                .await?
+                .into_iter()
+                .filter(|key| key.starts_with(&prefix)),
+        );
         let members = json!({"version": version, "frontends": frontend_instances, "backends": backend_instances}).to_string();
         for key in keys {
             let result: String = TRANSITION
@@ -148,6 +141,7 @@ impl RequestLedger {
                 .arg("publish_membership")
                 .arg("")
                 .arg(&members)
+                .arg(self.connection.channel())
                 .invoke_async(&mut connection)
                 .await?;
             Self::outcome(result)?;
@@ -158,33 +152,21 @@ impl RequestLedger {
     /// Registers a fresh engine process before it accepts traffic and retires its stopped predecessor.
     /// Pod identity is supplied by Kubernetes; store-issued epochs fence delayed recovery commands.
     pub async fn register_backend(&self, pod: &str) -> Result<u64, LedgerError> {
-        let mut connection = self.connection().await?;
+        let mut connection = self.connection.get().await?;
         let epoch: u64 = redis::cmd("INCR")
             .arg(format!("foretoken:engine-epoch:{pod}"))
             .query_async(&mut connection)
             .await?;
-        let mut cursor = 0_u64;
-        loop {
-            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(format!("{MODEL_KEY_PREFIX}*"))
-                .query_async(&mut connection)
+        for key in self.model_keys().await? {
+            let result: String = TRANSITION
+                .key(key)
+                .arg("recover_backend")
+                .arg("")
+                .arg(json!({"pod": pod, "epoch": epoch}).to_string())
+                .arg(self.connection.channel())
+                .invoke_async(&mut connection)
                 .await?;
-            for key in keys {
-                let result: String = TRANSITION
-                    .key(key)
-                    .arg("recover_backend")
-                    .arg("")
-                    .arg(json!({"pod": pod, "epoch": epoch}).to_string())
-                    .invoke_async(&mut connection)
-                    .await?;
-                Self::outcome(result)?;
-            }
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
+            Self::outcome(result)?;
         }
         Ok(epoch)
     }
@@ -428,22 +410,8 @@ impl RequestLedger {
         &self,
         prefix: &str,
     ) -> Result<Vec<(ReservationRef, String)>, LedgerError> {
-        let mut connection = self.connection().await?;
-        let mut keys = std::collections::BTreeSet::new();
-        let mut cursor = 0_u64;
-        loop {
-            let (next, page): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(format!("{MODEL_KEY_PREFIX}*"))
-                .query_async(&mut connection)
-                .await?;
-            keys.extend(page);
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
-        }
+        let mut connection = self.connection.get().await?;
+        let keys = self.model_keys().await?;
         let input = json!({"prefix": prefix}).to_string();
         let mut completed = Vec::new();
         for key in keys {
@@ -452,6 +420,7 @@ impl RequestLedger {
                 .arg("completed_consumers")
                 .arg("")
                 .arg(&input)
+                .arg(self.connection.channel())
                 .invoke_async(&mut connection)
                 .await?;
             if receipts.is_empty() {
@@ -505,8 +474,9 @@ impl RequestLedger {
     /// Waits for retained execution evidence without treating cancellation or stage handoff as completion.
     /// Storage failures return to the API state owner; they never imply termination.
     pub async fn wait_finished(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+        let mut changes = self.watch_request(reservation);
         while !self.finished(reservation).await? {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            changes.changed().await;
         }
         Ok(())
     }
@@ -532,7 +502,7 @@ impl RequestLedger {
     }
 
     /// Lets the execution owner observe cancellation independently of an HTTP response consumer.
-    pub async fn cancelled(&self, reservation: &ReservationRef) -> Result<bool, LedgerError> {
+    async fn cancelled(&self, reservation: &ReservationRef) -> Result<bool, LedgerError> {
         let state = self
             .transition(
                 &reservation.scope,
@@ -550,6 +520,24 @@ impl RequestLedger {
         }
     }
 
+    /// Registers state observation before an execution owner checks cancellation or completion.
+    fn watch_request(&self, reservation: &ReservationRef) -> KeyWatch {
+        self.connection.watch(format!(
+            "{}:r:{}",
+            Self::key(&reservation.scope, &reservation.model),
+            reservation.request
+        ))
+    }
+
+    /// Waits for committed cancellation; storage failures never imply that execution ended.
+    pub async fn wait_cancelled(&self, reservation: &ReservationRef) -> Result<(), LedgerError> {
+        let mut changes = self.watch_request(reservation);
+        while !self.cancelled(reservation).await? {
+            changes.changed().await;
+        }
+        Ok(())
+    }
+
     async fn transition(
         &self,
         scope: &str,
@@ -558,30 +546,28 @@ impl RequestLedger {
         request: &str,
         input: Value,
     ) -> Result<String, LedgerError> {
-        let mut connection = self.connection().await?;
+        let mut connection = self.connection.get().await?;
         Ok(TRANSITION
             .key(Self::key(scope, model))
             .arg(action)
             .arg(request)
             .arg(input.to_string())
+            .arg(self.connection.channel())
             .invoke_async(&mut connection)
             .await?)
     }
 
-    /// Shares the upstream client with bounded connection attempts and short reconnect sleeps.
-    /// Connection deadlines cover stale service endpoints; retry jitter adds up to one second.
-    async fn connection(&self) -> Result<ConnectionManager, LedgerError> {
-        let connection = self
-            .connection
-            .get_or_try_init(|| {
-                self.client.get_connection_manager_with_config(
-                    ConnectionManagerConfig::new()
-                        .set_connection_timeout(std::time::Duration::from_secs(5))
-                        .set_max_delay(1_000),
-                )
-            })
+    /// Discovers each model key once, propagating scan-page and decoding errors to recovery callers.
+    async fn model_keys(&self) -> Result<BTreeSet<String>, LedgerError> {
+        let mut connection = self.connection.get().await?;
+        let mut scan: redis::AsyncIter<String> = connection
+            .scan_match(format!("{MODEL_KEY_PREFIX}*"))
             .await?;
-        Ok(connection.clone())
+        let mut keys = BTreeSet::new();
+        while let Some(key) = scan.next_item().await {
+            keys.insert(key?);
+        }
+        Ok(keys)
     }
 
     // Length-prefixed components keep model and service identities distinct without content hashes.

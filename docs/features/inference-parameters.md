@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
 
+## Schedule multi-node replicas
+
+A platform administrator can select [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) for complete-group placement, [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) for quota admission, or both. Foretoken continues to own model capacity, readiness and request draining. Single-node replicas and CPU-only model preparation keep their ordinary scheduling path.
+
+The native controllers and queues must already exist. For the combined example, prepare Volcano Queue `inference`, enable Kueue's LeaderWorkerSet integration and create LocalQueue `inference` in each service namespace. Save this platform selection in `deploy/platform-values.yaml`:
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+Omit either field to use only the other integration. Run `foretoken install --values deploy/platform-values.yaml`, retaining the original source or registry options, then redeploy the instances that should adopt the queues. Foretoken enables Volcano support in its managed LeaderWorkerSet controller; an independently installed controller remains under its administrator's control.
+
+Platform updates do not change existing or stopped instances. Their selected queues remain fixed until the next explicit `foretoken deploy`. Use `leaderWorkerScheduling: null` to clear the selection for new deployments.
+
 ## Instance concurrency
 
 To bound accepted, unfinished work at each text model-server instance, including its engine queue, add this setting to the model YAML:
@@ -142,7 +159,9 @@ Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP r
 
 Prefill processes the input; Decode generates the answer. Mooncake and NIXL can also reuse a previous Decode instance's retained KV cache for a later Prefill. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
 
-For a service with `prefill` and `decode` entries in `modelPools`, Mooncake is the default connector. Foretoken checks the selected nodes for both stages and automatically requests RDMA devices when available; otherwise it uses TCP. `foretoken install` reuses the cluster's shared RDMA device plugin or prepares one. The native transport uses GPUDirect RDMA—direct NIC access to GPU memory—when supported by the cluster's GPU and NIC drivers, without a model-level switch.
+For a service with `prefill` and `decode` entries in `modelPools`, Mooncake is the default connector. Foretoken checks the selected nodes for both stages and automatically requests RDMA devices when available; otherwise it uses TCP. `foretoken install` reuses the cluster's shared RDMA device plugin or prepares one. For RoCE (RDMA over Ethernet) on a shared Layer 2 network, it also prepares secondary Pod interfaces while retaining the ordinary Kubernetes network for API traffic. Models need no NIC or GID configuration.
+
+The native transport uses GPUDirect RDMA—direct NIC access to GPU memory—when supported by the cluster's GPU and NIC drivers, without a model-level switch.
 
 To use NIXL, select only the connector:
 
@@ -163,6 +182,7 @@ The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct` and its P/D Pools directl
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+export FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
 
 python3 - <<'PY'
 import json
@@ -183,7 +203,7 @@ for question in (
             "temperature": 0,
             "max_tokens": 256,
         }).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Host": os.environ["FRONTEND_HOST"]},
     )
     with urlopen(request, timeout=300) as response:
         answer = json.load(response)["choices"][0]["message"]["content"]

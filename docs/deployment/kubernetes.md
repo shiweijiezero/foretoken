@@ -71,7 +71,7 @@ Install with `--values deploy/platform-values.yaml` when using the authenticated
 
 ### Assign external service addresses
 
-If the cluster already provides LoadBalancer addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
+The default shared Gateway needs a LoadBalancer address. If the cluster already provides these addresses, use its existing implementation. When installation reports `LoadBalancer support Not verified`, Foretoken can configure MetalLB with unused addresses in the nodes' subnet. Obtain the range from the cluster administrator and add it to `deploy/platform-values.yaml`, replacing this example:
 
 ```yaml
 loadBalancer:
@@ -85,19 +85,24 @@ Apply it with the same installation settings:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-## 3. Deploy and update code
+### RDMA networking
 
-The Quick Start selects the repository's `data/` directory. Keep that selection when the directory is available on the target nodes, using a shared filesystem for multi-node deployments. Member namespaces use [administrator-prepared directory access](../features/model-storage.md#share-model-files-across-namespaces).
+Installation discovers or prepares shared RDMA device allocation. For RoCE (RDMA over Ethernet), nodes sharing a Layer 2 fabric and matching interface layouts also receive secondary Pod networks automatically. Multus adds these interfaces alongside the ordinary Kubernetes network, and Whereabouts assigns their addresses. Compatible existing installations are reused.
 
-If the cluster should provide storage instead, replace the `spec` in `examples/quickstart/qwen3-0.6b/cache.yaml` with:
+To use networks already provided by a network operator, add references to their `NetworkAttachmentDefinition` objects in `deploy/platform-values.yaml`:
 
 ```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteOnce
+rdma:
+  networks:
+    - name: inference-rdma
+      namespace: network-system
 ```
 
-This uses the default StorageClass for a single-node volume. Choose `ReadWriteMany` when the driver supports multi-node access, or add `storageClassName` to select another class. See [Model storage](../features/model-storage.md) for sharing and retention.
+Replace the name and namespace with the existing network, then rerun the installation command with `--values deploy/platform-values.yaml`. Omit `rdma.networks`, or set it to `null`, for automatic preparation; `[]` disables default secondary attachments. Saved choices persist across platform updates. Redeploy an instance to adopt changed defaults. Foretoken-created network definitions survive platform updates and rollbacks and are removed by `foretoken uninstall`; direct `helm uninstall` retains them. Externally managed networks retain their existing owner.
+
+## 3. Deploy and update code
+
+Use the platform's default model storage when it is configured. If none is prepared, or you want a separate volume, [request dynamic storage](../features/model-storage.md#use-dynamic-storage). To use a different shared directory, [select an administrator-authorized path](../features/model-storage.md#choose-a-directory).
 
 Deploy and update code:
 

@@ -12,6 +12,36 @@ import time
 from datetime import timedelta
 
 
+def run_probe(options: dict) -> None:
+    """Own one candidate's GPU workers until all complete or their startup share expires."""
+    import torch.multiprocessing as mp
+
+    def terminate(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminate)
+    deadline = time.monotonic() + options["timeout"]
+    results = mp.get_context("spawn").SimpleQueue()
+    workers = mp.spawn(
+        _measure_worker,
+        args=(options, results),
+        nprocs=options["gpu_count"],
+        join=False,
+    )
+    try:
+        while not workers.join(timeout=max(0, deadline - time.monotonic())):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("MCCL network candidate exceeded its startup share")
+        print(json.dumps(results.get()), flush=True)
+    finally:
+        for worker in workers.processes:
+            if worker.is_alive():
+                worker.kill()
+        for worker in workers.processes:
+            worker.join()
+        results.close()
+
+
 def _measure_worker(local_rank: int, options: dict, results) -> None:
     """Measure the same collective on every allocated GPU and release its communicator."""
     # Native libraries also write to fd 1; keep the probe's JSON result separate.
@@ -85,33 +115,3 @@ def _measure_worker(local_rank: int, options: dict, results) -> None:
         if communicator is not None:
             communicator.destroy()
         dist.destroy_process_group()
-
-
-def run_probe(options: dict) -> None:
-    """Own one candidate's GPU workers until all complete or their startup share expires."""
-    import torch.multiprocessing as mp
-
-    def terminate(signum, frame):
-        raise SystemExit(128 + signum)
-
-    signal.signal(signal.SIGTERM, terminate)
-    deadline = time.monotonic() + options["timeout"]
-    results = mp.get_context("spawn").SimpleQueue()
-    workers = mp.spawn(
-        _measure_worker,
-        args=(options, results),
-        nprocs=options["gpu_count"],
-        join=False,
-    )
-    try:
-        while not workers.join(timeout=max(0, deadline - time.monotonic())):
-            if time.monotonic() >= deadline:
-                raise TimeoutError("MCCL network candidate exceeded its startup share")
-        print(json.dumps(results.get()), flush=True)
-    finally:
-        for worker in workers.processes:
-            if worker.is_alive():
-                worker.kill()
-        for worker in workers.processes:
-            worker.join()
-        results.close()

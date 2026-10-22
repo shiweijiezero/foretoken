@@ -5,18 +5,16 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from benchmarks.config.video import VideoBenchmarkConfig
-from benchmarks.results.recording.files import write_json
 from benchmarks.results.reporting.local import LocalDirectorySink
 from benchmarks.results.types import BenchmarkRun, ResultSink
 from benchmarks.results.wandb.recording import WandbSink
 from benchmarks.results.wandb.video import publish_video_wandb
-
-logger = logging.getLogger(__name__)
 
 
 def video_result_sinks(
@@ -24,8 +22,7 @@ def video_result_sinks(
 ) -> list[ResultSink]:
     """Build video adapters for destinations managed by ResultOutputs."""
     run_dir = Path(execution_dir)
-    sinks: list[ResultSink] = [VideoArtifactSink(config, run_dir)]
-    sinks.append(VideoConsoleSink(config))
+    sinks: list[ResultSink] = [VideoConsoleSink(config)]
     if config.outputs.saves_local:
         sinks.append(LocalDirectorySink(str(run_dir)))
     if config.outputs.includes("wandb"):
@@ -97,32 +94,7 @@ def log_video_summary(
         source = metrics.get("reference_tokens_source")
         lines.append(f"  {'Reference tokens':<18}{tokens} ({source})")
     lines.append("=====================================================")
-    logger.info("\n%s", "\n".join(lines))
-
-
-class VideoArtifactSink:
-    """Materialize video configuration beside the run's shared metrics."""
-
-    def __init__(self, config: VideoBenchmarkConfig, run_dir: Path) -> None:
-        self.config = config
-        self.run_dir = run_dir
-        self.config_path: Path | None = None
-
-    def open(self, record: dict[str, Any]) -> None:
-        """Write configuration before requests so failed runs remain reproducible."""
-        self.config_path = write_json(
-            str(self.run_dir), "config.json", self.config.to_dict()
-        )
-
-    def publish(self, run: BenchmarkRun) -> None:
-        """Complete the shared artifact map with video summary metadata."""
-        if self.config_path is None:
-            raise RuntimeError("video artifact sink is not open")
-        run.artifacts["config"] = self.config_path
-
-    def close(self, *, exit_code: int = 0) -> None:
-        """Release no resources because ResultOutputs owns the directory."""
-        return
+    logger.info("\n{}", "\n".join(lines))
 
 
 class VideoConsoleSink:

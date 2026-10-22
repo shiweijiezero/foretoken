@@ -12,12 +12,14 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from foretoken.applications.files import (
     SERVICE_COMPONENTS,
@@ -27,7 +29,7 @@ from foretoken.applications.files import (
 )
 from foretoken.arguments import InstallCommand
 from foretoken.build.cluster.builder import registry_credentials
-from foretoken.build.cluster.compiler import CompilerWorkspace
+from foretoken.build.cluster.compiler import APPLICATION_PARTS, CompilerWorkspace
 from foretoken.build.cluster.images import image_tools_image, node_image_store
 from foretoken.build.cluster.storage import ensure_build_volumes, local_build_nodes
 from foretoken.build.inputs import (
@@ -55,27 +57,34 @@ from foretoken.build.state import (
     runtime_settings,
     write_source_state,
 )
-from foretoken.command_execution import cleanup_commands
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
     service_requires_execution,
 )
+from foretoken.downloads.sources import select_build_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, ResourceRef, timeout_seconds
-from foretoken.network_sources import select_build_sources
 from foretoken.platform.config import default_platform_config
 from foretoken.platform.helm import Helm
+from foretoken.processes.execution import cleanup_commands
 
-_APPLICATION_PARTS = {
-    "control-plane": ("go",),
-    "frontend": ("rust",),
-    "model-server": ("rust", "python", "engine"),
-}
 _APPLICATION_IMAGE_KEYS = {
     "control-plane": "control_plane_image",
     "frontend": "image",
     "model-server": "model_image",
 }
+
+
+def _executing_services(objects: Iterable[dict[str, Any]]) -> Iterator[tuple[dict[str, Any], str]]:
+    """Select first-party services requesting execution for source preparation and activation."""
+    for obj in objects:
+        component = SERVICE_COMPONENTS.get(obj.get("kind"))
+        if (
+            component is not None
+            and str(obj.get("apiVersion") or "").startswith("inference.foretoken.io/")
+            and service_requires_execution(obj)
+        ):
+            yield obj, component
 
 
 class EditableDeployment:
@@ -182,7 +191,7 @@ class EditableDeployment:
                 })
                 write_source_state(path, self.state)
                 previous_images = dict(build["images"])
-            print(f"Source checkout: {self.root}", flush=True)
+            logger.info("Source checkout: {}", self.root)
             if (self.directory / "build.json").is_file():
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
             self._retain_workspace()
@@ -194,61 +203,64 @@ class EditableDeployment:
             if self.state is not None and self.state["build"]["images"] != previous_images:
                 reconcile_source_resources(self.kubectl, timeout, checkout=self.directory)
 
-    def prepare(self, timeout: str) -> None:
-        """Prepare changed runtime artifacts and retire candidates not retained by committed state."""
+    def prepare(self, deployment: ForetokenDeployment, timeout: str) -> None:
+        """Publish required applications before the instance selects its controller and service defaults."""
         with local_candidates(self.directory):
             self._prepare(timeout)
+            components = {"control-plane"}
+            components.update(
+                component for obj, component in _executing_services(deployment.objects)
+                if component != "model-server" or obj["spec"].get("backend") == "vllm"
+            )
+            self._publish_applications(components, timeout)
 
     def apply(
-        self, deployment: ForetokenDeployment, timeout: str
+        self, deployment: ForetokenDeployment, controller: dict[str, Any],
     ) -> ForetokenDeployment:
-        """Publish selected applications before submitting service and model-storage intent."""
+        """Select published applications against the instance controller's resolved defaults."""
+        manager = next(
+            container for container in controller["spec"]["template"]["spec"]["containers"]
+            if container["name"] == "manager"
+        )
+        arguments = dict(
+            argument.removeprefix("--").split("=", 1)
+            for argument in manager["args"] if "=" in argument
+        )
+        # The selected controller keeps its defaults even when another workstation
+        # updates the platform during this source operation.
+        controller_applications = {
+            "frontend": {
+                "applicationURL": arguments.get("frontend-application-url", ""),
+                "image": arguments["frontend-image"],
+            },
+            "model-server": {
+                "applicationURL": arguments.get("model-server-application-url", ""),
+                "image": arguments["inference-engine-image"],
+            },
+        }
         objects = copy.deepcopy(deployment.objects)
-        pending: set[str] = {"control-plane"}
-        services = []
-        for obj in objects:
-            component = SERVICE_COMPONENTS.get(obj.get("kind"))
-            if component is None or not str(obj.get("apiVersion") or "").startswith(
-                "inference.foretoken.io/"
-            ):
-                continue
-            # Retain pending bundles until the service requests execution.
-            if not service_requires_execution(obj):
-                continue
+        for obj, component in _executing_services(objects):
             metadata = obj["metadata"]
             annotations = metadata.setdefault("annotations", {})
             annotations.pop(SOURCE_REVISION, None)
-            bundle = self.state["bundles"].get(
-                component, self.state["build"].get("applications", {}).get(component)
-            )
-            namespace = metadata.get("namespace") or deployment.namespace or "default"
             if component == "model-server" and obj["spec"].get("backend") != "vllm":
-                # Alternate backends keep their own platform image/profile, rather
-                # than receiving the standard vLLM application's environment.
+                # Alternate backends keep their platform image and application.
                 continue
-            current = self.kubectl.get_if_exists(
-                obj["kind"], metadata["name"], namespace
-            )
-            active = (
-                (current or {})
-                .get("metadata", {})
-                .get("annotations", {})
-                .get(SOURCE_REVISION, "")
-            )
-            if bundle is not None and active != bundle["revision"]:
-                pending.add(component)
-            services.append((obj, component, namespace, current, active))
-        if pending:
-            self._publish_applications(pending, timeout)
-
-        # Publication can reuse an earlier version. Select workloads only after the
-        # publisher has committed the actual application references.
-        for obj, component, namespace, current, active in services:
-            metadata = obj["metadata"]
+            namespace = metadata.get("namespace") or deployment.namespace or "default"
+            current = self.kubectl.get_if_exists(obj["kind"], metadata["name"], namespace)
+            active = (current or {}).get("metadata", {}).get("annotations", {}).get(SOURCE_REVISION, "")
             bundle = self.state["bundles"].get(
                 component, self.state["build"].get("applications", {}).get(component)
             )
             revision = bundle["revision"] if bundle is not None else ""
+            # Entering source development must not replace an unchanged default
+            # cohort. Existing source selections keep their explicit identity.
+            if (
+                revision and not active
+                and self.origin.reference(component, revision) == controller_applications[component]["applicationURL"]
+                and self.state["runtime"][_APPLICATION_IMAGE_KEYS[component]] == controller_applications[component]["image"]
+            ):
+                revision = ""
             writers = (
                 self._ready_containers(namespace, component, metadata["name"], revision)
                 if current is not None
@@ -261,7 +273,7 @@ class EditableDeployment:
             # must not make a deployment finish before the selected runtime is serving.
             if active != revision or not ready:
                 self.selected[(obj["kind"], namespace, metadata["name"])] = revision
-            if bundle is not None:
+            if revision:
                 metadata["annotations"][SOURCE_REVISION] = revision
         return deployment.with_objects(objects)
 
@@ -426,10 +438,7 @@ class EditableDeployment:
     def _prepare(self, timeout: str) -> None:
         """Compare this checkout's inputs and prepare its runtime application or environment update."""
         if self.environment_changed or not self.state["build"].get("compilers"):
-            print(
-                "Source plan: prepare this checkout's runtime environments",
-                flush=True,
-            )
+            logger.info("Source plan: prepare this checkout's runtime environments")
             self._rebuild(timeout)
             return
         engines = self.state.get("engines", {})
@@ -437,10 +446,7 @@ class EditableDeployment:
         current = BuildInputs.select(self.root, engines, mooncake_version=self.mooncake_version)
         changed = current.changed(old)
         if not changed:
-            print(
-                "Source plan: reuse runtime artifacts (no source inputs changed)",
-                flush=True,
-            )
+            logger.info("Source plan: reuse runtime artifacts (no source inputs changed)")
             return
         components: dict[str, set[str]] = {}
         rebuild = False
@@ -487,21 +493,13 @@ class EditableDeployment:
             else:
                 rebuild = True
         if rebuild:
-            print(
-                "Source plan: prepare this checkout's runtime environments",
-                flush=True,
-            )
+            logger.info("Source plan: prepare this checkout's runtime environments")
             self._rebuild(timeout)
             return
         if components:
-            print(
-                "Source plan: publish "
-                + ", ".join(sorted(components))
-                + " applications",
-                flush=True,
-            )
+            logger.info("Source plan: publish {} applications", ", ".join(sorted(components)))
         else:
-            print("Source plan: update source snapshot only", flush=True)
+            logger.info("Source plan: update source snapshot only")
         snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
         current.capture(snapshot, previous=old, unchanged=set(current.files).difference(changed))
         self.state["build"]["versions"] = snapshot_versions(
@@ -517,7 +515,7 @@ class EditableDeployment:
                 "revision": str(uuid.uuid4()),
                 "previous": prior.get("revision", ""),
             }
-            required = set(_APPLICATION_PARTS[component])
+            required = set(APPLICATION_PARTS[component])
             if not engines:
                 required.discard("engine")
             if parts < required and bundle["previous"]:
@@ -612,7 +610,7 @@ class EditableDeployment:
         build_engine = (
             "model-server" in missing
             and bool(self.state.get("engines"))
-            and "engine" in self.state["bundles"]["model-server"].get("parts", _APPLICATION_PARTS["model-server"])
+            and "engine" in self.state["bundles"]["model-server"].get("parts", APPLICATION_PARTS["model-server"])
         )
         compilers = {component: build["compilers"][component] for component in missing}
         if build_engine:
@@ -629,10 +627,10 @@ class EditableDeployment:
                     for component, image in compilers.items()
                 )
             if not available:
-                print("Compiler image is unavailable on this node; restoring the development environment", flush=True)
+                logger.warning("Compiler image is unavailable on this node; restoring the development environment")
                 self._rebuild(timeout)
                 return
-        print("Preparing application files: " + ", ".join(sorted(missing)), flush=True)
+        logger.info("Preparing application files: {}", ", ".join(sorted(missing)))
         with self._application_workspace(
             origin, snapshot, compilers, helm, timeout,
         ) as (builder, references):
@@ -643,17 +641,18 @@ class EditableDeployment:
                 revision = bundle["revision"]
                 staging = builder.root + "/output/" + revision
                 payload = staging + "/payload"
-                parts = bundle.get("parts", _APPLICATION_PARTS[component])
+                parts = bundle.get("parts", APPLICATION_PARTS[component])
                 arguments = dict(build["arguments"])
                 if component == "model-server":
                     arguments["INFERENCE_ENGINE_IMAGE"] = self.state["runtime"]["model_image"]
-                builder.export_application(component, payload, arguments, list(parts))
+                builder.compile_application(component, arguments, list(parts))
                 if component == "model-server" and build_engine:
-                    builder.export_engine(
-                        payload, build["arguments"],
+                    builder.compile_engine(
+                        compilers["engine"], build["arguments"],
                         cache_id=build["engine_caches"]["" if build["registry"] else origin.node],
                         build_native=build["engine_native"],
                     )
+                builder.export_application(component, payload, engine=component == "model-server" and build_engine)
 
             # Each component owns its export directory. Join builds before validating
             # their shared source snapshot or allowing any publisher to consume them.
@@ -692,8 +691,7 @@ class EditableDeployment:
                 default_revision = (
                     build.get("applications", {}).get(component, {}).get("revision")
                 )
-                # Matching the installed default needs no source override; adding one
-                # would change Pod annotations even though the application is unchanged.
+                # Store only differences from this checkout's completed build.
                 if published_revision == default_revision:
                     self.state["bundles"].pop(component)
                 else:
@@ -703,12 +701,9 @@ class EditableDeployment:
                     if published_revision == previous_revisions[component]
                     else "published"
                 )
-                print(f"Application {publication}: {component}", flush=True)
+                logger.info("Application {}: {}", publication, component)
             write_source_state(self.directory / "install.json", self.state)
-            print(
-                f"Application publication completed in {time.monotonic() - published_at:.1f}s",
-                flush=True,
-            )
+            logger.info("Application publication completed in {:.1f}s", time.monotonic() - published_at)
             builder.run(["rm", "-rf", "--", builder.root + "/output"], container=builder.artifact_container)
 
     @contextmanager
@@ -773,7 +768,7 @@ class EditableDeployment:
         tools_image = image_tools_image(build["arguments"], build.get("registry_mirrors", {}))
         with CompilerWorkspace(
             self.kubectl, namespace, claim, build["binding"], origin.node,
-            compilers, build["configuration"], timeout,
+            {name: image for name, image in compilers.items() if name != "engine"}, build["configuration"], timeout,
             tools_image=tools_image,
             execution_claim=execution["name"] if execution is not None else "",
             owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},

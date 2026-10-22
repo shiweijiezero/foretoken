@@ -132,18 +132,38 @@ impl Leader {
                 || "EngineCore client became unhealthy during startup".to_string(),
                 |error| format!("EngineCore client became unhealthy during startup: {error}"),
             );
-            let _ = client.shutdown().await;
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            warn!(%reason, "EngineCore startup failed; stopping the attempt");
+            if let Err(error) = client.shutdown().await {
+                warn!(%error, "could not shut down EngineCore client cleanly");
+            }
+            if let Err(error) = engine.shutdown(config.launch.drain_timeout()).await {
+                return Err(io::Error::other(format!(
+                    "{reason}; engine cleanup also failed: {error}"
+                ))
+                .into());
+            }
             health.set_process_alive(false);
             return Err(io::Error::other(reason).into());
         }
         health.set_client_healthy(true);
         health.set_accepting(true);
+        let shared_kv = if config.launch.shared_prefix_lookup() {
+            Some(prefix_lookup::SharedKvLookup::new(
+                super::required_env(MODEL_GROUP_UID_ENV)?,
+                super::required_env(KV_SCOPE_ENV)?,
+                &config,
+            ))
+        } else {
+            None
+        };
         let backend = Arc::new(VllmBackend::new(
             Llm::new(client),
             max_concurrent_requests,
+            kv_events,
+            shared_kv,
             kv_transfer.is_some_and(|kv| kv.bidirectional_kv_xfer),
             kv_connector_utility,
+            kv_source_endpoint,
         ));
         let profiling = if cache_mode == runtime_cache::Mode::Persistent {
             profiling_config
@@ -157,24 +177,11 @@ impl Leader {
         let shutdown = CancellationToken::new();
         let server_shutdown = shutdown.clone();
         let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
-        if let Some(endpoint) = kv_source_endpoint {
-            app_state = app_state.with_kv_source_endpoint(endpoint);
-        }
         if let Some((ledger, pod_uid, epoch)) = execution_store {
             app_state = app_state.with_request_ledger(ledger, pod_uid, epoch);
         }
         if let Some(profiler) = &profiler {
             app_state = app_state.with_profiling(profiler.handle());
-        }
-        if let Some(kv_events) = kv_events {
-            app_state = app_state.with_kv_events(kv_events);
-        }
-        if config.launch.shared_prefix_lookup() {
-            app_state = app_state.with_shared_kv(prefix_lookup::SharedKvLookup::new(
-                super::required_env(MODEL_GROUP_UID_ENV)?,
-                super::required_env(KV_SCOPE_ENV)?,
-                &config,
-            ));
         }
         if let Some(cache_config) = cache_config {
             app_state = app_state.with_runtime_cache(cache_config);
@@ -215,7 +222,18 @@ impl Leader {
             | Stop::CacheServer(reason)
             | Stop::Profiling(reason) => warn!(%reason),
         }
-        self.drain(&mut stop).await?;
+        if let Err(cleanup) = self.drain(&mut stop).await {
+            return Err(match stop {
+                Stop::Signal => cleanup,
+                Stop::Engine(reason)
+                | Stop::Server(reason)
+                | Stop::CacheServer(reason)
+                | Stop::Profiling(reason) => {
+                    io::Error::other(format!("{reason}; runtime cleanup also failed: {cleanup}"))
+                }
+            }
+            .into());
+        }
         match stop {
             Stop::Signal => Ok(()),
             Stop::Engine(reason)
@@ -338,13 +356,17 @@ impl Leader {
                     biased;
                     reason = engine_failure(&self.engine, &self.health, &mut self.client_health), if !engine_stopped => {
                         warn!(%reason, "engine failed while draining");
-                        *stop = Stop::Engine(reason);
+                        if matches!(stop, Stop::Signal) {
+                            *stop = Stop::Engine(reason);
+                        }
                         stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
                         engine_stopped = true;
                     }
                     result = tokio::time::timeout_at(deadline.into(), &mut drain) => {
                         if result.is_err() {
-                            *stop = Stop::Engine("model-server drain deadline elapsed".into());
+                            if matches!(stop, Stop::Signal) {
+                                *stop = Stop::Engine("model-server drain deadline elapsed".into());
+                            }
                             stop_failed_engine(&self.engine, &self.backend, &self.health, deadline).await?;
                             error!(
                                 accepted_requests = self.health.running_requests(),

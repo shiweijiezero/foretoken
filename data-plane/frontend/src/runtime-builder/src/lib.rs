@@ -19,7 +19,7 @@ use foretoken_router::{
 };
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
-    RuntimeState,
+    RuntimeState, VideoServiceReference,
 };
 use foretoken_text::{SnapshotRuntime, load_snapshot_runtime};
 use thiserror::Error;
@@ -169,7 +169,25 @@ impl RuntimeBuilder {
         let preparation_targets = snapshot
             .admission_target_sets()
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        // Task targets belong to this publication even when backend clients can be reused.
+        // Preserve unnamed legacy entries so partial metadata never appears unambiguous.
+        let mut video_services = BTreeMap::<String, Vec<Option<VideoServiceReference>>>::new();
+        for model in &snapshot.models {
+            if identities[&model.model].capabilities.contains("video") {
+                video_services.entry(model.model.clone()).or_default().push(
+                    model
+                        .service_name
+                        .as_ref()
+                        .filter(|name| !name.is_empty())
+                        .map(|name| VideoServiceReference {
+                            name: name.clone(),
+                            uid: model.service_uid.clone(),
+                        }),
+                );
+            }
+        }
         let backends = self.prepare_backends(snapshot, identities).await?;
+        video_services.retain(|model, _| backends.video_models.contains(model));
         let registry = backends.registry.clone();
         let kv_indexer = backends.kv_indexer.clone();
         let control = Arc::new(RegistryRuntimeControl {
@@ -211,11 +229,7 @@ impl RuntimeBuilder {
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
         let mut state = RuntimeState::new(models, router, resolver, request_timeout, stream_idle);
         if let Some(client) = &backends.video_client {
-            state = state.with_video_backend(
-                backends.video_models.clone(),
-                video_inventory,
-                client.clone(),
-            );
+            state = state.with_video_backend(video_services, video_inventory, client.clone());
         }
         for (model, candidates) in preparation_targets {
             state = state.with_preparation_targets(model, candidates);

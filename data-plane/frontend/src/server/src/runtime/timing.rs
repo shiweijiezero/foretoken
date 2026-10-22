@@ -6,6 +6,7 @@
 use foretoken_admission::{AdmissionPermit, mark_request_deadline};
 use foretoken_llm_facade::{LlmFacadeError, TokenStream};
 use futures::StreamExt;
+use tracing::Instrument;
 
 use super::GenerationError;
 
@@ -69,7 +70,7 @@ pub(super) async fn prepare_with_permit<T: Send + 'static>(
     };
     before_waiting_deadline(deadline, async {
         if reserved {
-            tokio::spawn(preparation)
+            tokio::spawn(preparation.in_current_span())
                 .await
                 .map_err(|_| GenerationError::Internal)?
         } else {
@@ -109,7 +110,7 @@ pub(super) fn deadline_stream(
         if expired {
             let _ = expiry_sender.send(());
         }
-    });
+    }.in_current_span());
     Box::pin(async_stream::stream! {
         while let Some(item) = receiver.recv().await {
             yield item;

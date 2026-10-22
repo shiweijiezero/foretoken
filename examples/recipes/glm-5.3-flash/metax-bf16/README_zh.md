@@ -27,14 +27,16 @@
 RECIPE=examples/recipes/glm-5.3-flash/metax-bf16
 foretoken deploy "$RECIPE" --timeout 70m
 FRONTEND_URL="$(foretoken endpoint "$RECIPE")"
+REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host)"
 
 curl --fail-with-body --no-buffer \
   "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{"model":"zai-org/GLM-5.3-Flash-BF16","messages":[{"role":"user","content":"你好，请介绍一下你自己。"}],"max_tokens":512,"stream":true}'
 ```
 
-本例使用平台的直接 LoadBalancer 入口；网关模式的域名与 Host 设置见[沐曦部署指南](../../../../docs/deployment/metax_zh.md)。
+自定义域名或 HTTPS 的主机名设置见[沐曦部署指南](../../../../docs/deployment/metax_zh.md)。
 
 修改配置后重新运行同一条 `foretoken deploy`。查看或删除本例：
 

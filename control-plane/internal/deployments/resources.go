@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+// Materializes Chart-compiled instance controllers, delegated access, and credentials.
 package deployments
 
 import (

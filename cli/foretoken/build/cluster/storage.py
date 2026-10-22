@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+from loguru import logger
 
 from foretoken.build.cluster.images import (
     SOURCE_BUILD_BINDING_LABEL,
@@ -681,7 +682,10 @@ def _ensure_build_cache(
                     raise DeploymentError(f"compiler cache {namespace}/{name} is still used by {pod['metadata']['name']}; finish that operation before updating storage")
             if claim_binding is None and not consumers and not recorded_legacy:
                 raise DeploymentError(f"cannot replace legacy compiler cache {namespace}/{name}: its source binding is unknown")
-            print(f"Replacing compiler cache {namespace}/{name} on the selected local storage; published applications are retained", flush=True)
+            logger.info(
+                "Replacing compiler cache {}/{} on the selected local storage; published applications are retained",
+                namespace, name,
+            )
             owners = existing["metadata"].get("ownerReferences", owners)
             for resource, obj in [*(("pods", pod) for pod in consumers), ("persistentvolumeclaims", existing)]:
                 metadata = obj["metadata"]

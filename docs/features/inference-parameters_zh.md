@@ -75,6 +75,23 @@ spec:
 
 `ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
 
+## 多节点副本的调度与配额
+
+平台管理员可以用 [Volcano](https://github.com/kubernetes-sigs/lws/tree/main/docs/examples/sample/gang-scheduling) 为完整执行组选择节点，用 [Kueue](https://kueue.sigs.k8s.io/docs/tasks/run/leaderworkerset/) 控制配额准入，也可以组合两者。模型容量、就绪判断与请求排空仍由 Foretoken 管理。单节点副本和不占用 GPU 的模型准备任务保持原有调度方式。
+
+原生控制器和队列需要提前准备。以下组合示例使用名为 `inference` 的 Volcano Queue，同时启用 Kueue 的 LeaderWorkerSet 集成，并在各服务命名空间创建名为 `inference` 的 LocalQueue。将配置保存到 `deploy/platform-values.yaml`：
+
+```yaml
+workload:
+  leaderWorkerScheduling:
+    volcanoQueueName: inference
+    kueueLocalQueueName: inference
+```
+
+只需要一种集成时，省略另一字段即可。执行 `foretoken install --values deploy/platform-values.yaml`，保留原安装命令的源码和镜像仓库选项，再重新部署需要采用队列的实例。Foretoken 会为自己托管的 LeaderWorkerSet 控制器启用 Volcano 支持；独立安装的控制器仍由其管理员配置。
+
+平台更新不会改变运行中或已暂停的实例。已有实例继续使用选定的队列，直到下一次明确执行 `foretoken deploy`。通过 `leaderWorkerScheduling: null` 清除新部署的选择。
+
 ## 实例并发上限
 
 要限制每个文本模型服务实例已接收但尚未完成的工作，包括引擎内排队的请求，在模型 YAML 中添加：
@@ -142,7 +159,9 @@ P/D 和 E/P/D 各 Pool 可以在模型和引擎支持的组合内分别配置并
 
 预填充（Prefill）计算输入，解码（Decode）生成回答。Mooncake 和 NIXL 都可以让后续 Prefill 复用上一轮 Decode 保留的 KV 缓存。两轮请求可以经过不同的前端和 Prefill 实例；能否复用取决于输入 token 前缀和缓存隔离身份是否匹配，无需提供会话标识。
 
-在 `modelPools` 中配置 `prefill` 和 `decode` 后，默认使用 Mooncake。Foretoken 检查两端的目标节点，有可分配的 RDMA 设备时自动申请并使用，否则使用 TCP。`foretoken install` 会复用集群已有的共享 RDMA 设备插件，或自动准备一个。集群的 GPU 和网卡驱动支持时，原生传输库会使用 GPUDirect RDMA，让网卡直接访问 GPU 内存，无需模型级开关。
+在 `modelPools` 中配置 `prefill` 和 `decode` 后，默认使用 Mooncake。Foretoken 检查两端的目标节点，有可分配的 RDMA 设备时自动申请并使用，否则使用 TCP。`foretoken install` 会复用集群已有的共享 RDMA 设备插件，或自动准备一个。在同一二层网络上使用 RoCE（通过以太网传输 RDMA 数据）时，还会为 Pod 准备独立通信接口，API 流量继续使用普通 Kubernetes 网络，无需在模型中指定网卡或 GID。
+
+集群的 GPU 和网卡驱动支持时，原生传输库会使用 GPUDirect RDMA，让网卡直接访问 GPU 内存，无需模型级开关。
 
 使用 NIXL 时只需选择 connector：
 
@@ -163,6 +182,7 @@ NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yam
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+export FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
 
 python3 - <<'PY'
 import json
@@ -183,7 +203,7 @@ for question in (
             "temperature": 0,
             "max_tokens": 256,
         }).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Host": os.environ["FRONTEND_HOST"]},
     )
     with urlopen(request, timeout=300) as response:
         answer = json.load(response)["choices"][0]["message"]["content"]

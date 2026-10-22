@@ -72,7 +72,12 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # Use an existing namespace PVC by default; an explicit authorized directory takes precedence.
+  # Optional placement and quota admission for multi-node replicas; native controllers and queues must exist.
+  # leaderWorkerScheduling:
+  #   volcanoQueueName: inference
+  #   kueueLocalQueueName: inference
+  leaderWorkerScheduling: {}
+  # Default namespace storage; an explicit RuntimeCache directory or dynamic size takes precedence.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
@@ -99,17 +104,25 @@ rdma:
   image: ghcr.io/mellanox/k8s-rdma-shared-dev-plugin:v1.5.4
   # Selected GPU nodes, populated by foretoken install.
   nodeNames: []
+  # Existing NetworkAttachmentDefinitions; null selects automatic preparation, [] disables it.
+  networks: null
+  # Installer-resolved attachments; managed definitions remain until foretoken uninstall.
+  preparedNetworks: []
+  # Shared Whereabouts configuration path resolved from the cluster's CNI installation.
+  ipamConfigFile: ""
 
-# Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
+# Gateway mode shares one entry point across instances. Local mode uses separate LoadBalancer Services.
 frontend:
   enabled: false
-  mode: local
+  mode: gateway
   image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.4
   applicationURL: ""
   port: 8080
   gateway:
-    # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
-    create: false
+    # Create an isolated GatewayClass and HTTP Gateway when Gateway mode is selected.
+    create: true
+    # Separate from direct frontend ports so existing instances can migrate independently.
+    port: 8081
     controllerName: gateway.envoyproxy.io/gatewayclass-controller
     name: ""
     namespace: ""

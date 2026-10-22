@@ -44,6 +44,7 @@ class PlatformConfig:
     envoy_gateway: ManagedChart
     metallb: ManagedChart
     leader_worker: ManagedChart
+    multus: ManagedChart
     dragonfly: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
@@ -137,6 +138,16 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
             version="0.10.0",
         ),
+        multus=ManagedChart(
+            release_name="foretoken-multus",
+            source=_chart_source(
+                registry,
+                "https://github.com/rancher/rke2-charts/raw/refs/heads/main/"
+                "assets/rke2-multus/rke2-multus-v4.3.114.tgz",
+                "rke2-charts.rancher.io/rke2-multus",
+            ),
+            version="v4.3.114" if registry else None,
+        ),
         dragonfly=ManagedChart(
             release_name="foretoken-dragonfly",
             source=_chart_source(
@@ -218,9 +229,14 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
-            reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
+            reserved = ["frontend.mode"] if "mode" in frontend else []
+            if "gateway" in frontend:
+                gateway = frontend["gateway"]
+                if not isinstance(gateway, dict):
+                    raise DeploymentError(f"Helm values file {path} requires frontend.gateway to be a mapping")
+                reserved.extend(f"frontend.gateway.{key}" for key in gateway if key != "port")
             if reserved:
-                names = ", ".join(f"frontend.{key}" for key in reserved)
+                names = ", ".join(reserved)
                 raise DeploymentError(
                     f"Helm values file {path} sets {names}; use --frontend-mode "
                     "and --gateway-* options for frontend topology"

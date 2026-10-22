@@ -24,6 +24,7 @@ from benchmarks.results.plots.comparison import compare_to_base
 from benchmarks.results.plots.data import Chart, _method, sweep_charts
 from benchmarks.results.plots.rendering import _charts, _pareto, _table
 from benchmarks.results.plots.saved_results import SavedResults, read_saved_results
+from benchmarks.results.recording.database import read_record, read_records
 from benchmarks.results.recording.locks import publication_lock
 from benchmarks.results.recording.tasks import task_source
 
@@ -84,14 +85,14 @@ def _render_results(
         raise ValueError("columns must be 1 or 2")
     if base is None and not others:
         source = task_source(source)
+    documents = read_records(source, ("config.json", "metrics.json", "sweep_points.json", "slo_results.json"))
     direct = base is None and not others and (
-        (source / "slo_results.json").is_file()
-        or (source / "config.json").is_file() and any(
-            (source / name).is_file() for name in ("metrics.json", "sweep_points.json")
-        )
+        "slo_results.json" in documents
+        or "config.json" in documents and any(name in documents for name in ("metrics.json", "sweep_points.json"))
     )
     comparison = None if direct else read_saved_results((source, *map(Path, others)), methods=methods, base=base)
-    if base is None and comparison is not None and (source / "generated/context.json").is_file() and len(comparison.runs) == 1:
+    command = read_records(source / "generated", ("context.json",))
+    if base is None and comparison is not None and "context.json" in command and len(comparison.runs) == 1:
         measured = comparison.runs[0].get("result")
         collection_metrics = {row["metric"] for row in comparison.summary} | {
             chart.metric for chart in comparison.native
@@ -101,25 +102,23 @@ def _render_results(
         ):
             return _render_results(Path(measured), output_dir=out, columns=columns, metrics=metrics,
                                    methods=comparison.method_filters.get(Path(measured), ()), base=None)
-    config_path = source / "config.json"
-    if comparison is None and not config_path.is_file() and not (source / "slo_results.json").is_file():
+    if comparison is None and not any(name in documents for name in ("config.json", "slo_results.json")):
         raise FileNotFoundError(f"No saved benchmark config.json in {source}")
-    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
-    points_path = source / "sweep_points.json"
+    config = documents.get("config.json", {})
     if comparison is not None:
         charts, identities, result = _render_collection(comparison, out, columns, metrics, base)
-    elif points_path.is_file():
+    elif "sweep_points.json" in documents:
         charts, identities, result = _render_sweep(source, config, out, columns, metrics, methods)
-    elif (source / "slo_results.json").is_file():
-        search = json.loads((source / "slo_results.json").read_text(encoding="utf-8"))
+    elif "slo_results.json" in documents:
+        search = documents["slo_results.json"]
         charts, identities = _slo_charts(search), []
         file = _table(out / "slo-probes", search["probes"])
         result = {file.name: file}
-    elif (source / "metrics.json").is_file():
+    elif "metrics.json" in documents:
         charts, identities, result = _render_run(source, config, out, methods)
     else:
         raise FileNotFoundError(f"No saved metrics or sweep results in {source}")
-    if comparison is None and not points_path.is_file():
+    if comparison is None and "sweep_points.json" not in documents:
         if set(methods) - set(identities):
             raise ValueError("Unknown plot methods: " + ", ".join(sorted(set(methods) - set(identities))))
         missing = set(metrics) - {chart.metric for chart in charts}
@@ -179,8 +178,8 @@ def _render_sweep(
     metrics: tuple[str, ...], methods: tuple[str, ...],
 ) -> tuple[list[Chart], list[str], dict[str, Path]]:
     """Export an existing sweep's measured curves and selected summary, preserving repeat statistics."""
-    points = json.loads((source / "sweep_points.json").read_text(encoding="utf-8"))
-    summary = json.loads((source / "sweep_summary.json").read_text(encoding="utf-8"))
+    points = read_record(source, "sweep_points.json")
+    summary = read_record(source, "sweep_summary.json")
     identities = list(dict.fromkeys(_method(point) for point in points))
     charts = list(sweep_charts(points, summary, metrics=metrics, methods=methods))
     result = _pareto(points, summary, out, methods, columns) if config.get("mode") == "parameter_sweep" else {}
@@ -196,9 +195,9 @@ def _render_run(
     source: Path, config: dict[str, Any], out: Path, methods: tuple[str, ...],
 ) -> tuple[list[Chart], list[str], dict[str, Path]]:
     """Export a single run's domain charts and native tables without measuring or rescoring it."""
-    measured = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
-    warmup_path = source / "warmup_metrics.json"
-    warmup = json.loads(warmup_path.read_text(encoding="utf-8")) if warmup_path.is_file() else None
+    measured = read_record(source, "metrics.json")
+    documents = read_records(source, ("warmup_metrics.json", "context.json"))
+    warmup = documents.get("warmup_metrics.json")
     comparison = comparison_charts(measured)
     identities: list[str] = []
     if comparison is not None:
@@ -210,7 +209,7 @@ def _render_run(
             charts = [chart for chart in charts if chart.series]
     elif "scores" in measured:
         charts = _quality_charts(measured)
-    elif config.get("mode") == "video_generation" or (source / "raw_results.json").is_file():
+    elif config.get("mode") == "video_generation" or "requests" in config:
         charts = _video_phase_charts(source, measured)
         if warmup is not None:
             charts += phase_summary_charts(measured, warmup)
@@ -222,7 +221,7 @@ def _render_run(
         charts += _prometheus_charts(source)
         charts += gpu_allocation_charts(source)
     result = {}
-    if "evaluation_comparison" in measured or (source / "context.json").is_file():
+    if "evaluation_comparison" in measured or "context.json" in documents:
         runs = read_saved_results((source,), methods=methods).runs
         file = _table(out / "comparison-runs", [
             {key: value for key, value in row.items() if key != "environment_settings"} for row in runs

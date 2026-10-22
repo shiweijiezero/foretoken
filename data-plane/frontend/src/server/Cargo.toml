@@ -20,11 +20,13 @@ foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-llm-facade = { path = "../llm-facade" }
 foretoken-metrics = { path = "../metrics" }
 foretoken-model-protocol = { path = "../../../model-protocol" }
+foretoken-redis-client.workspace = true
 foretoken-router = { path = "../router" }
 foretoken-request-ledger = { path = "../../../request-ledger" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
 futures.workspace = true
+hyproxy.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 reqwest.workspace = true
@@ -35,6 +37,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tokio-util = { workspace = true, features = ["rt"] }
+tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 vllm-llm.workspace = true

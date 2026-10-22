@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
     Kubectl,
@@ -73,7 +75,7 @@ def prepare_directory_bindings(
                         raise DeploymentError(
                             f"Cannot discover shared storage for {directory}; platform values must select its NFS source or an existing claim"
                         )
-                    print(f"No shared mount was found for {directory}; no directory claim was prepared", flush=True)
+                    logger.warning("No shared mount was found for {}; no directory claim was prepared", directory)
                     del prepared[name]
                     continue
                 entry.update(source)

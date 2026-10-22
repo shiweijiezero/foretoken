@@ -24,6 +24,7 @@ class MooncakeSource:
     """Own source materialization and patch updates, preserving supplied local files."""
 
     def __init__(self, root: Path, *, destination: Path | None = None, cache: Path | None = None) -> None:
+        """Bind the selected release's ordered patches and dependencies to saved source provenance."""
         self.root = root
         self.directory = destination if destination is not None else root / "third_party/mooncake"
         self.archive_cache = cache
@@ -170,6 +171,7 @@ class MooncakeSource:
         if self.prepared():
             return
         previous = self.record.get("patches", [])
+        # An unrecorded legacy stack is owned only when every patch is already present.
         if not previous and self.recipe.get("legacyPatches"):
             legacy = [{"path": name, "contents": (self.root / name).read_text()} for name in self.recipe["legacyPatches"]]
             if all(self._patch(self.directory, patch["contents"], reverse=True, check=True).returncode == 0 for patch in legacy):
@@ -192,6 +194,7 @@ class MooncakeSource:
                     target = staged / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
+            # Undo the owned stack in reverse order, then apply the selected release in manifest order.
             if previous and previous != self.patches:
                 for patch in reversed(previous):
                     result = self._patch(staged, patch["contents"], reverse=True)
@@ -203,6 +206,7 @@ class MooncakeSource:
                 result = self._patch(staged, patch["contents"])
                 if result.returncode:
                     raise ValueError(f"Cannot apply {patch['path']} to local Mooncake source: {result.stderr.strip()}")
+            # Publish only after the complete stack succeeds; unchanged files keep their build timestamps.
             for name in names:
                 source, destination = staged / name, self.directory / name
                 if source.is_file():

@@ -71,7 +71,7 @@ workload:
 
 ### 分配外部访问地址
 
-集群已经提供 LoadBalancer 地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
+默认的共享 Gateway 需要 LoadBalancer 地址。集群已经提供地址分配时，直接复用已有实现。安装提示 `LoadBalancer support Not verified` 时，可以让 Foretoken 通过 MetalLB 分配节点网段内的空闲地址。先向集群管理员确认可用范围，再添加到 `deploy/platform-values.yaml`，替换下面的示例：
 
 ```yaml
 loadBalancer:
@@ -85,19 +85,24 @@ loadBalancer:
 foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-## 3. 部署与更新代码
+### RDMA 网络
 
-快速开始示例选择仓库中的 `data/` 目录。目标节点能访问该目录时可保留配置，跨节点部署应使用共享文件系统。成员使用的目录访问由[管理员提前准备](../features/model-storage_zh.md#跨命名空间复用模型文件)。
+安装时会发现或准备共享 RDMA 设备分配。使用 RoCE（通过以太网传输 RDMA 数据）时，如果节点位于相同二层网络且网卡布局一致，还会自动准备 Pod 的附加网络接口。Multus 负责添加接口，Whereabouts 负责分配地址，普通 Kubernetes 网络继续保留。集群已有兼容组件时直接复用。
 
-如果希望由集群提供存储，将 `examples/quickstart/qwen3-0.6b/cache.yaml` 中的 `spec` 替换为：
+如果网络 Operator 已经提供所需网络，在 `deploy/platform-values.yaml` 中引用对应的 `NetworkAttachmentDefinition`：
 
 ```yaml
-spec:
-  initialSize: 10Gi
-  accessMode: ReadWriteOnce
+rdma:
+  networks:
+    - name: inference-rdma
+      namespace: network-system
 ```
 
-这会使用默认 StorageClass 申请单节点卷。驱动支持跨节点访问时，可选择 `ReadWriteMany`；需要其他存储类时添加 `storageClassName`。共享和保留行为见[模型存储](../features/model-storage_zh.md)。
+将名称和命名空间换成实际网络，在原安装命令中加入 `--values deploy/platform-values.yaml` 后重新执行。省略 `rdma.networks` 或设为 `null` 时自动准备，设为 `[]` 则不再为新实例默认附加网络。后续平台更新会保留已保存的选择；已有实例重新部署后采用新的默认值。Foretoken 创建的网络定义在平台更新、回滚时保留，由 `foretoken uninstall` 回收；直接执行 `helm uninstall` 会保留这些定义。外部网络仍由原有组件管理。
+
+## 3. 部署与更新代码
+
+平台已准备默认模型存储时，直接部署即可。平台尚未准备存储，或需要独立卷时，先[配置动态存储](../features/model-storage_zh.md#使用动态存储)；需要其他共享目录时，按[选择目录](../features/model-storage_zh.md#选择目录)使用管理员已授权的路径。
 
 部署并更新代码：
 

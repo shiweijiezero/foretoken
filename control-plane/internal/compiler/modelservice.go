@@ -367,8 +367,7 @@ func normalizeProfiling(input *inferencev1alpha1.ProfilingConfig) *inferencev1al
 	return input.DeepCopy()
 }
 
-// The remaining compiler helpers normalize user shorthand into stable Pool template fields.
-// Runtime-incompatible resources, storage, timeouts, and features fail before reconciliation.
+// normalizeResources canonicalizes model resource quantities for immutable Pool templates.
 func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alpha1.ModelResources, error) {
 	cpu, err := normalizeQuantity("resources.requests.cpu", input.Requests.CPU)
 	if err != nil {
@@ -439,6 +438,7 @@ func normalizeKVTransfer(input *inferencev1alpha1.KVTransfer) (*inferencev1alpha
 	return &output, nil
 }
 
+// normalizeKVCache resolves typed cache intent and capacity; the service controller binds managed Stores.
 func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.NormalizedKVCache, error) {
 	if input == nil {
 		return nil, nil
@@ -492,6 +492,7 @@ func normalizeDuration(field string, input inferencev1alpha1.Duration) (inferenc
 	return inferencev1alpha1.Duration(duration.String()), nil
 }
 
+// normalizeModelFeatures validates opt-in capabilities and gives Pool templates a canonical ordering.
 func normalizeModelFeatures(input *inferencev1alpha1.ModelFeatures) (inferencev1alpha1.ModelFeatures, error) {
 	if input == nil {
 		return inferencev1alpha1.ModelFeatures{}, nil

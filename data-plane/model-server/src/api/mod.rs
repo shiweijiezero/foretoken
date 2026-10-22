@@ -22,7 +22,6 @@ use prometheus_client::encoding::text::{encode_eof, encode_registry};
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
-use crate::backend::vllm::kv_events::KvEventAdapter;
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::execution::{
     AdmissionRejection, ExecutionError, ExecutionRegistry, ExecutionStore, InstanceAdmissionStatus,
@@ -42,11 +41,8 @@ pub struct AppState {
     backend: Arc<dyn Backend>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
-    kv_source_endpoint: Option<String>,
-    kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
-    shared_kv: Option<crate::backend::vllm::prefix_lookup::SharedKvLookup>,
     ledger: Option<ExecutionStore>,
     executions: ExecutionRegistry,
 }
@@ -133,11 +129,8 @@ impl AppState {
             backend,
             health,
             metadata,
-            kv_source_endpoint: None,
-            kv_events: None,
             runtime_cache: None,
             profiling: None,
-            shared_kv: None,
             ledger: None,
             executions: ExecutionRegistry::default(),
         }
@@ -155,29 +148,6 @@ impl AppState {
             pod_uid,
             epoch,
         });
-        self
-    }
-
-    /// Binds prefix observations, claims, and cancellations to this process's physical endpoint.
-    pub fn with_kv_source_endpoint(mut self, endpoint: String) -> Self {
-        self.kv_source_endpoint = Some(endpoint);
-        self
-    }
-
-    /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
-    ///
-    /// The router owns this state while its handlers retain cloned adapter references.
-    pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
-        self.kv_events = Some(adapter);
-        self
-    }
-
-    /// Enables read-only shared-prefix observations through the running connector.
-    pub fn with_shared_kv(
-        mut self,
-        lookup: crate::backend::vllm::prefix_lookup::SharedKvLookup,
-    ) -> Self {
-        self.shared_kv = Some(lookup);
         self
     }
 

@@ -17,12 +17,10 @@
 ## 部署
 
 默认从公开 Hugging Face 仓库 `MiniMaxAI/MiniMax-H3` 自动下载权重，
-与 Quick Start 示例共用仓库根目录的 `data/`。本地 k3d 复用建集群时的数据挂载；
-远程集群按[模型存储指南](../../../../docs/features/model-storage_zh.md)，将 `cache.yaml`
-中的 `directory` 改为目标节点可访问的目录。
+使用平台默认存储。本地 k3d 复用建集群时的数据挂载；其他存储选择见
+[模型存储指南](../../../../docs/features/model-storage_zh.md)。
 
-使用 Gateway 时，先在本配方的 `frontend.yaml` 中设置 `spec.hostname`，
-并按[网关模式](../../../../README_zh.md#网关模式)安装平台，再部署模型。
+自定义域名或 HTTPS 的设置见[网关配置](../../../../README_zh.md#网关模式)。
 
 ```bash
 RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2

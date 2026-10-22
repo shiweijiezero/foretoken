@@ -69,7 +69,7 @@ foretoken install -e .
 # foretoken install
 ```
 
-平台在集群中安装一次，之后每个部署实例都有独立的控制器和服务。
+平台在集群中安装一次。各部署实例拥有独立的控制器和服务，默认通过共享 Gateway 提供 HTTP 访问。
 
 宿主机需要 Docker、NVIDIA Container Toolkit、k3d、kubectl 和 [Helm 4](cli/README_zh.md#开始前)，且当前用户可以无 `sudo` 执行 `docker info`。需要时请先按 [k3d 部署指南](docs/deployment/k3d_zh.md) 安装宿主机依赖。使用 kind 或已有 Kubernetes 集群时，按上表进入对应指南。
 
@@ -81,17 +81,21 @@ foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
 
 不传 `--name` 时，实例名取自 [`frontend.yaml`](examples/quickstart/qwen3-0.6b/frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `qwen3-0-6b`。
 
-实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。示例使用仓库根目录的 `./data` 目录保存模型文件和运行时缓存。更多部署配置见 [`examples/`](examples/)。
+实例包含一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型请求 1 张 GPU、4 个 CPU 和 48 GiB 内存，资源上限为 8 个 CPU 和 64 GiB。模型文件和运行时缓存使用平台默认存储，本机示例对应创建集群时准备的 `./data`。更多部署配置见 [`examples/`](examples/)。
 
 同时尝试不同代码改动，见[并行运行候选方案](docs/deployment/source_zh.md#并行运行候选方案)；修改 vLLM，见[使用本地引擎源码](docs/deployment/source_zh.md#修改推理引擎)。
 
 ### 4. 发送测试请求
 
+Gateway 根据 Host 将请求路由到目标实例。
+
 ```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
@@ -150,32 +154,7 @@ codex \
 
 ## 网关模式
 
-网关模式让多个实例共用一个入口。调用时带上 `foretoken endpoint --host` 返回的 Host。
-
-启用网关模式并部署：
-
-```bash
-# 为上面的源码安装启用网关模式
-foretoken install -e . --frontend-mode gateway
-# 使用发布版平台时：
-# foretoken install --frontend-mode gateway
-
-# 部署快速开始示例
-foretoken deploy examples/quickstart/qwen3-0.6b --timeout 20m
-
-# 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint qwen3-0-6b)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint qwen3-0-6b --host)"
-
-# 发送测试请求
-curl --fail-with-body --no-buffer \
-  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
-  -H "Host: $FORETOKEN_REQUEST_HOST" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
-```
-
-命令会按需安装 Envoy Gateway。复用已有 Gateway 或指定 listener，见[命令行工具使用指南](cli/README_zh.md)。
+复用已有 Gateway 或选择其监听器，见[安装选项](cli/README_zh.md#install)。
 
 使用自定义域名、HTTPS 或限定域名的监听器时，在 `examples/quickstart/qwen3-0.6b/frontend.yaml` 中填写 Gateway 接受的主机名并重新部署。HTTPS 还需对应的 DNS 和网关证书：
 

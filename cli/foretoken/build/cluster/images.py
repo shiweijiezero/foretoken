@@ -12,9 +12,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from foretoken.command_execution import CommandExecution, cleanup_commands
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution, cleanup_commands
 
 _IMAGE_OWNER_LABEL = "inference.foretoken.io/source-image-owner"
 SOURCE_BUILD_BINDING_LABEL = "inference.foretoken.io/source-build-binding"

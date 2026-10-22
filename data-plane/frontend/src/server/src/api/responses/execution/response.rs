@@ -4,7 +4,7 @@
 //! Executes one response while retaining admission, persistence, and transport cancellation ownership.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use foretoken_admission::{
     AdmissionPermit, AdmissionRequest, CallerIdentity, ExecutionReservation, with_caller,
@@ -14,6 +14,7 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use super::super::convert::{self, ResponseMeta, build_response, build_usage};
 use super::super::error::ApiError;
@@ -21,7 +22,7 @@ use super::super::streaming::{
     OutputItemStreamer, ResponseStreamEvent, response_lifecycle_event, restore_tool_event,
 };
 use super::super::types::{ResponseItemStatus, ResponsesInput, ResponsesRequest};
-use super::{Disconnect, ResponseDelivery, ResponseReady, ResponseTasks};
+use super::{ResponseDelivery, ResponseReady, ResponseTasks};
 use crate::api::RequestTiming;
 use crate::api::stream::chat_events;
 use crate::runtime::{GenerationError, RequestSnapshot};
@@ -63,7 +64,7 @@ impl ResponseTasks {
         let identity = CallerIdentity::current();
         let background = request.background.unwrap_or(false);
         let cancel = self.stopping.child_token();
-        let disconnect = Disconnect((!background).then(|| cancel.clone()));
+        let disconnect = (!background).then(|| cancel.clone().drop_guard());
         let (ready, receiver) = oneshot::channel();
         let (events, event_receiver) = mpsc::channel(1);
         self.active
@@ -71,40 +72,44 @@ impl ResponseTasks {
             .expect("response task lock poisoned")
             .insert(id.clone(), cancel.clone());
         let tasks = self.clone();
-        self.tracker.spawn(async move {
-            let _active = ActiveResponse {
-                tasks: tasks.clone(),
-                id: id.clone(),
-            };
-            let items = OutputItemStreamer::new(request.include_reasoning);
-            let mut run = ResponseExecution {
-                items,
-                id,
-                snapshot,
-                request,
-                timing,
-                identity: identity.clone(),
-                cancel,
-                store: tasks.store.clone(),
-                reservation: None,
-                recorded: false,
-                registration_attempted: false,
-                generation_started: false,
-                ready: Some(ready),
-                delivery: events,
-                sequence: 0,
-                created_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            };
-            with_caller(identity, async {
-                if let Err(error) = run.execute().await {
-                    run.fail(error).await;
-                }
-            })
-            .await;
-        });
+        self.tracker.spawn(
+            async move {
+                let _active = ActiveResponse {
+                    tasks: tasks.clone(),
+                    id: id.clone(),
+                };
+                let items = OutputItemStreamer::new(request.include_reasoning);
+                let mut run = ResponseExecution {
+                    items,
+                    id,
+                    snapshot,
+                    request,
+                    timing,
+                    identity: identity.clone(),
+                    cancel,
+                    store: tasks.store.clone(),
+                    reservation: None,
+                    recorded: false,
+                    registration_attempted: false,
+                    generation_started: false,
+                    ready: Some(ready),
+                    delivery: events,
+                    sequence: 0,
+                    created_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                tracing::debug!(response_id = %run.id, "response execution started");
+                with_caller(identity, async {
+                    if let Err(error) = run.execute().await {
+                        run.fail(error).await;
+                    }
+                })
+                .await;
+            }
+            .in_current_span(),
+        );
         ResponseDelivery {
             ready: receiver,
             events: event_receiver,
@@ -290,6 +295,17 @@ impl ResponseExecution {
         let streamed = self.request.stream;
         self.publish_start(meta).await?;
         self.generation_started = true;
+        let store = self
+            .recorded
+            .then(|| self.store.as_ref().expect("recorded response").clone());
+        let id = self.id.clone();
+        let remote_cancel = async move {
+            match store {
+                Some(store) => store.wait_cancelled(&id).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::pin!(remote_cancel);
         let snapshot = self.snapshot.clone();
         let model = meta.model.clone();
         let include_reasoning = meta.include_reasoning;
@@ -299,17 +315,13 @@ impl ResponseExecution {
                 .generate_admitted_chat(model, chat, include_reasoning, timing, Some(admission))
                 .await
         });
-        let mut cancel_poll = tokio::time::interval(Duration::from_millis(100));
-        cancel_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let generated = loop {
-            tokio::select! {
-                result = &mut generation => break result,
-                _ = cancel_poll.tick(), if self.recorded => {
-                    if self.store.as_ref().expect("recorded response").cancellation_requested(&self.id).await? {
-                        self.cancel.cancel();
-                    }
-                }
-            }
+        let generated = tokio::select! {
+            result = &mut generation => result,
+            result = &mut remote_cancel => {
+                result?;
+                self.cancel.cancel();
+                return std::future::pending().await;
+            },
         };
         // Drop preparation/submission before waiting for its backend-owned termination evidence.
         drop(generation);
@@ -335,13 +347,12 @@ impl ResponseExecution {
         }
         loop {
             let event = tokio::select! {
-                _ = cancel_poll.tick(), if self.recorded => {
-                    if self.store.as_ref().expect("recorded response").cancellation_requested(&self.id).await? {
-                        self.cancel.cancel();
-                    }
-                    continue;
-                },
                 event = events.next() => event,
+                result = &mut remote_cancel => {
+                    result?;
+                    self.cancel.cancel();
+                    return std::future::pending().await;
+                },
             };
             let Some(chunk) = event else {
                 drop(events);
@@ -386,13 +397,13 @@ impl ResponseExecution {
                                 status == ResponseItemStatus::Incomplete,
                             )
                             .map_err(|_| ApiError::generation(GenerationError::BackendProtocol))?;
-                        let closing = self.items.finish(status, &meta.tool_names);
+                        let closing = self.items.finish(status.clone(), &meta.tool_names);
                         let response = build_response(
                             meta,
                             &self.id,
                             created_at,
                             self.items.final_output_items(),
-                            status,
+                            status.clone(),
                             Some(build_usage(&usage)),
                         );
                         let mut final_events = outgoing;

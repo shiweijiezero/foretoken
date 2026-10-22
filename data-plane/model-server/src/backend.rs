@@ -5,6 +5,7 @@
 
 mod kv_reuse;
 pub mod vllm;
+pub mod vllmomni;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -77,6 +78,13 @@ pub enum BackendError {
     RequestFailed,
 }
 
+/// A KV reader either retries unavailable observations or replaces its cursor with the returned epoch.
+#[derive(Debug)]
+pub enum KvDeltaError {
+    Unavailable,
+    CursorReset(Box<foretoken_model_protocol::KvDeltaResponse>),
+}
+
 /// Minimal inference backend operations that this group-local server needs.
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -90,17 +98,33 @@ pub trait Backend: Send + Sync {
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
 
-    /// Observes reusable prefixes in every local scheduler without allocating request capacity.
+    /// Observes local scheduler prefixes and binds them to the backend's model/layout identity.
+    /// HTTP callers receive owned observations without allocating request capacity.
     async fn local_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
-    ) -> Result<Vec<foretoken_model_protocol::KvRankPrefix>, BackendError>;
+    ) -> Result<foretoken_model_protocol::KvLocalPrefixResponse, BackendError>;
 
-    /// Queries retained Decode prefixes across DP schedulers without acquiring their blocks.
+    /// Reads the selected connector's shared prefix without retaining request or result state.
+    async fn shared_prefix(
+        &self,
+        request: &foretoken_model_protocol::KvPrefixRequest,
+    ) -> Result<foretoken_model_protocol::KvSharedPrefixResponse, BackendError>;
+
+    /// Returns rank-local changes or a cursor reset while the backend retains event history.
+    fn kv_delta(
+        &self,
+        dp_rank: u32,
+        epoch: Option<&str>,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<foretoken_model_protocol::KvDeltaResponse, KvDeltaError>;
+
+    /// Observes retained Decode prefixes with their physical source identity without acquiring blocks.
     async fn retained_prefixes(
         &self,
         request: &foretoken_model_protocol::KvPrefixRequest,
-    ) -> Result<Vec<foretoken_model_protocol::KvRetainedRankPrefix>, BackendError>;
+    ) -> Result<foretoken_model_protocol::KvRetainedPrefixResponse, BackendError>;
 
     /// Claims a source prefix, returning Granted only after its native workers retain the blocks.
     async fn claim_kv_prefix(

@@ -4,14 +4,20 @@
 //! Composes client APIs, operator endpoints, and frontend-wide HTTP middleware.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use foretoken_admission::{CallerIdentity, observe_http, with_caller};
+use tower_http::request_id::{
+    MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
+use tower_http::trace::TraceLayer;
+use tracing::Span;
 
 use crate::api::{self, ApiState};
 use crate::runtime::{Generation, before_deadline};
@@ -48,7 +54,46 @@ pub fn router(
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
         .layer(middleware::from_fn_with_state(generation, observe_request))
-        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics));
+        .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
+        // The diagnostic ID is available before tracing and returned even for intake errors.
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request| {
+                    let route = request
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map_or("unmatched", MatchedPath::as_str);
+                    if foretoken_metrics::EXCLUDED_HANDLERS.contains(&route) {
+                        return Span::none();
+                    }
+                    let request_id = request
+                        .extensions()
+                        .get::<RequestId>()
+                        .and_then(|id| id.header_value().to_str().ok());
+                    // Correlation survives every enabled log level; spans emit no request event.
+                    tracing::error_span!(
+                        "http_request",
+                        method = %request.method(),
+                        route,
+                        request_id,
+                        status = tracing::field::Empty,
+                        latency_ms = tracing::field::Empty,
+                    )
+                })
+                .on_request(())
+                .on_response(|response: &Response, latency: Duration, span: &Span| {
+                    if !span.is_disabled() {
+                        span.record("status", response.status().as_u16());
+                        span.record("latency_ms", latency.as_secs_f64() * 1_000.0);
+                        tracing::debug!("HTTP response started");
+                    }
+                })
+                .on_failure(())
+                .on_body_chunk(())
+                .on_eos(()),
+        )
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid));
     Ok((app, response_tasks))
 }
 

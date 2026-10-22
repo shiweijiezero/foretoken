@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from foretoken.accelerators.config import GPU_RESOURCE_BACKENDS
 from foretoken.applications.files import application_references
+from foretoken.downloads.sources import select_platform_image_sources
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl
 from foretoken.kubernetes.documents import decode_resources
-from foretoken.network_sources import select_platform_image_sources
 from foretoken.platform.config import load_platform_values
 from foretoken.platform.helm_client import (
     HelmClient,
@@ -24,11 +24,13 @@ from foretoken.platform.helm_client import (
     owned_by_release,
     value_at,
 )
+from foretoken.platform.rdma import nodes_with_rdma_allocation
 from foretoken.platform.storage.directories import prepare_directory_bindings
-from foretoken.platform.types import ReleaseRef
+from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
 
 if TYPE_CHECKING:
     from foretoken.build.source import SourceImages
+    from foretoken.platform.networking.rdma import RDMANetworkLifecycle
     from foretoken.platform.storage.application_files import PlatformApplicationFiles
 
 
@@ -41,11 +43,7 @@ class Helm(HelmClient):
         release: ReleaseRef,
         source_images: SourceImages | None,
         values: tuple[str, ...],
-        frontend_mode: str | None,
-        gateway_name: str,
-        gateway_namespace: str,
-        gateway_section_name: str,
-        gateway_controller_name: str,
+        gateway: PlatformGatewayConfig,
         observability_labels: tuple[tuple[str, str], ...],
         observability_prometheus: str,
         grafana_anonymous_access: bool | None,
@@ -55,6 +53,8 @@ class Helm(HelmClient):
         rdma_resource_name: str | None,
         rdma_managed: bool,
         rdma_node_names: tuple[str, ...],
+        rdma_networks: RDMANetworkLifecycle,
+        gpu_nodes: tuple[dict[str, Any], ...],
         download_proxy_url: str,
         stored_values: dict[str, Any] | None,
         kubectl: Kubectl,
@@ -75,10 +75,7 @@ class Helm(HelmClient):
         if stored_values is not None:
             # Reusing Helm's original values would restore keys removed by migration.
             args.extend(["--reset-values", "--values", "-"])
-        self._add_platform_values(
-            args, values, frontend_mode, gateway_name, gateway_namespace,
-            gateway_section_name, gateway_controller_name, observability_labels,
-        )
+        self._add_platform_values(args, values, gateway, observability_labels)
         args.extend(["--set", f"development.enabled={str(source_mode).lower()}"])
         args.extend(["--set-string", f"observability.prometheus={observability_prometheus}"])
         args.extend(["--set-string", f"observability.logs.datasourceURL={log_endpoint}"])
@@ -126,12 +123,33 @@ class Helm(HelmClient):
             if "deployment-template.json" not in configuration["data"]:
                 raise DeploymentError("The selected platform chart does not support deployment instances")
             template = json.loads(configuration["data"]["deployment-template.json"])
+            defaults = json.loads(configuration["data"]["deploymentValues"])
+            network_nodes = (
+                tuple(node for node in gpu_nodes if node["metadata"]["name"] in rdma_node_names)
+                if rdma_managed else nodes_with_rdma_allocation(gpu_nodes, defaults["rdma"]["resourceName"])
+            )
+            networks, ipam_config = rdma_networks.prepare(
+                release, network_nodes,
+                defaults["applicationFiles"]["clientImage"], defaults["imagePullSecrets"],
+                (stored_values or {}).get("rdma", {}).get("preparedNetworks", []),
+                overrides.get("rdma", {}).get("networks"), timeout,
+            )
+            args.extend([
+                "--set-json", "rdma.preparedNetworks=" + json.dumps(networks),
+                "--set-string", "rdma.ipamConfigFile=" + ipam_config,
+            ])
+            default_claim = release.name + "-data"
             directories = prepare_directory_bindings(
                 kubectl, template["directories"],
                 source_images.source_root if source_images is not None else Path.cwd(),
-                release.name + "-data", timeout,
+                default_claim, timeout,
             )
             args.extend(["--set-json", "workload.cache.directories=" + json.dumps(directories)])
+            if default_claim in directories:
+                try:
+                    value_at(overrides, "workload.cache.claimName")
+                except KeyError:
+                    args.extend(["--set-string", "workload.cache.claimName=" + default_claim])
             # Adoption keeps the origin publisher alive until Helm selects the complete release.
             with application_files.adopt(self.render_chart(args, input_text=input_text), timeout):
                 self.run(args, input_text=input_text)
@@ -237,11 +255,10 @@ class Helm(HelmClient):
 
     @staticmethod
     def _add_platform_values(
-        args: list[str], values: tuple[str, ...], frontend_mode: str | None,
-        gateway_name: str, gateway_namespace: str, gateway_section_name: str,
-        gateway_controller_name: str, observability_labels: tuple[tuple[str, str], ...],
+        args: list[str], values: tuple[str, ...], gateway: PlatformGatewayConfig,
+        observability_labels: tuple[tuple[str, str], ...],
     ) -> None:
-        """Render the platform choices shared by release and source installations."""
+        """Project the resolved platform plan into both previews and the final Helm installation."""
         for values_file in values:
             args.extend(["--values", values_file])
         args.extend(["--set", "frontend.enabled=true", "--set", "observability.mode=enabled"])
@@ -249,18 +266,14 @@ class Helm(HelmClient):
             args.extend([
                 "--set-json", "observability.additionalLabels=" + json.dumps(dict(observability_labels), separators=(",", ":")),
             ])
-        if frontend_mode is not None:
-            gateway_create = frontend_mode == "gateway" and not gateway_name
-            args.extend(["--set", f"frontend.mode={frontend_mode}"])
-            args.extend(["--set", f"frontend.gateway.create={str(gateway_create).lower()}"])
-        if gateway_controller_name:
-            args.extend(["--set-string", f"frontend.gateway.controllerName={gateway_controller_name}"])
-        if gateway_name:
-            args.extend(["--set-string", f"frontend.gateway.name={gateway_name}"])
-        if gateway_namespace:
-            args.extend(["--set-string", f"frontend.gateway.namespace={gateway_namespace}"])
-        if gateway_section_name or (frontend_mode == "gateway" and gateway_name):
-            args.extend(["--set-string", f"frontend.gateway.sectionName={gateway_section_name}"])
+        args.extend([
+            "--set-string", "frontend.mode=" + gateway.mode,
+            "--set-json", "frontend.gateway=" + json.dumps({
+                "create": gateway.create, "controllerName": gateway.controller_name,
+                "name": gateway.name, "namespace": gateway.namespace, "sectionName": gateway.section_name,
+                **({"port": gateway.port} if gateway.port is not None else {}),
+            }),
+        ])
 
     @staticmethod
     def _platform_images(documents: tuple[dict[str, Any], ...]) -> tuple[dict[str, str], str | None]:

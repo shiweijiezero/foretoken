@@ -17,6 +17,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -298,7 +299,13 @@ func (reconciler *ServiceReconciler) metricsSnapshot(ctx context.Context, target
 		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}
 	metrics, err := reconciler.MetricsProvider.Snapshot(ctx, target, needsEngineLoad)
-	if err != nil || metrics.State == "" {
+	if err != nil {
+		if ctx.Err() == nil {
+			ctrl.LoggerFrom(ctx).Error(err, "could not collect autoscaling metrics", "pool", target.Name, "role", target.Role)
+		}
+		return core.MetricsSnapshot{State: core.MetricsUnavailable}
+	}
+	if metrics.State == "" {
 		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}
 	if metrics.State == core.MetricsFresh {

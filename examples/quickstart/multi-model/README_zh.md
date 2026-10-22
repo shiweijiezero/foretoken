@@ -10,15 +10,16 @@
 - `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
 - `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-初始部署请求 2 张 GPU、12 个 CPU 核心和 100 GiB 内存。Qwen 扩容至 3 个副本、Llama 保持 1 个副本时，加上前端共请求 4 张 GPU、20 个 CPU 核心和 196 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存与单模型示例共用项目根目录的 `data/`，由 `cache.yaml` 配置。如需最小部署，请参阅[单模型快速开始](../qwen3-0.6b/README_zh.md)。
+初始部署请求 2 张 GPU、12 个 CPU 核心和 100 GiB 内存。Qwen 扩容至 3 个副本、Llama 保持 1 个副本时，加上前端共请求 4 张 GPU、20 个 CPU 核心和 196 GiB 内存；还需为平台预留额外容量。模型使用平台默认的[数据存储](../../../docs/features/model-storage_zh.md)，与单模型示例复用下载，运行时缓存则按实例隔离。如需最小部署，请参阅[单模型快速开始](../qwen3-0.6b/README_zh.md)。
 
 ## 部署
 
-从源码[安装平台](../../../docs/deployment/source_zh.md)并准备[模型存储](../../../docs/features/model-storage_zh.md)，再从仓库根目录运行：
+从源码[安装平台](../../../docs/deployment/source_zh.md)后，在仓库根目录运行：
 
 ```bash
 foretoken deploy examples/quickstart/multi-model --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint multi-model)"
+export REQUEST_HOST="$(foretoken endpoint multi-model --host)"
 ```
 
 不传 `--name` 时，实例名采用 [`frontend.yaml`](frontend.yaml) 中 `FrontendService` 的 `metadata.name`，本例为 `multi-model`。添加 `--name candidate-a` 则部署名为 `candidate-a` 的独立实例，后续命令也使用这个名字。
@@ -39,6 +40,7 @@ foretoken status multi-model --watch
 seq 1 32 | xargs -P8 -I{} sh -c '
   curl --fail --silent --show-error \
     "$FRONTEND_URL/v1/chat/completions" \
+    -H "Host: $REQUEST_HOST" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"详细解释 Kubernetes 请求路由。\"}],\"max_tokens\":512}"
 '
@@ -52,11 +54,11 @@ seq 1 32 | xargs -P8 -I{} sh -c '
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "Hello from Qwen"}],
-    "max_tokens": 32
+    "messages": [{"role": "user", "content": "Hello from Qwen"}]
   }'
 printf '\n'
 ```
@@ -65,6 +67,7 @@ printf '\n'
 
 ```bash
 curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "unsloth/Llama-3.2-1B-Instruct",

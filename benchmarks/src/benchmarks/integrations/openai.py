@@ -22,7 +22,7 @@ from benchmarks.datasets.conversations import Task
 from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.model_service import ModelService
 from benchmarks.results.measurements.requests import compute_tpot
-from benchmarks.results.recording.responses import ResponseContent, ResponseWriter
+from benchmarks.results.recording.responses import ResponseWriter
 
 
 @dataclass(frozen=True)
@@ -116,6 +116,7 @@ class OpenAILoadClient:
         max_connections: int | None,
         response_writer: ResponseWriter | None = None,
     ) -> None:
+        """Create the workload's SDK transport with the selected endpoint and retry policy."""
         self.response_writer = response_writer
         limits = httpx.Limits(
             max_connections=max_connections,
@@ -292,4 +293,129 @@ class OpenAILoadClient:
             "reasoning_characters": content.reasoning_characters,
             "transport_completed": transport_completed,
             "error": error_message,
+        }
+
+
+def merge_delta(target: dict[str, Any], delta: dict[str, Any]) -> None:
+    """Assemble OpenAI message fragments, including indexed tool-call arguments."""
+    for key, value in delta.items():
+        if value is None:
+            target.setdefault(key, None)
+        elif isinstance(value, str) and key not in {"role", "type", "id"}:
+            target[key] = (target.get(key) or "") + value
+        elif isinstance(value, dict):
+            if not isinstance(target.get(key), dict):
+                target[key] = {}
+            merge_delta(target[key], value)
+        elif (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) and "index" in item for item in value)
+        ):
+            current = target.setdefault(key, [])
+            for fragment in value:
+                index = fragment["index"]
+                item = next(
+                    (item for item in current if item.get("index") == index), None
+                )
+                if item is None:
+                    item = {"index": index}
+                    current.append(item)
+                merge_delta(item, fragment)
+        elif isinstance(value, list):
+            target.setdefault(key, []).extend(value)
+        else:
+            target[key] = value
+
+
+class ResponseContent:
+    """Count returned text while retaining content only for raw output or generated history."""
+
+    def __init__(self, *, raw: bool, history: bool) -> None:
+        self.raw = raw
+        self.history = history
+        self.response: dict[str, Any] = {}
+        self.choices: dict[int, dict[str, Any]] = {}
+        self.content_characters: int | None = None
+        self.reasoning_characters: int | None = None
+        self.finish_reason: str | None = None
+        self._finished_choices: set[int] = set()
+        self.response_model: str | None = None
+        self.response_id: str | None = None
+        self.usage: dict[str, Any] | None = None
+        self.tool_calls = False
+        self.generated: list[str] = []
+
+    def observe(
+        self, payload: dict[str, Any], *, streaming: bool, completion: bool
+    ) -> None:
+        """Consume a response/chunk once, preserving absence and explicit empty text."""
+        self.response_id = payload.get("id", self.response_id)
+        self.response_model = payload.get("model", self.response_model)
+        if payload.get("usage") is not None:
+            self.usage = payload["usage"]
+        if self.raw:
+            self.response.update(
+                {key: value for key, value in payload.items() if key != "choices"}
+            )
+        for choice in payload.get("choices", []):
+            index = choice.get("index", 0)
+            if choice.get("finish_reason"):
+                self._finished_choices.add(index)
+            message = (
+                {"content": choice.get("text")}
+                if completion
+                else choice.get("delta" if streaming else "message", {})
+            )
+            if index == 0:
+                if choice.get("finish_reason") is not None:
+                    self.finish_reason = choice["finish_reason"]
+                content = message.get("content")
+                if isinstance(content, str):
+                    self.content_characters = (self.content_characters or 0) + len(
+                        content
+                    )
+                    if self.history:
+                        self.generated.append(content)
+                reasoning = message.get("reasoning_content", message.get("reasoning"))
+                if isinstance(reasoning, str):
+                    self.reasoning_characters = (self.reasoning_characters or 0) + len(
+                        reasoning
+                    )
+                self.tool_calls = self.tool_calls or bool(
+                    message.get("tool_calls") or message.get("function_call")
+                )
+            if self.raw:
+                assembled = self.choices.setdefault(index, {"index": index})
+                assembled.update(
+                    {
+                        key: value
+                        for key, value in choice.items()
+                        if key not in {"delta", "message", "text", "logprobs"}
+                        and value is not None
+                    }
+                )
+                if streaming:
+                    if completion:
+                        assembled["text"] = assembled.get("text", "") + (
+                            choice.get("text") or ""
+                        )
+                    else:
+                        merge_delta(assembled.setdefault("message", {}), message)
+                    if choice.get("logprobs") is not None:
+                        merge_delta(
+                            assembled.setdefault("logprobs", {}), choice["logprobs"]
+                        )
+                else:
+                    assembled.update(choice)
+
+    def is_complete(self, choice_count: int) -> bool:
+        """Tell the request client whether every requested choice has a terminal finish reason."""
+        return all(index in self._finished_choices for index in range(choice_count))
+
+    def record(self) -> dict[str, Any]:
+        """Return the assembled response without any original SSE framing or timing arrays."""
+        return {
+            **self.response,
+            "choices": [self.choices[index] for index in sorted(self.choices)],
         }

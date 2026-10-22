@@ -130,6 +130,7 @@ func (plan LaunchPlanV2) JSON() (string, error) {
 	return string(data), err
 }
 
+// compileEngineArgs normalizes Omni option names and rejects platform-owned launch settings.
 func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alpha1.EngineArguments, error) {
 	args := make(inferencev1alpha1.EngineArguments, len(input)+4)
 	for name, value := range input {

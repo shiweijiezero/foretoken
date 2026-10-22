@@ -11,10 +11,11 @@ from contextlib import ExitStack
 from dataclasses import replace
 from typing import Any
 
+from loguru import logger
+
 from foretoken.applications.files import SOURCE_REVISION
 from foretoken.build.editable import EditableDeployment
 from foretoken.build.state import source_operation
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DEPLOYMENT_RESOURCE, DeploymentInstance
 from foretoken.deployment.manifest import (
     ForetokenDeployment,
@@ -32,6 +33,7 @@ from foretoken.kubernetes.client import (
 )
 from foretoken.kubernetes.documents import encode_resources
 from foretoken.kubernetes.mutation import DeploymentMutation
+from foretoken.processes.execution import CommandExecution
 from foretoken.working_directory import resolve_runtime_directory
 
 
@@ -93,12 +95,14 @@ class DeploymentLifecycle:
                 source = EditableDeployment.discover(self.kubectl, timeout, editable, engine_sources)
                 assert source is not None
                 locks.enter_context(source.operation(timeout))
-                source.prepare(timeout)
-                deployment = source.apply(deployment, timeout)
+                source.prepare(deployment, timeout)
             revision = self.prepare_controller(
                 submission, deployment, timeout,
                 controller_source_revision=source.controller_source_revision if source is not None else "",
             )
+            if source is not None:
+                controller = self.kubectl.get("deployment", submission.instance.controller_name, deployment.namespace)
+                deployment = source.apply(deployment, controller)
             deployment = self._select_storage(deployment, submission.instance.access())
             objects = copy.deepcopy(deployment.objects)
             for obj in objects:
@@ -110,13 +114,13 @@ class DeploymentLifecycle:
                     selected_source = obj["metadata"].get("annotations", {}).get(SOURCE_REVISION, "")
                     obj["spec"]["deploymentRevision"] = f"{revision}:{selected_source}"
             deployment = deployment.with_objects(objects)
-            print(f"Applying deployment instance {deployment.name}", flush=True)
+            logger.info("Applying deployment instance {}", deployment.name)
             submission.apply(deployment.rendered)
 
-        print(f"Waiting up to {timeout} for Foretoken services", flush=True)
+        logger.info("Waiting up to {} for Foretoken services", timeout)
         rollout_started = time.monotonic()
         with self.kubectl.until(rollout_started + timeout_seconds(timeout)) as deadline, StartupProgress(
-            self.kubectl, lambda line: print(line, flush=True)
+            self.kubectl, logger.info
         ) as startup:
             def observe(resources: tuple[ResourceRef, ...], elapsed: float, budget: float = 5.0) -> None:
                 """Report progress only while this submission still owns the instance."""
@@ -145,7 +149,7 @@ class DeploymentLifecycle:
                 )
             deployment = replace(submission.instance.deployment(), path=deployment.path)
             submission.check()
-        print(f"Foretoken deployment completed in {time.monotonic() - started:.1f}s", flush=True)
+        logger.info("Foretoken deployment completed in {:.1f}s", time.monotonic() - started)
         return deployment
 
     def prepare_controller(
@@ -186,7 +190,7 @@ class DeploymentLifecycle:
         if submission is None or not submission.created:
             return
         if not submission.owns_instance():
-            print("Temporary deployment retained: another operation owns its instance", flush=True)
+            logger.warning("Temporary deployment retained: another operation owns its instance")
             return
         root = ResourceRef("InferenceDeployment", submission.instance.name, submission.namespace)
         if root in submission.created and not retain_storage:

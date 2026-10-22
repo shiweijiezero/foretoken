@@ -5,18 +5,19 @@
 
 from __future__ import annotations
 
-import sys
 import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from loguru import logger
+
 from foretoken.arguments import EndpointCommand
-from foretoken.command_execution import CommandExecution
 from foretoken.deployment.instances import DeploymentInstance, resolve_deployment_target
 from foretoken.deployment.manifest import DEPLOYMENT_UID_LABEL, ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds, wait_for_object
+from foretoken.processes.execution import CommandExecution
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ def print_endpoint(command: EndpointCommand) -> None:
     with CommandExecution(timeout_seconds(command.timeout)):
         kubectl = Kubectl()
         deployment = resolve_deployment_target(command.target, kubectl, name=command.name, allow_missing=True)
-        print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
+        logger.info("Waiting for the frontend endpoint")
         endpoint = resolve_frontend_endpoint(deployment, kubectl, command.timeout)
         if command.host:
             print(endpoint.routing_host or urlsplit(endpoint.url).netloc)

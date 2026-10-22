@@ -271,16 +271,20 @@ async fn execution_cancelled(
     execution: &ExecutionControl,
     shared: &Option<(ExecutionStore, foretoken_request_ledger::ReservationRef)>,
 ) {
-    loop {
-        tokio::select! {
-            () = execution.cancelled() => return,
-            () = tokio::time::sleep(std::time::Duration::from_millis(250)) => {},
+    let remote_cancellation = async {
+        if let Some((store, reference)) = shared {
+            loop {
+                match store.ledger.wait_cancelled(reference).await {
+                    Ok(()) => return,
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
         }
-        if let Some((store, reference)) = shared
-            && matches!(store.ledger.cancelled(reference).await, Ok(true))
-        {
-            return;
-        }
+        std::future::pending::<()>().await;
+    };
+    tokio::select! {
+        () = execution.cancelled() => {},
+        () = remote_cancellation => {},
     }
 }
 

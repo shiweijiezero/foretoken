@@ -5,41 +5,84 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from benchmarks.results.measurements.itl import ITLStatistics, ITLSummary
 from benchmarks.results.measurements.requests import RequestMeasurement
+from benchmarks.results.recording.database import RunRecords, read_recorded_requests
+from benchmarks.results.recording.files import write_json
 
 
 class RequestRecordWriter:
-    """Own a flushed JSONL journal so completed requests survive an interrupted run."""
+    """Commit completed requests and own their live JSONL export for one measurement channel."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, records: RunRecords) -> None:
+        """Open a fresh channel, borrowing the database owned by ResultOutputs."""
         self.path = path
+        self.records = records
+        self.channel = path.stem
+        records.start_requests(self.channel)
         self.file = path.open("w", encoding="utf-8", buffering=1)
+        self._executor: ThreadPoolExecutor | None = None
+        self._failure: BaseException | None = None
 
     def write(self, record: dict[str, Any]) -> None:
-        """Append a completed request without retaining request or response content."""
-        self.file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-        self.file.flush()
+        """Persist a completion from synchronous evaluator progress or the owned I/O worker."""
+        try:
+            self.file.write(self.records.append_request(self.channel, record) + "\n")
+            self.file.flush()
+        except BaseException as error:
+            self._failure = error
+            raise
+
+    async def awrite(self, record: dict[str, Any]) -> None:
+        """Await durable recording without blocking HTTP/video token delivery on filesystem I/O."""
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="benchmark-records")
+        pending = asyncio.wrap_future(self._executor.submit(self.write, record))
+        # Cancellation leaves the accepted write owned by close(). Its error must
+        # still surface there if the request no longer awaits the future.
+        pending.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+        await asyncio.shield(pending)
 
     def close(self) -> None:
-        """Close the journal after the owning result lifecycle finishes publication."""
-        self.file.close()
+        """Join accepted writes before closing the journal or returning database ownership to ResultOutputs."""
+        try:
+            if self._executor is not None:
+                self._executor.shutdown(wait=True)
+        finally:
+            self.file.close()
+        if self._failure is not None:
+            raise self._failure
 
 
 def read_request_records(directory: Path, name: str = "raw_output") -> list[dict[str, Any]]:
-    """Read published requests or their flushed journal for offline result consumers."""
-    published = directory / f"{name}.json"
-    if published.is_file():
-        return json.loads(published.read_text(encoding="utf-8"))
-    journal = directory / f"{name}.jsonl"
-    if journal.is_file():
-        with journal.open(encoding="utf-8") as file:
-            return sorted((json.loads(line) for line in file if line.strip()), key=lambda row: row["start_time"])
-    return []
+    """Restore elapsed HTTP measurements in send order for recovery and offline readers."""
+    return sorted(read_recorded_requests(directory, name), key=lambda row: row["start_time"])
+
+
+def export_http_requests(
+    directory: Path, metrics: dict[str, Any], *, name: str = "raw_output", traced: bool = False,
+) -> Path:
+    """Project retained HTTP observations and measured SLO results into the public JSON artifact."""
+    raw = read_request_records(directory, name)
+    if len(raw) != metrics["request_num"]:
+        raise ValueError(f"Cannot export completed measurement: request records are incomplete in {directory}")
+    slo = metrics.get("slo") or {}
+    met = slo.get("request_slo_met")
+    rows = []
+    for index, (row, measurement) in enumerate(zip(raw, load_http_measurements(raw))):
+        record = {
+            **(row if traced else {}),
+            **request_measurement_record(measurement, stream=bool(metrics["stream"])),
+        }
+        if isinstance(met, list):
+            record.update(slo_met=met[index], slo_target=slo["request_criteria"])
+        rows.append(record)
+    return write_json(str(directory), f"{name}.json", rows, compact=True)
 
 
 def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dict[str, Any]:

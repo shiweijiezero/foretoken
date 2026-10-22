@@ -19,7 +19,9 @@ from pathlib import Path
 from threading import Event, Lock
 from typing import Any, BinaryIO, Self
 
-from foretoken.errors import DeploymentError
+from loguru import logger
+
+from foretoken.errors import DeploymentError, current_error_reporter
 
 _EXECUTIONS: ContextVar[tuple[CommandExecution, ...]] = ContextVar(
     "foretoken_command_executions", default=()
@@ -50,12 +52,16 @@ class CommandExecution(AbstractContextManager):
     execution lifetime while participating in the same cancellation scope.
     """
 
-    def __init__(self, control_timeout: float | None = None) -> None:
+    def __init__(self, control_timeout: float | None = None, *, report_failure: bool = True) -> None:
+        """Bind command ownership; only a root operation publishes its failure to the CLI."""
         self.control_timeout = control_timeout
         self._cancelled = Event()
         self._error: BaseException | None = None
         self._lock = Lock()
         self._callbacks: set[Callable[[], None]] = set()
+        self._report_failure = (
+            current_error_reporter() if report_failure and self.current() is None else None
+        )
 
     @classmethod
     def current(cls) -> CommandExecution | None:
@@ -113,11 +119,15 @@ class CommandExecution(AbstractContextManager):
             self._error = error
             self._cancelled.set()
             callbacks = tuple(self._callbacks)
-        if callbacks:
-            with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
-                futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
-                for future in futures:
-                    future.result()
+        try:
+            if error is not None and self._report_failure is not None:
+                self._report_failure(error)
+        finally:
+            if callbacks:
+                with ThreadPoolExecutor(max_workers=len(callbacks)) as cleanup:
+                    futures = [cleanup.submit(self.cleanup, callback, error) for callback in callbacks]
+                    for future in futures:
+                        future.result()
 
     def run_stage(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run a parallel stage with the same command owner and first-failure propagation."""
@@ -140,14 +150,31 @@ class CommandExecution(AbstractContextManager):
         pass_fds: tuple[int, ...] = (),
     ) -> subprocess.CompletedProcess[Any]:
         """Execute a noninteractive process group and reap it on timeout or cancellation."""
-        self.check()
-        with subprocess.Popen(
+        with self.process(
             args,
             stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL if stdin is None else stdin,
             stdout=subprocess.PIPE if capture_output else stdout,
             stderr=subprocess.PIPE if capture_output else stderr,
-            text=text, cwd=cwd, env=env, pass_fds=pass_fds, start_new_session=True,
+            text=text, cwd=cwd, env=env, pass_fds=pass_fds,
         ) as process:
+            try:
+                output, errors = process.communicate(input, timeout=timeout)
+            except subprocess.TimeoutExpired as error:
+                raise DeploymentError(
+                    f"{shlex.join(args)} timed out after {timeout:g}s"
+                ) from error
+            # Return completed writes so their owner can record a creation receipt
+            # before the enclosing stage observes concurrent cancellation.
+            return subprocess.CompletedProcess(args, process.returncode, output, errors)
+
+    @contextmanager
+    def process(
+        self, args: list[str], *, interrupt_signal: signal.Signals = signal.SIGTERM,
+        shutdown_grace: float = 5.0, **kwargs: Any,
+    ) -> Iterator[subprocess.Popen[Any]]:
+        """Borrow process streams while this owner retains group cancellation and reaping."""
+        self.check()
+        with subprocess.Popen(args, start_new_session=True, **kwargs) as process:
             stop_lock = Lock()
             stopped = False
 
@@ -157,8 +184,8 @@ class CommandExecution(AbstractContextManager):
                     if stopped:
                         return
                     try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                        deadline = time.monotonic() + 5
+                        os.killpg(process.pid, interrupt_signal)
+                        deadline = time.monotonic() + shutdown_grace
                         # A shell can exit before its children. Reap the leader,
                         # but give the whole process group its shutdown grace.
                         while True:
@@ -177,15 +204,7 @@ class CommandExecution(AbstractContextManager):
 
             self.register(stop)
             try:
-                try:
-                    output, errors = process.communicate(input, timeout=timeout)
-                except subprocess.TimeoutExpired as error:
-                    raise DeploymentError(
-                        f"{shlex.join(args)} timed out after {timeout:g}s"
-                    ) from error
-                # Return completed writes so their owner can record a creation receipt
-                # before the enclosing stage observes concurrent cancellation.
-                return subprocess.CompletedProcess(args, process.returncode, output, errors)
+                yield process
             except BaseException as error:
                 # A caller may recover an observation timeout. Escaping the owning
                 # stage, rather than an individual command, cancels sibling work.
@@ -216,10 +235,10 @@ def cleanup_commands(error: BaseException | None = None, *, timeout: float | Non
         timeout = parent.control_timeout
     token = _OBSERVATION_DEADLINE.set(time.monotonic() + timeout if timeout is not None else None)
     try:
-        with CommandExecution(timeout):
+        with CommandExecution(timeout, report_failure=False):
             yield
     except (DeploymentError, OSError) as cleanup_error:
-        print(f"Cleanup failed: {cleanup_error}", file=sys.stderr, flush=True)
+        logger.opt(exception=cleanup_error).warning("Cleanup failed")
         if error is None:
             raise
     finally:
