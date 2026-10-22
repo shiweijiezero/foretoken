@@ -23,12 +23,16 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ### 安装命令行工具
 
-使用 Python 3.11 或更高版本：
+推荐用 [uv](https://docs.astral.sh/uv/getting-started/installation/) 创建独立环境并安装 CLI：
 
 ```bash
-pip install foretoken
+uv venv --python 3.12 --seed
+source .venv/bin/activate
+uv pip install foretoken
 foretoken --version
 ```
+
+uv 会在需要时准备 Python。运行 `foretoken` 和 `wandb` 时保持环境激活；已有 Python 3.11+ 环境也可使用 `pip install foretoken`。
 
 部署和本地集群示例使用仓库中的配置文件。获取仓库后，从仓库根目录执行这些示例：
 
@@ -37,7 +41,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-开发 CLI 时，在该目录执行 `pip install -e .`。使用 uv 时，通过 `uv venv` 和 `source .venv/bin/activate` 创建并激活虚拟环境，再执行 `uv pip install foretoken`。
+开发 CLI 时，在上述环境中进入仓库目录，执行 `uv pip install -e .`；使用 pip 则执行 `pip install -e .`。
 
 部署服务需要 `kubectl` 和目标集群的 kubeconfig。安装平台或开发源码时，还需 Helm 4.2.4 或更高版本。平台和服务命令会始终使用启动时选定的 Kubernetes context。评测已有 URL、绘制本地结果时无需 Kubernetes。
 

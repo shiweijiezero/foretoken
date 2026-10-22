@@ -23,12 +23,16 @@ Use `foretoken` to manage inference deployments, check services, run benchmarks,
 
 ### Install the command-line tool
 
-With Python 3.11 or later:
+Use [uv](https://docs.astral.sh/uv/getting-started/installation/) to create an isolated environment and install the CLI:
 
 ```bash
-pip install foretoken
+uv venv --python 3.12 --seed
+source .venv/bin/activate
+uv pip install foretoken
 foretoken --version
 ```
+
+uv prepares Python when needed. Keep the environment active when running `foretoken` and `wandb`. In an existing Python 3.11+ environment, `pip install foretoken` is also supported.
 
 The deployment and local-cluster examples use repository files. Get them and run those examples from the repository root:
 
@@ -37,7 +41,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 ```
 
-For CLI development, use `pip install -e .` in this directory. For uv, create and activate a virtual environment with `uv venv` and `source .venv/bin/activate`, then use `uv pip install foretoken`.
+For CLI development, run `uv pip install -e .` in this directory, using the active environment above. The pip equivalent is `pip install -e .`.
 
 Service deployment needs `kubectl` and a kubeconfig for the target cluster. Platform installation and source development also need Helm 4.2.4 or later. Each platform or service command keeps its initial Kubernetes context. Benchmarking an existing URL and plotting local results do not require Kubernetes.
 

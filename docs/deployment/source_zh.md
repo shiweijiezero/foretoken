@@ -9,7 +9,7 @@
 
 ## 从源码安装
 
-准备 Python 3.11+、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
+准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)、kubectl 和 [Helm 4](../../cli/README_zh.md#开始前)，选择有 GPU 和默认存储类（StorageClass）的 Kubernetes 集群。共享集群的[源码构建权限](../../cli/README_zh.md#为成员准备命名空间)由管理员分配。
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
@@ -17,11 +17,15 @@ cd foretoken
 kubectl config current-context
 ```
 
-从当前源码安装 CLI：
+创建 Python 环境，从当前源码安装 CLI：
 
 ```bash
-pip install -e .
+uv venv --python 3.12 --seed
+source .venv/bin/activate
+uv pip install -e .
 ```
+
+后续命令在已激活的环境中执行。使用 pip 的方式见 [CLI 安装说明](../../cli/README_zh.md#安装命令行工具)。
 
 集群只需安装一次源码版平台。平台已经从源码安装时，可直接进入[部署步骤](#部署模型服务)；另一台工作站只需安装 CLI 并准备源码目录。
 
@@ -62,7 +66,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
 
 从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
-CLI 代码使用执行 `pip install -e .` 时的目录；修改其 Python 依赖后，需要重新安装 CLI。
+CLI 使用 editable 安装时选定的源码目录；修改其 Python 依赖后，需要重新安装 CLI。
 
 示例使用完后删除：
 

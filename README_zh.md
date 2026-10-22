@@ -45,14 +45,20 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ### 1. 获取示例并安装命令行工具
 
+安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后创建 Python 环境并从源码安装：
+
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
+uv venv --python 3.12 --seed
+source .venv/bin/activate
+uv pip install -e .
 
 # 使用发布的 CLI：
-# pip install foretoken
+# uv pip install foretoken
 ```
+
+后续命令在已激活的环境中执行。也支持使用 pip，见 [CLI 安装说明](cli/README_zh.md#安装命令行工具)。
 
 ### 2. 安装 Kubernetes 平台
 
