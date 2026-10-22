@@ -52,9 +52,8 @@ type request struct {
 }
 
 type output struct {
-	Type      string            `json:"type"`
-	Attrs     map[string]string `json:"attrs"`
-	Directory string            `json:"directory,omitempty"`
+	Type  string            `json:"type"`
+	Attrs map[string]string `json:"attrs"`
 }
 
 // main consumes one operation from stdin; progress stays on stderr and only requested metadata goes to stdout.
@@ -97,18 +96,19 @@ func execute(ctx context.Context, action string, input request) (any, error) {
 		return nil, err
 	}
 	defer node.Close()
-	ctx = namespaces.WithNamespace(ctx, input.ContainerdNamespace)
-	if err := ensureLease(ctx, node.LeasesService(), input); err != nil {
+	nodeContext := namespaces.WithNamespace(ctx, input.ContainerdNamespace)
+	if err := ensureLease(nodeContext, node.LeasesService(), input); err != nil {
 		return nil, err
 	}
-	ctx = leases.WithLease(ctx, input.LeaseID)
+	nodeContext = leases.WithLease(nodeContext, input.LeaseID)
 	matcher := platforms.OnlyStrict(platform)
 	switch action {
 	case "inspect":
-		return inspectImage(ctx, node, input, matcher)
+		return inspectImage(nodeContext, node, input, matcher)
 	case "deliver":
-		return nil, deliverImage(ctx, node, input, matcher)
+		return nil, deliverImage(nodeContext, node, input, matcher)
 	default:
+		// BuildKit owns different leases; node-store RPC headers must not reach its daemon.
 		return nil, solve(ctx, node, input, matcher)
 	}
 }
@@ -160,22 +160,20 @@ func solve(ctx context.Context, node *containerd.Client, input request, matcher 
 		options.LocalMounts[name] = mount
 	}
 	for alias, descriptor := range input.Inputs {
-		allowed, err := retainGraph(ctx, node, descriptor, matcher)
+		store := &sessionStore{store: node.ContentStore(), namespace: input.ContainerdNamespace, lease: input.LeaseID}
+		allowed, err := retainGraph(store.scope(ctx), node, descriptor, matcher)
 		if err != nil {
 			return err
 		}
-		options.OCIStores[alias] = &sessionStore{
-			store: node.ContentStore(), namespace: input.ContainerdNamespace, lease: input.LeaseID, readable: allowed,
-		}
+		store.readable = allowed
+		options.OCIStores[alias] = store
 		options.FrontendAttrs["context:"+alias] = "oci-layout://" + alias + "@" + descriptor.Digest.String()
 	}
 	export := bkclient.ExportEntry{Type: input.Output.Type, Attrs: input.Output.Attrs}
 	if export.Type == bkclient.ExporterOCI {
 		export.OutputStore = &sessionStore{
-			store: node.ContentStore(), namespace: input.ContainerdNamespace, lease: input.LeaseID, writable: true,
+			store: node.ContentStore(), leaseManager: node.LeasesService(), namespace: input.ContainerdNamespace, lease: input.LeaseID, writable: true,
 		}
-	} else {
-		export.OutputDir = input.Output.Directory
 	}
 	options.Exports = []bkclient.ExportEntry{export}
 	// Drain the native progress channel even after cancellation so the last failure is not lost.

@@ -61,13 +61,25 @@ func inspectImage(ctx context.Context, node *containerd.Client, input request, m
 		return nil, err
 	}
 	store := node.ContentStore()
+	// Unpacked node images can outlive their compressed blobs. Only complete
+	// inputs can bypass BuildKit's registry resolver; generated outputs must remain complete.
+	available, _, _, missing, err := images.Check(ctx, store, descriptor, matcher)
+	if err != nil {
+		return nil, err
+	}
+	if !available || len(missing) != 0 {
+		if input.Descriptor == nil {
+			return map[string]bool{"found": false}, nil
+		}
+		return nil, fmt.Errorf("generated image %s has incomplete content: %w", descriptor.Digest, errdefs.ErrNotFound)
+	}
 	if images.IsIndexType(descriptor.MediaType) {
 		children, err := images.Children(ctx, store, descriptor)
 		if err != nil {
 			return nil, err
 		}
 		if len(children) == 1 && images.IsManifestType(children[0].MediaType) && children[0].Annotations["vnd.docker.reference.type"] != "attestation-manifest" {
-			manifest, err := images.Manifest(ctx, store, children[0], matcher)
+			manifest, err := images.Manifest(ctx, store, descriptor, matcher)
 			if err != nil {
 				return nil, err
 			}

@@ -25,6 +25,7 @@ from foretoken.build.cluster.images import image_tools_image
 from foretoken.build.cluster.storage import (
     build_configuration,
     ensure_build_volumes,
+    ensure_shared_build_cache,
     local_build_nodes,
     prepare_build_storage,
 )
@@ -465,11 +466,17 @@ def _prepare_workspaces(
     files = {str(path.relative_to(snapshot)): path for path in snapshot.rglob("*") if path.is_file()}
     builders = []
     for node, socket, claim in prepared.nodes:
+        client_cache = ensure_shared_build_cache(
+            kubectl, namespace, node, prepared.compiler_configuration,
+            {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+            role="node-client",
+        ) if socket else ""
         builder = contexts.enter_context(ClusterBuilder(
             kubectl, namespace, claim, "/var/cache/foretoken", prepared.compiler_configuration["image"],
             settings["binding"], timeout,
             tools_image=image_tools_image(settings["arguments"], settings["registry_mirrors"]),
             execution_claim=prepared.execution_claims[claim],
+            client_cache_claim=client_cache, client_build_arguments=settings["arguments"],
             node=node, containerd_socket=socket,
             pull_secrets=tuple(settings["pull_secrets"]), credentials=credentials,
             registry_mirrors=settings["registry_mirrors"], cancellation=cancellation,

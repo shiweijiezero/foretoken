@@ -53,8 +53,9 @@ incoming=$(mktemp -d "$parent/.incoming.XXXXXX")
 trap 'rm -rf "$incoming"; rm -f "$incoming.inputs"' EXIT
 tar --no-same-owner -xzf - -C "$incoming"
 rm -f "$receipt"
-if test "$reset" = true; then rm -rf "$workspace"; fi
 mkdir -p "$workspace"
+# A session client may bind-mount this directory; replace its contents, not its inode.
+if test "$reset" = true; then find "$workspace" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; fi
 cd "$workspace"
 xargs -0 -r rm -f -- < "$incoming/.foretoken-removed"
 find . -mindepth 1 -depth -type d -empty -delete

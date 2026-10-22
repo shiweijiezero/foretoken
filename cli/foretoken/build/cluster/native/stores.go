@@ -17,11 +17,12 @@ import (
 
 // sessionStore exposes either one selected input graph or an output ingester, never general node-store mutation.
 type sessionStore struct {
-	store     content.Store
-	namespace string
-	lease     string
-	readable  map[digest.Digest]struct{}
-	writable  bool
+	store        content.Store
+	leaseManager leases.Manager
+	namespace    string
+	lease        string
+	readable     map[digest.Digest]struct{}
+	writable     bool
 }
 
 func (s *sessionStore) scope(ctx context.Context) context.Context {
@@ -32,6 +33,11 @@ func (s *sessionStore) scope(ctx context.Context) context.Context {
 func (s *sessionStore) Info(ctx context.Context, key digest.Digest) (content.Info, error) {
 	if _, allowed := s.readable[key]; !allowed && !s.writable {
 		return content.Info{}, errdefs.ErrNotFound
+	}
+	if s.writable {
+		if err := s.retainOutput(ctx, key); err != nil {
+			return content.Info{}, err
+		}
 	}
 	return s.store.Info(s.scope(ctx), key)
 }
@@ -58,11 +64,22 @@ func (s *sessionStore) Writer(ctx context.Context, options ...content.WriterOpt)
 	if selected.Ref == "" {
 		return nil, errdefs.ErrInvalidArgument
 	}
+	if err := s.retainOutput(ctx, selected.Desc.Digest); err != nil {
+		return nil, err
+	}
 	writer, err := s.store.Writer(s.scope(ctx), content.WithDescriptor(selected.Desc), content.WithRef(s.lease+":"+selected.Ref))
 	if err != nil {
 		return nil, err
 	}
 	return &sessionWriter{Writer: writer, store: s, ref: selected.Ref}, nil
+}
+
+// retainOutput protects the expected blob before either content server can take its AlreadyExists shortcut.
+func (s *sessionStore) retainOutput(ctx context.Context, key digest.Digest) error {
+	if key == "" {
+		return nil
+	}
+	return s.leaseManager.AddResource(s.scope(ctx), leases.Lease{ID: s.lease}, leases.Resource{Type: "content", ID: key.String()})
 }
 
 // Status observes only an ingestion inside this output operation.
@@ -110,10 +127,15 @@ type sessionWriter struct {
 	ref   string
 }
 
+// Commit retains the finalized digest before native integrity validation and deduplication.
 func (w *sessionWriter) Commit(ctx context.Context, size int64, expected digest.Digest, options ...content.Opt) error {
+	if err := w.store.retainOutput(ctx, expected); err != nil {
+		return err
+	}
 	return w.Writer.Commit(w.store.scope(ctx), size, expected, options...)
 }
 
+// Status presents the ingestion name supplied by the session rather than its node-local lease prefix.
 func (w *sessionWriter) Status() (content.Status, error) {
 	status, err := w.Writer.Status()
 	status.Ref = w.ref

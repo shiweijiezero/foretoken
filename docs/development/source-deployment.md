@@ -25,6 +25,8 @@ Go controller executables, Rust serving executables, Python adapters and inferen
 
 BuildKit prepares reusable environment and compiler images. Independent compiler Pods share node-local dependency downloads, the Go build cache and ccache; each source directory keeps private Rust target and CMake trees. Compiler state survives Pod replacement. Completed artifacts can use a separate StorageClass, and application and model storage retain their own lifecycles.
 
+Registry-free builds exchange image content directly with containerd on each node. Only the CLI's image-management containers mount the node runtime socket; the packaged client's source, executable and compilation cache remain isolated from editable workload code.
+
 Independent checkouts can build concurrently. Serialize source updates within one checkout and service mutations for one deployment instance. Source operations sharing a workstation state directory exclude platform changes during builds. The deployment manager rejects new instances while the platform retires. Bound lock acquisition without expiring active holders. Stop and delete supersede older pending submissions; builds and readiness observation do not hold an instance's mutation lock.
 
 ## Readiness and failure

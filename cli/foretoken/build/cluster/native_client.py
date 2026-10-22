@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from importlib import resources
 
+CLIENT_BINARY = "/opt/foretoken-build-client/foretoken-build-client"
+
 
 def client_module() -> dict[str, str]:
     """Return packaged Go sources and dependency records for the trusted client init container."""
