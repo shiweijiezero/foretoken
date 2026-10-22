@@ -18,12 +18,13 @@ from foretoken.deployment.instances import (
     DeploymentInstance,
     storage_only_instance,
 )
-from foretoken.deployment.manifest import ForetokenDeployment
+from foretoken.deployment.manifest import DEPLOYMENT_KIND, ForetokenDeployment
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import (
     Kubectl,
     KubernetesVersionConflictError,
     ResourceRef,
+    resource_ref,
     timeout_seconds,
 )
 from foretoken.kubernetes.documents import decode_resources, encode_resource
@@ -31,33 +32,6 @@ from foretoken.kubernetes.mutation import (
     _SERVICE_OPERATION_ANNOTATION,
     DeploymentMutation,
 )
-
-
-def _matches_declared_fields(actual: Any, desired: Any) -> bool:
-    """Compare retained storage intent while allowing fields defaulted by its API."""
-    if isinstance(desired, dict):
-        return isinstance(actual, dict) and all(
-            key in actual and _matches_declared_fields(actual[key], value)
-            for key, value in desired.items()
-        )
-    return actual == desired
-
-
-def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str, str] | None:
-    """Identify spec and executable intent independently of status-only API updates."""
-    if value is None:
-        return None
-    metadata = value["metadata"]
-    if metadata.get("deletionTimestamp"):
-        raise DeploymentError(
-            f"DeploymentSuperseded: {value['kind']}/{metadata['name']} is being deleted"
-        )
-    return (
-        metadata["uid"],
-        metadata["generation"],
-        (metadata.get("annotations") or {}).get(SOURCE_REVISION, ""),
-        (metadata.get("annotations") or {}).get(_SERVICE_OPERATION_ANNOTATION, ""),
-    )
 
 
 class DeploymentSubmission:
@@ -81,12 +55,12 @@ class DeploymentSubmission:
         self.mutation = DeploymentMutation(kubectl, self.namespace, deployment.name, timeout, uid=deployment.uid)
         self.create_only = create_only
         self.deployment = deployment
-        self.expected = {
-            ref: _intent_version(
-                kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-            )
-            for ref in deployment.service_refs()
+        services = deployment.service_refs()
+        observed = {
+            resource_ref(value): value
+            for value in (kubectl.get_resources(services, ignore_not_found=True) if services else ())
         }
+        self.expected = {ref: _intent_version(observed.get(ref)) for ref in services}
         if create_only and any(
             version is not None for version in self.expected.values()
         ):
@@ -112,12 +86,21 @@ class DeploymentSubmission:
 
     def check(self) -> None:
         """Confirm instance ownership and every expected service before further writes or observation."""
-        if not self.owns_instance():
+        self._current_services()
+
+    def _current_services(self) -> dict[ResourceRef, dict[str, Any] | None]:
+        """Return validated service observations; writes retain each observed UID and resourceVersion."""
+        resources = (ResourceRef(DEPLOYMENT_RESOURCE, self.instance.name, self.namespace), *self.expected)
+        observed = {
+            resource_ref(value): value
+            for value in (self.kubectl.get_resources(resources, ignore_not_found=True) if self._scope is not None else ())
+        }
+        instance = observed.get(ResourceRef(DEPLOYMENT_KIND, self.instance.name, self.namespace))
+        if not self._owns_scope(instance):
             raise DeploymentError(
                 f"DeploymentSuperseded: instance {self.instance.name!r} was changed by another operation"
             )
-        for ref in self.expected:
-            self._current(ref)
+        return {ref: self._validate_member(ref, observed.get(ref)) for ref in self.expected}
 
     def _prepare_instance(self) -> None:
         """Bind all submitted resources to one root before claiming its operation."""
@@ -134,7 +117,7 @@ class DeploymentSubmission:
             self.check()
             return
         for ref in self.expected:
-            self._current(ref)
+            self._member(ref)
         ref = ResourceRef("InferenceDeployment", self.instance.name, self.namespace)
         current = self.instance.read()
         if self.create_only and ref not in self.created and not storage_only_instance(current):
@@ -165,11 +148,17 @@ class DeploymentSubmission:
 
     def owns_instance(self) -> bool:
         """Tell cleanup whether this operation still owns the same live deployment instance."""
-        if self._scope is None:
-            return False
-        current = self.kubectl.get_if_exists(DEPLOYMENT_RESOURCE, self.instance.name, self.namespace)
+        current = (
+            self.kubectl.get_if_exists(DEPLOYMENT_RESOURCE, self.instance.name, self.namespace)
+            if self._scope is not None else None
+        )
+        return self._owns_scope(current)
+
+    def _owns_scope(self, current: dict[str, Any] | None) -> bool:
+        """Match an observed instance to this submission's retained operation identity."""
         return (
-            current is not None
+            self._scope is not None
+            and current is not None
             and not current["metadata"].get("deletionTimestamp")
             and current["metadata"]["uid"] == self._scope["metadata"]["uid"]
             and current["metadata"].get("annotations", {}).get(_SERVICE_OPERATION_ANNOTATION) == self.operation
@@ -243,20 +232,18 @@ class DeploymentSubmission:
             if not suspended:
                 self._apply_service(ref, value, patch=True)
 
-    def _current(self, ref: ResourceRef) -> dict[str, Any] | None:
-        """Read current service intent and reject operations superseded during preparation."""
-        value = self._member(ref)
-        if _intent_version(value) != self.committed.get(ref, self.expected[ref]):
+    def _member(self, ref: ResourceRef) -> dict[str, Any] | None:
+        """Read and validate current member intent before a versioned mutation."""
+        return self._validate_member(ref, self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace))
+
+    def _validate_member(self, ref: ResourceRef, current: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Reject foreign membership and superseded service intent in one observed object."""
+        if current is not None and current["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != self.instance.uid:
+            raise DeploymentError(f"{ref.display_name} belongs to another deployment instance")
+        if ref in self.expected and _intent_version(current) != self.committed.get(ref, self.expected[ref]):
             raise DeploymentError(
                 f"DeploymentSuperseded: {ref.display_name} was changed by another operation"
             )
-        return value
-
-    def _member(self, ref: ResourceRef) -> dict[str, Any] | None:
-        """Read existing intent without adopting a colliding resource from another instance."""
-        current = self.kubectl.get_if_exists(ref.kind, ref.name, ref.namespace)
-        if current is not None and current["metadata"].get("labels", {}).get(DEPLOYMENT_UID_LABEL) != self.instance.uid:
-            raise DeploymentError(f"{ref.display_name} belongs to another deployment instance")
         return current
 
     def _claim_operation(
@@ -417,8 +404,7 @@ class DeploymentSubmission:
         deadline = time.monotonic() + self.timeout
         suspended = value["spec"].get("suspend", False)
         while True:
-            self.check()
-            current = self._current(ref)
+            current = self._current_services()[ref]
             payload = copy.deepcopy(value)
             if patch and current is not None:
                 payload = {
@@ -484,7 +470,7 @@ class DeploymentSubmission:
                     )
                 return
             except KubernetesVersionConflictError:
-                latest = self._current(ref)
+                latest = self._member(ref)
                 if (
                     current is None
                     or latest["metadata"]["resourceVersion"]
@@ -492,3 +478,30 @@ class DeploymentSubmission:
                 ):
                     # Field ownership conflicts are not optimistic-version races.
                     raise
+
+
+def _matches_declared_fields(actual: Any, desired: Any) -> bool:
+    """Compare retained storage intent while allowing fields defaulted by its API."""
+    if isinstance(desired, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _matches_declared_fields(actual[key], value)
+            for key, value in desired.items()
+        )
+    return actual == desired
+
+
+def _intent_version(value: dict[str, Any] | None) -> tuple[str, int, str, str] | None:
+    """Identify spec and executable intent independently of status-only API updates."""
+    if value is None:
+        return None
+    metadata = value["metadata"]
+    if metadata.get("deletionTimestamp"):
+        raise DeploymentError(
+            f"DeploymentSuperseded: {value['kind']}/{metadata['name']} is being deleted"
+        )
+    return (
+        metadata["uid"],
+        metadata["generation"],
+        (metadata.get("annotations") or {}).get(SOURCE_REVISION, ""),
+        (metadata.get("annotations") or {}).get(_SERVICE_OPERATION_ANNOTATION, ""),
+    )

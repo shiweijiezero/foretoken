@@ -356,21 +356,17 @@ class Kubectl:
         resources: tuple[ResourceRef, ...],
         *,
         timeout: float | None = None,
+        ignore_not_found: bool = False,
     ) -> tuple[dict[str, Any], ...]:
-        """Return named resources from one namespace within an optional timeout."""
+        """Read named resources in one command, optionally omitting absent objects for submission callers."""
         namespaces = {resource.namespace for resource in resources}
         if len(namespaces) != 1:
             raise DeploymentError("selected resources must share one namespace")
         if len(resources) == 1:
             resource = resources[0]
-            return (
-                self.get(
-                    resource.kind,
-                    resource.name,
-                    resource.namespace,
-                    timeout=timeout,
-                ),
-            )
+            read = self.get_if_exists if ignore_not_found else self.get
+            value = read(resource.kind, resource.name, resource.namespace, timeout=timeout)
+            return (value,) if value is not None else ()
         args = [
             "get",
             *(f"{resource.kind.lower()}/{resource.name}" for resource in resources),
@@ -378,9 +374,10 @@ class Kubectl:
         namespace = next(iter(namespaces))
         if namespace:
             args.extend(["--namespace", namespace])
-        return _decode_resource_list(
-            self.run([*args, "-o", "json"], timeout=timeout).stdout
-        )
+        if ignore_not_found:
+            args.append("--ignore-not-found")
+        output = self.run([*args, "-o", "json"], timeout=timeout).stdout
+        return () if ignore_not_found and not output.strip() else _decode_resource_list(output)
 
     def list_resources(
         self, kinds: Iterable[str], namespace: str, *, label_selector: str = ""
