@@ -120,16 +120,21 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 		})
 	}
 	scaling, err := reconciler.scalingConfig(service)
-	var autoscalingStatus []inferencev1alpha1.AutoscalingTargetStatus
-	if err == nil {
-		compiledPools, autoscalingStatus, err = reconciler.applyScaling(ctx, service, compiledPools, scaling)
-	}
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: metav1.Condition{Status: metav1.ConditionFalse, Reason: "ScalingFailed", Message: err.Error()},
 			pools:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "ScalingFailed", Message: "ModelPool capacity was not resolved"},
 			ready:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "ScalingFailed", Message: "ModelService capacity is invalid"},
 		})
+	}
+	compiledPools, autoscalingStatus, err := reconciler.applyScaling(ctx, service, compiledPools, scaling)
+	if err != nil {
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: metav1.Condition{Status: metav1.ConditionTrue, Reason: "Compiled", Message: "ModelService intent was compiled"},
+			pools:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "ScalingFailed", Message: err.Error()},
+			ready:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "ScalingFailed", Message: "ModelService capacity could not be resolved"},
+		})
+		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	// Retire existing capacity using its selected execution contract before resolving
 	// dependencies needed to start or replace runtimes.
@@ -153,12 +158,13 @@ func (reconciler *ServiceReconciler) reconcileService(ctx context.Context, servi
 			ready:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "InvalidIntent", Message: err.Error()},
 		})
 	}
-	if err := reconciler.resolveManagedKVBindings(ctx, service, compiledPools); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
-			compiled: metav1.Condition{Status: metav1.ConditionFalse, Reason: "KVServiceNotReady", Message: err.Error()},
+	if message, err := reconciler.resolveManagedKVBindings(ctx, service, compiledPools); message != "" {
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: metav1.Condition{Status: metav1.ConditionFalse, Reason: "KVServiceNotReady", Message: message},
 			pools:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "ResolutionFailed", Message: "No new ModelPools were materialized"},
 			ready:    metav1.Condition{Status: metav1.ConditionFalse, Reason: "KVServiceNotReady", Message: "Referenced KVService is not ready"},
 		})
+		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, service.Namespace)
 	if err != nil {
@@ -754,9 +760,10 @@ func (reconciler *ServiceReconciler) updateStatus(ctx context.Context, service *
 	return nil
 }
 
-// resolveManagedKVBindings replaces a user name reference with the KVService UID and
-// current binding configuration before any ModelPool is created or changed.
-func (reconciler *ServiceReconciler) resolveManagedKVBindings(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool) error {
+// resolveManagedKVBindings resolves user references before any ModelPool is materialized.
+// A nonempty message blocks materialization until configuration or dependencies change;
+// API failures also return an error so reconciliation retries the observation.
+func (reconciler *ServiceReconciler) resolveManagedKVBindings(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool) (string, error) {
 	for i := range pools {
 		store := modelServicePoolStore(service, pools[i].Name)
 		if store == nil || store.KVServiceRef == nil {
@@ -764,22 +771,23 @@ func (reconciler *ServiceReconciler) resolveManagedKVBindings(ctx context.Contex
 		}
 		kv := new(inferencev1alpha1.KVService)
 		if err := reconciler.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: store.KVServiceRef.Name}, kv); err != nil {
-			return fmt.Errorf("get KVService %q: %w", store.KVServiceRef.Name, err)
+			err = fmt.Errorf("get KVService %q: %w", store.KVServiceRef.Name, err)
+			return err.Error(), client.IgnoreNotFound(err)
 		}
 		ready := meta.FindStatusCondition(kv.Status.Conditions, workload.ConditionReady)
 		if !kv.DeletionTimestamp.IsZero() || kv.Status.ObservedGeneration != kv.Generation || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != kv.Generation || kv.Status.Binding == nil || kv.Status.Binding.Revision == "" || kv.Status.Binding.ConfigMapName == "" || kv.Status.Binding.ConfigMapKey == "" || kv.Status.Binding.PythonHashSeed != "0" {
-			return fmt.Errorf("KVService %q does not have a current Ready binding", kv.Name)
+			return fmt.Sprintf("KVService %q does not have a current Ready binding", kv.Name), nil
 		}
 		bufferBytes, err := resourcevalidation.ParsePositiveBytes("requester.localBufferSize", string(kv.Spec.Requester.LocalBufferSize))
 		if err != nil {
-			return fmt.Errorf("KVService %q requester buffer: %w", kv.Name, err)
+			return fmt.Sprintf("KVService %q requester buffer: %v", kv.Name, err), nil
 		}
 		if err := resourcevalidation.ValidateRequesterBufferBudget(pools[i].Template.Resources, bufferBytes); err != nil {
-			return fmt.Errorf("modelPool %q requester buffer budget: %w", pools[i].Name, err)
+			return fmt.Sprintf("modelPool %q requester buffer budget: %v", pools[i].Name, err), nil
 		}
 		pools[i].Template.KVCache.MooncakeStore = &inferencev1alpha1.NormalizedMooncakeStore{ManagedBinding: &inferencev1alpha1.ManagedMooncakeStoreBinding{Name: kv.Name, UID: string(kv.UID), BindingRevision: kv.Status.Binding.Revision, ConfigMapName: kv.Status.Binding.ConfigMapName, ConfigMapKey: kv.Status.Binding.ConfigMapKey, RequesterBufferBytes: bufferBytes}}
 	}
-	return nil
+	return "", nil
 }
 
 func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string) *inferencev1alpha1.MooncakeStore {

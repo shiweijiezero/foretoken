@@ -9,6 +9,7 @@ import json
 import secrets
 import socket
 import threading
+from concurrent.futures import CancelledError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
@@ -20,6 +21,7 @@ from foretoken.arguments import ProfileViewCommand
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution
 from foretoken.profiling.nsight import NsightViewerSessions
 from foretoken.profiling.reader import capture_directory
 from foretoken.profiling.storage import ProfileStorage
@@ -196,6 +198,7 @@ class ProfileViewer(ThreadingHTTPServer):
         self.connection_lock = threading.Lock()
         self.connections: set[socket.socket] = set()
         self.closing = threading.Event()
+        self.execution = CommandExecution(report_failure=False)
         self.history = history
         self.storage = storage
         self.nsight = nsight
@@ -220,7 +223,7 @@ class ProfileViewer(ThreadingHTTPServer):
         super().shutdown_request(request)
 
     def server_close(self) -> None:
-        """Close browser connections and join handlers before native sessions and capture readers close."""
+        """Cancel browser and cluster I/O before joining handlers and releasing their borrowed resources."""
         self.closing.set()
         with self.connection_lock:
             for connection in self.connections:
@@ -228,7 +231,10 @@ class ProfileViewer(ThreadingHTTPServer):
                     connection.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass  # The browser may already have disconnected.
-        super().server_close()
+        try:
+            self.execution.cancel()
+        finally:
+            super().server_close()
 
 
 class ProfileHandler(BaseHTTPRequestHandler):
@@ -286,8 +292,12 @@ class ProfileHandler(BaseHTTPRequestHandler):
             if self.server.closing.is_set():
                 return
             try:
-                self._serve(parsed.path[len(self.server.session_path) :], parsed.query)
-            except (BrokenPipeError, ConnectionResetError):
+                with self.server.execution:
+                    try:
+                        self._serve(parsed.path[len(self.server.session_path) :], parsed.query)
+                    except (BrokenPipeError, ConnectionResetError):
+                        self.close_connection = True
+            except CancelledError:
                 self.close_connection = True
 
     def _serve(self, route: str, query_string: str) -> None:

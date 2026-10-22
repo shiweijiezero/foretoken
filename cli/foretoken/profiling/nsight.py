@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
+from foretoken.processes.execution import CommandExecution
 from foretoken.profiling.storage import (
     CaptureFileSource,
     ProfileStorage,
@@ -329,7 +330,10 @@ except (URLError, OSError) as error:
         deadline = time.monotonic() + self.seconds
         cookie = session.metadata["name"].replace("-", "_")
         request = Request(origin + "/", headers={"Cookie": f"{cookie}={session.token}"})
+        execution = CommandExecution.current()
         while (remaining := deadline - time.monotonic()) > 0:
+            if execution is not None:
+                execution.check()
             try:
                 with urlopen(request, timeout=min(5, remaining)) as response:
                     if response.status == 200:

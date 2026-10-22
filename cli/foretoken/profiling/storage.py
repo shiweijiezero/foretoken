@@ -8,9 +8,6 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import subprocess
-import tempfile
-import threading
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, BinaryIO, Self
@@ -22,6 +19,7 @@ from loguru import logger
 from foretoken.deployment.instances import DEPLOYMENT_UID_LABEL
 from foretoken.errors import DeploymentError
 from foretoken.kubernetes.client import Kubectl, timeout_seconds
+from foretoken.processes.execution import CommandExecution
 from foretoken.profiling.reader import (
     CAPTURE_MOUNT_PATH,
     READER_DEPLOYMENT_UID_ENV,
@@ -91,21 +89,26 @@ class ViewerResources:
         return json.loads(output) if output else None
 
     def _create(self, document: dict[str, Any], resource: str) -> dict[str, Any]:
-        """Record each created UID immediately so partial startup has the same cleanup owner."""
-        created = json.loads(
-            self.kubectl.run(
-                [
-                    "create",
-                    "-f",
-                    "-",
-                    "-o",
-                    "json",
-                    f"--request-timeout={self.timeout}",
-                ],
-                input_text=json.dumps(document),
-                timeout=self.seconds,
-            ).stdout
-        )
+        """Finish accepted creation and record its UID before observing viewer cancellation."""
+        if execution := CommandExecution.current():
+            execution.check()
+        # Once submitted, creation must return its identity before the handler can
+        # stop; the viewer then releases the recorded UID after joining handlers.
+        with CommandExecution(report_failure=False):
+            created = json.loads(
+                self.kubectl.run(
+                    [
+                        "create",
+                        "-f",
+                        "-",
+                        "-o",
+                        "json",
+                        f"--request-timeout={self.timeout}",
+                    ],
+                    input_text=json.dumps(document),
+                    timeout=self.seconds,
+                ).stdout
+            )
         metadata = created["metadata"]
         self._created.append(
             (resource, metadata["namespace"], metadata["name"], metadata["uid"])
@@ -238,52 +241,18 @@ class ProfileStorage(ViewerResources):
         output: BinaryIO,
         *, deployment_uid: str,
     ) -> None:
-        """Stream a listed trace through kubectl without materializing it in CLI memory."""
+        """Stream a listed trace to the viewer socket under kubectl's command deadline and cleanup."""
         reader = self._reader(namespace, claim_name, deployment_uid)
         path = self._path(reader, namespace, "file", artifact_path, name)
-        timed_out = threading.Event()
-        with tempfile.TemporaryFile() as errors:
-            process = subprocess.Popen(
-                self.kubectl.command(
-                    [
-                        "get",
-                        "--raw",
-                        path,
-                        f"--request-timeout={self.timeout}",
-                    ]
-                ),
-                stdout=subprocess.PIPE,
-                stderr=errors,
+        try:
+            self.kubectl.run(
+                ["get", "--raw", path, f"--request-timeout={self.timeout}"],
+                output=output,
+                timeout=self.seconds,
             )
-
-            def expire() -> None:
-                timed_out.set()
-                process.kill()
-
-            timer = threading.Timer(self.seconds, expire)
-            timer.daemon = True
-            timer.start()
-            try:
-                assert process.stdout is not None
-                with process.stdout:
-                    while chunk := process.stdout.read(1024 * 1024):
-                        output.write(chunk)
-                status = process.wait()
-                if timed_out.is_set():
-                    raise DeploymentError("timed out reading capture file")
-                if status:
-                    errors.seek(0)
-                    detail = errors.read().decode(errors="replace").strip()
-                    token = capture_token(reader.secret, artifact_path)
-                    raise DeploymentError(
-                        "cannot read capture file: "
-                        + detail.replace(token, "[redacted]")
-                    )
-            finally:
-                timer.cancel()
-                if process.poll() is None:
-                    process.kill()
-                process.wait()
+        except DeploymentError as error:
+            token = capture_token(reader.secret, artifact_path)
+            raise DeploymentError(str(error).replace(token, "[redacted]")) from None
 
     def file_source(
         self, namespace: str, claim_name: str, directory: str, filename: str,
