@@ -45,20 +45,18 @@ The steps below use k3d as the example.
 
 ### 1. Get the examples and install the command-line tool
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create a Python environment and install from the checkout:
-
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-uv venv --python 3.12 --seed
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e .  # Or: pip install -e .
 
 # For the published CLI instead:
-# uv pip install foretoken
+# uv pip install foretoken  # Or: pip install foretoken
 ```
 
-Keep this environment active for the commands below. Installation with pip is also supported; see the [CLI installation guide](cli/README.md#install-the-command-line-tool).
+Keep this environment active for the commands below.
 
 ### 2. Install the Kubernetes platform
 

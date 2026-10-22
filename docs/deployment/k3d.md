@@ -11,7 +11,6 @@ k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is
 
 The host needs:
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/);
 - Linux;
 - an NVIDIA driver;
 - NVIDIA Container Toolkit;
@@ -67,9 +66,9 @@ Get the repository and prepare the CLI. Run the remaining commands from this dir
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-uv venv --python 3.12 --seed
+uv venv --python 3.12 --seed  # With pip: python3 -m venv .venv (Python 3.11+)
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e .  # Or: pip install -e .
 ```
 
 List GPUs:
@@ -107,7 +106,7 @@ foretoken install -e .
 To use published packages and images instead, get the examples from the chosen [release](https://github.com/shiweijiezero/foretoken/releases) and install:
 
 ```bash
-uv pip install foretoken
+uv pip install foretoken  # Or: pip install foretoken
 foretoken install
 ```
 
