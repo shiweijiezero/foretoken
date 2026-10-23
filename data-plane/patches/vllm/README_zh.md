@@ -52,7 +52,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 - `common/nixl-retained-prefix.patch` 统一管理普通 P→D 与保留前缀 D→P 读取。取消时关闭新授权，所有张量并行 worker 确认传输完成后才能归还缓存块。每个 reader 独立续期；reader 失联或传输状态不明时，引擎持有缓冲区并退役。保留原生握手中的生命周期版本检查。
 - `common/mooncake-retained-prefix.patch` 在原生 sender loop 中管理领取、撤销和 WRITE 提交。每个已接纳的 reader 都完成 WRITE 或确认未提交 WRITE，且全部 worker 完成后，才能释放缓存。I/O 完成状态不明时使 worker 退役。闲置保留使用 `kv_lease_duration`，与发送超时分开。
 
-通过 `catalog.json` 选择版本适配补丁，`common/kv-connector-utility.patch` 提供共用的 EngineCore 目录访问。修改后通过不同前端发送[两轮 P/D 请求](../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)，对比复用与重算的输出 token，再检查取消、到期、对端退出和张量并行完成期间的缓存引用。
+通过 `catalog.json` 选择版本适配补丁，`common/kv-connector-utility.patch` 提供共用的 EngineCore 目录访问。修改后使用[模型级 P/D 配置](../../../docs/features/inference-parameters_zh.md#分离预填充与解码并复用-kv)，通过不同前端发送两轮请求，对比复用与重算的输出 token，再检查取消、到期、对端退出和张量并行完成期间的缓存引用。
 
 ## Chat token 元数据
 

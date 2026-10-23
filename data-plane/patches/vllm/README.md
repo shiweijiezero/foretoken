@@ -52,7 +52,7 @@ The [retained-prefix directory](../../model-server/python/connectors/retained.py
 - `common/nixl-retained-prefix.patch` uses one source lifecycle for ordinary P→D and retained D→P reads. Cancellation closes new authorization, and blocks remain held until every tensor-parallel worker confirms completion. Each reader renews its heartbeat; a lost reader or unknown transfer status retires the engine with buffers held. Preserve the native handshake's lifecycle-version check.
 - `common/mooncake-retained-prefix.patch` keeps acquisition, revocation and WRITE submission in the native sender loop. Release requires a completed WRITE or confirmed no-WRITE from every admitted reader, followed by all workers completing. Unknown I/O completion retires the worker. Idle retention uses `kv_lease_duration`, separately from the send timeout.
 
-Select version-specific patches through `catalog.json`; `common/kv-connector-utility.patch` provides the shared EngineCore directory access. Validate changes with [two-turn P/D requests](../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) through different frontends. Compare reused and recomputed output tokens, then check allocator references during cancellation, expiry, peer exit and tensor-parallel completion.
+Select version-specific patches through `catalog.json`; `common/kv-connector-utility.patch` provides the shared EngineCore directory access. Use the [P/D configuration](../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) to validate two-turn requests through different frontends. Compare reused and recomputed output tokens, then check allocator references during cancellation, expiry, peer exit and tensor-parallel completion.
 
 ## Chat token metadata
 

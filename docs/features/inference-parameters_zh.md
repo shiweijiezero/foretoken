@@ -181,38 +181,23 @@ NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yam
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
-export FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
+FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
 
-python3 - <<'PY'
-import json
-import os
-from urllib.request import Request, urlopen
-
-messages = []
-for question in (
-    "请详细解释提示词缓存的用途，举例说明它怎样影响响应延迟。",
-    "如果下一轮对话由另一台服务器继续处理，缓存还能怎样帮助它？",
-):
-    messages.append({"role": "user", "content": question})
-    request = Request(
-        os.environ["FRONTEND_URL"] + "/v1/chat/completions",
-        data=json.dumps({
-            "model": "Qwen/Qwen2.5-0.5B-Instruct",
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": 256,
-        }).encode(),
-        headers={"Content-Type": "application/json", "Host": os.environ["FRONTEND_HOST"]},
-    )
-    with urlopen(request, timeout=300) as response:
-        answer = json.load(response)["choices"][0]["message"]["content"]
-    print(answer, "\n")
-    messages.append({"role": "assistant", "content": answer})
-PY
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FRONTEND_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "messages": [{"role": "user", "content": "请解释提示词缓存如何降低响应延迟。"}],
+    "temperature": 0,
+    "max_tokens": 256
+  }'
 ```
 
 后续对话继续通过同一 API 提交完整历史；聊天模板若删除历史思考内容，token 前缀也会改变，需要重新计算。匹配的 Decode 前缀比 Prefill 本地缓存更长、且引擎判断值得传输时，才使用远端缓存，否则正常计算。仅按负载选路也会使用这条复用路径，[路由权重](../../data-plane/frontend/src/router/README_zh.md)只影响目标偏好。
+
+性能测量使用 [`foretoken perf`](../../benchmarks/docs/perf/README_zh.md)，也可以运行[多轮对话工作负载](../../benchmarks/docs/perf/conversations_zh.md)。
 
 使用完后删除示例：
 

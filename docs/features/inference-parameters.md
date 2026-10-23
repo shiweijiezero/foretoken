@@ -181,38 +181,23 @@ The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct` and its P/D Pools directl
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
-export FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
-export FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
+FRONTEND_URL="$(foretoken endpoint qwen-nixl)"
+FRONTEND_HOST="$(foretoken endpoint qwen-nixl --host)"
 
-python3 - <<'PY'
-import json
-import os
-from urllib.request import Request, urlopen
-
-messages = []
-for question in (
-    "Explain prompt caching in detail, with examples and its effect on latency.",
-    "How does this help when a conversation continues on another server?",
-):
-    messages.append({"role": "user", "content": question})
-    request = Request(
-        os.environ["FRONTEND_URL"] + "/v1/chat/completions",
-        data=json.dumps({
-            "model": "Qwen/Qwen2.5-0.5B-Instruct",
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": 256,
-        }).encode(),
-        headers={"Content-Type": "application/json", "Host": os.environ["FRONTEND_HOST"]},
-    )
-    with urlopen(request, timeout=300) as response:
-        answer = json.load(response)["choices"][0]["message"]["content"]
-    print(answer, "\n")
-    messages.append({"role": "assistant", "content": answer})
-PY
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FRONTEND_HOST" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "messages": [{"role": "user", "content": "Explain how prompt caching reduces latency."}],
+    "temperature": 0,
+    "max_tokens": 256
+  }'
 ```
 
 For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
+
+Use [`foretoken perf`](../../benchmarks/docs/perf/README.md) to measure performance, including [multi-turn conversation workloads](../../benchmarks/docs/perf/conversations.md).
 
 Remove the example when finished:
 
