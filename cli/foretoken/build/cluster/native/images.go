@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/content"
@@ -112,52 +111,41 @@ func inspectImage(ctx context.Context, node *containerd.Client, input request, m
 	}{true, descriptor, user}, nil
 }
 
-// deliverImage establishes native GC links, owned pinned references and unpacked snapshots after dependency validation succeeds.
+// deliverImage establishes native GC links, the selected pinned reference and unpacked snapshots after dependency validation succeeds.
 func deliverImage(ctx context.Context, node *containerd.Client, input request, matcher platforms.MatchComparer) error {
-	if input.Descriptor == nil || len(input.References) == 0 || len(input.ImageLabels) == 0 {
-		return errors.New("image delivery requires a descriptor, references and ownership labels")
+	if input.Descriptor == nil || input.Image == "" || len(input.ImageLabels) == 0 {
+		return errors.New("image delivery requires a descriptor, reference and ownership labels")
 	}
-	names := slices.Clone(input.References)
-	slices.Sort(names)
-	names = slices.Compact(names)
 	store := node.ImageService()
-	existing := make(map[string]bool)
-	// Check every alias before publishing any of them; borrowed references keep their original owner.
-	for _, name := range names {
-		image, err := store.Get(ctx, name)
-		if errdefs.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
+	previous, err := store.Get(ctx, input.Image)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	exists := err == nil
+	if exists {
+		// Borrowed references keep their original owner.
 		for key, value := range input.ImageLabels {
-			if image.Labels[key] != value {
-				return fmt.Errorf("source image reference %q belongs to another owner", name)
+			if previous.Labels[key] != value {
+				return fmt.Errorf("source image reference %q belongs to another owner", input.Image)
 			}
 		}
-		existing[name] = true
 	}
 	contentStore := node.ContentStore()
 	if err := images.Walk(ctx, images.SetChildrenLabels(contentStore, images.ChildrenHandler(contentStore)), *input.Descriptor); err != nil {
 		return err
 	}
-	for _, name := range names {
-		image := images.Image{Name: name, Target: *input.Descriptor, Labels: input.ImageLabels}
-		var err error
-		if existing[name] {
-			fields := []string{"target"}
-			for key := range input.ImageLabels {
-				fields = append(fields, "labels."+key)
-			}
-			_, err = store.Update(ctx, image, fields...)
-		} else {
-			_, err = store.Create(ctx, image)
+	image := images.Image{Name: input.Image, Target: *input.Descriptor, Labels: input.ImageLabels}
+	if exists {
+		fields := []string{"target"}
+		for key := range input.ImageLabels {
+			fields = append(fields, "labels."+key)
 		}
-		if err != nil {
-			return err
-		}
+		_, err = store.Update(ctx, image, fields...)
+	} else {
+		_, err = store.Create(ctx, image)
 	}
-	image := containerd.NewImageWithPlatform(node, images.Image{Name: names[0], Target: *input.Descriptor}, matcher)
-	return image.Unpack(ctx, "")
+	if err != nil {
+		return err
+	}
+	return containerd.NewImageWithPlatform(node, image, matcher).Unpack(ctx, "")
 }

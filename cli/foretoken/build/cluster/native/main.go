@@ -47,7 +47,6 @@ type request struct {
 	MetadataFile        string                        `json:"metadata_file,omitempty"`
 	Image               string                        `json:"image,omitempty"`
 	Descriptor          *ocispec.Descriptor           `json:"descriptor,omitempty"`
-	References          []string                      `json:"references,omitempty"`
 	ImageLabels         map[string]string             `json:"image_labels,omitempty"`
 }
 

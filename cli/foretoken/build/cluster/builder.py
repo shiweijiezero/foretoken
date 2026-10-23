@@ -106,7 +106,6 @@ class ClusterBuilder(AbstractContextManager):
         self._retirement_lock = Lock()
         self._generated_images: dict[str, dict[str, Any]] = {}
         self._node_inputs: dict[str, dict[str, Any] | None] = {}
-        self._built_images: set[str] = set()
         self._resolved_images: dict[str, str] = {}
         self._image_users: dict[str, str] = {}
 
@@ -267,12 +266,6 @@ class ClusterBuilder(AbstractContextManager):
             self.image_store.pin_owned(reference)
         else:
             self.image_store.deliver(metadata["containerimage.descriptor"], reference, self.lease, self.platform)
-            self._built_images.add(reference)
-
-    def discard_unselected_images(self, retained: set[str]) -> None:
-        """Remove only this build's unselected local references after every node has been compared."""
-        if self.containerd_socket:
-            self.image_store.remove_owned(self._built_images - retained)
 
     def __enter__(self) -> Self:
         """Start this operation's image builder on its persistent cache node."""

@@ -659,8 +659,6 @@ def _deliver_environments(
         ]
         for future in pending:
             future.result()
-    for builder in workspaces.builders:
-        builder.discard_unselected_images(set(images.values()) | set(environment_images.values()))
     prepared.pending_state["build"].update(
         digests=digests, images={**images, **environment_images},
         environments=built.environments.records, compilers=built.compilers,

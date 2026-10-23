@@ -71,7 +71,7 @@ class NodeImageStore:
         return result.stdout if capture else ""
 
     def containerd(self) -> list[str]:
-        """Return the node client command used by source export and image operations."""
+        """Return the node client command for image records and lease cleanup."""
         return [
             _CONTAINERD_CLIENT,
             "--address",
@@ -104,7 +104,7 @@ class NodeImageStore:
         logger.info("Delivering source image {} to the node", image)
         request = self.client_request(lease, platform)
         request.update(
-            descriptor=descriptor, references=[image],
+            descriptor=descriptor, image=image,
             image_labels={**request["lease_labels"], _PIN_LABEL: "pinned"},
         )
         self.run([CLIENT_BINARY, "deliver"], input_text=json.dumps(request))
@@ -209,12 +209,6 @@ class NodeImageStore:
                 f"{SOURCE_BUILD_BINDING_LABEL}={self.binding}",
             ]
         )
-
-    def remove_owned(self, references: set[str]) -> None:
-        """Discard this build's temporary aliases without deleting unowned references."""
-        unused = references & self.owned_images().keys()
-        if unused:
-            self.run([*self.containerd(), "images", "remove", *sorted(unused)])
 
     def release_except(self, retained: set[str]) -> set[str]:
         """Release unreferenced owned pins and return owned references still retained by consumers."""
@@ -348,7 +342,7 @@ def node_image_store(
 def image_manifest_digest(
     digest: str, read: Callable[[str], dict[str, Any]]
 ) -> str:
-    """Resolve a single-image index for node and OCI-layout consumers without unwrapping artifacts."""
+    """Compare a node's single-image index with build output without unwrapping artifacts."""
     descriptor = read(digest)
     if descriptor.get("mediaType") not in {
         "application/vnd.oci.image.index.v1+json",
