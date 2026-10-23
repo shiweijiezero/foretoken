@@ -177,7 +177,7 @@ Foretoken 的 vLLM 0.31 和所提供的沐曦运行环境会为使用完整注�
 
 复用要求每个模型副本位于单个节点，P/D 的 KV 布局兼容，PP/PCP/DCP 均为 1；NIXL 还要求两端 TP 大小相同。其他受支持的配置继续使用普通 P/D。Encoder 分离和 Mooncake Store 使用 Mooncake。
 
-NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml) 中直接声明模型 `Qwen/Qwen2.5-0.5B-Instruct` 和 P/D 两个 Pool，传输方式自动选择。每个阶段申请一张 GPU，前端有两个副本；`cache.yaml` 将模型文件和运行时缓存保存在仓库根目录的 `data/`。在已准备好的 Foretoken 集群上，从仓库根目录执行：
+NIXL 示例在 [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml) 中直接声明模型 `Qwen/Qwen2.5-0.5B-Instruct` 和 P/D 两个 Pool，传输方式自动选择。每个阶段申请一张 GPU，前端有两个副本，存储使用[平台默认配置](model-storage_zh.md)。在已准备好的 Foretoken 集群上，从仓库根目录执行：
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m

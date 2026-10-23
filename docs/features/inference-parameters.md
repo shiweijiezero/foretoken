@@ -177,7 +177,7 @@ Reuse is enabled automatically for full-attention text models without LoRA in th
 
 Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
 
-The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct` and its P/D Pools directly in [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml), leaving network transport selection automatic. It requests one GPU per stage and two frontend replicas; `cache.yaml` stores model files and runtime cache in the repository-root `data/` directory. On a prepared Foretoken cluster, run from the repository root:
+The NIXL example declares `Qwen/Qwen2.5-0.5B-Instruct` and its P/D Pools directly in [`model.yaml`](../../examples/feature/nixl-prefix-reuse/model.yaml), leaving network transport selection automatic. It requests one GPU per stage and two frontend replicas, using the [platform's default storage](model-storage.md). On a prepared Foretoken cluster, run from the repository root:
 
 ```bash
 foretoken deploy examples/feature/nixl-prefix-reuse --timeout 20m
