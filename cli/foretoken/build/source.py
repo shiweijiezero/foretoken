@@ -41,6 +41,7 @@ from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
+    mooncake_build_version,
     snapshot_versions,
     source_checkout,
 )
@@ -258,7 +259,9 @@ def _prepare_source_build(
     )
     old = directory / saved_inputs["inputs"] if saved_inputs.get("root") == str(root) and saved_inputs.get("inputs") else None
     previous_versions = saved_inputs.get("build", {}).get("versions", {}) if old is not None else {}
-    mooncake_version = arguments.get("MOONCAKE_VERSION", "") if build_metax_runtime else None
+    mooncake_version = mooncake_build_version(
+        root, arguments, runtime_backend=runtime_backend, build_metax_runtime=build_metax_runtime,
+    )
     configuration = build_configuration(
         root, values,
         arguments.get("BASE_IMAGE_REGISTRY", registry_mirrors.get("docker.io", [""])[0]),
@@ -578,7 +581,7 @@ def _build_environments(
         if component == "model-server":
             dependency_names = {
                 "BASE_IMAGE_REGISTRY", "UV_IMAGE_REGISTRY", "UV_IMAGE", "UV_DEFAULT_INDEX",
-                "FORETOKEN_GITHUB_MIRROR", "FORETOKEN_VLLM_PYTHON", "BUILDKIT_SYNTAX_IMAGE",
+                "FORETOKEN_GITHUB_MIRROR", "FORETOKEN_VLLM_PYTHON", "BUILDKIT_SYNTAX_IMAGE", "GOPROXY", "GOSUMDB",
             }
         else:
             dependency_names = {
@@ -590,7 +593,7 @@ def _build_environments(
             dependency_arguments["INFERENCE_ENGINE_IMAGE"] = engine_image
         selected = environments.build(
             component, _COMPONENT_DOCKERFILES[component], target="environment", arguments=dependency_arguments,
-            input_prefixes=("data-plane/patches/vllm/",) if component == "model-server" else (),
+            input_prefixes=("data-plane/patches/vllm/", "deploy/mooncake/", "third_party/mooncake/") if component == "model-server" else (),
         )
         if selected["image"] != build.get("images", {}).get("environment-" + component):
             application_parts[component] = None

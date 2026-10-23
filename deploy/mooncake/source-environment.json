@@ -5,6 +5,7 @@
     "0.3.12": {
       "revision": "c7ae97fd24251ed0aaaa613e8251859f170f1ae7",
       "patches": [
+        "deploy/mooncake/patches/v0.3.12/rdma-port-rails.patch",
         "deploy/mooncake/patches/v0.3.12/provider-registration.patch",
         "deploy/mooncake/patches/v0.3.12/client-lifecycle.patch"
       ],
@@ -26,6 +27,7 @@
     "0.3.12.post1": {
       "revision": "6041a609a8c3af35e778f70db344f145c2914980",
       "patches": [
+        "deploy/mooncake/patches/v0.3.12/rdma-port-rails.patch",
         "deploy/mooncake/patches/v0.3.12.post1/provider-registration.patch",
         "deploy/mooncake/patches/v0.3.12.post1/client-lifecycle.patch"
       ],
@@ -43,6 +45,7 @@
     "0.3.13": {
       "revision": "e5598b0992cc258b06d22f24d875480e8931a28e",
       "patches": [
+        "deploy/mooncake/patches/rdma-port-rails.patch",
         "deploy/mooncake/patches/provider-registration.patch",
         "deploy/mooncake/patches/client-lifecycle.patch",
         "deploy/mooncake/patches/tenant-quota-ha.patch"
@@ -57,6 +60,7 @@
     "0.3.13.post1": {
       "revision": "719735896c86b56fabec6cf3e825fb2ea640597a",
       "patches": [
+        "deploy/mooncake/patches/rdma-port-rails.patch",
         "deploy/mooncake/patches/provider-registration.patch",
         "deploy/mooncake/patches/client-lifecycle.patch",
         "deploy/mooncake/patches/tenant-quota-ha.patch"

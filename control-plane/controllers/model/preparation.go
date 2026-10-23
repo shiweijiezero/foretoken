@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -259,9 +260,17 @@ func (reconciler *GroupReconciler) preparationNodeAffinity(ctx context.Context, 
 		return nil, fmt.Errorf("list accelerator nodes for model preparation: %w", err)
 	}
 	requests := modelResourceRequirements(group.Spec.Resources, group.Spec.Accelerator.DeviceResourceName, group.Spec.RDMA).Requests
+	var placement *nodeaffinity.NodeSelector
+	if rdma := group.Spec.RDMA; rdma != nil && rdma.RequiredNodeAffinity != nil {
+		var err error
+		placement, err = nodeaffinity.NewNodeSelector(rdma.RequiredNodeAffinity)
+		if err != nil {
+			return nil, fmt.Errorf("resolve model preparation placement: %w", err)
+		}
+	}
 	var terms []corev1.NodeSelectorTerm
 	for _, node := range nodes.Items {
-		if !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests) {
+		if !modelNodeFitsRequests(node, group.Spec.Accelerator.DeviceResourceName, requests, placement) {
 			continue
 		}
 		// Node field selectors accept one value; separate terms express eligible alternatives.

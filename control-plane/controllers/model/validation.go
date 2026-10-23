@@ -51,8 +51,8 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	if group.Spec.Runtime.Backend != "vllm" {
 		return fmt.Errorf("inference backend %q is not supported", group.Spec.Runtime.Backend)
 	}
-	if rdma := group.Spec.RDMA; rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
-		return fmt.Errorf("RDMA allocation requires a resource name and positive count")
+	if err := runtimeconfig.ValidateRDMAAllocation(group.Spec.RDMA, group.Spec.Accelerator.DeviceResourceName); err != nil {
+		return err
 	}
 	if group.Spec.PDRuntime != nil && group.Spec.PDRuntime.Protocol == "rdma" && group.Spec.RDMA == nil {
 		return fmt.Errorf("P/D Groups with RDMA transport require an RDMA allocation")

@@ -207,7 +207,7 @@ class PlatformLifecycle:
             log_endpoint=prepared.log_endpoint,
             log_storage_statefulset=prepared.log_storage_statefulset,
             gpu_resource_name=plan.runtime.gpu_resource_override,
-            rdma_resource_name=plan.rdma.resource_name,
+            rdma_resource_names=plan.rdma.resource_names,
             rdma_managed=plan.rdma.managed,
             rdma_node_names=plan.rdma.node_names,
             rdma_networks=self._rdma_networks,

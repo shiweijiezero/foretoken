@@ -12,12 +12,14 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/engines/vllm"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -31,15 +33,17 @@ func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context,
 	}
 	profile := reconciler.RuntimeProfile
 	requestsRDMA := make([]bool, len(pools))
-	if profile.RDMA != nil {
+	configs := make([]vllmconfig.EffectiveConfig, len(pools))
+	if len(profile.RDMABindings) != 0 {
 		for index, pool := range pools {
-			if pool.Template.Backend != "vllm" {
+			if pool.DesiredGroups == 0 || pool.Template.Backend != "vllm" {
 				continue
 			}
 			effective, err := vllmconfig.Compile(pool.Template)
 			if err != nil {
 				return fmt.Errorf("resolve Pool %q RDMA requirements: %w", pool.Name, err)
 			}
+			configs[index] = effective
 			requestsRDMA[index] = effective.RequestsRDMA(pool.Template, profile.DeviceResourceName)
 		}
 	}
@@ -60,37 +64,114 @@ func (reconciler *ServiceReconciler) resolveModelTransports(ctx context.Context,
 		}
 	}
 
-	protocol := "rdma"
+	candidates := make([][]*inferencev1alpha1.RDMAAllocation, len(pools))
+	selected := make([]*inferencev1alpha1.RDMAAllocation, len(pools))
+	var pdPools []int
+	for index, pool := range pools {
+		if requestsRDMA[index] {
+			var err error
+			candidates[index], err = modelRDMACandidates(service.Namespace, pool.Template, profile, nodes.Items)
+			if err != nil {
+				return fmt.Errorf("resolve Pool %q RDMA binding: %w", pool.Name, err)
+			}
+			if len(candidates[index]) > 0 {
+				selected[index] = candidates[index][0]
+			} else if pool.Template.Network != "" {
+				return fmt.Errorf("Pool %q has no available RDMA binding for network %s/%s", pool.Name, service.Namespace, pool.Template.Network)
+			}
+		}
+		if transfer := pool.Template.KVTransfer; pool.DesiredGroups > 0 && transfer != nil && transfer.Protocol != "tcp" {
+			pdPools = append(pdPools, index)
+		}
+	}
+
+	// Choose one attachment domain for all P/D stages, not an arbitrary collection of NICs.
+	// An empty attachment set only preserves the same explicit device allocation across stages.
+	protocol := "tcp"
+	if len(pdPools) > 0 {
+		for _, network := range candidates[pdPools[0]] {
+			choice := slices.Clone(selected)
+			matched := true
+			for _, index := range pdPools {
+				candidate := slices.IndexFunc(candidates[index], func(allocation *inferencev1alpha1.RDMAAllocation) bool {
+					return slices.Equal(network.Networks, allocation.Networks) &&
+						(len(network.Networks) > 0 || apiequality.Semantic.DeepEqual(network.Resources, allocation.Resources))
+				})
+				if candidate < 0 {
+					matched = false
+					break
+				}
+				choice[index] = candidates[index][candidate]
+			}
+			if matched {
+				selected, protocol = choice, "rdma"
+				break
+			}
+		}
+		if protocol != "rdma" {
+			for _, index := range pdPools {
+				if pools[index].Template.KVTransfer.Protocol == "rdma" || requestsRDMA[index] && pools[index].Template.Network != "" {
+					return fmt.Errorf("P/D RDMA requires an available common network binding across all Pools")
+				}
+			}
+		}
+	}
+	// Stopped Pools inherit the common protocol but acquire devices only when capacity is enabled.
 	for index := range pools {
 		template := &pools[index].Template
-		template.RDMA = nil
-		if allocation := profile.RDMA; requestsRDMA[index] {
-			selector := labels.SelectorFromSet(template.NodeSelector)
-			requests := modelResourceRequirements(template.Resources, profile.DeviceResourceName, allocation).Requests
-			var eligible int32
-			for _, node := range nodes.Items {
-				if !selector.Matches(labels.Set(node.Labels)) || profile.NodeSelectorKey != "" && node.Labels[profile.NodeSelectorKey] != profile.NodeSelectorValue {
-					continue
-				}
-				if modelNodeFitsRequests(node, profile.DeviceResourceName, requests) {
-					eligible++
-				}
-			}
-			if eligible >= template.NodeCount {
-				template.RDMA = allocation.DeepCopy()
-			}
-		}
-		// Every P/D member must use the same network family, including across different node selectors.
-		if template.KVTransfer != nil && template.RDMA == nil {
-			protocol = "tcp"
-		}
-	}
-	for index := range pools {
-		if transfer := pools[index].Template.KVTransfer; transfer != nil && transfer.Protocol == "" {
+		if transfer := template.KVTransfer; transfer != nil && transfer.Protocol == "" {
 			transfer.Protocol = protocol
 		}
+		if requestsRDMA[index] && !configs[index].RequestsRDMA(*template, profile.DeviceResourceName) {
+			selected[index] = nil
+		}
+		template.RDMA = selected[index]
 	}
 	return nil
+}
+
+// modelRDMACandidates returns complete installer bindings that can place every member of a Pool.
+// Namespace restrictions come from the installer; Kubernetes still owns device allocation and scheduling.
+func modelRDMACandidates(namespace string, template inferencev1alpha1.NormalizedPoolTemplate, profile resolver.RuntimeProfile, nodes []corev1.Node) ([]*inferencev1alpha1.RDMAAllocation, error) {
+	var candidates []*inferencev1alpha1.RDMAAllocation
+	selector := labels.SelectorFromSet(template.NodeSelector)
+	for _, binding := range profile.RDMABindings {
+		if binding.Namespace != "" && binding.Namespace != namespace {
+			continue
+		}
+		allocation := binding.Allocation.Canonical()
+		allocation.Networks = runtimeconfig.RDMANetworks(namespace, allocation, "")
+		if template.Network != "" {
+			explicit := runtimeconfig.RDMANetworks(namespace, nil, template.Network)
+			if binding.AllowExplicitNetwork {
+				allocation.Networks = explicit
+			} else if !slices.Equal(allocation.Networks, explicit) {
+				continue
+			}
+		}
+		var placement *nodeaffinity.NodeSelector
+		if allocation.RequiredNodeAffinity != nil {
+			var err error
+			placement, err = nodeaffinity.NewNodeSelector(allocation.RequiredNodeAffinity)
+			if err != nil {
+				return nil, err
+			}
+		}
+		requests := modelResourceRequirements(template.Resources, profile.DeviceResourceName, allocation).Requests
+		var eligible int32
+		for _, node := range nodes {
+			if !selector.Matches(labels.Set(node.Labels)) || profile.NodeSelectorKey != "" && node.Labels[profile.NodeSelectorKey] != profile.NodeSelectorValue {
+				continue
+			}
+			if modelNodeFitsRequests(node, profile.DeviceResourceName, requests, placement) {
+				eligible++
+			}
+		}
+		if eligible >= template.NodeCount {
+			candidates = append(candidates, allocation)
+		}
+	}
+	return candidates, nil
 }
 
 // retainModelTransports keeps an accepted execution choice independent of transient node health.
@@ -133,7 +214,10 @@ func (reconciler *ServiceReconciler) retainModelTransports(ctx context.Context, 
 			if !apiequality.Semantic.DeepEqual(group.Spec.Artifacts.Cache, pool.Template.RuntimeCache) {
 				return false, nil
 			}
-			selections[index].RDMA = group.Spec.RDMA
+			selections[index].RDMA = group.Spec.RDMA.Canonical()
+			if selections[index].RDMA != nil {
+				selections[index].RDMA.Networks = runtimeconfig.RDMANetworks(service.Namespace, group.Spec.RDMA, group.Spec.Network)
+			}
 			if pool.Template.KVTransfer != nil {
 				if group.Spec.PDRuntime == nil {
 					return false, nil
@@ -157,7 +241,7 @@ func (reconciler *ServiceReconciler) retainModelTransports(ctx context.Context, 
 	}
 	// Publish both P/D choices together; a partial match must not mix retained and newly selected protocols.
 	for index := range pools {
-		pools[index].Template.RDMA = selections[index].RDMA.DeepCopy()
+		pools[index].Template.RDMA = selections[index].RDMA.Canonical()
 		if transfer := pools[index].Template.KVTransfer; transfer != nil {
 			transfer.Protocol = selections[index].KVTransfer.Protocol
 			if pools[index].DesiredGroups == 0 && protocol != "" {
@@ -170,8 +254,8 @@ func (reconciler *ServiceReconciler) retainModelTransports(ctx context.Context, 
 
 // modelNodeFitsRequests checks static serving requests against advertised node capacity.
 // Transport selection and CPU-only preparation share this placement constraint; the scheduler owns occupancy.
-func modelNodeFitsRequests(node corev1.Node, accelerator string, requests corev1.ResourceList) bool {
-	if !node.DeletionTimestamp.IsZero() || node.Spec.Unschedulable {
+func modelNodeFitsRequests(node corev1.Node, accelerator string, requests corev1.ResourceList, placement *nodeaffinity.NodeSelector) bool {
+	if !node.DeletionTimestamp.IsZero() || node.Spec.Unschedulable || placement != nil && !placement.Match(&node) {
 		return false
 	}
 	for name, request := range requests {

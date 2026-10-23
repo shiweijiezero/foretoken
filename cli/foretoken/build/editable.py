@@ -36,6 +36,7 @@ from foretoken.build.inputs import (
     BuildInputs,
     build_sources,
     engine_source_roots,
+    mooncake_build_version,
     snapshot_versions,
     source_checkout,
 )
@@ -168,9 +169,9 @@ class EditableDeployment:
                 self.build_arguments = None if platform_changed else {**build["arguments"], **build_arguments(dict(os.environ))}
                 if self.build_arguments is not None and self.recipe["buildMetaXRuntime"] and "MOONCAKE_VERSION" in os.environ:
                     self.build_arguments["MOONCAKE_VERSION"] = os.environ["MOONCAKE_VERSION"]
-                self.mooncake_version = (
-                    (self.build_arguments or {}).get("MOONCAKE_VERSION", "")
-                    if self.recipe["buildMetaXRuntime"] else None
+                self.mooncake_version = mooncake_build_version(
+                    self.root, self.build_arguments or {},
+                    runtime_backend=self.recipe["runtimeBackend"], build_metax_runtime=self.recipe["buildMetaXRuntime"],
                 )
                 manifest = self.directory / self.state["inputs"] / "engine/manifest.json"
                 old_engines = set(json.loads(manifest.read_text())) if manifest.is_file() else set()
@@ -574,7 +575,10 @@ class EditableDeployment:
             write_source_state(self.directory / "install.json", self.state)
             (self.directory / "build.json").unlink(missing_ok=True)
         self.build_arguments = dict(self.state["build"]["arguments"])
-        self.mooncake_version = self.build_arguments.get("MOONCAKE_VERSION", "") if self.recipe["buildMetaXRuntime"] else None
+        self.mooncake_version = mooncake_build_version(
+            self.root, self.build_arguments,
+            runtime_backend=self.recipe["runtimeBackend"], build_metax_runtime=self.recipe["buildMetaXRuntime"],
+        )
         self.environment_changed = False
 
     def _publish_applications(self, components: set[str], timeout: str) -> None:

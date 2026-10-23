@@ -263,6 +263,9 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if and .Values.rdma.managed .Values.rdma.resourceName -}}
 {{- fail "rdma.managed and an external rdma.resourceName are mutually exclusive" -}}
 {{- end -}}
+{{- if and .Values.rdma.managed (kindIs "slice" .Values.rdma.bindings) -}}
+{{- fail "rdma.bindings consume existing allocations and cannot enable rdma.managed" -}}
+{{- end -}}
 {{- if eq (trim .Values.image.repository) "" -}}
 {{- fail "image.repository must reference a control-plane image" -}}
 {{- end -}}

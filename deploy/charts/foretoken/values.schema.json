@@ -1,5 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "rdmaBinding": {
+      "type": "object",
+      "required": ["allocation"],
+      "properties": {
+        "namespace": {"type": "string"},
+        "allocation": {
+          "type": "object",
+          "required": ["resources"],
+          "properties": {
+            "resources": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": ["string", "integer"]}
+            },
+            "networks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "requiredNodeAffinity": {"type": "object"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "type": "object",
   "required": [
     "global",
@@ -113,6 +137,8 @@
       "properties": {
         "resourceName": {"type": "string"},
         "resourceCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "bindings": {"type": ["array", "null"], "items": {"$ref": "#/definitions/rdmaBinding"}},
+        "preparedBindings": {"type": "array", "items": {"$ref": "#/definitions/rdmaBinding"}},
         "managed": {"type": "boolean"},
         "ipamConfigFile": {"type": "string"},
         "image": {"type": "string", "minLength": 1},

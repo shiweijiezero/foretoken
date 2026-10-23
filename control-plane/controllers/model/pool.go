@@ -17,6 +17,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/servingconfig"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/workload"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -278,7 +279,21 @@ func matchingRevision(groups []inferencev1alpha1.ModelGroup, pool *inferencev1al
 
 func groupMatchesTemplate(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) bool {
 	template.Revision = group.Spec.Revision
-	return reflect.DeepEqual(group.Spec, template.Spec(pool, group.Spec.Ordinal))
+	return modelGroupSpecsEqual(group.Spec, template.Spec(pool, group.Spec.Ordinal), group.Namespace)
+}
+
+// modelGroupSpecsEqual compares execution semantics without rewriting retained immutable Groups.
+// Resource representation and attachment ordering do not create a new cohort on their own.
+func modelGroupSpecsEqual(left, right inferencev1alpha1.ModelGroupSpec, namespace string) bool {
+	before, after := left.DeepCopy(), right.DeepCopy()
+	for _, spec := range []*inferencev1alpha1.ModelGroupSpec{before, after} {
+		if spec.RDMA != nil {
+			spec.RDMA = spec.RDMA.Canonical()
+			spec.RDMA.Networks = runtimeconfig.RDMANetworks(namespace, spec.RDMA, spec.Network)
+			spec.Network = ""
+		}
+	}
+	return apiequality.Semantic.DeepEqual(before, after)
 }
 
 // modelPoolStopped confirms the Pool controller has reconciled its current zero-capacity intent.
@@ -322,7 +337,7 @@ func (reconciler *PoolReconciler) reconcileGroups(ctx context.Context, pool *inf
 	for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
 		spec := template.Spec(pool, ordinal)
 		if existing := current[ordinal]; existing != nil {
-			if !reflect.DeepEqual(existing.Spec, spec) {
+			if !modelGroupSpecsEqual(existing.Spec, spec, pool.Namespace) {
 				return groupState{}, fmt.Errorf("ModelGroup %q has an unexpected immutable spec", existing.Name)
 			}
 			continue

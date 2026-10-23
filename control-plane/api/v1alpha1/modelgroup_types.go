@@ -6,7 +6,10 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -59,13 +62,24 @@ type ModelGroupArtifacts struct {
 	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 }
 
-// RDMAAllocation identifies the platform device-plugin allocation used by runtime transports.
+// RDMAAllocation identifies the device requests, placement, and networks used by runtime transports.
+// +kubebuilder:validation:XValidation:rule="has(self.resources) ? size(self.resources) > 0 && !has(self.resourceName) && !has(self.resourceCount) : has(self.resourceName) && has(self.resourceCount)",message="RDMA requires resources or a retained single-resource allocation"
 type RDMAAllocation struct {
+	// Resources are requested together by each runtime member Pod.
+	// +optional
+	Resources corev1.ResourceList `json:"resources,omitempty"`
+	// RequiredNodeAffinity constrains members to nodes providing the selected network binding.
+	// +optional
+	RequiredNodeAffinity *corev1.NodeSelector `json:"requiredNodeAffinity,omitempty"`
+	// ResourceName and ResourceCount retain allocations written by older controllers.
+	// New allocations use Resources exclusively.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	ResourceName string `json:"resourceName"`
+	ResourceName string `json:"resourceName,omitempty"`
+	// +optional
 	// +kubebuilder:validation:Minimum=1
-	ResourceCount int32 `json:"resourceCount"`
-	// Networks are platform-prepared Multus attachments, used when a Pool selects no explicit network.
+	ResourceCount int32 `json:"resourceCount,omitempty"`
+	// Networks are the Multus attachments selected with these device requests.
 	// +optional
 	Networks []string `json:"networks,omitempty"`
 }
@@ -410,6 +424,25 @@ type ModelGroupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ModelGroup `json:"items"`
+}
+
+// Canonical returns independent native requests and placement for workload projection
+// and execution comparison, converting retained single-resource allocations without mutating them.
+func (allocation *RDMAAllocation) Canonical() *RDMAAllocation {
+	if allocation == nil {
+		return nil
+	}
+	result := *allocation
+	result.Resources = allocation.Resources.DeepCopy()
+	if result.Resources == nil && allocation.ResourceName != "" {
+		result.Resources = corev1.ResourceList{
+			corev1.ResourceName(allocation.ResourceName): *resource.NewQuantity(int64(allocation.ResourceCount), resource.DecimalSI),
+		}
+	}
+	result.ResourceName, result.ResourceCount = "", 0
+	result.RequiredNodeAffinity = allocation.RequiredNodeAffinity.DeepCopy()
+	result.Networks = slices.Clone(allocation.Networks)
+	return &result
 }
 
 func init() {

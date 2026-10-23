@@ -1,0 +1,269 @@
+#!/usr/bin/env -S python3 -I
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+"""Build the CUDA transfer wheel inside the selected inference environment's build stage."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import sysconfig
+from pathlib import Path
+
+
+def build_wheel(output: Path, cache: Path, jobs: int) -> None:
+    """Export a complete patched wheel for the image installer, retaining upstream packaging and ABI."""
+    import torch
+
+    output.mkdir(parents=True, exist_ok=True)
+    licenses = output / "licenses"
+    licenses.mkdir(exist_ok=True)
+    if getattr(torch.version, "maca", None) or not torch.version.cuda:
+        return
+
+    root = Path(__file__).resolve().parents[2]
+    version = (root / "data-plane/patches/vllm/mooncake.version").read_text().strip()
+    cuda_version = torch.version.cuda
+    cuda = Path("/usr/local") / f"cuda-{cuda_version}"
+    source = Path("/src/mooncake")
+    environment = {
+        **os.environ,
+        "MOONCAKE_VERSION": version,
+        "VERSION": version,
+        "CUDA_HOME": str(cuda),
+        "MAX_JOBS": str(jobs),
+        "EP_TORCH_VERSIONS": "",
+        "BUILD_DIR": "build",
+        "OUTPUT_DIR": "dist",
+        "PYTHON_VERSION": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "CU13_BUILD": "1" if int(cuda_version.split(".", 1)[0]) >= 13 else "0",
+        "DEBIAN_FRONTEND": "noninteractive",
+    }
+    for variant in (
+        "NON_CUDA_BUILD",
+        "NPU_BUILD",
+        "EFA_BUILD",
+        "EFA_NON_CUDA_BUILD",
+        "MUSA_BUILD",
+    ):
+        environment.pop(variant, None)
+    # Mooncake owns the target architectures of its EP kernels; the engine image's
+    # broader vLLM target list can include architectures those kernels do not support.
+    environment.pop("TORCH_CUDA_ARCH_LIST", None)
+    packages = [
+        "build-essential",
+        "ca-certificates",
+        "cmake",
+        "git",
+        "ninja-build",
+        "pkg-config",
+        "patchelf",
+        "libasio-dev",
+        "libboost-dev",
+        "libcurl4-openssl-dev",
+        "libgflags-dev",
+        "libgoogle-glog-dev",
+        "libibverbs-dev",
+        "libjsoncpp-dev",
+        "libmsgpack-dev",
+        "libnuma-dev",
+        "libssl-dev",
+        "liburing-dev",
+        "libxxhash-dev",
+        "libyaml-cpp-dev",
+        "libzstd-dev",
+    ]
+    if not (Path(sysconfig.get_path("include")) / "Python.h").is_file():
+        packages.append(f"python{sys.version_info.major}.{sys.version_info.minor}-dev")
+    suffix = cuda_version.replace(".", "-")
+    packages.append(f"cuda-libraries-dev-{suffix}")
+    if not (cuda / "bin/nvcc").is_file():
+        packages.extend(
+            f"{package}-{suffix}"
+            for package in ("cuda-nvcc", "cuda-cudart-dev", "cuda-driver-dev")
+        )
+    subprocess.run(["apt-get", "update"], env=environment, check=True)
+    subprocess.run(
+        ["apt-get", "install", "-y", "--no-install-recommends", *packages],
+        env=environment,
+        check=True,
+    )
+
+    # Source preparation is shared with the CPU Store and MetaX images. Local
+    # source is copied into this disposable build stage, never built in place.
+    local = root / "third_party/mooncake"
+    if local.is_dir():
+        shutil.copytree(local, source)
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(root / "deploy/mooncake/prepare-source"),
+            "--destination",
+            str(source),
+            "--cache",
+            str(cache),
+        ],
+        env=environment,
+        check=True,
+    )
+    virtualenv = Path("/opt/mooncake-build")
+    subprocess.run(
+        [
+            "uv",
+            "venv",
+            "--system-site-packages",
+            "--python",
+            sys.executable,
+            str(virtualenv),
+        ],
+        check=True,
+    )
+    python = virtualenv / "bin/python"
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "cmake<4",
+            "pip",
+            "build",
+            "setuptools",
+            "wheel",
+            "auditwheel",
+        ],
+        check=True,
+    )
+    environment["PATH"] = (
+        f"{virtualenv}/bin:{cuda}/bin:/usr/local/go/bin:{environment['PATH']}"
+    )
+    environment["VIRTUAL_ENV"] = str(virtualenv)
+    environment["LIBRARY_PATH"] = f"{cuda}/lib64/stubs:" + environment.get(
+        "LIBRARY_PATH", ""
+    )
+    mirror = environment.get("FORETOKEN_GITHUB_MIRROR", "").rstrip("/")
+    if mirror.endswith("https://github.com"):
+        environment["ASCEND_GITHUB_MIRROR_URLS"] = mirror.removesuffix(
+            "https://github.com"
+        )
+
+    # Use upstream's installation layout in this disposable build stage: some
+    # native targets consume its headers through the compiler's default search path.
+    dependency_build = Path("/build/yalantinglibs")
+    subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(source / "extern/yalantinglibs"),
+            "-B",
+            str(dependency_build),
+            "-G",
+            "Ninja",
+            "-DBUILD_EXAMPLES=OFF",
+            "-DBUILD_BENCHMARK=OFF",
+            "-DBUILD_UNIT_TESTS=OFF",
+        ],
+        env=environment,
+        check=True,
+    )
+    subprocess.run(
+        ["cmake", "--build", str(dependency_build), "--parallel", str(jobs)],
+        env=environment,
+        check=True,
+    )
+    subprocess.run(
+        ["cmake", "--install", str(dependency_build)], env=environment, check=True
+    )
+
+    # Rebuild every native payload packaged by upstream, including engine/store,
+    # command-line binaries and the EP extensions that link against engine.so.
+    arm = platform.machine() == "aarch64"
+    configuration = [
+        "cmake",
+        "-S",
+        str(source),
+        "-B",
+        str(source / "build"),
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DUSE_CUDA=ON",
+        "-DUSE_HTTP=ON",
+        "-DUSE_TCP=ON",
+        "-DWITH_TE=ON",
+        "-DWITH_STORE=ON",
+        "-DWITH_STORE_RUST=OFF",
+        "-DBUILD_UNIT_TESTS=OFF",
+        f"-DUSE_ETCD={'OFF' if arm else 'ON'}",
+        f"-DSTORE_USE_ETCD={'OFF' if arm else 'ON'}",
+        f"-DWITH_EP={'OFF' if arm else 'ON'}",
+        f"-DUSE_MNNVL={'ON' if arm else 'OFF'}",
+        f"-DPython3_EXECUTABLE={python}",
+        f"-DCUDAToolkit_ROOT={cuda}",
+    ]
+    subprocess.run(configuration, env=environment, check=True)
+    targets = [
+        "engine",
+        "store",
+        "mooncake_master",
+        "mooncake_client",
+        "transfer_engine_bench",
+        "build_nvlink_allocator",
+    ]
+    if not arm:
+        targets.extend(["mooncake_ep_ext", "mooncake_pg_ext"])
+    subprocess.run(
+        [
+            "cmake",
+            "--build",
+            str(source / "build"),
+            "--target",
+            *targets,
+            "--parallel",
+            str(jobs),
+        ],
+        env=environment,
+        check=True,
+    )
+    subprocess.run(
+        ["bash", "scripts/build_wheel.sh"], cwd=source, env=environment, check=True
+    )
+    (wheel,) = (source / "mooncake-wheel/dist").glob("*.whl")
+    shutil.copy2(wheel, output / wheel.name)
+    notices = {
+        "mooncake/LICENSE-APACHE": source / "LICENSE-APACHE",
+        "pybind11/LICENSE": source / "extern/pybind11/LICENSE",
+        "yalantinglibs/LICENSE": source / "extern/yalantinglibs/LICENSE",
+        "yalantinglibs/NOTICE": source / "extern/yalantinglibs/NOTICE",
+        "asio/copyright": Path("/usr/share/doc/libasio-dev/copyright"),
+        "go/LICENSE": Path("/usr/local/go/LICENSE"),
+    }
+    boost = subprocess.check_output(
+        ["dpkg-query", "-S", "/usr/include/boost/version.hpp"], text=True
+    ).split(":", 1)[0]
+    notices["boost/copyright"] = Path("/usr/share/doc") / boost / "copyright"
+    for relative, notice in notices.items():
+        destination = licenses / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(notice, destination)
+
+
+def main() -> None:
+    """Build a native wheel for the caller-owned image stage without touching a running engine."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--jobs", type=int, required=True)
+    arguments = parser.parse_args()
+    build_wheel(arguments.output, arguments.cache, arguments.jobs)
+
+
+if __name__ == "__main__":
+    main()

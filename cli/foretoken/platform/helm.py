@@ -50,7 +50,7 @@ class Helm(HelmClient):
         log_endpoint: str,
         log_storage_statefulset: str,
         gpu_resource_name: str | None,
-        rdma_resource_name: str | None,
+        rdma_resource_names: tuple[str, ...],
         rdma_managed: bool,
         rdma_node_names: tuple[str, ...],
         rdma_networks: RDMANetworkLifecycle,
@@ -87,12 +87,10 @@ class Helm(HelmClient):
         if gpu_resource_name is not None:
             args.extend(["--set-string", f"runtime.vllm.gpu.resourceName={gpu_resource_name}"])
         self._add_download_proxy(args, download_proxy_url)
-        if rdma_managed:
-            args.extend([
-                "--set", "rdma.managed=true", "--set-json", "rdma.nodeNames=" + json.dumps(rdma_node_names),
-            ])
-        if rdma_resource_name is not None:
-            args.extend(["--set-string", f"rdma.resourceName={rdma_resource_name}"])
+        args.extend([
+            "--set", "rdma.managed=" + str(rdma_managed).lower(),
+            "--set-json", "rdma.nodeNames=" + json.dumps(rdma_node_names),
+        ])
         # Blanket registry overrides would also rewrite user and source images.
         args.extend(["--set-string", "global.imageRegistry="])
         if source_images is not None:
@@ -115,8 +113,9 @@ class Helm(HelmClient):
         with self.prepared_chart(chart, chart_version) as prepared:
             args[3] = str(prepared)
             self._set_platform_image_sources(args, overrides, source_mode, input_text)
+            rendered = self.render_chart(args, input_text=input_text)
             configuration = next(
-                document for document in self.render_chart(args, input_text=input_text)
+                document for document in rendered
                 if document["kind"] == "ConfigMap"
                 and document["metadata"].get("labels", {}).get("foretoken.io/platform") == "configuration"
             )
@@ -124,34 +123,51 @@ class Helm(HelmClient):
                 raise DeploymentError("The selected platform chart does not support deployment instances")
             template = json.loads(configuration["data"]["deployment-template.json"])
             defaults = json.loads(configuration["data"]["deploymentValues"])
+            allocation_names = rdma_resource_names or (
+                (defaults["rdma"]["resourceName"],) if defaults["rdma"]["resourceName"] else ()
+            )
             network_nodes = (
                 tuple(node for node in gpu_nodes if node["metadata"]["name"] in rdma_node_names)
-                if rdma_managed else nodes_with_rdma_allocation(gpu_nodes, defaults["rdma"]["resourceName"])
+                if rdma_managed else tuple(
+                    node for node in gpu_nodes
+                    if any(nodes_with_rdma_allocation((node,), name) for name in allocation_names)
+                )
             )
-            networks, ipam_config = rdma_networks.prepare(
-                release, network_nodes,
-                defaults["applicationFiles"]["clientImage"], defaults["imagePullSecrets"],
-                (stored_values or {}).get("rdma", {}).get("preparedNetworks", []),
-                overrides.get("rdma", {}).get("networks"), timeout,
+            runtime_pod = next(
+                document["spec"]["template"]["spec"] for document in rendered
+                if document["kind"] == "Deployment"
+                and document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "foretoken-deployment-manager"
             )
-            args.extend([
-                "--set-json", "rdma.preparedNetworks=" + json.dumps(networks),
-                "--set-string", "rdma.ipamConfigFile=" + ipam_config,
-            ])
-            default_claim = release.name + "-data"
-            directories = prepare_directory_bindings(
-                kubectl, template["directories"],
-                source_images.source_root if source_images is not None else Path.cwd(),
-                default_claim, timeout,
-            )
-            args.extend(["--set-json", "workload.cache.directories=" + json.dumps(directories)])
-            if default_claim in directories:
-                try:
-                    value_at(overrides, "workload.cache.claimName")
-                except KeyError:
-                    args.extend(["--set-string", "workload.cache.claimName=" + default_claim])
-            # Adoption keeps the origin publisher alive until Helm selects the complete release.
-            with application_files.adopt(self.render_chart(args, input_text=input_text), timeout):
+            # Native inspection consumes the same application that Helm will install.
+            # Hold publication through inspection and final release selection.
+            with application_files.adopt(rendered, timeout):
+                networks, ipam_config, bindings = rdma_networks.prepare(
+                    release, network_nodes,
+                    defaults["applicationFiles"]["clientImage"], defaults["imagePullSecrets"], runtime_pod,
+                    (stored_values or {}).get("rdma", {}).get("preparedNetworks", []),
+                    overrides.get("rdma", {}).get("networks"), timeout,
+                    resource_names=allocation_names,
+                    resource_count=defaults["rdma"]["resourceCount"],
+                    bindings=defaults["rdma"]["bindings"],
+                    runtime_class_name=defaults["runtime"]["vllm"]["gpu"]["runtimeClassName"],
+                )
+                args.extend([
+                    "--set-json", "rdma.preparedBindings=" + json.dumps(bindings),
+                    "--set-json", "rdma.preparedNetworks=" + json.dumps(networks),
+                    "--set-string", "rdma.ipamConfigFile=" + ipam_config,
+                ])
+                default_claim = release.name + "-data"
+                directories = prepare_directory_bindings(
+                    kubectl, template["directories"],
+                    source_images.source_root if source_images is not None else Path.cwd(),
+                    default_claim, timeout,
+                )
+                args.extend(["--set-json", "workload.cache.directories=" + json.dumps(directories)])
+                if default_claim in directories:
+                    try:
+                        value_at(overrides, "workload.cache.claimName")
+                    except KeyError:
+                        args.extend(["--set-string", "workload.cache.claimName=" + default_claim])
                 self.run(args, input_text=input_text)
                 self.set_platform_retiring(
                     kubectl, self.platform_configuration(), retiring=False,

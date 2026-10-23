@@ -99,11 +99,11 @@ class MultusLifecycle:
         values = merge_values(
             helm.stored_chart_values(release), {"rke2-whereabouts": {"enabled": True}}
         )
-        versions = tuple(
-            node["status"]["nodeInfo"]["kubeletVersion"]
+        directories = tuple(
+            inspection.runtime_paths(node, timeout)
             for node in kubectl.list_cluster_resources(("node",))
         )
-        defaults = _cni_defaults(versions, values)
+        defaults = _cni_defaults(directories, values)
         self._ensure_apis(timeout, install=True)
         chart = helm.config.multus
         with helm.prepared_chart(chart.source, chart.version) as prepared:
@@ -152,7 +152,9 @@ class MultusLifecycle:
                 )
             )
             for pod in pods:
-                container, host_conf, conf, binaries = _cni_mounts(pod)
+                node = self._kubectl.get("node", pod["spec"]["nodeName"])
+                directories = inspection.runtime_paths(node, timeout)
+                container, host_conf, conf, binaries = _cni_mounts(pod, directories)
                 arguments = (*container.get("command", []), *container.get("args", []))
                 daemon_config = ""
                 for index, argument in enumerate(arguments):
@@ -235,7 +237,7 @@ class MultusLifecycle:
         pod: dict[str, Any],
         container: dict[str, Any],
         conf: str,
-        binaries: str,
+        binaries: list[str],
         daemon: str,
         inspection: NodeInspection,
         timeout: str,
@@ -246,7 +248,7 @@ class MultusLifecycle:
         host_paths = {
             volumes[mount["name"]]["hostPath"]["path"]: mount["mountPath"]
             for mount in mounts
-            if mount["mountPath"].rstrip("/") in {conf, binaries}
+            if mount["mountPath"].rstrip("/") in {conf, *binaries}
         }
         daemon_file = ""
         daemon_document = None
@@ -291,7 +293,7 @@ class MultusLifecycle:
             pod["spec"]["nodeName"],
             Path(__file__).with_name("cni_files.py").read_text(),
             timeout,
-            arguments=(conf, binaries, daemon_file),
+            arguments=(conf, json.dumps(binaries), daemon_file),
             host_paths=host_paths,
         )
         if daemon_document is not None:
@@ -356,8 +358,9 @@ class MultusLifecycle:
 
 def _cni_mounts(
     pod: dict[str, Any],
-) -> tuple[dict[str, Any], str, str, str]:
-    """Locate observable node CNI directories from the agent's actual host mounts."""
+    directories: dict[str, Any],
+) -> tuple[dict[str, Any], str, str, list[str]]:
+    """Locate effective runtime CNI directories in the agent's actual host mounts."""
     spec = pod["spec"]
     volumes = {
         volume["name"]: volume["hostPath"]["path"].rstrip("/")
@@ -373,18 +376,18 @@ def _cni_mounts(
             and not mount.get("subPathExpr")
         ]
         configurations = [
-            (host, path) for host, path, _ in mounts if host.endswith("/net.d")
+            (host, path)
+            for host, path, _ in mounts
+            if host == directories["confDir"].rstrip("/")
         ]
         binaries = [
             path
-            for host, path, name in mounts
-            if host.endswith("/cni/bin")
-            or path.endswith("/cni/bin")
-            or ("cni" in name.lower() and "bin" in name.lower())
+            for host, path, _ in mounts
+            if host in {directory.rstrip("/") for directory in directories["binDirs"]}
         ]
-        if len(configurations) == 1 and len(binaries) == 1:
+        if len(configurations) == 1 and binaries:
             host, path = configurations[0]
-            return container, host, path, binaries[0]
+            return container, host, path, binaries
     raise DeploymentError(
         f"cannot locate observable host CNI configuration and binary mounts on "
         f"{pod['metadata']['namespace']}/{pod['metadata']['name']}; retain its existing CNI owner"
@@ -430,28 +433,25 @@ def _is_multus(value: dict[str, Any]) -> bool:
 
 
 def _cni_defaults(
-    node_versions: tuple[str, ...], values: dict[str, Any]
+    directories: tuple[dict[str, Any], ...], values: dict[str, Any]
 ) -> dict[str, Any]:
-    """Resolve shared CNI defaults while retaining the managed release's explicit paths."""
-    if not node_versions or any(not version for version in node_versions):
-        raise DeploymentError(
-            "node kubelet versions are required to resolve Multus CNI directories"
-        )
-    layouts = {"k3s" in version for version in node_versions}
+    """Project effective runtime paths into the managed Multus and Whereabouts installation."""
+    paths = values.get("config", {}).get("cni_conf", {})
+    layouts = set()
+    for directory in directories:
+        conf_dir = paths.get("confDir", directory["confDir"])
+        bin_dir = paths.get("binDir", directory["binDirs"][0])
+        if conf_dir != directory["confDir"] or bin_dir not in directory["binDirs"]:
+            raise DeploymentError(
+                "stored Multus CNI directories do not match the running container runtime"
+            )
+        layouts.add((conf_dir, bin_dir))
     if len(layouts) != 1:
         raise DeploymentError(
-            "selected nodes mix K3s and standard Kubernetes CNI directories; "
-            "reuse a CNI installation that covers both layouts"
+            "the managed Multus release requires common runtime CNI directories; "
+            "reuse an existing CNI installation for nodes with different layouts"
         )
-    k3s = layouts.pop()
-    paths = values.get("config", {}).get("cni_conf", {})
-    conf_dir = paths.get(
-        "confDir",
-        "/var/lib/rancher/k3s/agent/etc/cni/net.d" if k3s else "/etc/cni/net.d",
-    )
-    bin_dir = paths.get(
-        "binDir", "/var/lib/rancher/k3s/data/cni" if k3s else "/opt/cni/bin"
-    )
+    conf_dir, bin_dir = layouts.pop()
     return {
         "config.cni_conf.confDir": conf_dir,
         "config.cni_conf.binDir": bin_dir,

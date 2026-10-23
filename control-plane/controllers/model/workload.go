@@ -229,6 +229,11 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			},
 		},
 	}
+	if rdma := group.Spec.RDMA; rdma != nil && rdma.RequiredNodeAffinity != nil {
+		deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: rdma.RequiredNodeAffinity.DeepCopy(),
+		}}
+	}
 	files.Configure(&deployment.Spec.Template, &deployment.Spec.Template.Spec.Containers[0], groupApplicationURL(group, files), command)
 	mountPreparationSource(group, &deployment.Spec.Template)
 	if err := vllmconfig.ConfigureWeightSources(group.Spec, &deployment.Spec.Template); err != nil {
@@ -275,10 +280,10 @@ func modelResourceRequirements(resources inferencev1alpha1.ModelResources, accel
 	requests[deviceResource] = deviceCount
 	limits[deviceResource] = deviceCount
 	if rdma != nil {
-		rdmaResource := corev1.ResourceName(rdma.ResourceName)
-		rdmaCount := *resource.NewQuantity(int64(rdma.ResourceCount), resource.DecimalSI)
-		requests[rdmaResource] = rdmaCount
-		limits[rdmaResource] = rdmaCount
+		for name, quantity := range rdma.Canonical().Resources {
+			requests[name] = quantity
+			limits[name] = quantity
+		}
 	}
 	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }

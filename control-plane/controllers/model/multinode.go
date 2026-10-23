@@ -61,12 +61,19 @@ func (reconciler *GroupReconciler) reconcileWorkload(ctx context.Context, group 
 		}
 	}
 	member := deployment.Spec.Template
-	member.Spec.Affinity = &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{
-		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
+	if member.Spec.Affinity == nil {
+		member.Spec.Affinity = &corev1.Affinity{}
+	}
+	if member.Spec.Affinity.PodAntiAffinity == nil {
+		member.Spec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{}
+	}
+	member.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution = append(
+		member.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
+		corev1.PodAffinityTerm{
 			LabelSelector: &metav1.LabelSelector{MatchLabels: workload.ModelGroupLabels(group)},
 			TopologyKey:   corev1.LabelHostname,
-		}},
-	}}
+		},
+	)
 	if err := runtimeconfig.PlaceRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &member); err != nil {
 		return modelGroupWorkloadState{}, err
 	}

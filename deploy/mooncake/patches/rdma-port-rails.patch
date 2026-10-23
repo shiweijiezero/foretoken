@@ -1,0 +1,698 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Expand classic RDMA into port rails without changing physical-HCA discovery.
+
+diff --git a/mooncake-transfer-engine/include/config.h b/mooncake-transfer-engine/include/config.h
+--- a/mooncake-transfer-engine/include/config.h
++++ b/mooncake-transfer-engine/include/config.h
+@@ -42,7 +42,7 @@
+ struct GlobalConfig {
+     size_t num_cq_per_ctx = 1;
+     size_t num_comp_channels_per_ctx = 1;
+-    uint8_t port = 1;
++    uint8_t port = 0;  // 0 selects all active ports; MC_IB_PORT selects one.
+     int gid_index = -1;       // -1 for auto-selection, >=0 for user-specified
+     uint16_t pkey_index = 0;  // QP attr.pkey_index; override via MC_PKEY_INDEX
+     uint64_t max_mr_size = 0x10000000000;
+diff --git a/mooncake-transfer-engine/include/topology.h b/mooncake-transfer-engine/include/topology.h
+--- a/mooncake-transfer-engine/include/topology.h
++++ b/mooncake-transfer-engine/include/topology.h
+@@ -35,6 +35,11 @@
+ #include "common.h"
+ 
+ namespace mooncake {
++// Return usable ports of one selected HCA for classic RDMA initialization.
++// A nonzero port restricts discovery; zero enumerates all active ports.
++std::vector<uint8_t> discoverActiveRdmaPorts(const std::string &device_name,
++                                          uint8_t port);
++
+ struct TopologyEntry {
+     std::string name;
+     std::vector<std::string> preferred_hca;
+@@ -79,6 +84,11 @@
+     int discover(const std::vector<std::string> &filter);
+ 
+     int parse(const std::string &topology_json);
++
++    // Expand successful port rails in the transport-private topology before
++    // publishing device descriptors and memory-registration indexes.
++    void expandDevicePorts(
++        const std::unordered_map<std::string, std::vector<std::string>> &rails);
+ 
+     int disableDevice(const std::string &device_name);
+ 
+diff --git a/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h b/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h
+--- a/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h
++++ b/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h
+@@ -214,7 +214,12 @@
+     // Device name, such as `mlx5_3`
+     std::string deviceName() const { return device_name_; }
+ 
+-    // NIC Path, such as `192.168.3.76@mlx5_3`
++    // Port-qualified identity used by metadata and endpoint routing.
++    std::string railName() const {
++        return device_name_ + "/" + std::to_string(port_);
++    }
++
++    // NIC Path, such as `192.168.3.76@mlx5_3/1`.
+     std::string nicPath() const;
+ 
+    public:
+diff --git a/mooncake-transfer-engine/src/config.cpp b/mooncake-transfer-engine/src/config.cpp
+--- a/mooncake-transfer-engine/src/config.cpp
++++ b/mooncake-transfer-engine/src/config.cpp
+@@ -128,8 +128,7 @@
+     const char* port_env = std::getenv("MC_IB_PORT");
+     if (port_env) {
+         int val = atoi(port_env);
+-        // IB port numbers are 1-based. Accepting 0 made ibv_query_port fail on
+-        // every device, disabling the whole topology.
++        // Zero is reserved for automatic discovery, not an explicit verbs port.
+         if (val > 0 && val < 256)
+             config.port = uint8_t(val);
+         else
+diff --git a/mooncake-transfer-engine/src/topology.cpp b/mooncake-transfer-engine/src/topology.cpp
+--- a/mooncake-transfer-engine/src/topology.cpp
++++ b/mooncake-transfer-engine/src/topology.cpp
+@@ -99,17 +99,15 @@
+     return true;
+ }
+ 
+-static bool isIbDeviceAvailable(struct ibv_device *device) {
++static std::vector<uint8_t> activeIbDevicePorts(struct ibv_device *device,
++                                               uint8_t selected_port) {
+     const char *device_name = ibv_get_device_name(device);
+-
+-    if (!isIbDeviceAccessible(device)) {
+-        return false;
+-    }
++    if (!isIbDeviceAccessible(device)) return {};
+ 
+     struct ibv_context *context = ibv_open_device(device);
+     if (!context) {
+         PLOG(WARNING) << "Failed to open device " << device_name;
+-        return false;
++        return {};
+     }
+ 
+     struct ibv_device_attr device_attr;
+@@ -117,26 +115,40 @@
+         PLOG(WARNING) << "Failed to query device attributes for "
+                       << device_name;
+         ibv_close_device(context);
+-        return false;
+-    }
+-
+-    bool has_active_port = false;
+-    for (uint8_t port = 1; port <= device_attr.phys_port_cnt; ++port) {
+-        if (checkIbDevicePort(context, device_name, port)) {
+-            has_active_port = true;
++        return {};
++    }
++
++    std::vector<uint8_t> ports;
++    const unsigned int first = selected_port ? selected_port : 1;
++    const unsigned int last = selected_port ? selected_port : device_attr.phys_port_cnt;
++    for (unsigned int port = first; port <= last; ++port) {
++        if (checkIbDevicePort(context, device_name, static_cast<uint8_t>(port))) {
++            ports.push_back(static_cast<uint8_t>(port));
+             LOG(INFO) << "Device " << device_name << " port "
+-                      << static_cast<int>(port) << " is available";
+-        }
+-    }
+-
++                      << port << " is available";
++        }
++    }
+     ibv_close_device(context);
+-
+-    if (!has_active_port) {
+-        LOG(WARNING) << "Device " << device_name
+-                     << " has no active ports, skipping";
+-    }
+-
+-    return has_active_port;
++    return ports;
++}
++
++std::vector<uint8_t> discoverActiveRdmaPorts(const std::string &device_name,
++                                          uint8_t port) {
++    int count = 0;
++    auto **devices = ibv_get_device_list(&count);
++    if (!devices) {
++        PLOG(WARNING) << "Failed to enumerate RDMA devices";
++        return {};
++    }
++    std::vector<uint8_t> ports;
++    for (int i = 0; i < count; ++i) {
++        if (device_name == ibv_get_device_name(devices[i])) {
++            ports = activeIbDevicePorts(devices[i], port);
++            break;
++        }
++    }
++    ibv_free_device_list(devices);
++    return ports;
+ }
+ 
+ struct InfinibandDevice {
+@@ -220,7 +232,7 @@
+         }
+ 
+         // Check device availability before adding to the list
+-        if (!isIbDeviceAvailable(device_list[i])) {
++        if (activeIbDevicePorts(device_list[i], 0).empty()) {
+             LOG(WARNING) << "Skipping unavailable device: " << device_name;
+             continue;
+         }
+@@ -299,6 +311,15 @@
+     }
+     return devices;
+ #endif
++}
++
++// Physical HCA hints remain valid when a transport expands them into port rails.
++static std::string_view physicalHcaName(std::string_view name) {
++    return name.substr(0, name.find('/'));
++}
++
++static bool matchesHca(std::string_view rail, std::string_view hca) {
++    return rail == hca || physicalHcaName(rail) == hca;
+ }
+ 
+ static void precomputeResolvedHcaPeerAffinity(
+@@ -320,10 +341,6 @@
+         // Hardcoding "cuda:" silently disables HCA peer affinity under USE_HIP.
+         if (entry.first.rfind(GPU_PREFIX, 0) != 0) continue;
+ 
+-        std::unordered_set<std::string> preferred_set(
+-            entry.second.preferred_hca.begin(),
+-            entry.second.preferred_hca.end());
+-
+         for (const auto &mapping : config.nic_peer_affinity) {
+             const auto &local_hca = mapping.first;
+             const auto &peer_hcas = mapping.second;
+@@ -331,11 +348,11 @@
+             std::vector<int> peer_preferred_hca;
+             std::unordered_set<std::string> peer_preferred_set;
+             for (const auto &peer_hca : peer_hcas) {
+-                if (!preferred_set.count(peer_hca)) continue;
+-                auto hca_id_it = hca_id_map.find(peer_hca);
+-                if (hca_id_it == hca_id_map.end()) continue;
+-                if (peer_preferred_set.insert(peer_hca).second) {
+-                    peer_preferred_hca.push_back(hca_id_it->second);
++                for (const auto &rail : entry.second.preferred_hca) {
++                    if (matchesHca(rail, peer_hca) &&
++                        peer_preferred_set.insert(rail).second) {
++                        peer_preferred_hca.push_back(hca_id_map.at(rail));
++                    }
+                 }
+             }
+ 
+@@ -645,6 +662,23 @@
+     return resolve();
+ }
+ 
++void Topology::expandDevicePorts(
++    const std::unordered_map<std::string, std::vector<std::string>> &rails) {
++    auto expand = [&rails](std::vector<std::string> &devices) {
++        std::vector<std::string> expanded;
++        for (const auto &device : devices) {
++            const auto &ports = rails.at(device);
++            expanded.insert(expanded.end(), ports.begin(), ports.end());
++        }
++        devices = std::move(expanded);
++    };
++    for (auto &[location, entry] : matrix_) {
++        expand(entry.preferred_hca);
++        expand(entry.avail_hca);
++    }
++    resolve();
++}
++
+ int Topology::parse(const std::string &topology_json) {
+     std::set<std::string> rnic_set;
+     Json::Value root;
+@@ -709,6 +743,28 @@
+     return root;
+ }
+ 
++// Keep initial preference and retry ordering identical for physical and port hints.
++static int selectHca(const std::vector<int> &preferred,
++                     const std::vector<int> &available, int retry_count,
++                     bool round_robin) {
++    if (preferred.empty() && available.empty()) return ERR_DEVICE_NOT_FOUND;
++    if (retry_count == 0) {
++        int choice;
++        if (round_robin) {
++            thread_local int counter = 0;
++            choice = counter;
++            counter = (counter + 1) % 10000;
++        } else {
++            choice = SimpleRandom::Get().next();
++        }
++        const auto &candidates = preferred.empty() ? available : preferred;
++        return candidates[choice % candidates.size()];
++    }
++    size_t index = (retry_count - 1) % (preferred.size() + available.size());
++    return index < preferred.size() ? preferred[index]
++                                    : available[index - preferred.size()];
++}
++
+ int Topology::selectDevice(const std::string storage_type,
+                            std::string_view hint, int retry_count) {
+     const auto it = resolved_matrix_.find(std::string(storage_type));
+@@ -722,6 +778,19 @@
+         auto hca_idx = entry.getHcaIndex(std::string(hint));
+         if (hca_idx != -1) {
+             return hca_idx;
++        }
++        std::vector<int> preferred, available;
++        auto collect = [&](const std::vector<int> &ids, std::vector<int> &matches) {
++            for (int id : ids) {
++                if (matchesHca(hca_list_[id], physicalHcaName(hint))) {
++                    matches.push_back(id);
++                }
++            }
++        };
++        collect(entry.preferred_hca, preferred);
++        collect(entry.avail_hca, available);
++        if (!preferred.empty() || !available.empty()) {
++            return selectHca(preferred, available, retry_count, use_round_robin_);
+         }
+     }
+ 
+@@ -734,23 +803,16 @@
+     if (!local_hca.empty()) {
+         auto local_it =
+             resolved_hca_peer_affinity_by_local_.find(std::string(local_hca));
++        if (local_it == resolved_hca_peer_affinity_by_local_.end()) {
++            local_it = resolved_hca_peer_affinity_by_local_.find(
++                std::string(physicalHcaName(local_hca)));
++        }
+         if (local_it != resolved_hca_peer_affinity_by_local_.end()) {
+             auto hints_it = local_it->second.find(std::string(storage_type));
+             if (hints_it != local_it->second.end() &&
+                 !hints_it->second.empty()) {
+-                const auto &candidates = hints_it->second;
+-                if (retry_count == 0) {
+-                    int rand_value;
+-                    if (use_round_robin_) {
+-                        thread_local int tl_counter = 0;
+-                        rand_value = tl_counter;
+-                        tl_counter = (tl_counter + 1) % 10000;
+-                    } else {
+-                        rand_value = SimpleRandom::Get().next();
+-                    }
+-                    return candidates[rand_value % candidates.size()];
+-                }
+-                return candidates[(retry_count - 1) % candidates.size()];
++                return selectHca(hints_it->second, {}, retry_count,
++                                 use_round_robin_);
+             }
+         }
+     }
+@@ -761,34 +823,9 @@
+ int Topology::selectDevice(const std::string storage_type, int retry_count) {
+     if (resolved_matrix_.count(storage_type) == 0) return ERR_DEVICE_NOT_FOUND;
+ 
+-    auto &entry = resolved_matrix_[storage_type];
+-    if (entry.preferred_hca.empty() && entry.avail_hca.empty()) {
+-        return ERR_DEVICE_NOT_FOUND;
+-    }
+-
+-    if (retry_count == 0) {
+-        int rand_value;
+-        if (use_round_robin_) {
+-            thread_local int tl_counter = 0;
+-            rand_value = tl_counter;
+-            tl_counter = (tl_counter + 1) % 10000;
+-        } else
+-            rand_value = SimpleRandom::Get().next();
+-        if (!entry.preferred_hca.empty())
+-            return entry.preferred_hca[rand_value % entry.preferred_hca.size()];
+-        else
+-            return entry.avail_hca[rand_value % entry.avail_hca.size()];
+-    } else {
+-        size_t index = (retry_count - 1) %
+-                       (entry.preferred_hca.size() + entry.avail_hca.size());
+-        if (index < entry.preferred_hca.size())
+-            return entry.preferred_hca[index];
+-        else {
+-            index -= entry.preferred_hca.size();
+-            return entry.avail_hca[index];
+-        }
+-    }
+-    return ERR_DEVICE_NOT_FOUND;
++    const auto &entry = resolved_matrix_[storage_type];
++    return selectHca(entry.preferred_hca, entry.avail_hca, retry_count,
++                     use_round_robin_);
+ }
+ 
+ int Topology::resolve() {
+diff --git a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
+@@ -795,7 +795,7 @@
+ }
+ 
+ std::string RdmaContext::nicPath() const {
+-    return MakeNicPath(engine_.rdma_server_name_, device_name_);
++    return MakeNicPath(engine_.rdma_server_name_, railName());
+ }
+ 
+ std::string RdmaContext::gid() const { return gidSelection().gid; }
+@@ -1038,7 +1038,7 @@
+     }
+     next_gid_string = gidBytesToString(new_gid.raw);
+ 
+-    int publish_ret = engine_.refreshLocalDeviceDesc(device_name_, current_lid,
++    int publish_ret = engine_.refreshLocalDeviceDesc(railName(), current_lid,
+                                                      next_gid_string);
+     if (publish_ret) {
+         LOG(ERROR) << "Failed to refresh local device descriptor for "
+@@ -1162,7 +1162,7 @@
+         return GidRefreshResult::UNCHANGED;
+     }
+ 
+-    int publish_ret = engine_.refreshLocalDeviceDesc(device_name_, current_lid,
++    int publish_ret = engine_.refreshLocalDeviceDesc(railName(), current_lid,
+                                                      next_gid_string);
+     if (publish_ret) {
+         LOG(ERROR) << "Failed to refresh local device descriptor for "
+diff --git a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
+@@ -186,7 +186,8 @@
+ 
+     metadata_ = meta;
+     local_server_name_ = local_server_name;
+-    local_topology_ = topo;
++    // Port rails belong to classic RDMA; other transports retain physical HCAs.
++    local_topology_ = std::make_shared<Topology>(*topo);
+ 
+     // In dual-NIC environments (e.g. separate TCP and RDMA interfaces),
+     // MC_RDMA_BIND_ADDRESS allows NIC paths to use an RDMA-reachable IP
+@@ -681,7 +682,7 @@
+ #endif
+     for (auto &entry : context_list_) {
+         TransferMetadata::DeviceDesc device_desc;
+-        device_desc.name = entry->deviceName();
++        device_desc.name = entry->railName();
+         device_desc.lid = entry->lid();
+         device_desc.gid = entry->gid();
+         desc->devices.push_back(device_desc);
+@@ -1110,34 +1111,38 @@
+ }
+ 
+ int RdmaTransport::initializeRdmaResources() {
+-    auto hca_list = local_topology_->getHcaList();
+-    for (auto &device_name : hca_list) {
+-        auto context = std::make_shared<RdmaContext>(*this, device_name);
+-        auto &config = globalConfig();
+-        int ret = context->construct(config.num_cq_per_ctx,
+-                                     config.num_comp_channels_per_ctx,
+-                                     config.port, config.gid_index,
+-                                     config.max_cqe, config.max_ep_per_ctx);
+-        if (ret) {
+-            local_topology_->disableDevice(device_name);
+-            LOG(WARNING) << "Disable device " << device_name;
+-            // Keep context_list_ index-aligned with getHcaList(): both it and
+-            // BufferDesc::lkey are subscripted by the HCA index, which
+-            // disableDevice() leaves in place. Dropping a slot would make a
+-            // later device_id name the wrong RNIC or run off the end. A
+-            // never-constructed context is an inert placeholder; the partially
+-            // built one is released so it does not pin an open uverbs fd.
+-            auto placeholder =
+-                std::make_shared<RdmaContext>(*this, device_name);
+-            placeholder->set_active(false);
+-            context_list_.push_back(std::move(placeholder));
+-        } else {
+-            context_list_.push_back(context);
+-        }
+-    }
++    const auto &config = globalConfig();
++    std::unordered_map<std::string, std::vector<std::string>> rails;
++    std::unordered_map<std::string, std::shared_ptr<RdmaContext>> contexts;
++    for (const auto &device_name : local_topology_->getHcaList()) {
++        auto &device_rails = rails[device_name];
++        for (uint8_t port : discoverActiveRdmaPorts(device_name, config.port)) {
++            auto context = std::make_shared<RdmaContext>(*this, device_name);
++            int ret = context->construct(config.num_cq_per_ctx,
++                                         config.num_comp_channels_per_ctx,
++                                         port, config.gid_index,
++                                         config.max_cqe, config.max_ep_per_ctx);
++            if (ret) {
++                LOG(WARNING) << "Disable RDMA port " << device_name << "/"
++                             << static_cast<int>(port);
++                continue;
++            }
++            auto name = context->railName();
++            device_rails.push_back(name);
++            contexts.emplace(std::move(name), std::move(context));
++        }
++    }
++
++    // Resolve only successful rails, then use that order for every context,
++    // device descriptor and lkey/rkey array published by this transport.
++    local_topology_->expandDevicePorts(rails);
+     if (local_topology_->empty()) {
+         LOG(ERROR) << "RdmaTransport: No available RNIC";
+         return ERR_DEVICE_NOT_FOUND;
++    }
++    context_list_.reserve(contexts.size());
++    for (const auto &rail : local_topology_->getHcaList()) {
++        context_list_.push_back(std::move(contexts.at(rail)));
+     }
+     return 0;
+ }
+diff --git a/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp b/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
+@@ -196,7 +196,7 @@
+         auto &peer_segment_desc = segment_desc_map[slice->target_id];
+         int buffer_id, device_id;
+         if (selectPeerDevice(peer_segment_desc.get(), slice->rdma.dest_addr,
+-                             slice->length, context_.deviceName(), buffer_id,
++                             slice->length, context_.railName(), buffer_id,
+                              device_id)) {
+             peer_segment_desc = context_.engine().meta()->getSegmentDescByID(
+                 slice->target_id, true);
+@@ -209,7 +209,7 @@
+             }
+ 
+             if (selectPeerDevice(peer_segment_desc.get(), slice->rdma.dest_addr,
+-                                 slice->length, context_.deviceName(),
++                                 slice->length, context_.railName(),
+                                  buffer_id, device_id)) {
+                 slice->markFailed();
+                 context_.engine().meta()->dumpMetadataContent(
+@@ -264,7 +264,7 @@
+                     << resolveBufferLocation(
+                            peer_segment_desc->buffers[buffer_id],
+                            slice->rdma.dest_addr)
+-                    << ", local_device_name=" << context_.deviceName()
++                    << ", local_device_name=" << context_.railName()
+                     << ", peer_device_name="
+                     << peer_segment_desc->devices[device_id].name
+                     << ", target_id=" << slice->target_id
+@@ -628,7 +628,7 @@
+                         if (globalConfig().trace)
+                             LOG(INFO)
+                                 << "Worker: WR flush error on inactive "
+-                                << "local context " << context_.deviceName()
++                                << "local context " << context_.railName()
+                                 << " (peer_nic: " << slice->peer_nic_path
+                                 << "), handing off if retry allows";
+                         if (shouldRetrySlice(slice))
+@@ -656,7 +656,7 @@
+                            << ", source_addr: " << slice->source_addr
+                            << ", length: " << slice->length
+                            << ", dest_addr: " << (void *)slice->rdma.dest_addr
+-                           << ", local_nic: " << context_.deviceName()
++                           << ", local_nic: " << context_.railName()
+                            << ", peer_nic: " << slice->peer_nic_path
+                            << ", dest_rkey: " << slice->rdma.dest_rkey
+                            << ", retry_cnt: " << slice->rdma.retry_cnt
+@@ -780,7 +780,7 @@
+             int buffer_id, device_id;
+             if (!peer_segment_desc ||
+                 selectPeerDevice(peer_segment_desc.get(), slice->rdma.dest_addr,
+-                                 slice->length, context_.deviceName(),
++                                 slice->length, context_.railName(),
+                                  buffer_id, device_id, slice->rdma.retry_cnt)) {
+                 LOG(ERROR) << "Worker: Cannot redispatch slice for target "
+                            << slice->target_id
+@@ -840,7 +840,7 @@
+                         << resolveBufferLocation(
+                                peer_segment_desc->buffers[buffer_id],
+                                slice->rdma.dest_addr)
+-                        << ", local_device_name=" << context_.deviceName()
++                        << ", local_device_name=" << context_.railName()
+                         << ", peer_device_name="
+                         << peer_segment_desc->devices[device_id].name
+                         << ", target_id=" << slice->target_id
+@@ -935,8 +935,8 @@
+         alt_ctx->worker_pool_->submitPreparedPostSend(handoff);
+ 
+         VLOG(1) << "Local-side retry handed slice from worker pool on "
+-                << context_.deviceName() << " to worker pool on "
+-                << alt_ctx->deviceName() << " while keeping remote peer "
++                << context_.railName() << " to worker pool on "
++                << alt_ctx->railName() << " while keeping remote peer "
+                 << slice->peer_nic_path;
+         return true;
+     }
+@@ -1011,9 +1011,27 @@
+             if (errno == EINTR) continue;
+             return ERR_CONTEXT;
+         }
++        // Each context receives HCA-wide events; preserve the drain loop when
++        // acknowledging a port event owned by another rail.
++        switch (event.event_type) {
++            case IBV_EVENT_PORT_ERR:
++            case IBV_EVENT_PORT_ACTIVE:
++            case IBV_EVENT_LID_CHANGE:
++            case IBV_EVENT_PKEY_CHANGE:
++            case IBV_EVENT_SM_CHANGE:
++            case IBV_EVENT_CLIENT_REREGISTER:
++            case IBV_EVENT_GID_CHANGE:
++                if (event.element.port_num != context_.portNum()) {
++                    ibv_ack_async_event(&event);
++                    continue;
++                }
++                break;
++            default:
++                break;
++        }
+         LOG(WARNING) << "Worker: Received context async event "
+                      << ibv_event_type_str(event.event_type) << " for context "
+-                     << context_.deviceName();
++                     << context_.railName();
+         if (event.event_type == IBV_EVENT_QP_FATAL) {
+             auto endpoint_ptr = (RdmaEndPoint *)event.element.qp->qp_context;
+ 
+@@ -1053,7 +1071,7 @@
+ void WorkerPool::processContextEventForTest(ibv_event_type event_type) {
+     LOG(WARNING) << "Worker: Injected context async event "
+                  << ibv_event_type_str(event_type) << " for context "
+-                 << context_.deviceName();
++                 << context_.railName();
+ 
+     handleContextEvent(event_type, true);
+ }
+@@ -1084,7 +1102,7 @@
+         if (event != nullptr) ibv_ack_async_event(event);
+ 
+         context_.disconnectAllEndpoints();
+-        LOG(INFO) << "Worker: Context " << context_.deviceName()
++        LOG(INFO) << "Worker: Context " << context_.railName()
+                   << " is now inactive due to "
+                   << (injected_for_test ? "injected fatal event: "
+                                         : "fatal event: ")
+@@ -1095,7 +1113,7 @@
+ 
+         if (gid_refresh_result != GidRefreshResult::UNCHANGED) {
+             context_.disconnectAllEndpoints();
+-            LOG(INFO) << "Worker: Context " << context_.deviceName()
++            LOG(INFO) << "Worker: Context " << context_.railName()
+                       << (injected_for_test ? " injected GID refresh result="
+                                             : " GID refresh result=")
+                       << static_cast<int>(gid_refresh_result)
+@@ -1119,7 +1137,7 @@
+     uint64_t activate_after = getCurrentTimeInNano() + delay_ns;
+     recovery_activate_after_ns_.store(activate_after,
+                                       std::memory_order_relaxed);
+-    LOG(INFO) << "Worker: Context " << context_.deviceName()
++    LOG(INFO) << "Worker: Context " << context_.railName()
+               << " scheduled recovery probe after " << delay_ns / 1000000000ull
+               << " seconds";
+ }
+@@ -1142,21 +1160,21 @@
+         context_.set_active(false);
+         refreshPublishedLocalTopology();
+         scheduleContextRecovery();
+-        LOG(WARNING) << "Worker: Context " << context_.deviceName()
++        LOG(WARNING) << "Worker: Context " << context_.railName()
+                      << " failed to refresh GID during recovery; "
+                         "keeping inactive";
+         return;
+     }
+     if (gid_refresh_result == GidRefreshResult::CHANGED) {
+         context_.disconnectAllEndpoints();
+-        LOG(INFO) << "Worker: Context " << context_.deviceName()
++        LOG(INFO) << "Worker: Context " << context_.railName()
+                   << " GID changed during recovery, disconnected all endpoints";
+     }
+ 
+     context_.set_active(true);
+     refreshPublishedLocalTopology();
+     context_failure_count_.store(0, std::memory_order_relaxed);
+-    LOG(INFO) << "Worker: Context " << context_.deviceName()
++    LOG(INFO) << "Worker: Context " << context_.railName()
+               << " is now active after recovery delay";
+ }
+ 
+@@ -1204,7 +1222,7 @@
+     updated_desc->topology = *context_.engine().local_topology_;
+     for (const auto &context : context_.engine().context_list_) {
+         if (context->active()) continue;
+-        updated_desc->topology.disableDevice(context->deviceName());
++        updated_desc->topology.disableDevice(context->railName());
+     }
+ 
+     context_.engine().metadata_->addLocalSegment(
+@@ -1212,7 +1230,7 @@
+     int ret = context_.engine().metadata_->updateLocalSegmentDesc();
+     if (ret) {
+         LOG(WARNING) << "Failed to publish RDMA topology update for "
+-                     << context_.deviceName() << ", ret=" << ret;
++                     << context_.railName() << ", ret=" << ret;
+     }
+ }
+ 
+@@ -1222,14 +1240,14 @@
+     auto result = context_.refreshCurrentGid(&previous_gid, &next_gid);
+     if (result == GidRefreshResult::CHANGED) {
+         LOG(WARNING) << "Worker: refreshed published GID for "
+-                     << context_.deviceName() << ": " << previous_gid << " -> "
++                     << context_.railName() << ": " << previous_gid << " -> "
+                      << next_gid;
+     } else if (result == GidRefreshResult::UNCHANGED) {
+         LOG(INFO) << "Worker: received GID change event for "
+-                  << context_.deviceName() << ", current GID is unchanged";
++                  << context_.railName() << ", current GID is unchanged";
+     } else {
+         LOG(ERROR) << "Worker: failed to refresh published GID for "
+-                   << context_.deviceName()
++                   << context_.railName()
+                    << ", disconnecting endpoints to avoid stale GID reuse";
+     }
+     return result;
+@@ -1291,7 +1309,7 @@
+                 current_ts - last_timeout_log_ns >= 5ULL * 1000 * 1000 * 1000) {
+                 LOG(ERROR)
+                     << "CQ completion timeout diagnostic: context="
+-                    << context_.deviceName()
++                    << context_.railName()
+                     << ", outstanding=" << cq_outstanding
+                     << ", outstanding_age_ms=" << outstanding_age_ns / 1000000
+                     << ", poll_gap_ms=" << poll_gap_ns / 1000000
+@@ -1340,7 +1358,7 @@
+                                 : 0;
+                         LOG(ERROR)
+                             << "CQ stuck transfer group: context="
+-                            << context_.deviceName()
++                            << context_.railName()
+                             << ", peer_nic=" << entry.first
+                             << ", slices=" << group.slice_count
+                             << ", bytes=" << group.total_bytes
+@@ -1463,7 +1481,7 @@
+     }
+ 
+     LOG(WARNING) << "Local-side RDMA failure detected on context "
+-                 << context_.deviceName() << ", peer=" << peer_nic_path;
++                 << context_.railName() << ", peer=" << peer_nic_path;
+ }
+ 
+ }  // namespace mooncake

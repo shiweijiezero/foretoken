@@ -30,6 +30,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "inspect-node-network":
+			if err := inspectNodeNetwork(os.Args[2:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 	runServingController()

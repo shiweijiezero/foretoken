@@ -33,14 +33,38 @@ class RDMANetworkLifecycle:
         nodes: tuple[dict[str, Any], ...],
         image: str,
         pull_secrets: list[dict[str, str]],
+        runtime_pod: dict[str, Any],
         previous: list[dict[str, Any]],
         explicit: list[dict[str, str]] | None,
         timeout: str,
-    ) -> tuple[list[dict[str, Any]], str]:
-        """Return retained definitions, the active selection and the installed IPAM path."""
+        *,
+        resource_names: tuple[str, ...],
+        resource_count: int,
+        bindings: list[dict[str, Any]] | None,
+        runtime_class_name: str,
+    ) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]]]:
+        """Resolve resource/network alternatives and retain managed attachments until uninstall."""
         inspection = NodeInspection(
-            self._kubectl, platform.namespace, image, pull_secrets
+            self._kubectl,
+            platform.namespace,
+            image,
+            pull_secrets,
+            runtime_pod,
+            runtime_class_name,
+            tuple(node["metadata"]["name"] for node in nodes),
         )
+        if bindings is not None:
+            retained, ipam = self._retain_definitions(
+                platform, previous, [], timeout, inspection
+            )
+            return retained, ipam, bindings
+        if explicit is None and resource_names:
+            existing = self._existing_bindings(resource_names, resource_count)
+            if existing:
+                retained, ipam = self._retain_definitions(
+                    platform, previous, [], timeout, inspection
+                )
+                return retained, ipam, existing
         if explicit is not None:
             retained = {
                 (value.get("namespace", platform.namespace), value["name"]): value
@@ -59,8 +83,17 @@ class RDMANetworkLifecycle:
                         network["name"],
                         network.get("namespace", platform.namespace),
                     )
-            return self._retain_definitions(
+            if selected and len(resource_names) > 1:
+                raise DeploymentError(
+                    "multiple RDMA pools require network/resource associations in rdma.bindings"
+                )
+            retained, ipam = self._retain_definitions(
                 platform, previous, selected, timeout, inspection
+            )
+            return (
+                retained,
+                ipam,
+                self._bindings(platform, resource_names, resource_count, selected),
             )
 
         script = Path(__file__).with_name("rdma_interfaces.py").read_text()
@@ -69,7 +102,19 @@ class RDMANetworkLifecycle:
         ]
         available = [value for value in observations if value["active_roce_ports"]]
         if not available:
-            return self._retain_definitions(platform, previous, [], timeout, inspection)
+            retained, ipam = self._retain_definitions(
+                platform, previous, [], timeout, inspection
+            )
+            return (
+                retained,
+                ipam,
+                self._bindings(platform, resource_names, resource_count, []),
+            )
+        if len(resource_names) > 1:
+            raise DeploymentError(
+                "multiple RoCE pools have no resource-associated NetworkAttachmentDefinitions; "
+                "retain their network owner's allocation mapping"
+            )
         # The shared allocation can select any RDMA node, not only the RoCE subset.
         incompatible = [
             node["metadata"]["name"]
@@ -127,9 +172,59 @@ class RDMANetworkLifecycle:
                     "subnet": str(prefix),
                 }
             )
-        return self._retain_definitions(
+        retained, ipam = self._retain_definitions(
             platform, previous, selected, timeout, inspection
         )
+        return (
+            retained,
+            ipam,
+            self._bindings(platform, resource_names, resource_count, selected),
+        )
+
+    def _existing_bindings(
+        self,
+        resource_names: tuple[str, ...],
+        count: int,
+    ) -> list[dict[str, Any]]:
+        """Reuse resource-associated NADs for known RDMA pools without rewriting their CNI/IPAM policy."""
+        if NAD_RESOURCE not in self._kubectl.api_resource_names("k8s.cni.cncf.io"):
+            return []
+        bindings = []
+        for network in self._kubectl.list_all_resources((NAD_RESOURCE,)):
+            metadata = network["metadata"]
+            resource = metadata.get("annotations", {}).get(
+                "k8s.v1.cni.cncf.io/resourceName"
+            )
+            if resource not in resource_names or metadata.get("deletionTimestamp"):
+                continue
+            namespace = metadata["namespace"]
+            bindings.append(
+                {
+                    "namespace": namespace,
+                    "allocation": {
+                        "resources": {resource: str(count)},
+                        "networks": [f"{namespace}/{metadata['name']}"],
+                    },
+                }
+            )
+        return sorted(bindings, key=lambda value: value["allocation"]["networks"])
+
+    @staticmethod
+    def _bindings(
+        platform: ReleaseRef,
+        resource_names: tuple[str, ...],
+        count: int,
+        networks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Associate installer-owned attachments with each alternative shared allocation."""
+        references = [
+            f"{network.get('namespace', platform.namespace)}/{network['name']}"
+            for network in networks
+        ]
+        return [
+            {"allocation": {"resources": {name: str(count)}, "networks": references}}
+            for name in resource_names
+        ]
 
     def _retain_definitions(
         self,

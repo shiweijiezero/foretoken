@@ -860,7 +860,7 @@ func (reconciler *ServiceReconciler) SetupWithManager(manager ctrl.Manager) erro
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
 		Watches(&inferencev1alpha1.FrontendService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace))
-	if reconciler.RuntimeProfile.RDMA != nil {
+	if len(reconciler.RuntimeProfile.RDMABindings) != 0 {
 		// Node recovery must refresh Pool selections even before a Group can be created.
 		// Ignore heartbeat-only updates; the scoped client keeps enumeration within this deployment.
 		builder = builder.Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace), ctrlbuilder.WithPredicates(predicate.Funcs{

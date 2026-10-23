@@ -34,7 +34,7 @@ index 04b3ef56..ced7609f 100644
                  total_size += static_cast<int64_t>(segment.size);
                  MasterMetricManager::instance().inc_total_mem_capacity(
                      segment.name, segment.size);
-@@ -6483,6 +6485,27 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+@@ -6483,5 +6485,26 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
          }
      }
 

@@ -181,6 +181,17 @@ def pinned_rust_revision(root: Path) -> str:
     return revision
 
 
+def mooncake_build_version(
+    root: Path, arguments: dict[str, str], *, runtime_backend: str, build_metax_runtime: bool,
+) -> str | None:
+    """Select the native source recipe used by CUDA or managed MetaX environment builds."""
+    if build_metax_runtime:
+        return arguments.get("MOONCAKE_VERSION", "")
+    if runtime_backend != "metax":
+        return (root / "data-plane/patches/vllm/mooncake.version").read_text().strip()
+    return None
+
+
 def mooncake_inputs(
     root: Path, version: str,
 ) -> tuple[dict[str, Path], dict[str, Any]]:
