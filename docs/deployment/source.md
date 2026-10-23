@@ -33,7 +33,7 @@ foretoken install -e .
 
 This installs the shared Foretoken platform; builds run in the cluster. It can also replace a published platform installed through the CLI. For k3d GPU setup, follow [Deploy Foretoken with k3d](k3d.md). Other Kubernetes clusters need a registry reachable by the builder and nodes; [Deploy Foretoken on Kubernetes](kubernetes.md#2-install-foretoken-from-source) covers the installation command and registry authentication.
 
-The first source installation prepares toolchains and runtime environments, so it usually takes longer than subsequent code updates. Source directories reuse available images, dependency downloads and compatible compiler caches; each directory retains its own incremental build state.
+The first source installation prepares toolchains and runtime environments. Later deployments reuse available images, downloaded dependencies and compatible compiler caches, so code updates usually take less time. Each source directory keeps its own incremental build state.
 
 To store build artifacts on another StorageClass, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`; execution and compiler caches remain on automatically managed local storage. Dynamically provisioned native NFS and `nfs.csi.k8s.io` volumes are supported. Application files use the cluster's default StorageClass, or `applicationFiles.storageClassName` when specified. Existing volumes keep their StorageClass.
 
@@ -58,7 +58,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-For routine Go, Rust or Python changes to the controller, frontend or model server, rerun the deployment command above. With unchanged runtime dependencies and available caches, it incrementally builds and publishes the affected applications instead of rebuilding and distributing the full runtime images, making repeated updates faster. Only the selected instance is updated. Use `foretoken install -e .` for shared CRD or platform configuration changes. Serving updates still restart affected processes and may reload model weights.
+After editing Go, Rust or Python code in the controller, frontend or model server, rerun the deployment command above. It updates the selected instance and reuses unchanged runtime environments. Use `foretoken install -e .` for shared CRD or platform configuration changes. Serving-code updates restart affected processes and may reload model weights.
 
 To deploy from another directory, add `-e` with the path to the Foretoken checkout, for example `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m` from its parent directory. The deployment path remains relative to the directory where the command runs.
 

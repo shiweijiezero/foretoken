@@ -57,19 +57,21 @@ See the [RSI skill](../.agents/skills/rsi/SKILL.md) for assignments, workspace i
 
 ## Reuse the environment across iterations
 
-For code optimization, prepare the source platform once; parameter-only experiments can reuse installed applications. Keep each candidate's checkout and instance name across iterations. The normal loop is: choose a question → change code or configuration → deploy the candidate → confirm a successful request → measure performance and quality → retain or revise the approach.
+Keep each candidate's source directory and instance name across iterations. For code experiments, [install the source platform](../docs/deployment/source.md#install-from-source) once; the same command can update an existing published platform. Parameter-only experiments can use the applications already installed.
 
-| Situation | Workflow |
+| What changed? | How to update |
 | --- | --- |
-| First source experiment | Follow [source installation](../docs/deployment/source.md#install-from-source) to prepare the platform, toolchains and runtime environments. An existing published platform can be converted through the same installation command. |
-| Go, Rust or Python application changes | Use `foretoken deploy` with `-e` pointing to the candidate checkout. Reuse unchanged environments and compatible build caches, and publish the affected applications rather than rebuilding and transporting complete runtime images each round. |
-| Runtime dependency, base-image or shared platform changes | Rebuild the affected environment through the source workflow; use `foretoken install -e` for shared CRD or platform changes. Return to incremental deployment for subsequent application edits. |
+| Go, Rust or Python application code | Run `foretoken deploy` with `-e` pointing to the candidate's source directory. Unchanged environments and compatible build caches are reused. |
+| Runtime dependencies or the base image | Redeploy with `-e` from the updated source directory to rebuild the affected environment. |
+| Shared CRDs or platform configuration | Run `foretoken install -e .` from the source directory. |
 
-Reusing the environment makes repeated code updates faster than first-time preparation. Keep initial setup time separate from each iteration's build, publication, service startup and measurement time. Model processes may still need to restart or reload weights after serving-code changes.
+After each change, deploy the candidate, confirm a successful request, then measure performance and answer quality. Use the same `--name` for deployment and evaluation: `perf` and `eval` measure the deployed service without updating its code. Use the results to decide what to retain or try next.
 
-Use [parallel source deployments](../docs/deployment/source.md#run-candidates-in-parallel) for independent candidates, with the same `--name` in deployment and evaluation commands. Run `deploy` after changes before starting `perf` or `eval`: benchmarks reuse an existing service without updating its code. Share model downloads through the configured storage, while keeping each instance's runtime caches and results separate. Use `stop` to release GPUs between iterations; delete instances when they are no longer needed.
+Environment and cache reuse usually make later code updates faster than initial setup. Record setup time separately from each iteration's build, publication, startup and measurement time.
 
-Once workload groups are defined, compare candidates through existing sweeps. Use the results to continue, change direction or combine approaches, and validate the retained combination before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
+For [parallel candidates](../docs/deployment/source.md#run-candidates-in-parallel), share model downloads through the configured storage and keep runtime caches and results separate. Use `foretoken stop` to release GPUs between iterations while retaining the instance; delete it when no longer needed.
+
+Use existing sweeps for fixed workload groups, and validate combined changes before delivery. See [exploration and decision-making](guidance/meta-knowledge/03-exploration-and-decision.md) for choosing experiments and interpreting results.
 
 ## Choose evaluations
 

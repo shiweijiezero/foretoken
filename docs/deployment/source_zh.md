@@ -33,7 +33,7 @@ foretoken install -e .
 
 这会安装共享的 Foretoken 平台，构建在集群中进行；也可替换已通过 CLI 安装的发布版平台。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d_zh.md)。其他 Kubernetes 集群需要构建任务和节点都能访问的镜像仓库，安装命令及仓库认证见[Kubernetes 部署指南](kubernetes_zh.md#2-从源码安装-foretoken)。
 
-首次源码安装需要准备工具链和运行环境，通常比后续代码更新耗时更长。不同源码目录会复用已有镜像、依赖下载和兼容的编译缓存；每个目录保留自己的增量构建状态。
+首次源码安装需要准备工具链和运行环境。后续部署会复用已有镜像、下载的依赖和兼容的编译缓存，因此代码更新通常更快。每个源码目录保留自己的增量构建状态。
 
 需要将构建产物存入其他存储类时，在 `deploy/platform-values.yaml` 中设置 `development.build.storageClassName`，通过 `--values` 传入；执行和编译缓存仍由框架自动安排在本地存储。支持动态供卷的原生 NFS 和 `nfs.csi.k8s.io`。应用文件使用集群默认存储类，也可通过 `applicationFiles.storageClassName` 指定。已有卷保留其存储类。
 
@@ -58,7 +58,7 @@ curl --fail-with-body --no-buffer "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-日常修改控制器、前端或模型服务的 Go、Rust、Python 代码后，重新执行上面的部署命令。在运行环境依赖不变、缓存可用时，只需增量构建和发布受影响的应用，省去完整运行镜像的重建与分发，因此后续更新通常更快。更新只作用于选中的实例。共享 CRD 或平台配置的变更仍通过 `foretoken install -e .` 应用。服务代码更新仍会重启相应进程，并可能重新加载模型权重。
+修改控制器、前端或模型服务的 Go、Rust、Python 代码后，重新执行上面的部署命令，即可更新选中的实例，复用未变化的运行环境。共享 CRD 或平台配置通过 `foretoken install -e .` 更新。服务代码更新时会重启相应进程，并可能重新加载模型权重。
 
 从其他目录执行时，可用 `-e` 指定 Foretoken 目录。例如，在仓库的父目录中执行 `foretoken deploy foretoken/examples/quickstart/qwen3-0.6b -e foretoken --timeout 20m`。部署配置的路径始终相对于执行命令的目录。
 
