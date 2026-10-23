@@ -270,11 +270,10 @@ def import_release(
             )
 
 
-def publish_build(archive: Path, descriptor: Path, destination: Path, binding: str, archive_url: str) -> None:
+def publish_build(archive: Path, record: dict, destination: Path, binding: str, archive_url: str) -> None:
     """Publish one completed build and its exact input archive as an immutable development record."""
     if (destination / "build.json").is_file():
         return
-    record = json.loads(descriptor.read_text())
     origin = destination.parents[2]
     for component, application in record["build"]["applications"].items():
         if not (origin / component / application["revision"] / "manifest.json").is_file():
@@ -291,12 +290,43 @@ def publish_build(archive: Path, descriptor: Path, destination: Path, binding: s
         staging.rename(destination)
 
 
+def publish_batch(selection: dict) -> dict[str, str]:
+    """Publish a source cohort and commit its build record only after every application succeeds."""
+    binding = selection["binding"]
+    archive = Path(selection["source_archive"])
+    retained = selection["keep"]
+    revisions = {}
+    # Keep completed components reusable after a failure, without committing the
+    # build record or leaving sibling writers running beyond the original error.
+    for application in selection["applications"]:
+        destination = publish(
+            Path(application["source"]), Path(application["destination"]), binding,
+            Path(application["previous"]) if application["previous"] else None,
+            reuse_previous=True, sources=application["sources"], image=application["image"],
+            parts=application["parts"], previous_image=application["previous_image"],
+            source_archive=archive, archive_url=application["archive_url"],
+        )
+        if retained is not None:
+            retire(destination.parent, binding, set(retained) | {destination.name})
+        revisions[application["component"]] = destination.name
+    if completed := selection["build"]:
+        record = json.loads(Path(completed["descriptor"]).read_text())
+        record["build"]["applications"] = {
+            component: {"revision": revision} for component, revision in revisions.items()
+        }
+        publish_build(
+            archive, record, Path(completed["destination"]), binding,
+            completed["url"] + "/inputs.tar.gz",
+        )
+    return revisions
+
+
 def archive_inputs(workspace: Path, destination: Path) -> None:
     """Package exact synchronized inputs as their compiler owner for the publisher's read-only handoff."""
     inputs = json.loads((workspace.parent / "inputs.json").read_text())
     # The init container owns this temporary volume; failure discards it with the Job.
     # Include only synchronized inputs, retaining their original bytes and modes.
-    with tarfile.open(destination, "w:gz", dereference=True) as package:
+    with tarfile.open(destination, "w:gz", compresslevel=3, dereference=True) as package:
         for name in sorted(inputs):
             package.add(workspace / name, arcname=name, recursive=False)
     destination.chmod(0o444)
@@ -331,28 +361,7 @@ if __name__ == "__main__":
             selection["previous"],
             set(retained) if retained is not None else None,
         )
-    elif sys.argv[1] == "--publish-build":
-        publish_build(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5], sys.argv[6])
     elif sys.argv[1] == "--archive-inputs":
         archive_inputs(Path(sys.argv[2]), Path(sys.argv[3]))
-    else:
-        destination = Path(sys.argv[2])
-        binding = sys.argv[3]
-        selection = json.loads(sys.argv[4])
-        destination = publish(
-            Path(sys.argv[1]),
-            destination,
-            binding,
-            Path(selection["previous"]) if selection["previous"] else None,
-            reuse_previous=selection["reuse_previous"],
-            sources=selection["sources"],
-            image=selection["image"],
-            parts=selection["parts"],
-            previous_image=selection["previous_image"],
-            source_archive=Path(selection["source_archive"]),
-            archive_url=selection["archive_url"],
-        )
-        retained = selection["keep"]
-        if retained is not None:
-            retire(destination.parent, binding, set(retained) | {destination.name})
-        print(json.dumps({"revision": destination.name}))
+    elif sys.argv[1] == "--batch":
+        print(json.dumps(publish_batch(json.loads(Path(sys.argv[2]).read_text()))))

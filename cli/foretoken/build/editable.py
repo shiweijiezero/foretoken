@@ -679,7 +679,7 @@ class EditableDeployment:
             published = origin.publish_batch(
                 builder, publications, references, timeout=timeout,
             )
-            for component, published_revision in published.items():
+            for component, published_revision in published.revisions.items():
                 default_revision = (
                     build.get("applications", {}).get(component, {}).get("revision")
                 )

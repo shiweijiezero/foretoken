@@ -17,7 +17,11 @@ from typing import Any
 
 from loguru import logger
 
-from foretoken.applications.files import ApplicationFiles, ApplicationPublication
+from foretoken.applications.files import (
+    ApplicationFiles,
+    ApplicationPublication,
+    PublishedApplications,
+)
 from foretoken.arguments import InstallCommand
 from foretoken.build.cluster.builder import ClusterBuilder, registry_credentials
 from foretoken.build.cluster.compiler import APPLICATION_PARTS, CompilerWorkspace
@@ -46,7 +50,7 @@ from foretoken.build.inputs import (
     snapshot_versions,
     source_checkout,
 )
-from foretoken.build.records import completed_build
+from foretoken.build.records import source_build_record
 from foretoken.build.state import (
     capture_build_inputs,
     checkout_operation,
@@ -186,10 +190,11 @@ def prepare_source_images(
             ) as (built, compiler):
                 images = {component: built.component_environments[component]["image"] for component in components}
                 BuildInputs.select(root, engines, mooncake_version=prepared.mooncake_version).validate(workspaces.snapshot)
-                revisions = _publish_applications(
+                published = _publish_applications(
                     prepared, workspaces, built, images, compiler, origin,
                     checkout=checkout, oci_registry=command.oci_registry, timeout=command.timeout,
                 )
+                revisions = published.revisions
                 applications = {
                     component: origin.reference(component, revision)
                     for component, revision in revisions.items()
@@ -199,10 +204,8 @@ def prepare_source_images(
                 build_state["applications"] = {
                     component: {"revision": revision} for component, revision in revisions.items()
                 }
-                if checkout is None:
-                    build_state["completed"] = origin.publish_build(
-                        compiler, workspaces.snapshot.name, completed_build(build_state), timeout=command.timeout,
-                    )
+                if published.completed_build is not None:
+                    build_state["completed"] = published.completed_build
                 write_source_state(prepared.pending_path, prepared.pending_state)
             build_contexts.close()
             yield SourceImages(
@@ -784,7 +787,7 @@ def _publish_applications(
     checkout: Path | None,
     oci_registry: str | None,
     timeout: str,
-) -> dict[str, str]:
+) -> PublishedApplications:
     """Publish completed exports together, retaining live consumers and the checkout's prior selections."""
     retained = None
     if checkout is not None:
@@ -814,9 +817,10 @@ def _publish_applications(
         )
         for component, image in images.items()
     ]
-    revisions = origin.publish_batch(compiler, publications, retained, timeout=timeout)
+    record = source_build_record(prepared.pending_state["build"]) if checkout is None else None
+    published = origin.publish_batch(compiler, publications, retained, timeout=timeout, build_record=record)
     compiler.run(["rm", "-rf", "--", compiler.root + "/applications"], container=compiler.artifact_container)
-    return revisions
+    return published
 
 
 def build_arguments(environment: dict[str, str]) -> dict[str, str]:

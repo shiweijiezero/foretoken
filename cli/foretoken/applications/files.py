@@ -55,6 +55,14 @@ class ApplicationPublication:
     previous_image: str | None = None
 
 
+@dataclass(frozen=True)
+class PublishedApplications:
+    """Return completed application revisions and the optional portable build selected by their publisher."""
+
+    revisions: dict[str, str]
+    completed_build: dict[str, Any] | None
+
+
 class ApplicationFiles:
     """Resolve the installed file origin without taking ownership of model storage."""
 
@@ -132,99 +140,72 @@ class ApplicationFiles:
         references: set[str] | None,
         *,
         timeout: str,
-    ) -> dict[str, str]:
-        """Join a source build's publishers before returning their actual immutable revisions."""
+        build_record: dict[str, Any] | None = None,
+    ) -> PublishedApplications:
+        """Publish a build cohort with one input archive and Job, committing its build record last."""
         started = time.monotonic()
         logger.info("Publishing applications: {}", ", ".join(item.component for item in publications))
-        with ThreadPoolExecutor(max_workers=len(publications)) as writers, builder.cancellation:
-            pending = {
-                publication.component: writers.submit(
-                    builder.cancellation.run_stage, self.publish,
-                    builder, publication.source, publication.component,
-                    publication.revision, publication.previous, references,
-                    timeout=timeout, reuse_previous=True,
-                    sources=publication.sources, image=publication.image,
-                    parts=publication.parts, previous_image=publication.previous_image,
-                )
-                for publication in publications
-            }
-            revisions = {component: future.result() for component, future in pending.items()}
-        logger.info("Applications published in {:.1f}s", time.monotonic() - started)
-        return revisions
-
-    def publish(
-        self,
-        builder: CompilerWorkspace,
-        source: str,
-        component: str,
-        revision: str,
-        previous: str,
-        references: set[str] | None,
-        *,
-        timeout: str,
-        reuse_previous: bool = False,
-        sources: dict[str, Any] | None = None,
-        image: str | None = None,
-        parts: list[str] | None = None,
-        previous_image: str | None = None,
-    ) -> str:
-        """Publish an export, checking the producer-selected base when reusing application parts."""
-        arguments = [
-            source,
-            f"{self.mount}/{component}/{revision}",
-            builder.binding,
-            json.dumps({
-                "previous": f"{self.mount}/{component}/{previous}" if previous else None,
-                "keep": self._retained_versions(references),
-                "reuse_previous": reuse_previous,
-                "sources": sources,
-                "image": image,
-                "parts": parts,
-                "previous_image": previous_image,
-                "source_archive": _SOURCE_ARCHIVE,
+        selected = []
+        borrowed = []
+        for publication in publications:
+            if publication.parts is not None and not publication.previous:
+                raise DeploymentError("partial publication requires a completed application")
+            component, revision = publication.component, publication.revision
+            if publication.parts is not None:
+                borrowed.append(self.reference(component, publication.previous))
+            selected.append({
+                "component": component,
+                "source": publication.source,
+                "destination": f"{self.mount}/{component}/{revision}",
+                "previous": f"{self.mount}/{component}/{publication.previous}" if publication.previous else None,
+                "sources": publication.sources,
+                "image": publication.image,
+                "parts": publication.parts,
+                "previous_image": publication.previous_image,
                 "archive_url": f"{self.endpoint}/sources/{component}/{revision}.tar.gz",
-            }),
-        ]
-        if parts is not None and not previous:
-            raise DeploymentError("partial publication requires a completed application")
-        with self._publisher(
-            arguments, builder.binding, timeout, builder=builder,
-            source_revision=previous if parts is not None else "",
+            })
+        relative = None
+        if build_record is not None:
+            relative = "sources/builds/" + uuid.uuid4().hex
+            descriptor = builder.root + "/completed-build.json"
+            builder.run(
+                ["sh", "-ec", 'cat > "$1"', "record", descriptor],
+                container=builder.artifact_container, input_text=json.dumps(build_record),
+            )
+        selection = {
+            "applications": selected,
+            "binding": builder.binding,
+            "keep": self._retained_versions(references),
+            "source_archive": _SOURCE_ARCHIVE,
+            "build": {
+                "descriptor": descriptor,
+                "destination": self.mount + "/" + relative,
+                "url": self.endpoint + "/" + relative,
+            } if relative is not None else None,
+        }
+
+        def inputs() -> dict[str, str]:
+            """Retain partial-publication bases through the existing workspace reference protocol."""
+            data = {"input.json": json.dumps(selection)}
+            if borrowed:
+                data[WORKSPACE_SELECTION_KEY] = json.dumps({"applications": borrowed, "images": []})
+            return data
+
+        with builder.cancellation, self._publisher(
+            ["--batch", "/selection/input.json"], builder.binding, timeout,
+            builder=builder, inputs=inputs,
         ) as (job, deadline), self.kubectl.until(deadline):
             self._wait(job, deadline)
-            result = self.kubectl.run(
+            result = json.loads(self.kubectl.run(
                 ["logs", "job/" + job["name"], "-n", self.namespace, "-c", "publish"]
-            )
-            return json.loads(result.stdout)["revision"]
-
-    def publish_build(
-        self, builder: CompilerWorkspace, revision: str, record: dict[str, Any], *, timeout: str,
-    ) -> dict[str, Any]:
-        """Publish exact inputs and completed build choices independently of application deduplication."""
-        started = time.monotonic()
-        logger.info("Publishing completed source build")
-        descriptor = builder.root + "/completed-build.json"
-        builder.run(
-            ["sh", "-ec", 'cat > "$1"', "record", descriptor],
-            container=builder.artifact_container, input_text=json.dumps(record),
-        )
-        relative = "sources/builds/" + revision
-        archive_url = self.endpoint + "/" + relative + "/inputs.tar.gz"
-        arguments = [
-            "--publish-build", _SOURCE_ARCHIVE, descriptor,
-            self.mount + "/" + relative, builder.binding, archive_url,
-        ]
-        with self._publisher(arguments, builder.binding, timeout, builder=builder) as (job, deadline), self.kubectl.until(deadline):
-            self._wait(job, deadline)
-        logger.info("Completed source build published in {:.1f}s", time.monotonic() - started)
-        return {
+            ).stdout)
+        logger.info("Applications published in {:.1f}s", time.monotonic() - started)
+        completed = {
             "url": self.endpoint + "/" + relative + "/build.json",
-            "applications": {
-                component: self.reference(component, application["revision"])
-                for component, application in record["build"]["applications"].items()
-            },
-            "images": record["build"]["images"],
-        }
+            "applications": {component: self.reference(component, revision) for component, revision in result.items()},
+            "images": build_record["build"]["images"],
+        } if relative is not None else None
+        return PublishedApplications(result, completed)
 
     @contextmanager
     def import_release(
@@ -446,7 +427,6 @@ class ApplicationFiles:
         timeout: str,
         *,
         builder: CompilerWorkspace | None = None,
-        source_revision: str = "",
         name: str = "",
         inputs: Callable[[], dict[str, str]] | None = None,
         credentials_secret: str = "",
@@ -459,7 +439,7 @@ class ApplicationFiles:
         execution = builder.cancellation if builder is not None else CommandExecution.current()
         job = self._publisher_job(
             arguments, binding, name=name, input_name=input_name, seconds=seconds,
-            builder=builder, source_revision=source_revision,
+            builder=builder,
             credentials_secret=credentials_secret,
         )
         deadline = time.monotonic() + seconds
@@ -524,6 +504,7 @@ class ApplicationFiles:
                     "apiVersion": "v1", "kind": "ConfigMap",
                     "metadata": {
                         "name": input_name, "namespace": self.namespace,
+                        "labels": {WORKSPACE_LABEL: binding} if WORKSPACE_SELECTION_KEY in data else {},
                         "ownerReferences": [{
                             "apiVersion": "batch/v1", "kind": "Job",
                             "name": metadata["name"], "uid": metadata["uid"],
@@ -553,7 +534,6 @@ class ApplicationFiles:
         input_name: str,
         seconds: int,
         builder: CompilerWorkspace | None,
-        source_revision: str,
         credentials_secret: str,
     ) -> dict[str, Any]:
         """Render publisher storage and identity without taking ownership of borrowed compiler files."""
@@ -697,13 +677,6 @@ class ApplicationFiles:
                     archive_mount,
                 ],
             }]
-        if source_revision:
-            # Keep publisher cleanup identity while exposing its borrowed files
-            # to the existing cross-binding application reference collection.
-            labels[_SOURCE_CONSUMER_LABEL] = "true"
-            annotations = {SOURCE_REVISION: source_revision}
-            job["metadata"]["annotations"] = annotations
-            job["spec"]["template"]["metadata"]["annotations"] = annotations
         if credentials_secret:
             job["spec"]["template"]["spec"]["containers"][0]["env"] = [
                 {

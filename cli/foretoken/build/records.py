@@ -29,13 +29,13 @@ BUILD_TRANSPORT_ARGUMENTS = frozenset({
 })
 
 
-def completed_build(build: dict[str, Any]) -> dict[str, Any]:
-    """Select portable completed outputs for publication, excluding local paths and mutable cache identities."""
+def source_build_record(build: dict[str, Any]) -> dict[str, Any]:
+    """Select portable build metadata; the publisher adds the applications it actually completed."""
     return {
         "build": {key: build[key] for key in (
             "versions", "images", "environments", "compilers", "digests", "registry",
             "configuration", "containerd_socket", "runtime_backend", "build_metax_runtime",
-            "engine_native", "applications",
+            "engine_native",
         )},
         "arguments": {key: value for key, value in build["arguments"].items() if key not in BUILD_TRANSPORT_ARGUMENTS},
     }
