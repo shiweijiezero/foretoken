@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -554,7 +554,6 @@ def _build_environments(
     prepared: _PreparedSourceBuild,
     workspaces: _SourceWorkspaces,
     environments: BuildEnvironments,
-    compilers: dict[str, str],
     previous_revisions: dict[str, str],
     application_parts: dict[str, list[str] | None],
     *,
@@ -565,7 +564,7 @@ def _build_environments(
     settings = prepared.pending_state["build"]
     arguments = settings["arguments"]
     build, cached = prepared.previous_build, prepared.cached_build
-    compilers = dict(compilers)
+    compilers: dict[str, str] = {}
     application_parts = dict(application_parts)
     engine_caches: dict[str, str] = {}
     engine_native = bool(prepared.engines) and (runtime_backend != "metax" or "vllm-metax" in prepared.engines)
@@ -675,7 +674,7 @@ def _build_applications(
     refresh: bool,
     before_delivery: Callable[[], None] | None,
 ) -> Iterator[tuple[_BuiltEnvironments, CompilerWorkspace]]:
-    """Overlap native compilation with runtime preparation, retaining all exports through publication."""
+    """Start independent runtimes and toolchains together; retain writers through delivery and publication."""
     settings = prepared.pending_state["build"]
     builder = workspaces.origin_builder
     cancellation = builder.cancellation
@@ -683,34 +682,41 @@ def _build_applications(
         workspaces.builders, workspaces.versions, settings["environments"],
         settings["images"], push=bool(prepared.registry), refresh=refresh,
     )
-    compilers = _build_compilers(environments, settings["arguments"], components, builder)
-    environments.deliver(builder, {"compiler-" + component for component in components})
-    settings.update(
-        environments={**environments.previous, **environments.records},
-        compilers={**settings["compilers"], **compilers},
-    )
-    settings["images"].update({"environment-" + name: record["image"] for name, record in settings["environments"].items()})
-    write_source_state(prepared.pending_path, prepared.pending_state)
     previous_revisions, early_parts = _select_application_parts(prepared, workspaces, origin, components)
-
-    with CompilerWorkspace(
-        origin.kubectl, origin.namespace, builder.claim, settings["binding"], origin.node,
-        compilers, prepared.compiler_configuration, timeout,
-        tools_image=image_tools_image(settings["arguments"], settings["registry_mirrors"]),
-        execution_claim=builder.execution_claim,
-        owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
-        pull_secrets=tuple(settings["pull_secrets"]), credentials=workspaces.credentials,
-        cancellation=cancellation,
-    ) as compiler:
-        compiler.sync(workspaces.files, workspaces.versions)
-        # Runtime preparation has its own worker, so native workers can wait for
-        # its compatibility decision without starving the stage they depend on.
+    # Keep acquired compiler resources outside the worker scope: cancellation
+    # stops and joins every stage before its workspace can be released.
+    with ExitStack() as resources:
         with ThreadPoolExecutor(max_workers=len(components) + 1) as builds, cancellation:
+            # Runtime dependencies do not depend on the Go/Rust toolchains.
             runtime = builds.submit(
                 cancellation.run_stage, _build_environments,
-                prepared, workspaces, environments, compilers, previous_revisions, early_parts,
+                prepared, workspaces, environments, previous_revisions, early_parts,
                 runtime_backend=runtime_backend, build_metax_runtime=build_metax_runtime,
             )
+            compilers = _build_compilers(environments, settings["arguments"], components, builder)
+            compiler_names = {"compiler-" + component for component in components}
+            environments.deliver(builder, compiler_names)
+            # Runtime identities and their native cache selections must be saved
+            # together; only these delivered toolchains belong to this checkpoint.
+            settings.update(
+                environments={
+                    **environments.previous,
+                    **{name: record for name, record in environments.records.items() if name in compiler_names},
+                },
+                compilers={**settings["compilers"], **compilers},
+            )
+            settings["images"].update({"environment-" + name: record["image"] for name, record in settings["environments"].items()})
+            write_source_state(prepared.pending_path, prepared.pending_state)
+            compiler = resources.enter_context(CompilerWorkspace(
+                origin.kubectl, origin.namespace, builder.claim, settings["binding"], origin.node,
+                compilers, prepared.compiler_configuration, timeout,
+                tools_image=image_tools_image(settings["arguments"], settings["registry_mirrors"]),
+                execution_claim=builder.execution_claim,
+                owner={"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": origin.claim, "uid": origin.claim_uid},
+                pull_secrets=tuple(settings["pull_secrets"]), credentials=workspaces.credentials,
+                cancellation=cancellation,
+            ))
+            compiler.sync(workspaces.files, workspaces.versions)
 
             def compile_application(component: str) -> None:
                 """Compile source-required parts first, then fill any runtime-invalidated parts."""
@@ -727,6 +733,7 @@ def _build_applications(
                 for component in components
             ]
             built = runtime.result()
+            built = replace(built, compilers={**compilers, **built.compilers})
             if "engine" in built.compilers:
                 environments.deliver(builder, {"compiler-engine"})
                 settings.update(

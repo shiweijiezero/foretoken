@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from typing import Any
 
 from loguru import logger
@@ -33,9 +34,16 @@ class BuildEnvironments:
         self.images = images
         self.push = push
         self.refresh = refresh
-        self.records: dict[str, Any] = {}
+        self._records: dict[str, Any] = {}
         self._built: set[str] = set()
         self._delivered: dict[str, set[str]] = {builder.node: set() for builder in builders}
+        self._lock = Lock()
+
+    @property
+    def records(self) -> dict[str, Any]:
+        """Snapshot completed stages for checkpoints while independent builds continue."""
+        with self._lock:
+            return dict(self._records)
 
     def build(
         self,
@@ -107,7 +115,8 @@ class BuildEnvironments:
             }
         reusable = not self.refresh and previous.get("identity") == identity
         if reusable and self._available(previous, builders):
-            self.records[name] = previous
+            with self._lock:
+                self._records[name] = previous
             logger.info("Reusing {} environment: {}", name, previous["image"])
             return previous
 
@@ -125,28 +134,34 @@ class BuildEnvironments:
                 node: future.result()["containerimage.digest"]
                 for node, future in pending.items()
             }
-        if previous.get("digests") == digests and self._available(previous, builders):
+        retained = previous.get("digests") == digests and self._available(previous, builders)
+        if retained:
             image = previous["image"]
-        else:
-            self._built.add(name)
         record = {"identity": identity, "image": image, "digests": digests}
-        self.records[name] = record
+        # A stage becomes deliverable together with its completed record.
+        with self._lock:
+            self._records[name] = record
+            if not retained:
+                self._built.add(name)
         return record
 
     def deliver(self, builder: ClusterBuilder, names: set[str] | None = None) -> None:
         """Deliver completed stages once per node, leaving borrowed image references with their owner."""
         if builder.containerd_socket:
-            pending = {
-                name for name in self._built - self._delivered[builder.node]
-                if builder.node in self.records[name]["digests"]
-            }
-            if names is not None:
-                pending &= names
+            with self._lock:
+                pending = {
+                    name: self._records[name]["image"]
+                    for name in self._built - self._delivered[builder.node]
+                    if (names is None or name in names)
+                    and builder.node in self._records[name]["digests"]
+                }
+            # Node delivery is serial; independent builds can finish during its I/O.
             # The controller runtime is delivered last, immediately before installation.
             for name in sorted(pending, key=lambda value: value == "control-plane"):
-                image = self.records[name]["image"]
+                image = pending[name]
                 builder.import_image(image, image)
-                self._delivered[builder.node].add(name)
+                with self._lock:
+                    self._delivered[builder.node].add(name)
 
     def _available(self, record: dict[str, Any], builders: list[ClusterBuilder]) -> bool:
         """Check the stage's execution nodes before borrowing a producer's retained image reference."""

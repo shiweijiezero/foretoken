@@ -115,7 +115,7 @@ foretoken deploy examples/quickstart/qwen3-0.6b --engine-source ../vllm --timeou
 
 Subsequent deployments from this Foretoken directory reuse the selected vLLM directory. After editing Python, Triton or NVIDIA CUDA/C++ code, deploy with `-e .` to build and apply the changes. Select the engine directory separately for each Foretoken source directory.
 
-To limit build concurrency, prefix a source installation or deployment command with `BUILD_JOBS=4`. This sets four jobs per Go, Rust or native-engine compiler.
+To select build concurrency, prefix a source installation or deployment command with `BUILD_JOBS=4`. Each Go, Rust or native-engine compilation and Python bytecode preparation then uses four workers.
 
 For MetaX native kernels, also select the plugin directory alongside its matching vLLM directory:
 

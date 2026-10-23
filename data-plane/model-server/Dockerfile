@@ -79,6 +79,7 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+ARG BUILD_JOBS
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
@@ -99,7 +100,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
       'from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(); check_installed_dependencies()' \
-    && "$python_path" -c 'import compileall, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1) for path in site.getsitepackages()))' \
+    && "$python_path" -c 'import compileall, os, site; raise SystemExit(not all(compileall.compile_dir(path, quiet=1, workers=int(os.environ.get("BUILD_JOBS") or 1)) for path in site.getsitepackages()))' \
     && rm /tmp/foretoken-engine-constraints.txt
 
 FROM engine-runtime AS environment
