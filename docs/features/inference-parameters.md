@@ -159,7 +159,7 @@ Expert parallelism (EP) keeps each DP rank's KV cache separate. Single-node EP r
 
 Prefill processes the input; Decode generates the answer. Mooncake and NIXL can also reuse a previous Decode instance's retained KV cache for a later Prefill. Requests may reach different frontends and Prefill instances; reuse depends on matching input tokens and cache isolation, not a session identifier.
 
-For a service with `prefill` and `decode` entries in `modelPools`, Mooncake is the default connector. Foretoken checks the selected nodes for both stages and automatically requests RDMA devices when available; otherwise it uses TCP. `foretoken install` reuses the cluster's shared RDMA device plugin or prepares one. For RoCE (RDMA over Ethernet) on a shared Layer 2 network, it also prepares secondary Pod interfaces while retaining the ordinary Kubernetes network for API traffic. Models need no NIC or GID configuration.
+For a service with `prefill` and `decode` entries in `modelPools`, Mooncake is the default connector. Foretoken uses RDMA when both stages can use a compatible device allocation and network; otherwise it selects TCP. Network preparation is part of [platform installation](../deployment/kubernetes.md#rdma-networking), so model configuration needs no NIC or port settings.
 
 The native transport uses GPUDirect RDMA—direct NIC access to GPU memory—when supported by the cluster's GPU and NIC drivers, without a model-level switch.
 
@@ -173,7 +173,7 @@ spec:
 
 Set `kvTransfer.protocol` to `tcp` or `rdma` only when overriding automatic selection. Apply changes with `foretoken deploy <directory>`; this replaces the model's P/D instances while other services keep their own transport choices.
 
-Foretoken enables reuse automatically for full-attention text models without LoRA in supported vLLM environments of 0.31 or later and in the supplied MetaX runtime. The selected transport must support the accelerator's device memory: Mooncake, or NIXL with UCX. Foretoken's corresponding runtime prepares these dependencies.
+Reuse is enabled automatically for full-attention text models without LoRA in the Foretoken vLLM 0.31 and supplied MetaX environments. These environments include the required transport dependencies.
 
 Reuse requires one node per model replica, compatible P/D KV layouts, and PP/PCP/DCP of 1. NIXL also requires matching P/D TP sizes. Other supported configurations retain ordinary P/D behavior. Encoder separation and Mooncake Store use Mooncake.
 
@@ -213,8 +213,6 @@ PY
 ```
 
 For subsequent turns, send the complete conversation history through the same API. Chat templates that remove earlier reasoning change the token prefix and require recomputation. A matching retained prefix extends Prefill's local cache when the engine finds the transfer worthwhile; otherwise Prefill computes normally. Load-based routing also uses this reuse path. [Routing weights](../../data-plane/frontend/src/router/README.md) control target preference, not whether reuse is available.
-
-NIXL selects network devices automatically. If explicit selection is needed, set `spec.env.UCX_NET_DEVICES` to UCX identifiers such as `mlx5_0:1,mlx5_1:1`.
 
 Remove the example when finished:
 

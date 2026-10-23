@@ -37,7 +37,7 @@ For a remote cluster, also pass `--registry REGISTRY` with a container registry 
 
 ## Deploy
 
-P/D uses Mooncake. Foretoken automatically requests RDMA devices when they are available to both stages; otherwise it uses TCP with host-memory staging. No transport setting is needed in `model.yaml`.
+Prefill and Decode use Mooncake. Foretoken selects RDMA when both stages have compatible devices and networking, or TCP otherwise. The example needs no transport settings.
 
 From the repository root:
 

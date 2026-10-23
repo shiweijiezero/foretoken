@@ -87,37 +87,7 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ### RDMA 网络
 
-安装时会发现或准备共享 RDMA 设备分配。使用 RoCE（通过以太网传输 RDMA 数据）时，如果节点位于相同二层网络且网卡布局一致，还会自动准备 Pod 的附加网络接口。Multus 负责添加接口，Whereabouts 负责分配地址，普通 Kubernetes 网络继续保留。集群已有兼容组件时直接复用。
-
-如果已有 `NetworkAttachmentDefinition` 通过 `k8s.v1.cni.cncf.io/resourceName` 注解关联了已发现的共享 RDMA 资源，同一命名空间的服务会自动复用这些网络。其 CNI 配置和地址分配方式继续由原有网络组件管理。
-
-需要为某个共享分配指定已有网络时，在 `deploy/platform-values.yaml` 中填写对应引用：
-
-```yaml
-rdma:
-  networks:
-    - name: inference-rdma
-      namespace: network-system
-```
-
-将名称和命名空间换成实际网络，在原安装命令中加入 `--values deploy/platform-values.yaml` 后重新执行。省略 `rdma.networks` 或设为 `null` 时自动准备，设为 `[]` 则不再为新实例默认附加网络。后续平台更新会保留已保存的选择；已有实例重新部署后采用新的默认值。Foretoken 创建的网络定义在平台更新、回滚时保留，由 `foretoken uninstall` 回收；直接执行 `helm uninstall` 会保留这些定义。外部网络仍由原有组件管理。
-
-如果 RDMA 工作负载需要同时申请多种设备资源，使用 `rdma.bindings` 描述完整分配。将下面的资源键和网络名称替换为集群实际提供的值：
-
-```yaml
-rdma:
-  bindings:
-    - namespace: inference
-      allocation:
-        resources:
-          rdma/rail_a: "1"
-          rdma/rail_b: "1"
-        networks:
-          - inference/rdma-a
-          - inference/rdma-b
-```
-
-一个分配中的资源会一起申请，列表中的不同分配则是备选项。Foretoken 根据工作负载选择可用的完整分配，并为 Prefill 和 Decode 选择共同网络。`namespace` 限定可使用该分配的命名空间；只有 CNI 允许跨命名空间使用这些网络时才省略。`rdma.bindings: []` 关闭 RDMA 资源分配，而 `rdma.networks: []` 只关闭默认附加网络。
+RDMA 用于加速模型实例之间的数据传输。安装时会发现可用设备、复用集群已有的兼容配置，并自动准备受支持的设备分配和网络。常规部署无需在模型配置中指定网卡或端口，主机驱动和物理网络需已可用。
 
 ## 3. 部署与更新代码
 

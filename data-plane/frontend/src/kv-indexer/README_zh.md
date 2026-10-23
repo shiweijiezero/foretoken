@@ -24,7 +24,7 @@ fn needs_kv_prefix(&self) -> bool {
 }
 ```
 
-`PipelineRouter::start` 会在选择目标前异步调用 `KvPrefixIndexer::prepare`；启用 Decode 到 Prefill 的复用时，也会独立于评分算法准备这些观测。算法在 `filter` 或 `score` 中同步使用传入的查询器：
+Router 会在调用算法前准备观测结果。在 `filter` 或 `score` 中，通过传入的查询器同步读取即可：
 
 ```rust
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};

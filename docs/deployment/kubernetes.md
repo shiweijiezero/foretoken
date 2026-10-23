@@ -87,37 +87,7 @@ foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.ya
 
 ### RDMA networking
 
-Installation discovers or prepares shared RDMA device allocation. For RoCE (RDMA over Ethernet), nodes sharing a Layer 2 fabric and matching interface layouts also receive secondary Pod networks automatically. Multus adds these interfaces alongside the ordinary Kubernetes network, and Whereabouts assigns their addresses. Compatible existing installations are reused.
-
-Existing `NetworkAttachmentDefinition` objects that associate a discovered shared RDMA resource through the `k8s.v1.cni.cncf.io/resourceName` annotation are selected automatically for services in that network's namespace. Their CNI and address-allocation settings stay with the existing network owner.
-
-To select specific existing attachments for a single shared allocation, add their references in `deploy/platform-values.yaml`:
-
-```yaml
-rdma:
-  networks:
-    - name: inference-rdma
-      namespace: network-system
-```
-
-Replace the name and namespace with the existing network, then rerun the installation command with `--values deploy/platform-values.yaml`. Omit `rdma.networks`, or set it to `null`, for automatic preparation; `[]` disables default secondary attachments. Saved choices persist across platform updates. Redeploy an instance to adopt changed defaults. Foretoken-created network definitions survive platform updates and rollbacks and are removed by `foretoken uninstall`; direct `helm uninstall` retains them. Externally managed networks retain their existing owner.
-
-For RDMA workloads that require several device resources together, describe the complete allocation with `rdma.bindings`. Replace these resource and attachment names with those provided by the cluster:
-
-```yaml
-rdma:
-  bindings:
-    - namespace: inference
-      allocation:
-        resources:
-          rdma/rail_a: "1"
-          rdma/rail_b: "1"
-        networks:
-          - inference/rdma-a
-          - inference/rdma-b
-```
-
-Resources within one allocation are requested together; separate list entries are alternatives. Foretoken selects a complete allocation that fits the workload and a common network for Prefill and Decode. `namespace` limits where a binding can be used; omit it only when the CNI permits sharing its attachments across namespaces. `rdma.bindings: []` disables RDMA allocation, while `rdma.networks: []` disables only default secondary interfaces.
+RDMA accelerates data transfer between model instances. Installation discovers available devices, reuses compatible cluster configuration, and prepares supported device allocation and networking. Ordinary deployments need no NIC or port settings in the model configuration. Host drivers and the physical network must already be operational.
 
 ## 3. Deploy and update code
 

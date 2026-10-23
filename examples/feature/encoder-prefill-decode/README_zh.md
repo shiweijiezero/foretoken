@@ -37,7 +37,7 @@ foretoken install -e . --values deploy/platform-values.yaml
 
 ## 部署
 
-P/D 使用 Mooncake。两端的目标节点都有可分配的 RDMA 设备时，Foretoken 自动申请并使用；否则使用 TCP，通过主机内存暂存 GPU KV 数据。无需在 `model.yaml` 中配置传输方式。
+Prefill 与 Decode 之间使用 Mooncake。两端设备和网络兼容时，Foretoken 自动选择 RDMA，否则使用 TCP；示例无需额外配置传输方式。
 
 从仓库根目录执行：
 

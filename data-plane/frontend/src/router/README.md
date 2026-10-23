@@ -65,7 +65,7 @@ Both weights accept values from 0 to 1:
 | `cacheWeight` | `0.5` | Balances cache affinity against load; `0` selects by load alone and skips cache queries for this scorer. |
 | `restoreWeight` | `0.5` | Credit for the restored extension relative to GPU-local reuse; `0` credits only GPU-local reuse, and `1` gives both equal credit. |
 
-For Encoder and Decode, `kv_least_loaded` uses load alone. These weights express routing preferences, not transfer-time estimates. When [NIXL Decode-to-Prefill reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) is enabled, routing still discovers and uses retained prefixes with load-only scorers or `cacheWeight: 0`.
+For Encoder and Decode, `kv_least_loaded` uses load alone. These weights control routing preference. [Decode-to-Prefill reuse](../../../../docs/features/inference-parameters.md#prefilldecode-separation-and-kv-reuse) remains available with load-only scorers or `cacheWeight: 0`, for both Mooncake and NIXL.
 
 A target with unavailable prefix observations remains eligible without a cache preference. See the [KV prefix index](../kv-indexer/README.md) for supported caches and status access.
 

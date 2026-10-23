@@ -24,7 +24,7 @@ fn needs_kv_prefix(&self) -> bool {
 }
 ```
 
-`PipelineRouter::start` calls `KvPrefixIndexer::prepare` asynchronously before selection. Enabled Decode-to-Prefill reuse also prepares these observations independently of scoring. The algorithm then uses the supplied reader synchronously in `filter` or `score`:
+The router prepares observations before calling the algorithm. Read them synchronously from the supplied indexer in `filter` or `score`:
 
 ```rust
 use foretoken_kv_indexer::{KvPrefixIndexer, KvPrefixQueryResult};

@@ -113,7 +113,7 @@ Do not comment getters, field forwarding, constant mappings, obvious loops, or e
 
 ## Language and repository tools
 
-Write source-code comments, documentation comments, docstrings, and comments in scripts and configuration files in English. Use English for identifiers, CLI help, error messages, commit messages, and PR or issue titles and descriptions. This also applies to Foretoken additions in upstream patches.
+Prefer English for source-code comments, documentation comments, docstrings, and comments in scripts and configuration files. Use English where practical for identifiers, CLI help, error messages, commit messages, and PR or issue titles and descriptions. Apply the same preference to Foretoken additions in upstream patches.
 
 Follow the surrounding code and the executable checks for each subtree.
 

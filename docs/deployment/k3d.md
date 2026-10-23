@@ -91,7 +91,7 @@ foretoken cluster create k3d --name "$CLUSTER" --gpus "$GPU_INDICES"
 kubectl get nodes
 ```
 
-The command mounts the NVIDIA runtime and the repository `data/` directory, installs the NVIDIA device plugin, and selects the created kubeconfig context. Active RoCE (RDMA over Ethernet) interfaces are also prepared for model communication and restored when the node restarts. Platform installation prepares the corresponding Pod networks.
+The command makes the selected GPUs and repository `data/` directory available to the cluster, installs the NVIDIA device plugin, and selects the new kubeconfig context. Cluster creation and platform installation also detect the host's RDMA capabilities and prepare supported devices and networks for model communication.
 
 ## 4. Install and access Foretoken
 
