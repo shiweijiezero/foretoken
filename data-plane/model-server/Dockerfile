@@ -12,16 +12,28 @@ ARG INFERENCE_ENGINE_IMAGE
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.12.22
 ARG GO_IMAGE=${BASE_IMAGE_REGISTRY}/library/golang:1.25.10-bookworm
+ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 
 FROM ${UV_IMAGE} AS uv
 
 FROM ${GO_IMAGE} AS mooncake-go
 
-# Keep the build-time patch utility out of the inference image.
+# Keep build-time patch tools out of the inference image.
 FROM ${BASE_IMAGE_REGISTRY}/library/debian:bookworm-slim AS patch-tool
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends patch \
+    && apt-get install -y --no-install-recommends jq patch \
     && rm -rf /var/lib/apt/lists/*
+
+# Only Python catalog entries affect the installed engine. Project their files
+# before the runtime stages so Rust-only edits retain BuildKit's environment cache.
+FROM patch-tool AS runtime-patches
+COPY data-plane/patches/vllm/ /input/
+RUN set -eu; cd /input; mkdir /patches; \
+    cp apply.py vllm_patches.py mooncake.version /patches/; \
+    jq '.patches |= map(select(.python != null) | del(.rust))' catalog.json > /patches/catalog.json; \
+    jq -r '.patches[].path' /patches/catalog.json | while IFS= read -r patch; do \
+        cp --parents "$patch" /patches/; \
+    done
 
 FROM ${RUST_BUILDER_IMAGE} AS compiler
 COPY --from=uv /uv /usr/local/bin/uv
@@ -70,24 +82,27 @@ COPY data-plane/model-server/python/foretoken_prepare.py /opt/foretoken/python/f
 COPY data-plane/model-server/python/foretoken_model_sources/ /opt/foretoken/python/foretoken_model_sources/
 ENTRYPOINT ["foretoken-omni-model-server"]
 
-FROM ${INFERENCE_ENGINE_IMAGE} AS engine-base
-
+# Native wheels and Python adaptation share the selected interpreter and ABI,
+# but Python patch changes do not invalidate the native compilation branch.
+FROM ${INFERENCE_ENGINE_IMAGE} AS inference-base
 ARG FORETOKEN_VLLM_PYTHON
 ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
+
+FROM inference-base AS engine-base
 
 # Patch the installed Python engine, not the independent Rust build source.
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
-    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
     "${FORETOKEN_VLLM_PYTHON:-python3}" /tmp/vllm-patches/apply.py
 
-ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+ARG UV_DEFAULT_INDEX
 ARG BUILD_JOBS
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 # Precompile installed packages to avoid repeated bytecode compilation at startup.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'import sys; print(sys.executable)') \
     && PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "$python_path" -c \
@@ -115,11 +130,12 @@ COPY LICENSE third_party* /third_party/
 
 # Build against the selected Python/CUDA ABI. Runtime images consume the complete
 # wheel and do not retain native compilers or build-time system packages.
-FROM engine-base AS mooncake-build
+FROM inference-base AS mooncake-build
 USER root
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=mooncake-go /usr/local/go /usr/local/go
 ARG BUILD_JOBS=2
+ARG UV_DEFAULT_INDEX
 ARG FORETOKEN_GITHUB_MIRROR
 ARG GOPROXY
 ARG GOSUMDB
@@ -131,7 +147,7 @@ RUN --mount=type=bind,from=mooncake-inputs,target=/input \
 FROM engine-base AS engine-runtime
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=from=mooncake-build,source=/out,target=/tmp/mooncake-wheels \
-    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    --mount=from=runtime-patches,source=/patches,target=/tmp/vllm-patches \
     PYTHONPATH="/tmp/vllm-patches${PYTHONPATH:+:$PYTHONPATH}" "${FORETOKEN_VLLM_PYTHON:-python3}" -c \
       'from pathlib import Path; from vllm_patches import install_mooncake_dependencies, check_installed_dependencies; install_mooncake_dependencies(Path("/tmp/mooncake-wheels")); check_installed_dependencies()'
 COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/
